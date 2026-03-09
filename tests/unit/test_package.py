@@ -94,10 +94,13 @@ def test_py_typed_marker_is_empty_file() -> None:
     pkg = _import_pramanix()
     package_dir = Path(pkg.__file__).parent  # type: ignore[arg-type]
     py_typed = package_dir / "py.typed"
-    if py_typed.exists():
-        assert py_typed.stat().st_size == 0, (
-            f"py.typed must be empty (size 0), but has {py_typed.stat().st_size} bytes"
-        )
+    assert py_typed.exists(), (
+        f"py.typed marker not found at {py_typed} — cannot check file size. "
+        "Add an empty py.typed file to src/pramanix/."
+    )
+    assert py_typed.stat().st_size == 0, (
+        f"py.typed must be empty (size 0), but has {py_typed.stat().st_size} bytes"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -174,8 +177,13 @@ def test_minimum_python_version() -> None:
 
 
 def test_maximum_python_version() -> None:
-    """The running interpreter must be below Python 3.13 (not yet supported)."""
+    """The running interpreter must be below Python 3.13.
+
+    pyproject.toml declares python = ">=3.10,<3.13", so 3.13 and above are
+    intentionally outside the supported range until z3-solver compatibility
+    and CI matrix coverage for 3.13 are confirmed.
+    """
     assert sys.version_info < (3, 13), (
-        f"Python 3.13+ is not yet supported; running {sys.version}. "
-        "Switch to Python 3.10, 3.11, or 3.12."
+        f"Python 3.13+ is not supported (supported range: >=3.10,<3.13); "
+        f"running {sys.version}. Switch to Python 3.10, 3.11, or 3.12."
     )
