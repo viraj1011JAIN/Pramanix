@@ -41,10 +41,10 @@
 - [ ] Pin core dependencies: `pydantic ^2.5`, `z3-solver ^4.12`, `structlog ^23.2`, `prometheus-client ^0.19`
 - [ ] Define extras: `translator` (httpx, openai), `otel` (opentelemetry-sdk, exporter-otlp), `all`
 - [ ] Define dev-dependencies: `pytest ^7.4`, `pytest-asyncio ^0.23`, `pytest-cov ^4.1`, `hypothesis ^6.92`, `mypy ^1.7`, `ruff ^0.1`
-- [ ] Configure `[tool.mypy]` — `strict = true`, `python_version = "3.11"`
+- [ ] Configure `[tool.mypy]` — `strict = true`, `python_version = "3.10"`
 - [ ] Configure `[tool.ruff]` — `line-length = 100`, `target-version = "py310"`
 - [ ] Configure `[tool.pytest.ini_options]` — `asyncio_mode = "auto"`, `testpaths = ["tests"]`
-- [ ] Configure `[tool.coverage.run]` — `source = ["src/pramanix"]`, `fail_under = 95`
+- [ ] Configure `[tool.coverage.run]` — `source = ["src/pramanix"]`, `fail_under = 95`, `branch = true`
 - [ ] `poetry install` succeeds with zero errors on Python 3.11
 
 ### 0.3 — CI Pipeline (GitHub Actions) — Skeleton
@@ -167,7 +167,7 @@
 ### 2.4 — Transpiler (`transpiler.py`)
 
 - [ ] `transpile(invariants, field_values: dict) → list[tuple[z3.BoolRef, str]]`
-- [ ] Type projection: `Decimal` → `z3.RealSort` (via `as_integer_ratio()`), `bool` → `BoolSort`, `int` → `IntSort`, `float` → `RealSort`, `str` → not in v0.1 (compile-time guard)
+- [ ] Type projection: `Decimal` → `z3.RealSort` (via `as_integer_ratio()`), `bool` → `BoolSort`, `int` → `IntSort`, `float` → `RealSort` (**WARNING: using `float` loses exactness/precision guarantees; only acceptable for approximate arithmetic and non-critical domains — prefer `Decimal` for all numeric operations requiring exact arithmetic**), `str` → not in v0.1 (compile-time guard)
 - [ ] Walk expression tree recursively — no `ast.parse()`, no string eval
 - [ ] Each invariant returns `(z3_formula, invariant_name_label)` tuple
 - [ ] Unit tests per Blueprint §39 `transpiler_test.py` — all 10 cases
@@ -203,6 +203,9 @@
 - [ ] `validate_intent(intent_model, raw_data) → validated_instance` — Pydantic v2 strict mode
 - [ ] `validate_state(state_model, raw_data) → validated_instance` — Pydantic v2 strict mode
 - [ ] State model must contain `state_version: str` field — raise `StateValidationError` if missing
+- [ ] Guard validates the `state_version` field in every incoming state: if `state_version` is absent, raise `StateValidationError`; if `state_version` is present but does not match the policy's expected version, raise `StateValidationError` with a descriptive mismatch message
+- [ ] Version comparison is performed by the **Guard** (host-side) immediately after `validate_state()` succeeds: compare `state.state_version` against `Policy.Meta.version` using exact string equality; semantic/semver comparison is not applied in v0.1
+- [ ] Add `STALE_STATE` member to `SolverStatus` enum — returned when state version is present but mismatched; produces `Decision(allowed=False, status=STALE_STATE)` so callers can distinguish stale-state rejections from validation errors
 - [ ] Validation errors produce `Decision(allowed=False, status=VALIDATION_FAILURE)`
 - [ ] Never propagate `ValidationError` to the caller — catch and wrap
 
@@ -291,6 +294,7 @@
 - [ ] **CRITICAL:** Never pass Pydantic model instances to `ProcessPoolExecutor.submit()`
 - [ ] **CRITICAL:** Workers receive only plain dicts — workers never call resolvers
 - [ ] **CRITICAL:** Never create Z3 objects outside worker scope — Z3 contexts are process-local
+- [ ] **CRITICAL:** Worker failure handling — any exception, timeout, or process termination in `spawn()`, `warmup()`, or `solve()` must be caught by `WorkerPool` in a `try/except`/timeout handler; log the error and return `Decision(allowed=False)` to the caller; `recycle_if_needed()` and `shutdown()` must also absorb worker-level errors without re-raising — the public API must never propagate worker exceptions to callers
 
 ### 3.2 — Async Guard Methods
 

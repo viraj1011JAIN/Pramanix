@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Pramanix .gitattributes — enforce LF line endings everywhere
+#
+# WHY: Pramanix targets Linux containers (python:3.11-slim). Shell scripts,
+# Dockerfiles, and .env files with Windows CRLF (\r\n) cause cryptic
+# failures like "/bin/bash^M: bad interpreter" inside containers.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Default: all text files normalize to LF in the repo, check out as LF
+* text=auto eol=lf
+
+# Explicitly mark text file types
+*.py        text eol=lf
+*.toml      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.json      text eol=lf
+*.cfg       text eol=lf
+*.ini       text eol=lf
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile* text eol=lf
+Makefile    text eol=lf
+*.env       text eol=lf
+
+# Binary files — do not normalize
+*.png       binary
+*.jpg       binary
+*.gif       binary
+*.ico       binary
+*.whl       binary
+*.zip       binary
+*.tar.gz    binary
+*.gz        binary
+*.so        binary
+*.dylib     binary
+*.docx      binary
