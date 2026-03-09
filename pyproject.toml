@@ -1,0 +1,139 @@
+[build-system]
+requires = ["poetry-core>=1.7.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "pramanix"
+version = "0.1.0"
+description = "Deterministic neuro-symbolic guardrails for autonomous AI agents"
+authors = ["Viraj Jain <viraj@pramanix.dev>"]
+license = "AGPL-3.0-only"
+readme = "README.md"
+homepage = "https://github.com/viraj1011JAIN/Pramanix"
+repository = "https://github.com/viraj1011JAIN/Pramanix"
+documentation = "https://github.com/viraj1011JAIN/Pramanix#readme"
+keywords = ["ai-safety", "guardrails", "smt", "z3", "formal-verification", "neuro-symbolic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+    "Operating System :: OS Independent",
+]
+packages = [{include = "pramanix", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pydantic = "^2.5"
+z3-solver = "^4.12"
+structlog = "^23.2"
+prometheus-client = "^0.19"
+
+[tool.poetry.extras]
+translator = ["httpx", "openai"]
+otel = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
+all = ["httpx", "openai", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+pytest-asyncio = "^0.23"
+pytest-cov = "^4.1"
+hypothesis = "^6.92"
+mypy = "^1.7"
+ruff = "^0.1"
+
+# Optional dev extras for integration testing
+# httpx = {version = "^0.27", optional = true}
+# openai = {version = "^1.10", optional = true}
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = [
+    "z3",
+    "z3.*",
+    "prometheus_client",
+    "prometheus_client.*",
+    "opentelemetry.*",
+]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "T20",  # flake8-print (no print statements in library code)
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",    # line length — handled by formatter
+    "UP007",   # use X | Y for union types — keep Optional for 3.10 compat
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pramanix"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "perf: performance benchmarks",
+    "adversarial: adversarial security tests",
+]
+
+[tool.coverage.run]
+source = ["src/pramanix"]
+branch = true
+omit = [
+    "src/pramanix/translator/openai_compat.py",
+]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+    "@overload",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]

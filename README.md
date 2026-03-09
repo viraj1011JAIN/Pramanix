@@ -34,6 +34,7 @@ AI Agent: "Transfer $5,000 to account X"
 
 ## Table of Contents
 
+- [Table of Contents](#table-of-contents)
 - [Why Pramanix](#why-pramanix)
 - [Key Features](#key-features)
 - [How It Works](#how-it-works)
@@ -54,8 +55,12 @@ AI Agent: "Transfer $5,000 to account X"
 - [Pramanix vs. Alternatives](#pramanix-vs-alternatives)
 - [Configuration Reference](#configuration-reference)
 - [Deployment](#deployment)
+  - [Docker](#docker)
+  - [FastAPI Integration](#fastapi-integration)
 - [Performance](#performance)
 - [Security Model](#security-model)
+  - [Threat Mitigations](#threat-mitigations)
+  - [Fail-Safe Guarantee](#fail-safe-guarantee)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
