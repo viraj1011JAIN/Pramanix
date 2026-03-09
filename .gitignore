@@ -19,9 +19,6 @@ dist/
 sdist/
 wheels/
 
-# Poetry
-poetry.lock
-
 # Virtual environments
 .venv/
 venv/
