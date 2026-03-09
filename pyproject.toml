@@ -23,13 +23,14 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
     "Operating System :: OS Independent",
 ]
 packages = [{include = "pramanix", from = "src"}]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.10,<3.14"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"

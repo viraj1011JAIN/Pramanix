@@ -9,10 +9,12 @@ import re
 import sys
 from importlib.metadata import PackageNotFoundError, metadata
 from pathlib import Path
-from types import ModuleType
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from types import ModuleType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -20,7 +22,8 @@ import pytest
 
 
 def _import_pramanix() -> ModuleType:
-    import pramanix  # noqa: PLC0415
+    import pramanix
+
     return pramanix
 
 
@@ -47,9 +50,7 @@ def test_version_format_semver() -> None:
     """Version string must strictly follow MAJOR.MINOR.PATCH semver."""
     pkg = _import_pramanix()
     pattern = re.compile(r"^\d+\.\d+\.\d+$")
-    assert pattern.match(pkg.__version__), (
-        f"Expected semver (X.Y.Z), got {pkg.__version__!r}"
-    )
+    assert pattern.match(pkg.__version__), f"Expected semver (X.Y.Z), got {pkg.__version__!r}"
 
 
 def test_version_components_non_negative() -> None:
@@ -68,9 +69,9 @@ def test_version_matches_package_metadata() -> None:
     except PackageNotFoundError:
         pytest.skip("Package not installed in editable/dist mode — skipping metadata check")
     pkg = _import_pramanix()
-    assert pkg.__version__ == meta["Version"], (
-        f"__version__ ({pkg.__version__!r}) does not match dist metadata ({meta['Version']!r})"
-    )
+    assert (
+        pkg.__version__ == meta["Version"]
+    ), f"__version__ ({pkg.__version__!r}) does not match dist metadata ({meta['Version']!r})"
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +85,7 @@ def test_py_typed_marker_exists() -> None:
     package_dir = Path(pkg.__file__).parent  # type: ignore[arg-type]
     py_typed = package_dir / "py.typed"
     assert py_typed.exists(), (
-        f"py.typed marker not found at {py_typed}. "
-        "Add an empty py.typed file to src/pramanix/."
+        f"py.typed marker not found at {py_typed}. " "Add an empty py.typed file to src/pramanix/."
     )
 
 
@@ -98,9 +98,9 @@ def test_py_typed_marker_is_empty_file() -> None:
         f"py.typed marker not found at {py_typed} — cannot check file size. "
         "Add an empty py.typed file to src/pramanix/."
     )
-    assert py_typed.stat().st_size == 0, (
-        f"py.typed must be empty (size 0), but has {py_typed.stat().st_size} bytes"
-    )
+    assert (
+        py_typed.stat().st_size == 0
+    ), f"py.typed must be empty (size 0), but has {py_typed.stat().st_size} bytes"
 
 
 # ---------------------------------------------------------------------------
@@ -119,27 +119,21 @@ def test_all_is_list_of_strings() -> None:
     pkg = _import_pramanix()
     assert isinstance(pkg.__all__, list), "__all__ must be a list"
     for name in pkg.__all__:
-        assert isinstance(name, str) and name, (
-            f"__all__ entry {name!r} must be a non-empty string"
-        )
+        assert isinstance(name, str) and name, f"__all__ entry {name!r} must be a non-empty string"
 
 
 def test_all_exports_are_importable() -> None:
     """Every name declared in __all__ must actually exist in the package namespace."""
     pkg = _import_pramanix()
     missing = [name for name in pkg.__all__ if not hasattr(pkg, name)]
-    assert not missing, (
-        f"Names in __all__ not found in package namespace: {missing}"
-    )
+    assert not missing, f"Names in __all__ not found in package namespace: {missing}"
 
 
 def test_all_contains_no_private_names() -> None:
     """__all__ must not expose private (underscore-prefixed) names."""
     pkg = _import_pramanix()
     private = [name for name in pkg.__all__ if name.startswith("_")]
-    assert not private, (
-        f"Private names must not appear in __all__: {private}"
-    )
+    assert not private, f"Private names must not appear in __all__: {private}"
 
 
 # ---------------------------------------------------------------------------
@@ -151,17 +145,15 @@ def test_package_file_is_under_src() -> None:
     """The installed package must resolve to a path containing 'pramanix'."""
     pkg = _import_pramanix()
     package_path = Path(pkg.__file__).resolve()  # type: ignore[arg-type]
-    assert "pramanix" in package_path.parts, (
-        f"Unexpected package location: {package_path}"
-    )
+    assert "pramanix" in package_path.parts, f"Unexpected package location: {package_path}"
 
 
 def test_package_docstring_exists() -> None:
     """The top-level package must have a module docstring."""
     pkg = _import_pramanix()
-    assert pkg.__doc__ and pkg.__doc__.strip(), (
-        "pramanix/__init__.py must have a non-empty module docstring"
-    )
+    assert (
+        pkg.__doc__ and pkg.__doc__.strip()
+    ), "pramanix/__init__.py must have a non-empty module docstring"
 
 
 # ---------------------------------------------------------------------------
@@ -171,19 +163,16 @@ def test_package_docstring_exists() -> None:
 
 def test_minimum_python_version() -> None:
     """The running interpreter must be at least Python 3.10."""
-    assert sys.version_info >= (3, 10), (
-        f"Pramanix requires Python >= 3.10, running {sys.version}"
-    )
+    assert sys.version_info >= (3, 10), f"Pramanix requires Python >= 3.10, running {sys.version}"
 
 
 def test_maximum_python_version() -> None:
-    """The running interpreter must be below Python 3.13.
+    """The running interpreter must be below Python 3.14.
 
-    pyproject.toml declares python = ">=3.10,<3.13", so 3.13 and above are
-    intentionally outside the supported range until z3-solver compatibility
-    and CI matrix coverage for 3.13 are confirmed.
+    pyproject.toml declares python = ">=3.10,<3.14", so 3.14 and above are
+    outside the tested and supported range (3.13 is the current latest stable).
     """
-    assert sys.version_info < (3, 13), (
-        f"Python 3.13+ is not supported (supported range: >=3.10,<3.13); "
-        f"running {sys.version}. Switch to Python 3.10, 3.11, or 3.12."
+    assert sys.version_info < (3, 14), (
+        f"Python 3.14+ is not yet supported (supported range: >=3.10,<3.14); "
+        f"running {sys.version}. Use Python 3.10, 3.11, 3.12, or 3.13."
     )
