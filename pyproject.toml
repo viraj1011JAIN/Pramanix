@@ -107,6 +107,14 @@ ignore = [
     "UP007",   # use X | Y for union types — keep Optional for 3.10 compat
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Primitive factory functions are intentionally PascalCase (styled as constructors).
+"src/pramanix/primitives/*.py" = ["N802"]
+# Integration tests use print() for latency measurement output; T20 not applicable here.
+# Tests also use ConstraintExpr at runtime (not just type-checking) via invariants() return type.
+"tests/integration/*.py" = ["T20", "TCH"]
+"tests/unit/*.py" = ["TCH"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["pramanix"]
 
