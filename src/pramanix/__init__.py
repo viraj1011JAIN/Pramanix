@@ -7,13 +7,60 @@ Public API contract — these are the ONLY names that are considered stable.
 All other internal modules may change without notice.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
-# Public API will be populated in Phase 2 (v0.1).
-# Planned exports:
-#   Guard, GuardConfig, Policy, Field, E, Decision, SolverStatus,
-#   and the full exception hierarchy.
-#
-# See Blueprint §10 for the complete API surface.
+# ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
-__all__: list[str] = []
+from pramanix.decision import Decision, SolverStatus
+from pramanix.decorator import guard
+from pramanix.exceptions import (
+    ConfigurationError,
+    FieldTypeError,
+    GuardError,
+    GuardViolationError,
+    InvariantLabelError,
+    PolicyCompilationError,
+    PolicyError,
+    PramanixError,
+    SolverError,
+    SolverTimeoutError,
+    StateValidationError,
+    TranspileError,
+    ValidationError,
+    WorkerError,
+)
+from pramanix.expressions import ConstraintExpr, E, Field
+from pramanix.guard import Guard, GuardConfig
+from pramanix.policy import Policy
+
+__all__ = [
+    # Core result
+    "Decision",
+    "SolverStatus",
+    # DSL
+    "Field",
+    "E",
+    "ConstraintExpr",
+    # Policy
+    "Policy",
+    # Guard
+    "Guard",
+    "GuardConfig",
+    # Decorator
+    "guard",
+    # Exceptions
+    "PramanixError",
+    "PolicyError",
+    "PolicyCompilationError",
+    "InvariantLabelError",
+    "FieldTypeError",
+    "TranspileError",
+    "GuardError",
+    "ValidationError",
+    "StateValidationError",
+    "SolverTimeoutError",
+    "SolverError",
+    "WorkerError",
+    "GuardViolationError",
+    "ConfigurationError",
+]
