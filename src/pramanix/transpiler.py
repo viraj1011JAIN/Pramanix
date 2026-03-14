@@ -49,23 +49,30 @@ __all__: list[str] = []  # internal module — nothing re-exported via pramanix.
 # ── Z3 variable and value constructors ───────────────────────────────────────
 
 
-def z3_var(field: Field) -> z3.ExprRef:
+def z3_var(field: Field, ctx: z3.Context | None = None) -> z3.ExprRef:
     """Return a Z3 symbolic variable for *field*.
+
+    Args:
+        field: The :class:`~pramanix.expressions.Field` descriptor.
+        ctx:   Optional Z3 context for thread-safety.  Each thread that calls
+               Z3 functions concurrently **must** supply its own context.
+               ``None`` falls back to Z3's global context (safe for single-
+               threaded sync mode only).
 
     Raises:
         FieldTypeError: If ``field.z3_type`` is not one of ``"Real"``,
             ``"Int"``, ``"Bool"``.
     """
     if field.z3_type == "Real":
-        return z3.Real(field.name)
+        return z3.Real(field.name, ctx)
     if field.z3_type == "Int":
-        return z3.Int(field.name)
+        return z3.Int(field.name, ctx)
     if field.z3_type == "Bool":
-        return z3.Bool(field.name)
+        return z3.Bool(field.name, ctx)
     raise FieldTypeError(f"Unknown z3_type {field.z3_type!r} on field '{field.name}'.")
 
 
-def z3_val(field: Field, value: Any) -> z3.ExprRef:
+def z3_val(field: Field, value: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
     """Convert a concrete Python *value* to a Z3 literal for *field*'s sort.
 
     Conversion rules:
@@ -74,6 +81,9 @@ def z3_val(field: Field, value: Any) -> z3.ExprRef:
     * ``Int``   — ``int(value)``  → ``z3.IntVal``
     * ``Real``  — exact rational via ``Decimal.as_integer_ratio()``
 
+    Args:
+        ctx: Optional Z3 context (see :func:`z3_var`).
+
     Raises:
         FieldTypeError: If *value* is a ``bool`` but the field is ``Real``
             (booleans are a subclass of ``int`` in Python; accepting them
@@ -81,9 +91,9 @@ def z3_val(field: Field, value: Any) -> z3.ExprRef:
             field's ``z3_type`` is unknown.
     """
     if field.z3_type == "Bool":
-        return cast(z3.ExprRef, z3.BoolVal(bool(value)))
+        return cast(z3.ExprRef, z3.BoolVal(bool(value), ctx))
     if field.z3_type == "Int":
-        return cast(z3.ExprRef, z3.IntVal(int(value)))
+        return cast(z3.ExprRef, z3.IntVal(int(value), ctx))
     if field.z3_type == "Real":
         if isinstance(value, bool):
             raise FieldTypeError(
@@ -92,44 +102,47 @@ def z3_val(field: Field, value: Any) -> z3.ExprRef:
             )
         if isinstance(value, Decimal):
             n, d = value.as_integer_ratio()
-            return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}"))
+            return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
         if isinstance(value, float):
             n, d = Decimal(str(value)).as_integer_ratio()
-            return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}"))
-        return cast(z3.ExprRef, z3.RealVal(int(value)))
+            return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
+        return cast(z3.ExprRef, z3.RealVal(int(value), ctx))
     raise FieldTypeError(f"Unknown z3_type {field.z3_type!r} on field '{field.name}'.")
 
 
 # ── Literal-node converter (used internally by transpile) ─────────────────────
 
 
-def _z3_lit(value: Any) -> z3.ExprRef:
+def _z3_lit(value: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
     """Convert a raw Python literal (from a ``_Literal`` AST node) to Z3.
 
     Integer and float literals default to the ``Real`` sort so that they are
     compatible with ``Real``-sorted field variables.  Use :func:`z3_val` when
     you know the target sort from a :class:`~pramanix.expressions.Field`.
 
+    Args:
+        ctx: Optional Z3 context (see :func:`z3_var`).
+
     Raises:
         FieldTypeError: If *value* is of an unsupported type.
     """
     if isinstance(value, bool):
-        return cast(z3.ExprRef, z3.BoolVal(value))
+        return cast(z3.ExprRef, z3.BoolVal(value, ctx))
     if isinstance(value, Decimal):
         n, d = value.as_integer_ratio()
-        return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}"))
+        return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
     if isinstance(value, float):
         n, d = Decimal(str(value)).as_integer_ratio()
-        return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}"))
+        return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
     if isinstance(value, int):
-        return cast(z3.ExprRef, z3.RealVal(value))  # numeric literals → Real
+        return cast(z3.ExprRef, z3.RealVal(value, ctx))  # numeric literals → Real
     raise FieldTypeError(f"Unsupported literal type in DSL expression: {type(value)!r}")
 
 
 # ── Main transpiler ───────────────────────────────────────────────────────────
 
 
-def transpile(node: Any) -> z3.ExprRef:
+def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
     """Recursively walk the DSL AST *node* and return the equivalent Z3 formula.
 
     Supported operators:
@@ -139,6 +152,12 @@ def transpile(node: Any) -> z3.ExprRef:
       ``eq`` (==), ``ne`` (!=)
     * Boolean: ``and`` (&), ``or`` (|), ``not`` (~)
 
+    Args:
+        ctx: Optional Z3 context.  Must be the **same** context used for all
+             Z3 operations within a single solve call.  Pass ``None`` only in
+             single-threaded (sync) contexts where the global Z3 context is
+             acceptable.
+
     Raises:
         TranspileError: If an unknown node type or operator string is
             encountered.
@@ -146,14 +165,14 @@ def transpile(node: Any) -> z3.ExprRef:
     """
     match node:
         case _FieldRef(field=f):
-            return z3_var(f)
+            return z3_var(f, ctx)
 
         case _Literal(value=v):
-            return _z3_lit(v)
+            return _z3_lit(v, ctx)
 
         case _BinOp(op=op, left=l, right=r):
-            lz = cast(z3.ArithRef, transpile(l))
-            rz = cast(z3.ArithRef, transpile(r))
+            lz = cast(z3.ArithRef, transpile(l, ctx))
+            rz = cast(z3.ArithRef, transpile(r, ctx))
             if op == "add":
                 return cast(z3.ExprRef, lz + rz)
             if op == "sub":
@@ -168,8 +187,8 @@ def transpile(node: Any) -> z3.ExprRef:
             # Cast to ArithRef so pyright knows comparison operators are defined.
             # Bool-sort comparisons (eq/ne on Bool fields) work correctly at
             # Z3 runtime despite the cast — Z3's type system is independent.
-            lz = cast(z3.ArithRef, transpile(l))
-            rz = cast(z3.ArithRef, transpile(r))
+            lz = cast(z3.ArithRef, transpile(l, ctx))
+            rz = cast(z3.ArithRef, transpile(r, ctx))
             if op == "ge":
                 return cast(z3.ExprRef, lz >= rz)
             if op == "le":
@@ -185,7 +204,7 @@ def transpile(node: Any) -> z3.ExprRef:
             raise TranspileError(f"Unknown CmpOp operator: {op!r}")
 
         case _BoolOp(op=op, operands=ops):
-            zops = [transpile(o) for o in ops]
+            zops = [transpile(o, ctx) for o in ops]
             if op == "and":
                 return cast(z3.ExprRef, z3.And(*zops))
             if op == "or":
@@ -197,8 +216,8 @@ def transpile(node: Any) -> z3.ExprRef:
         case _InOp(left=l, values=vs):
             # Transpile as a Z3 disjunction: (field == v1) | (field == v2) | …
             # This is the correct SMT encoding for membership tests.
-            lz = transpile(l)
-            disjuncts = [cast(z3.ExprRef, lz == transpile(v)) for v in vs]
+            lz = transpile(l, ctx)
+            disjuncts = [cast(z3.ExprRef, lz == transpile(v, ctx)) for v in vs]
             if len(disjuncts) == 1:
                 return disjuncts[0]
             return cast(z3.ExprRef, z3.Or(*disjuncts))

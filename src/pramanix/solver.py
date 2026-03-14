@@ -25,6 +25,7 @@ Fail-safe behaviour
 """
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -38,6 +39,26 @@ if TYPE_CHECKING:
     from pramanix.expressions import ConstraintExpr, Field
 
 __all__: list[str] = []  # internal module
+
+
+# ── OpenTelemetry — graceful optional dependency ──────────────────────────────
+# If the ``otel`` extra is not installed, every span call is a no-op
+# (contextlib.nullcontext).  The hot path has zero overhead when OTel is absent.
+
+try:
+    from opentelemetry import trace as _otel_trace
+
+    def _span(name: str, **attrs: Any) -> Any:
+        """Return a live OTel span context-manager."""
+        tracer = _otel_trace.get_tracer("pramanix.solver")
+        span_cm = tracer.start_as_current_span(name)
+        return span_cm
+
+except ImportError:
+
+    def _span(name: str, **attrs: Any) -> Any:
+        """No-op span when opentelemetry is not installed."""
+        return contextlib.nullcontext()
 
 
 # ── Internal result type ──────────────────────────────────────────────────────
@@ -63,12 +84,17 @@ class _SolveResult:
 def _build_bindings(
     all_fields: dict[str, Field],
     values: dict[str, Any],
+    ctx: z3.Context | None = None,
 ) -> list[tuple[z3.ExprRef, z3.ExprRef]]:
     """Map concrete *values* to Z3 ``(variable == value)`` binding pairs.
 
     Only fields that appear in *all_fields* and whose names match a key in
     *values* are included.  Extra keys in *values* that are not referenced by
     any invariant are silently ignored.
+
+    Args:
+        ctx: Optional Z3 context.  Must match the context used for all other
+             Z3 operations in the same solve call.
 
     Raises:
         FieldTypeError: If a value cannot be coerced to its field's Z3 sort.
@@ -85,7 +111,7 @@ def _build_bindings(
                 f"Field '{name}' is declared as Real; "
                 "bool values are not allowed (bool is a subclass of int in Python)."
             )
-        bindings.append((z3_var(f), z3_val(f, val)))
+        bindings.append((z3_var(f, ctx), z3_val(f, val, ctx)))
     return bindings
 
 
@@ -96,23 +122,28 @@ def _fast_check(
     invariants: list[ConstraintExpr],
     bindings: list[tuple[z3.ExprRef, z3.ExprRef]],
     timeout_ms: int,
+    ctx: z3.Context | None = None,
 ) -> z3.CheckSatResult:
     """Run all invariants in a single solver; return the raw Z3 result.
 
     Uses ``add()`` (not ``assert_and_track``) — no unsat-core attribution here.
     The result is used only to decide whether to proceed to the attribution path.
 
+    Args:
+        ctx: Optional Z3 context for thread-safety.
+
     Raises:
         SolverTimeoutError: If Z3 returns ``unknown`` (timeout or resource
             limit exceeded) on the shared solver.
     """
-    s = z3.Solver()
+    s = z3.Solver(ctx=ctx)
     s.set("timeout", timeout_ms)
     for z3v, z3val in bindings:
         s.add(z3v == z3val)
     for inv in invariants:
-        s.add(transpile(inv.node))
-    result = s.check()
+        s.add(transpile(inv.node, ctx))
+    with _span("pramanix.z3_solve"):
+        result = s.check()
     del s  # prompt Z3 memory release
     if result == z3.unknown:
         raise SolverTimeoutError("<all-invariants>", timeout_ms)
@@ -126,12 +157,16 @@ def _attribute_violations(
     invariants: list[ConstraintExpr],
     bindings: list[tuple[z3.ExprRef, z3.ExprRef]],
     timeout_ms: int,
+    ctx: z3.Context | None = None,
 ) -> list[ConstraintExpr]:
     """Determine exactly which invariants are violated.
 
     Each invariant gets its own ``z3.Solver`` with exactly one
     ``assert_and_track`` call, so ``unsat_core()`` returns ``{label}``
     with certainty — no minimal-core ambiguity.
+
+    Args:
+        ctx: Optional Z3 context for thread-safety.
 
     Raises:
         InvariantLabelError: If an invariant reached this path without a label
@@ -146,12 +181,13 @@ def _attribute_violations(
                 "An invariant without a label reached the solver. "
                 "Call Policy.validate() before Guard.verify()."
             )
-        s = z3.Solver()
+        s = z3.Solver(ctx=ctx)
         s.set("timeout", timeout_ms)
         for z3v, z3val in bindings:
             s.add(z3v == z3val)
-        s.assert_and_track(transpile(inv.node), z3.Bool(label))
-        result = s.check()
+        s.assert_and_track(transpile(inv.node, ctx), z3.Bool(label, ctx))
+        with _span("pramanix.z3_solve"):
+            result = s.check()
         del s  # prompt Z3 memory release
         if result == z3.unknown:
             raise SolverTimeoutError(label, timeout_ms)
@@ -190,27 +226,34 @@ def solve(
     """
     start = time.perf_counter()
 
-    # Collect all fields referenced across all invariants, then build bindings.
-    all_fields: dict[str, Field] = {}
-    for inv in invariants:
-        all_fields.update(collect_fields(inv.node))
-    bindings = _build_bindings(all_fields, values)
+    # Create a per-call Z3 context so this function is safe to call from
+    # multiple threads simultaneously.  Z3's global default context is NOT
+    # thread-safe; sharing it across threads causes access violations.
+    ctx = z3.Context()
+    try:
+        # Collect all fields referenced across all invariants, then build bindings.
+        all_fields: dict[str, Field] = {}
+        for inv in invariants:
+            all_fields.update(collect_fields(inv.node))
+        bindings = _build_bindings(all_fields, values, ctx)
 
-    # ── Phase 1: fast path ────────────────────────────────────────────────────
-    fast_result = _fast_check(invariants, bindings, timeout_ms)
+        # ── Phase 1: fast path ────────────────────────────────────────────────────
+        fast_result = _fast_check(invariants, bindings, timeout_ms, ctx)
 
-    if fast_result == z3.sat:
+        if fast_result == z3.sat:
+            return _SolveResult(
+                sat=True,
+                violated=[],
+                solver_time_ms=(time.perf_counter() - start) * 1000.0,
+            )
+
+        # ── Phase 2: attribution path (only reached on unsat) ─────────────────────
+        violated = _attribute_violations(invariants, bindings, timeout_ms, ctx)
+
         return _SolveResult(
-            sat=True,
-            violated=[],
+            sat=False,
+            violated=violated,
             solver_time_ms=(time.perf_counter() - start) * 1000.0,
         )
-
-    # ── Phase 2: attribution path (only reached on unsat) ─────────────────────
-    violated = _attribute_violations(invariants, bindings, timeout_ms)
-
-    return _SolveResult(
-        sat=False,
-        violated=violated,
-        solver_time_ms=(time.perf_counter() - start) * 1000.0,
-    )
+    finally:
+        del ctx  # release Z3 context memory
