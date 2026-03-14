@@ -1,0 +1,57 @@
+repos:
+  # ── Secret detection ───────────────────────────────────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets (baseline)
+        args:
+          - "--baseline"
+          - ".secrets.baseline"
+        # Exclude known-safe test fixtures and documentation files.
+        exclude: >-
+          (?x)^(
+            \.secrets\.baseline|
+            tests/.*|
+            docs/.*\.md|
+            CHANGELOG\.md|
+            README\.md|
+            SECURITY\.md
+          )$
+
+  # ── Code quality ───────────────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.4
+    hooks:
+      - id: ruff
+        name: ruff lint
+        args: ["--fix"]
+      - id: ruff-format
+        name: ruff format
+
+  # ── Type safety ────────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        name: mypy type-check
+        additional_dependencies:
+          - "pydantic>=2.0"
+        args: ["--ignore-missing-imports"]
+        files: "^src/"
+
+  # ── General hygiene ────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: debug-statements
+        name: no debug statements (pdb/breakpoint)
+      - id: detect-private-key
+        name: detect private keys
