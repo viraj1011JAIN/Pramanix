@@ -1,0 +1,60 @@
+version: 2
+updates:
+  # ── Python (pip) dependencies ──────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    assignees:
+      - "virajjain"
+    commit-message:
+      prefix: "deps(pip)"
+    groups:
+      # Group runtime dependencies together to reduce PR noise.
+      runtime-deps:
+        patterns:
+          - "z3-solver"
+          - "pydantic"
+          - "structlog"
+        update-types:
+          - "minor"
+          - "patch"
+      # Separate group for security-sensitive crypto dependencies.
+      security-deps:
+        patterns:
+          - "cryptography"
+          - "pyOpenSSL"
+      # Group dev/test tools.
+      dev-tools:
+        patterns:
+          - "pytest*"
+          - "hypothesis"
+          - "ruff"
+          - "mypy"
+          - "pre-commit"
+          - "detect-secrets"
+          - "pip-audit"
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "github-actions"
+    assignees:
+      - "virajjain"
+    commit-message:
+      prefix: "deps(actions)"
