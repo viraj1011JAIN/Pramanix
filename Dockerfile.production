@@ -1,0 +1,139 @@
+# syntax=docker/dockerfile:1.6
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — Production Docker Image
+#
+# Multi-stage build: builder → runner
+# Security guarantees:
+#   - Runs as non-root UID/GID 10001 (pramanix user)
+#   - Read-only filesystem in runner (no write access to binaries)
+#   - No build tools in production image (build-essential stripped in runner stage)
+#   - Zero Alpine — glibc required by z3-solver (Blueprint §48)
+#   - PYTHONDONTWRITEBYTECODE prevents .pyc file accumulation
+#
+# Build args:
+#   VERSION — pramanix version to install (e.g. 1.0.0). Required.
+#
+# Build:  docker build --build-arg VERSION=1.0.0 -f Dockerfile.production -t pramanix:1.0.0 .
+# Scan:   trivy image --exit-code 1 --severity CRITICAL,HIGH pramanix:1.0.0
+# Run:    docker run --read-only --user 10001:10001 pramanix:1.0.0
+
+ARG PYTHON_VERSION=3.11
+ARG DEBIAN_CODENAME=bookworm
+
+# ════════════════════════════════════════════════════════════════════════════
+# STAGE 1 — builder
+# Installs pramanix[all] into /opt/venv. Produces a clean, portable venv.
+# Build tools (gcc, make) stay here — never copied to runner.
+# ════════════════════════════════════════════════════════════════════════════
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS builder
+
+# Fail fast on any shell error; treat unset vars as errors
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+# Install build dependencies (compiler needed for packages without binary wheels)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create the isolated virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip inside venv to latest stable
+RUN pip install --upgrade pip setuptools wheel
+
+# Build arg — pramanix version to install from PyPI
+ARG VERSION
+RUN test -n "${VERSION}" || (echo "ERROR: --build-arg VERSION=<x.y.z> is required" && exit 1)
+
+# Install pramanix[all] into the venv
+# --no-cache-dir keeps the layer lean (no ~/.cache/pip in final image)
+RUN pip install --no-cache-dir "pramanix[all]==${VERSION}"
+
+# Strip __pycache__ directories left by pip (test-dep .pyc files)
+# This eliminates stale bytecode from the venv before copy to runner
+RUN find /opt/venv -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+RUN find /opt/venv -name "*.pyc" -delete 2>/dev/null || true
+
+# Verify the install is functional before shipping to runner stage
+RUN python -c "from pramanix import Guard, Policy, Field, E, Decision; print('builder verify: OK')"
+
+# ════════════════════════════════════════════════════════════════════════════
+# STAGE 2 — runner
+# Minimal runtime image. No build tools. No dev dependencies.
+# ════════════════════════════════════════════════════════════════════════════
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS runner
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+# Runtime labels (OCI image spec)
+ARG VERSION
+LABEL org.opencontainers.image.title="Pramanix" \
+      org.opencontainers.image.description="Deterministic neuro-symbolic guardrails for autonomous AI agents" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.vendor="Viraj Jain" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.source="https://github.com/viraj1011JAIN/Pramanix" \
+      pramanix.alpine-banned="true"
+
+# ── Runtime system dependencies ──────────────────────────────────────────────
+# libz3-4: system z3 runtime (belt-and-suspenders alongside pip wheel's bundled lib)
+# ca-certificates: required for HTTPS calls to LLM APIs
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libz3-4 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Zero-root policy ──────────────────────────────────────────────────────────
+# Fixed GID/UID 10001 — consistent across container restarts and K8s pods
+# -M: no home directory (reduce attack surface)
+# -s /sbin/nologin: no shell login
+RUN groupadd -g 10001 pramanix \
+    && useradd -u 10001 -g pramanix -M -s /sbin/nologin pramanix
+
+# ── Copy application sources ──────────────────────────────────────────────────
+# Only production code — no tests, docs, markdown, or tooling
+WORKDIR /app
+COPY --chown=pramanix:pramanix src/pramanix/ /app/pramanix/
+COPY --chown=pramanix:pramanix examples/ /app/examples/
+
+# ── Copy virtual environment from builder ────────────────────────────────────
+COPY --from=builder --chown=pramanix:pramanix /opt/venv /opt/venv
+
+# ── Harden the venv binary ───────────────────────────────────────────────────
+# 550 = r-x r-x --- : owner and group can read+execute; no write; no world access
+RUN chmod 550 /opt/venv/bin/python \
+    && chmod 550 /opt/venv/bin/python3
+
+# ── Python environment ────────────────────────────────────────────────────────
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE="1" \
+    PYTHONUNBUFFERED="1" \
+    PYTHONPATH="/app" \
+    # Pramanix production defaults
+    PRAMANIX_EXECUTION_MODE="async-thread" \
+    PRAMANIX_WORKER_WARMUP="true" \
+    PRAMANIX_LOG_LEVEL="INFO" \
+    PRAMANIX_TRANSLATOR_ENABLED="false"
+
+# ── Health check ──────────────────────────────────────────────────────────────
+# Verifies the pramanix package imports cleanly every 30s
+# Start: 10s (allow worker pool warmup)
+# Interval: 30s | Timeout: 10s | Retries: 3
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import pramanix; print('OK')" || exit 1
+
+# ── Final security posture ────────────────────────────────────────────────────
+EXPOSE 8000
+
+# Drop to non-root before ENTRYPOINT — UID 10001 matches groupadd above
+USER 10001
+
+# Default entrypoint: run the neuro-symbolic agent example
+# Override with: docker run pramanix:VERSION python -m your_app
+ENTRYPOINT ["python"]
+CMD ["-c", "from pramanix import Guard; print('Pramanix ready')"]

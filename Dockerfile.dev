@@ -1,0 +1,125 @@
+# syntax=docker/dockerfile:1.6
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — Development Image
+#
+# ⚠️  LOCAL DEVELOPMENT ONLY — NEVER DEPLOYED TO PRODUCTION ⚠️
+#
+# Extends the production runner image to add:
+#   - poetry & dev group dependencies (pytest, mypy, ruff, hypothesis …)
+#   - Z3 header files (for z3-solver wheel build, if needed from source)
+#   - Root access for mounting volumes and inspecting state
+#
+# The production runner image is multi-stage-built first; this Dockerfile
+# MUST reference a locally built tag, not pull from a registry.
+#
+# Usage:
+#   # 1. Build production runner first
+#   docker build --build-arg VERSION=$(poetry version -s) \
+#                -f Dockerfile.production \
+#                -t pramanix-runner:local .
+#
+#   # 2. Build dev image on top
+#   docker build -f Dockerfile.dev -t pramanix-dev:local .
+#
+#   # 3. Run tests inside the dev container
+#   docker run --rm -it \
+#     -v "$(pwd)/src:/workspace/src:ro" \
+#     -v "$(pwd)/tests:/workspace/tests:ro" \
+#     pramanix-dev:local \
+#     pytest tests/ -x --tb=short
+#
+# Security note:
+#   - This image runs as root during setup then drops to UID 10001 for tests
+#   - The image is never pushed to any registry
+#   - --read-only flag NOT applied here (tests write .coverage, .hypothesis)
+
+ARG PYTHON_VERSION=3.11
+ARG DEBIAN_CODENAME=bookworm
+
+# ════════════════════════════════════════════════════════════════════════════
+# Base: re-build the production runner stage inline so Dockerfile.dev is
+# fully self-contained.  This avoids an image-reference dependency that
+# would break in clean CI environments.
+# ════════════════════════════════════════════════════════════════════════════
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS dev
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+LABEL org.opencontainers.image.title="Pramanix Dev" \
+      org.opencontainers.image.description="Local development image — NOT for production" \
+      org.opencontainers.image.vendor="Viraj Jain" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      pramanix.alpine-banned="true" \
+      pramanix.dev-only="true"
+
+# ── Runtime + build-time OS dependencies ─────────────────────────────────────
+# libz3-4: system z3 runtime (belt-and-suspenders alongside pip wheel's bundled lib)
+# build-essential: required by some dev dependencies (hypothesis extras, etc.)
+# git: required by pre-commit hooks
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libz3-4 \
+        ca-certificates \
+        build-essential \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Non-root user (matches production UID/GID for volume mount compatibility) ─
+RUN groupadd -g 10001 pramanix \
+    && useradd -u 10001 -g pramanix -m -s /bin/bash pramanix
+
+# ── Create workspace ──────────────────────────────────────────────────────────
+RUN mkdir -p /workspace && chown pramanix:pramanix /workspace
+WORKDIR /workspace
+
+# ── Install poetry (dev dependency manager) ──────────────────────────────────
+# Installed as root so it's on the system PATH for all users
+ENV POETRY_HOME="/opt/poetry" \
+    POETRY_VIRTUALENVS_CREATE="false" \
+    POETRY_NO_INTERACTION="1"
+RUN pip install --no-cache-dir poetry \
+    && poetry --version
+
+# ── Copy project manifests (for dependency installation) ─────────────────────
+# Copy only files needed for dependency resolution — sources mounted at runtime
+COPY --chown=pramanix:pramanix pyproject.toml poetry.lock* ./
+
+# ── Install ALL project dependencies including dev group and all extras ───────
+# This includes: pytest, mypy, ruff, hypothesis, pytest-cov, pytest-asyncio,
+#                bandit, pip-audit, semgrep, pip-licenses
+RUN poetry install --with dev --extras all \
+    && pip install --no-cache-dir \
+        bandit \
+        pip-audit \
+        semgrep \
+        pip-licenses \
+        twine \
+    && pip install --no-cache-dir \
+        pytest-xdist \
+        pytest-timeout
+
+# ── Copy application source (will typically be overridden by volume mount) ───
+COPY --chown=pramanix:pramanix src/ /workspace/src/
+COPY --chown=pramanix:pramanix tests/ /workspace/tests/
+COPY --chown=pramanix:pramanix examples/ /workspace/examples/
+
+# ── Python environment flags ──────────────────────────────────────────────────
+ENV PYTHONDONTWRITEBYTECODE="1" \
+    PYTHONUNBUFFERED="1" \
+    PYTHONPATH="/workspace/src" \
+    # Force deterministic Hypothesis behaviour in dev container
+    HYPOTHESIS_DATABASE_FILE="/tmp/hypothesis-db" \
+    # Pramanix dev defaults
+    PRAMANIX_EXECUTION_MODE="async-thread" \
+    PRAMANIX_WORKER_WARMUP="true" \
+    PRAMANIX_LOG_LEVEL="DEBUG" \
+    PRAMANIX_TRANSLATOR_ENABLED="false"
+
+# ── Drop to non-root for test execution ──────────────────────────────────────
+USER 10001
+
+# ── Entrypoint: default to running the full test suite ───────────────────────
+# Override with: docker run pramanix-dev:local pytest tests/unit/ -x --tb=short
+ENTRYPOINT ["python", "-m", "pytest"]
+CMD ["tests/", "-x", "--tb=short", "-q"]

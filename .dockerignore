@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix .dockerignore
+#
+# Keeps the Docker build context lean and prevents secrets / dev artefacts
+# from reaching the image layer cache or the production image.
+#
+# Rule: include ONLY what is strictly required to build and run pramanix.
+# Production image copies:  src/pramanix/   examples/   (+ /opt/venv from builder)
+# Nothing else belongs in a production container.
+
+# ── Version control ─────────────────────────────────────────────────────────
+.git
+.gitattributes
+.gitignore
+.github
+
+# ── Test artefacts ───────────────────────────────────────────────────────────
+tests/
+.hypothesis/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+junit*.xml
+
+# ── Documentation & notes ────────────────────────────────────────────────────
+docs/
+*.md
+!README.md
+
+# ── Python bytecode & caches ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# ── Type checker / linter caches ─────────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Local dev tooling ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Build artefacts ──────────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ── CI / security scan outputs ───────────────────────────────────────────────
+pip-audit-report.json
+bandit-report.json
+semgrep-report.json
+licenses.json
+pramanix-sbom.cdx.json
+release-notes.md
+
+# ── Benchmarks & spikes (not production code) ────────────────────────────────
+benchmarks/
+transpiler_spike.py
+radar_test.py
+pramanix_hardened.py
+pramanix_llm_hardened.py
+pramanix_telemetry.py
+test_integrity.py
+test_llm_hardening.py
+
+# ── Lock files (deps pinned inside the venv; lock file not needed in image) ──
+poetry.lock
+requirements*.txt

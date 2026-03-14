@@ -1,0 +1,12 @@
+# CI TEST ARTIFACT — DO NOT DEPLOY
+#
+# This file exists solely to verify that the alpine-ban CI gate functions
+# correctly.  The CI job must turn RED when this file is present.
+#
+# To confirm the gate works locally:
+#   grep -iq "alpine" Dockerfile.test && echo "CAUGHT" || echo "MISSED"
+#
+# Expected result: CAUGHT
+#
+FROM python:alpine
+RUN echo "This image must never reach production."
