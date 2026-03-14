@@ -34,7 +34,7 @@ AUDITOR = 4
 UNKNOWN = 99
 
 _requestor_role = Field("requestor_role", int, "Int")
-_consent_given = Field("consent_given", bool, "Bool")
+_consent_status = Field("consent_status", str, "String")
 _consent_expiry = Field("consent_expiry", int, "Int")
 _new_dose = Field("new_dose", Decimal, "Real")
 _current_dose = Field("current_dose", Decimal, "Real")
@@ -82,34 +82,46 @@ class TestPHILeastPrivilege:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ConsentActive
-# HIPAA 45 CFR § 164.508: consent_given == True AND consent_expiry > now
+# HIPAA 45 CFR § 164.508: consent_status == "ACTIVE" AND consent_expiry > now
+# Supports ACTIVE / REVOKED / EXPIRED multi-state lifecycle
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_INV_CONSENT = [ConsentActive(_consent_given, _consent_expiry, current_epoch=_NOW)]
+_INV_CONSENT = [ConsentActive(_consent_status, _consent_expiry, current_epoch=_NOW)]
 
 
 class TestConsentActive:
     def test_sat_valid_unexpired_consent(self) -> None:
         result = solve(
             _INV_CONSENT,
-            {"consent_given": True, "consent_expiry": _NOW + 86_400},  # expires tomorrow
+            {"consent_status": "ACTIVE", "consent_expiry": _NOW + 86_400},
             timeout_ms=5_000,
         )
         assert result.sat is True
 
-    def test_unsat_no_consent_on_file(self) -> None:
+    def test_unsat_revoked_consent(self) -> None:
+        """Revoked consent must block even if expiry is in the future."""
         result = solve(
             _INV_CONSENT,
-            {"consent_given": False, "consent_expiry": _NOW + 86_400},
+            {"consent_status": "REVOKED", "consent_expiry": _NOW + 86_400},
             timeout_ms=5_000,
         )
         assert result.sat is False
         assert any(v.label == "consent_active" for v in result.violated)
 
-    def test_unsat_expired_consent(self) -> None:
+    def test_unsat_expired_status(self) -> None:
+        """EXPIRED status must block regardless of expiry timestamp."""
         result = solve(
             _INV_CONSENT,
-            {"consent_given": True, "consent_expiry": _NOW - 1},  # expired 1 second ago
+            {"consent_status": "EXPIRED", "consent_expiry": _NOW + 86_400},
+            timeout_ms=5_000,
+        )
+        assert result.sat is False
+        assert any(v.label == "consent_active" for v in result.violated)
+
+    def test_unsat_expired_timestamp(self) -> None:
+        result = solve(
+            _INV_CONSENT,
+            {"consent_status": "ACTIVE", "consent_expiry": _NOW - 1},
             timeout_ms=5_000,
         )
         assert result.sat is False
@@ -118,7 +130,7 @@ class TestConsentActive:
     def test_unsat_both_conditions_fail(self) -> None:
         result = solve(
             _INV_CONSENT,
-            {"consent_given": False, "consent_expiry": _NOW - 86_400},
+            {"consent_status": "REVOKED", "consent_expiry": _NOW - 86_400},
             timeout_ms=5_000,
         )
         assert result.sat is False
@@ -127,7 +139,7 @@ class TestConsentActive:
         """Expiry exactly equal to now — constraint is strictly >, so UNSAT."""
         result = solve(
             _INV_CONSENT,
-            {"consent_given": True, "consent_expiry": _NOW},
+            {"consent_status": "ACTIVE", "consent_expiry": _NOW},
             timeout_ms=5_000,
         )
         assert result.sat is False

@@ -89,32 +89,42 @@ def PHILeastPrivilege(requestor_role: Field, allowed_roles: list[Any]) -> Constr
 
 
 def ConsentActive(
-    consent_given: Field,
+    consent_status: Field,
     consent_expiry_epoch: Field,
     current_epoch: int,
 ) -> ConstraintExpr:
     """Enforce that a valid, unexpired patient authorisation exists.
 
-    DSL: ``(E(consent_given) == True) & (E(consent_expiry_epoch) > current_epoch)``
+    DSL: ``(E(consent_status) == "ACTIVE") & (E(consent_expiry_epoch) > current_epoch)``
+
+    Encoding: ``consent_status`` must be a String-sorted Z3 variable
+    (``Field(..., str, "String")``).  Supported states per HIPAA §164.508:
+
+    * ``"ACTIVE"``  — valid written authorisation is on file and unexpired.
+    * ``"REVOKED"`` — patient has withdrawn authorisation (HIPAA §164.508(b)(5)).
+    * ``"EXPIRED"`` — authorisation lapse date has passed.
+
+    This multi-state encoding prevents a boolean ``True`` from being reused
+    after the patient revokes consent — a gap in single-Bool implementations.
 
     Regulatory: HIPAA 45 CFR § 164.508 — a written authorisation must exist
     and must not have expired before PHI may be used or disclosed for purposes
     beyond Treatment, Payment, and Operations (TPO).
 
     Args:
-        consent_given:        Field (bool, Bool) — True if patient authorisation
-            is on file.
+        consent_status:       Field (str, String) — authorisation lifecycle
+            state.  Must be one of ``"ACTIVE"``, ``"REVOKED"``, ``"EXPIRED"``.
         consent_expiry_epoch: Field (int, Int) — UNIX timestamp of authorisation
             expiry date.
         current_epoch:        Request time as a UNIX timestamp literal (int).
     """
     return (
-        ((E(consent_given) == True) & (E(consent_expiry_epoch) > current_epoch))  # noqa: E712
+        ((E(consent_status) == "ACTIVE") & (E(consent_expiry_epoch) > current_epoch))
         .named("consent_active")
         .explain(
-            "PHI disclosure blocked: consent_given={consent_given}, "
-            "consent_expiry_epoch={consent_expiry_epoch} — authorisation absent "
-            "or expired. (HIPAA 45 CFR § 164.508)"
+            'PHI disclosure blocked: consent_status="{consent_status}", '
+            "consent_expiry_epoch={consent_expiry_epoch} — authorisation absent, "
+            "revoked, or expired. (HIPAA 45 CFR § 164.508)"
         )
     )
 
