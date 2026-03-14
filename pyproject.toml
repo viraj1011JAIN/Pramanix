@@ -33,7 +33,7 @@ python = ">=3.11,<3.14"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"
-prometheus-client = "^0.19"
+prometheus-client = "^0.24"
 httpx = {version = "^0.27", optional = true}
 openai = {version = "^1.10", optional = true}
 anthropic = {version = "^0.25", optional = true}
