@@ -66,31 +66,112 @@ reserved for M2.  This implementation is single-threaded and synchronous.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import re
+import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from pydantic import BaseModel
 
 from pramanix.decision import Decision
 from pramanix.exceptions import (
     ConfigurationError,
+    InjectionBlockedError,
     PramanixError,
+    SemanticPolicyViolation,
     SolverTimeoutError,
     StateValidationError,
     ValidationError,
     WorkerError,
 )
 from pramanix.helpers.serialization import safe_dump
+from pramanix.resolvers import ResolverRegistry
 from pramanix.solver import _SolveResult, solve
 from pramanix.validator import validate_intent, validate_state
-from pramanix.worker import WorkerPool, _worker_solve
+from pramanix.worker import WorkerPool
 
 if TYPE_CHECKING:
     from pramanix.expressions import ConstraintExpr
     from pramanix.policy import Policy
 
 __all__ = ["GuardConfig", "Guard"]
+
+# ── Structlog secrets redaction ───────────────────────────────────────────────
+# Pattern matches any event-dict key that looks like a credential.
+# The processor is applied BEFORE any renderer so secrets never reach disk.
+_SECRET_KEY_RE = re.compile(
+    r"(secret|api[_\-]?key|token|hmac|password|passwd|credential|private[_\-]?key)",
+    re.IGNORECASE,
+)
+_REDACTED = "<redacted>"
+
+
+def _redact_secrets_processor(
+    _logger: Any,
+    _method: str,
+    event_dict: Any,
+) -> Any:
+    """Structlog processor — redact any event-dict key that looks like a secret.
+
+    Applied as the first processor in the chain so that secret values are
+    never visible in any downstream processor, renderer, or log sink.
+
+    Matches keys containing: ``secret``, ``api_key``, ``apikey``, ``token``,
+    ``hmac``, ``password``, ``passwd``, ``credential``, ``private_key``.
+    """
+    return {
+        k: (_REDACTED if _SECRET_KEY_RE.search(k) else v)
+        for k, v in event_dict.items()
+    }
+
+
+structlog.configure(
+    processors=[
+        _redact_secrets_processor,          # must be first — sanitise before anything else
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer(),
+    ],
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+    wrapper_class=structlog.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+_log = structlog.get_logger("pramanix.guard")
+
+
+# ── OpenTelemetry — graceful optional dependency ──────────────────────────────
+# Each span is a no-op (contextlib.nullcontext) when the ``otel`` extra is
+# absent, so there is zero overhead on deployments that do not use tracing.
+
+try:
+    from opentelemetry import trace as _otel_trace
+
+    def _span(name: str) -> Any:
+        """Return a live OTel span context-manager."""
+        return _otel_trace.get_tracer("pramanix.guard").start_as_current_span(name)
+
+except ImportError:
+
+    def _span(name: str) -> Any:
+        """No-op span when opentelemetry is not installed."""
+        return contextlib.nullcontext()
+
+
+# ── Module-level resolver registry ───────────────────────────────────────────
+# Shared registry for lazy field resolvers.  The thread-local cache inside
+# ResolverRegistry ensures User A's resolved values are never visible to
+# User B's concurrent request.  Guard.verify() clears the cache in its
+# finally block so no stale values survive across requests.
+
+_resolver_registry = ResolverRegistry()
 
 
 # ── Environment variable helpers ──────────────────────────────────────────────
@@ -191,6 +272,85 @@ class GuardConfig:
 
 
 # ── Explanation formatter ─────────────────────────────────────────────────────
+
+def _semantic_post_consensus_check(
+    intent_dict: dict[str, Any],
+    state_values: dict[str, Any],
+) -> None:
+    """Fast pure-Python semantic guard applied after LLM consensus, before Z3.
+
+    Catches obvious business-rule violations immediately without invoking
+    the Z3 solver, reducing latency and attack surface:
+
+    * Positive-amount enforcement (amount > 0).
+    * Minimum-reserve floor (balance - amount >= minimum_reserve).
+    * Full-balance drain guard (requires secondary approval when reserve = 0).
+    * Daily limit breach (when ``daily_limit`` and ``daily_spent`` are present).
+
+    Only activates for the fields that are present in *both* intent and state,
+    so it is safe to call for any policy/intent combination regardless of
+    the domain.
+
+    Args:
+        intent_dict:  Validated dict extracted from the LLM (post-consensus).
+        state_values: Plain dict of current system state.
+
+    Raises:
+        SemanticPolicyViolation: If a business rule is violated.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    # ── Extract amount (skip check if no amount field) ───────────────────────
+    raw_amount = intent_dict.get("amount")
+    if raw_amount is None:
+        return  # no amount field — nothing to check
+
+    try:
+        amount = Decimal(str(raw_amount))
+    except InvalidOperation as exc:
+        raise SemanticPolicyViolation(
+            f"amount is not a valid number: {raw_amount!r}"
+        ) from exc
+
+    if amount <= 0:
+        raise SemanticPolicyViolation(f"amount must be positive, got {amount}")
+
+    # ── Balance / minimum-reserve check ────────────────────────────────────
+    raw_balance = state_values.get("balance")
+    if raw_balance is not None:
+        try:
+            balance = Decimal(str(raw_balance))
+            minimum_reserve = Decimal(str(state_values.get("minimum_reserve", "0")))
+            if balance - amount < minimum_reserve:
+                raise SemanticPolicyViolation(
+                    f"Transfer would leave balance below minimum reserve "
+                    f"(balance={balance}, amount={amount}, "
+                    f"minimum_reserve={minimum_reserve})."
+                )
+            if minimum_reserve == Decimal("0") and amount == balance:
+                raise SemanticPolicyViolation(
+                    "Full balance transfer requires secondary human approval."
+                )
+        except SemanticPolicyViolation:
+            raise
+        except Exception:
+            pass  # Non-numeric balance — let Z3 enforce the invariant
+
+    # ── Daily limit check ───────────────────────────────────────────────
+    raw_daily_limit = state_values.get("daily_limit")
+    raw_daily_spent = state_values.get("daily_spent")
+    if raw_daily_limit is not None and raw_daily_spent is not None:
+        try:
+            remaining = Decimal(str(raw_daily_limit)) - Decimal(str(raw_daily_spent))
+            if amount > remaining:
+                raise SemanticPolicyViolation(
+                    f"Transfer exceeds remaining daily limit "
+                    f"(remaining={remaining}, amount={amount})."
+                )
+        except SemanticPolicyViolation:
+            raise
+        except Exception:
+            pass  # Let Z3 handle non-numeric daily fields
 
 
 def _fmt(inv: ConstraintExpr, values: dict[str, Any]) -> str:
@@ -305,80 +465,164 @@ class Guard:
             * ``Decision.stale_state()``       — state version mismatch
             * ``Decision.validation_failure()``— Pydantic validation failed
         """
+        decision_id = str(uuid.uuid4())
         try:
-            # ── Step 1: Validate intent ────────────────────────────────────────
-            if isinstance(intent, dict) and self._intent_model is not None:
-                intent = validate_intent(self._intent_model, intent)
+            with _span("pramanix.guard.verify") as span:
+                if span is not None:
+                    # Attach audit-trail metadata so SREs can correlate this
+                    # span with a specific policy evaluation in any OTel backend.
+                    span.set_attribute("pramanix.decision_id", decision_id)
+                    span.set_attribute("pramanix.policy.name", self._policy.__name__)
+                    span.set_attribute(
+                        "pramanix.policy.version",
+                        self._policy_version or "unversioned",
+                    )
+                # ── Step 1: Validate intent ────────────────────────────────────────
+                if isinstance(intent, dict) and self._intent_model is not None:
+                    intent = validate_intent(self._intent_model, intent)
 
-            # ── Step 2: Validate state ─────────────────────────────────────────
-            if isinstance(state, dict) and self._state_model is not None:
-                state = validate_state(self._state_model, state)
+                # ── Step 2: Validate state ─────────────────────────────────────────
+                if isinstance(state, dict) and self._state_model is not None:
+                    state = validate_state(self._state_model, state)
 
-            # ── Step 3: model_dump() → plain dicts ────────────────────────────
-            intent_values: dict[str, Any] = (
-                safe_dump(intent) if isinstance(intent, BaseModel) else dict(intent)
-            )
-            state_values: dict[str, Any] = (
-                safe_dump(state) if isinstance(state, BaseModel) else dict(state)
-            )
+                with _span("pramanix.resolve"):
+                    # ── Step 3: model_dump() → plain dicts ────────────────────────────
+                    intent_values: dict[str, Any] = (
+                        safe_dump(intent) if isinstance(intent, BaseModel) else dict(intent)
+                    )
+                    state_values: dict[str, Any] = (
+                        safe_dump(state) if isinstance(state, BaseModel) else dict(state)
+                    )
 
-            # ── Step 4: State version check ───────────────────────────────────
-            if self._policy_version is not None:
-                actual_version = state_values.get("state_version")
-                if actual_version is None:
-                    return Decision.validation_failure(
-                        reason=(
-                            "state_version is missing from state data. "
-                            f"Policy '{self._policy.__name__}' requires "
-                            f"version='{self._policy_version}'."
+                    # ── Step 4: State version check ───────────────────────────────────
+                    if self._policy_version is not None:
+                        actual_version = state_values.get("state_version")
+                        if actual_version is None:
+                            return Decision.validation_failure(
+                                reason=(
+                                    "state_version is missing from state data. "
+                                    f"Policy '{self._policy.__name__}' requires "
+                                    f"version='{self._policy_version}'."
+                                )
+                            )
+                        if str(actual_version) != self._policy_version:
+                            return Decision.stale_state(
+                                expected=self._policy_version,
+                                actual=str(actual_version),
+                            )
+
+                    # ── Step 5 prep: merge field dicts ────────────────────────────────
+                    conflicting = intent_values.keys() & state_values.keys()
+                    if conflicting:
+                        raise ValueError(
+                            f"Intent and state share conflicting keys: {sorted(conflicting)}. "
+                            "Each key must appear in exactly one of intent or state."
                         )
-                    )
-                if str(actual_version) != self._policy_version:
-                    return Decision.stale_state(
-                        expected=self._policy_version,
-                        actual=str(actual_version),
-                    )
+                    values: dict[str, Any] = {**intent_values, **state_values}
 
-            # ── Step 5: Z3 solve ──────────────────────────────────────────────
-            conflicting = intent_values.keys() & state_values.keys()
-            if conflicting:
-                raise ValueError(
-                    f"Intent and state share conflicting keys: {sorted(conflicting)}. "
-                    "Each key must appear in exactly one of intent or state."
+                # ── Step 5: Z3 solve (solver.py adds pramanix.z3_solve child span) ──
+                result: _SolveResult = solve(
+                    self._policy.invariants(),
+                    values,
+                    self._config.solver_timeout_ms,
                 )
-            values: dict[str, Any] = {**intent_values, **state_values}
-            result: _SolveResult = solve(
-                self._policy.invariants(),
-                values,
-                self._config.solver_timeout_ms,
-            )
 
-            # ── Step 6: Build Decision ────────────────────────────────────────
-            if result.sat:
-                return Decision.safe(solver_time_ms=result.solver_time_ms)
+                # ── Step 6: Build Decision ────────────────────────────────────────
+                if result.sat:
+                    decision_safe = Decision.safe(solver_time_ms=result.solver_time_ms)
+                    _log.info(
+                        "pramanix.guard.decision",
+                        decision_id=decision_id,
+                        policy=self._policy.__name__,
+                        allowed=True,
+                        status=decision_safe.status.value,
+                        solver_time_ms=result.solver_time_ms,
+                    )
+                    return decision_safe
 
-            filtered = [inv for inv in result.violated if inv.label]
-            explanation = "; ".join(
-                e for inv in filtered if (e := _fmt(inv, values))
-            )
-            return Decision.unsafe(
-                violated_invariants=tuple(label for inv in filtered if (label := inv.label)),
-                explanation=explanation,
-                solver_time_ms=result.solver_time_ms,
-            )
+                filtered = [inv for inv in result.violated if inv.label]
+                explanation = "; ".join(
+                    e for inv in filtered if (e := _fmt(inv, values))
+                )
+                decision_unsafe = Decision.unsafe(
+                    violated_invariants=tuple(label for inv in filtered if (label := inv.label)),
+                    explanation=explanation,
+                    solver_time_ms=result.solver_time_ms,
+                )
+                _log.info(
+                    "pramanix.guard.decision",
+                    decision_id=decision_id,
+                    policy=self._policy.__name__,
+                    allowed=False,
+                    status=decision_unsafe.status.value,
+                    violated=list(decision_unsafe.violated_invariants),
+                    solver_time_ms=result.solver_time_ms,
+                )
+                return decision_unsafe
 
         except ValidationError as exc:
-            return Decision.validation_failure(reason=str(exc))
+            decision = Decision.validation_failure(reason=str(exc))
+            _log.warning(
+                "pramanix.guard.decision",
+                decision_id=decision_id,
+                policy=self._policy.__name__,
+                allowed=False,
+                status=decision.status.value,
+                reason=str(exc),
+            )
+            return decision
         except StateValidationError as exc:
-            return Decision.validation_failure(reason=str(exc))
+            decision = Decision.validation_failure(reason=str(exc))
+            _log.warning(
+                "pramanix.guard.decision",
+                decision_id=decision_id,
+                policy=self._policy.__name__,
+                allowed=False,
+                status=decision.status.value,
+                reason=str(exc),
+            )
+            return decision
         except SolverTimeoutError as exc:
-            return Decision.timeout(label=exc.label, timeout_ms=exc.timeout_ms)
+            decision = Decision.timeout(label=exc.label, timeout_ms=exc.timeout_ms)
+            _log.warning(
+                "pramanix.guard.decision",
+                decision_id=decision_id,
+                policy=self._policy.__name__,
+                allowed=False,
+                status=decision.status.value,
+                reason=f"solver timeout after {exc.timeout_ms}ms",
+            )
+            return decision
         except PramanixError as exc:
-            return Decision.error(reason=str(exc))
+            decision = Decision.error(reason=str(exc))
+            _log.error(
+                "pramanix.guard.decision",
+                decision_id=decision_id,
+                policy=self._policy.__name__,
+                allowed=False,
+                status=decision.status.value,
+                reason=str(exc),
+            )
+            return decision
         except Exception as exc:  # — intentional fail-safe catch-all
-            return Decision.error(
+            decision = Decision.error(
                 reason=f"Unexpected internal error ({type(exc).__name__}): {exc}"
             )
+            _log.error(
+                "pramanix.guard.decision",
+                decision_id=decision_id,
+                policy=self._policy.__name__,
+                allowed=False,
+                status=decision.status.value,
+                exc_type=type(exc).__name__,
+                reason=str(exc),
+            )
+            return decision
+        finally:
+            # Always clear the per-context resolver cache after every decision
+            # (context = asyncio Task or OS thread).  Prevents User A's resolved
+            # field values from bleeding into User B's subsequent request.
+            _resolver_registry.clear_cache()
 
     # ── verify_async ───────────────────────────────────────────────────────────
 
@@ -477,19 +721,31 @@ class Guard:
             )
 
         if mode == "async-process":
+            from pramanix.worker import (
+                _RESULT_SEAL_KEY,
+                _unseal_decision,
+                _worker_solve_sealed,
+            )
+
             loop = asyncio.get_running_loop()
-            # _worker_solve is a module-level free function — picklable.
-            # policy_cls is passed as a class reference (import path in pickle).
-            # values is a plain dict. Nothing Z3-flavoured crosses the boundary.
+            # _worker_solve_sealed is a module-level free function — picklable.
+            # seal_key is plain bytes — picklable.
+            # Nothing Z3-flavoured crosses the process boundary.
             try:
-                result_dict: dict[str, Any] = await loop.run_in_executor(
+                sealed = await loop.run_in_executor(
                     pool.executor,
-                    _worker_solve,
+                    _worker_solve_sealed,
                     self._policy,
                     values,
                     self._config.solver_timeout_ms,
+                    _RESULT_SEAL_KEY.bytes,
                 )
-                return pool._dict_to_decision(result_dict)
+                result_dict_p: dict[str, Any] = _unseal_decision(sealed)
+                return pool._dict_to_decision(result_dict_p)
+            except (ValueError, KeyError):
+                return Decision.error(
+                    reason="Worker result integrity check failed — HMAC mismatch."
+                )
             except WorkerError as exc:
                 return Decision.error(reason=str(exc))
             except Exception as exc:
@@ -498,6 +754,94 @@ class Guard:
                 )
 
         return Decision.error(reason=f"Unknown execution_mode: {mode!r}")
+
+    # ── parse_and_verify ────────────────────────────────────────────────────────
+
+    async def parse_and_verify(
+        self,
+        prompt: str,
+        intent_schema: type[BaseModel],
+        state: dict[str, Any] | BaseModel,
+        models: tuple[str, str] = ("gpt-4o", "claude-opus-4-5"),
+        context: Any | None = None,
+    ) -> Decision:
+        """Extract structured intent from natural language, then verify.
+
+        This is the neuro-symbolic entry-point that bridges the unstructured
+        world (free-form user text) and the deterministic Z3 verification
+        engine.  The pipeline is:
+
+        1. Call both LLM models **concurrently** via
+           :func:`~pramanix.translator.redundant.extract_with_consensus`.
+        2. Require the two models to agree on every field
+           (:class:`~pramanix.exceptions.ExtractionMismatchError` if not).
+        3. Pass the validated intent dict to :meth:`verify_async`.
+
+        The method **never raises**.  All translator and verification failures
+        are collapsed into ``Decision.error()`` (fail-safe).
+
+        Args:
+            prompt:        Raw natural-language user input.
+            intent_schema: Pydantic model class defining the expected intent
+                           fields.
+            state:         Current system state (dict or validated BaseModel).
+            models:        Two model-name strings used for dual-model consensus.
+                           Defaults to ``("gpt-4o", "claude-opus-4-5")``.
+                           Routing: ``"gpt-*"``/``"o?-*"`` → OpenAI;
+                           ``"claude-*"`` → Anthropic.
+            context:       Optional :class:`~pramanix.translator.base.TranslatorContext`
+                           supplying request ID, user ID, available accounts, etc.
+
+        Returns:
+            A :class:`~pramanix.decision.Decision`.
+
+        Example::
+
+            class TransferIntent(BaseModel):
+                amount: Decimal
+
+            guard = Guard(BankingPolicy)
+            decision = await guard.parse_and_verify(
+                "Please move five hundred dollars",
+                TransferIntent,
+                state={"balance": Decimal("1000"), ...},
+            )
+        """
+        try:
+            from pramanix.exceptions import (
+                ExtractionFailureError,
+                ExtractionMismatchError,
+                LLMTimeoutError,
+            )
+            from pramanix.translator.redundant import create_translator, extract_with_consensus
+
+            translator_a = create_translator(models[0])
+            translator_b = create_translator(models[1])
+
+            intent_dict = await extract_with_consensus(
+                prompt, intent_schema, (translator_a, translator_b), context
+            )
+
+            # ── Semantic post-consensus check: fast Python rules before Z3 ─────
+            state_check_values: dict[str, Any] = (
+                safe_dump(state) if isinstance(state, BaseModel) else dict(state)
+            )
+            _semantic_post_consensus_check(intent_dict, state_check_values)
+
+            return await self.verify_async(intent=intent_dict, state=state)
+
+        except (
+            ExtractionFailureError,
+            ExtractionMismatchError,
+            LLMTimeoutError,
+            InjectionBlockedError,
+            SemanticPolicyViolation,
+        ) as exc:
+            return Decision.error(reason=str(exc))
+        except Exception as exc:
+            return Decision.error(
+                reason=f"Translator error ({type(exc).__name__}): {exc}"
+            )
 
     # ── shutdown ────────────────────────────────────────────────────────────────────
 

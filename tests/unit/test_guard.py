@@ -138,7 +138,7 @@ class TestGuardConfig:
 
     def test_invalid_execution_mode_raises(self) -> None:
         with pytest.raises(ConfigurationError):
-            GuardConfig(execution_mode="async-thread")
+            GuardConfig(execution_mode="not-a-valid-mode")
 
     def test_default_max_workers(self) -> None:
         assert GuardConfig().max_workers == 4
