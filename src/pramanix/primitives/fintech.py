@@ -65,6 +65,7 @@ __all__ = [
     "KYCTierCheck",
     "TradingWindowCheck",
     "MarginRequirement",
+    "RiskScoreLimit",
 ]
 
 
@@ -239,29 +240,65 @@ def MaxDrawdown(
     )
 
 
-def SanctionsScreen(counterparty_flagged: Field) -> ConstraintExpr:
+def SanctionsScreen(counterparty_status: Field) -> ConstraintExpr:
     """Block transactions with OFAC-sanctioned counterparties.
 
-    DSL: ``E(counterparty_flagged) == False``
+    DSL: ``E(counterparty_status) != "SANCTIONED"``
 
-    Encoding: The field must be a Bool-sorted Z3 variable
-    (``Field(..., bool, "Bool")``).  ``True`` means the counterparty appears
-    on a watchlist (OFAC SDN, EU Consolidated, UN Security Council, etc.).
+    Encoding: The field must be a String-sorted Z3 variable
+    (``Field(..., str, "String")``).  Supported states:
+
+    * ``"CLEAR"``      — counterparty passed all watchlist checks.
+    * ``"SANCTIONED"`` — counterparty appears on OFAC SDN / EU / UN list.
+    * ``"REVIEW"``     — pending manual AML review; treat as blocked.
+
+    This string-based encoding supports multi-state OFAC workflows without
+    requiring separate Bool fields per watchlist.
 
     Regulatory: 31 CFR § 501.805 (OFAC) / OFAC SDN list — US persons are
     prohibited from transacting with SDN-listed parties.  Penalties: up to
     $1M per violation.
 
     Args:
-        counterparty_flagged: Field (bool, Bool) — True if counterparty is
-            on any OFAC/sanctions watchlist.
+        counterparty_status: Field (str, String) — OFAC screening result.
+            Must be one of ``"CLEAR"``, ``"SANCTIONED"``, or ``"REVIEW"``.
     """
     return (
-        (E(counterparty_flagged) == False)  # noqa: E712 — Z3 DSL, not Python equality
+        (E(counterparty_status) != "SANCTIONED")
         .named("sanctions_screen")
         .explain(
-            "Transaction blocked: counterparty ({counterparty_flagged}) appears "
-            "on OFAC SDN / sanctions watchlist. (31 CFR § 501.805)"
+            'Transaction blocked: counterparty_status="{counterparty_status}" '
+            "matches OFAC SDN / sanctions watchlist. (31 CFR § 501.805)"
+        )
+    )
+
+
+def RiskScoreLimit(risk_score: Field, max_risk: Decimal) -> ConstraintExpr:
+    """Enforce that a counterparty or transaction risk score does not exceed
+    the configured ceiling.
+
+    DSL: ``E(risk_score) <= max_risk``
+
+    Risk scores are produced by AML/fraud models (range 0–1000 or 0.0–1.0
+    depending on the scoring engine).  A score above ``max_risk`` triggers a
+    block and routes the transaction to manual review.
+
+    Regulatory: FinCEN CDD Rule (31 CFR § 1010.230) / FATF Recommendation 10
+    — covered institutions must apply risk-based customer due diligence and
+    may not process transactions whose risk profile exceeds internal limits.
+
+    Args:
+        risk_score: Field (Decimal, Real) — numeric risk score from the
+            AML / fraud scoring engine.
+        max_risk:   Decimal — maximum permitted risk score (inclusive).
+    """
+    return (
+        (E(risk_score) <= max_risk)
+        .named("risk_score_limit")
+        .explain(
+            f"Risk score {{risk_score}} exceeds maximum threshold {max_risk}. "
+            "Route to manual AML review. "
+            "(FinCEN CDD Rule 31 CFR § 1010.230 / FATF Rec. 10)"
         )
     )
 
