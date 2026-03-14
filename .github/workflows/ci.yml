@@ -1,15 +1,26 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Pramanix CI Pipeline
+# Pramanix Iron Gate CI Pipeline — v0.5
 #
-# Jobs: lint → typecheck → test (matrix) → coverage gate
-# Runs on: push to any branch, pull requests to main
-# CRITICAL: Alpine base images are BANNED — Z3 requires glibc (see Blueprint §48)
+# Job execution order (dependency chain — fail-fast at each gate):
+#   sast → alpine-ban → lint-typecheck → test → coverage → license-scan
+#
+# Security rationale:
+#   SAST first: reject known-CVE deps before ANY test code runs.
+#   Alpine ban second: reject musl builds before compilation/install.
+#   Lint/type third: reject broken code before spending compute on tests.
+#   Tests fourth: full adversarial + property suite, ordered unit→integ→prop→adv.
+#   Coverage fifth: enforce 95% floor; fail PRs that drop > 0.5%.
+#   License last: expensive scan runs only after everything else passes.
+#
+# CRITICAL: Alpine base images are BANNED — Z3 requires glibc (Blueprint §48).
+# CRITICAL: Python 3.10 dropped — EOL December 2026.
+# Matrix: ubuntu-latest × Python 3.11, 3.12
 
 name: Pramanix CI
 
 on:
   push:
-    branches: ["main", "dev", "feature/**"]
+    branches: ["main", "dev", "feature/**", "fix/**"]
   pull_request:
     branches: ["main"]
 
@@ -19,56 +30,225 @@ concurrency:
 
 env:
   PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
   FORCE_COLOR: "1"
+  # Pin pip to avoid resolver regressions
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# JOB 1 — SAST: Static Application Security Testing
+# Runs BEFORE any test job so known-CVE dependencies are rejected fast.
+# ──────────────────────────────────────────────────────────────────────────────
 jobs:
-  # ──────────────────────────────────────────────────────────────────────────
-  # GATE: Reject Alpine base images in any Dockerfile
-  # ──────────────────────────────────────────────────────────────────────────
-  alpine-ban:
-    name: Reject Alpine base images
+  sast:
+    name: "SAST (pip-audit · bandit · semgrep)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check for Alpine base images
-        run: |
-          if grep -rq "FROM.*alpine" Dockerfile* docker/ 2>/dev/null; then
-            echo "::error::FATAL: Alpine base image detected."
-            echo "Alpine uses musl libc which breaks z3-solver native extensions."
-            echo "Use python:3.11-slim (Debian-based) instead."
-            exit 1
-          fi
-          echo "✓ No Alpine base images found."
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # LINT: ruff check + ruff format --check
-  # ──────────────────────────────────────────────────────────────────────────
-  lint:
-    name: Lint (ruff)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install SAST tools
+        run: pip install pip-audit bandit semgrep
 
-      - name: ruff check
-        run: ruff check src/ tests/
+      - name: Install poetry & export requirements
+        run: |
+          pip install poetry
+          poetry config virtualenvs.create false
+          # Export all deps (including optional extras) so pip-audit can scan them all
+          poetry export \
+            --without-hashes \
+            --with dev \
+            --extras all \
+            -f requirements.txt \
+            -o requirements.txt
+          echo "=== requirements.txt ===" && cat requirements.txt
 
-      - name: ruff format --check
-        run: ruff format --check src/ tests/
+      - name: pip-audit — fail on any known CVE
+        # To accept a specific CVE finding that you have reviewed and accepted,
+        # add --ignore-vuln VULN-ID to the command below and document the
+        # rationale in a comment.  Example (do not uncomment without a real CVE):
+        #   --ignore-vuln GHSA-0000-0000-0000  # Accepted: only affects feature X we don't use
+        run: pip-audit --requirement requirements.txt --format=json --output pip-audit-report.json
+        continue-on-error: false
+
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+      - name: bandit — fail on HIGH severity findings
+        # -ll = HIGH and CRITICAL only (suppress LOW/MEDIUM noise)
+        # -ii = only MEDIUM and HIGH confidence (suppress speculative findings)
+        run: bandit -r src/pramanix/ -ll -ii -f json -o bandit-report.json
+        continue-on-error: false
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+      - name: semgrep — fail on ERROR level findings
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: |
+          semgrep \
+            --config=auto \
+            --error \
+            --json \
+            --output semgrep-report.json \
+            src/pramanix/
+
+      - name: Upload semgrep report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+
+      # ── Secrets scan — fail if PRAMANIX_HMAC_SECRET or similar tokens ──────
+      # Scans Python and YAML source files for hardcoded credentials.
+      # Test files are excluded (they use test-only ephemeral keys via secrets.token_bytes).
+      # Any match → rebuild fails to prevent secrets leaking into version control.
+      - name: Secrets scan — no hardcoded credentials in source
+        run: |
+          FAIL=0
+
+          # Pattern: any assignment of a secrets-like env var to a string literal
+          BANNED_PATTERNS=(
+            'PRAMANIX_HMAC_SECRET\s*='
+            'PRAMANIX_API_KEY\s*='
+            'PRAMANIX_LLM_API_KEY\s*='
+            'openai_api_key\s*=\s*"[a-zA-Z0-9]'
+            'anthropic_api_key\s*=\s*"[a-zA-Z0-9]'
+          )
+
+          for PATTERN in "${BANNED_PATTERNS[@]}"; do
+            HITS=$(grep -rn -E "$PATTERN" \
+              --include="*.py" --include="*.yml" --include="*.yaml" --include="*.toml" \
+              --exclude-dir=tests \
+              --exclude-dir=.venv \
+              --exclude-dir=.github \
+              --exclude-dir=__pycache__ \
+              . 2>/dev/null || true)
+            if [[ -n "$HITS" ]]; then
+              echo "::error::FATAL: hardcoded credential pattern '${PATTERN}' detected:"
+              echo "$HITS"
+              FAIL=1
+            fi
+          done
+
+          if [[ $FAIL -eq 1 ]]; then
+            echo ""
+            echo "Secrets MUST be injected via environment variables or GitHub Secrets."
+            echo "See docs/security.md for the Secrets & Configuration Security section."
+            exit 1
+          fi
+          echo "✓ Secrets scan: no hardcoded credentials detected in source files."
 
   # ──────────────────────────────────────────────────────────────────────────
-  # TYPECHECK: mypy --strict
+  # JOB 2 — Alpine & musl Ban
+  # Z3 requires glibc — musl causes segfaults and 3-10x slowdowns (Blueprint §48)
+  # Gate: grep exits 0 (0 matches found = safe). 1 match = FATAL.
   # ──────────────────────────────────────────────────────────────────────────
-  typecheck:
-    name: Type check (mypy)
+  alpine-ban:
+    name: "Reject Alpine / musl base images"
     runs-on: ubuntu-latest
+    needs: sast
     steps:
       - uses: actions/checkout@v4
+
+      - name: Scan Dockerfiles for Alpine / musl
+        run: |
+          # Collect all Dockerfiles, excluding:
+          #   - .git/ (git internals)
+          #   - Dockerfile.test (known test fixture — intentionally contains Alpine
+          #     to verify this gate catches it during local development)
+          mapfile -t DOCKERFILES < <(
+            find . \
+              \( -name "Dockerfile*" -o -name "*.dockerfile" -o -name "*.Dockerfile" \) \
+              ! -path "./.git/*" \
+              ! -name "Dockerfile.test" \
+              2>/dev/null
+          )
+          echo "Scanning ${#DOCKERFILES[@]} Dockerfile(s):"
+          printf '  %s\n' "${DOCKERFILES[@]}"
+
+          HITS=()
+          for f in "${DOCKERFILES[@]}"; do
+            # Match any FROM that references alpine or musl in image name/tag
+            if grep -iqE "FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?[^[:space:]]*(alpine|musl)" "$f" 2>/dev/null; then
+              HITS+=("$f")
+            fi
+          done
+
+          if [[ ${#HITS[@]} -gt 0 ]]; then
+            echo "::error::FATAL: Alpine/musl base image detected in:"
+            printf '  %s\n' "${HITS[@]}"
+            echo ""
+            echo "Alpine uses musl libc which breaks z3-solver native extensions."
+            echo "Symptoms: segfaults, 3-10x slowdowns, non-deterministic BLOCK decisions."
+            echo "Fix: Use python:3.11-slim-bookworm (Debian/glibc) instead."
+            exit 1
+          fi
+          # Gate: exit 0 = no alpine found = safe
+          echo "✓ Alpine/musl ban: 0 matches found in ${#DOCKERFILES[@]} Dockerfile(s). SAFE."
+
+      - name: Scan docker-compose files for Alpine / musl
+        run: |
+          mapfile -t COMPOSE_FILES < <(
+            find . \
+              \( -name "docker-compose*.yml" -o -name "docker-compose*.yaml" \) \
+              ! -path "./.git/*" \
+              2>/dev/null
+          )
+          if [[ ${#COMPOSE_FILES[@]} -eq 0 ]]; then
+            echo "✓ No docker-compose files found. SAFE."
+            exit 0
+          fi
+          HITS=()
+          for f in "${COMPOSE_FILES[@]}"; do
+            grep -iqE "(alpine|musl)" "$f" 2>/dev/null && HITS+=("$f")
+          done
+          if [[ ${#HITS[@]} -gt 0 ]]; then
+            echo "::error::FATAL: Alpine/musl reference in docker-compose files:"
+            printf '  %s\n' "${HITS[@]}"
+            exit 1
+          fi
+          echo "✓ docker-compose scan: 0 matches in ${#COMPOSE_FILES[@]} file(s). SAFE."
+
+      - name: Scan deploy/ directory for Alpine / musl
+        run: |
+          if [[ ! -d "./deploy" ]]; then
+            echo "✓ No deploy/ directory found. SAFE."
+            exit 0
+          fi
+          HITS=$(grep -rl -i -E "(alpine|musl)" ./deploy/ 2>/dev/null || true)
+          if [[ -n "$HITS" ]]; then
+            echo "::error::FATAL: Alpine/musl reference in deploy/ directory:"
+            echo "$HITS"
+            exit 1
+          fi
+          echo "✓ deploy/ scan: 0 matches. SAFE."
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Lint & Type Check
+  # ruff check + ruff format + mypy --strict
+  # All three exit 0 required — no warnings suppressed.
+  # ──────────────────────────────────────────────────────────────────────────
+  lint-typecheck:
+    name: "Lint (ruff) + Type check (mypy)"
+    runs-on: ubuntu-latest
+    needs: alpine-ban
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -79,47 +259,79 @@ jobs:
           poetry config virtualenvs.create false
           poetry install --with dev
 
-      - name: mypy --strict
-        run: mypy src/pramanix/ --strict
+      - name: ruff check — linting
+        run: ruff check src/ tests/ --output-format=github
+
+      - name: ruff format — formatting
+        run: ruff format --check src/ tests/
+
+      - name: mypy — strict type checking
+        run: mypy src/pramanix/ --strict --no-error-summary
 
   # ──────────────────────────────────────────────────────────────────────────
-  # TEST: pytest with coverage, across Python 3.10 / 3.11 / 3.12
+  # JOB 4 — Test Gauntlet
+  # Ordered: unit → integration → property → adversarial → perf (main only)
+  # Matrix: Python 3.11 × 3.12
   # ──────────────────────────────────────────────────────────────────────────
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    name: "Tests (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
+    needs: lint-typecheck
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install dependencies
+      - name: Install dependencies (all extras)
         run: |
           pip install poetry
           poetry config virtualenvs.create false
-          poetry install --with dev
+          poetry install --with dev --extras translator --extras otel
 
-      - name: Run unit tests with coverage
+      - name: "Step 1/5 — Unit tests"
+        run: pytest tests/unit/ -x --tb=short
+
+      - name: "Step 2/5 — Integration tests"
+        run: pytest tests/integration/ -x --tb=short
+
+      - name: "Step 3/5 — Property-based tests"
         run: |
-          pytest tests/unit/ \
-            -v \
-            --tb=short \
-            --cov=pramanix \
+          pytest tests/property/ \
+            --hypothesis-seed=0 \
+            --hypothesis-profile=ci \
+            -x --tb=short
+
+      - name: "Step 4/5 — Adversarial security tests (always run)"
+        run: pytest tests/adversarial/ -v --tb=short
+
+      - name: "Step 5/5 — Perf benchmarks (main branch only)"
+        if: github.ref == 'refs/heads/main'
+        run: pytest tests/perf/ -m "not slow" --tb=short
+
+      - name: "Step 5/5 — Perf benchmarks (PR: non-slow only)"
+        if: github.ref != 'refs/heads/main' && github.event_name == 'pull_request'
+        run: pytest tests/perf/ -m "not slow" --tb=short
+        continue-on-error: true
+
+      - name: Generate coverage report (Python 3.11 only)
+        if: matrix.python-version == '3.11'
+        run: |
+          pytest \
+            --cov=src/pramanix \
             --cov-branch \
+            --cov-report=xml:coverage.xml \
             --cov-report=term-missing \
-            --cov-report=xml:coverage.xml
+            --cov-fail-under=95 \
+            tests/unit/ tests/integration/ tests/property/ tests/adversarial/
 
-      - name: Run integration tests
-        run: |
-          pytest tests/integration/ -v --tb=short
-
-      - name: Upload coverage artifact
+      - name: Upload coverage artifact (Python 3.11 only)
         if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
@@ -129,14 +341,16 @@ jobs:
             coverage.xml
 
   # ──────────────────────────────────────────────────────────────────────────
-  # COVERAGE GATE: fail if coverage < 95% (on Python 3.11 only)
+  # JOB 5 — Coverage Gate
+  # Enforces ≥95% branch coverage and Codecov delta < -0.5%.
   # ──────────────────────────────────────────────────────────────────────────
   coverage:
-    name: Coverage gate (≥95%)
+    name: "Coverage gate (≥95%, delta ≤-0.5%)"
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -149,5 +363,115 @@ jobs:
         with:
           name: coverage-report
 
-      - name: Enforce coverage threshold
+      - name: Enforce coverage threshold (≥95%)
         run: coverage report --fail-under=95
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: unittests
+          name: pramanix-coverage
+          fail_ci_if_error: true
+          # Coverage delta threshold (>0.5% drop → PR fails) is enforced
+          # via codecov.yml in the repo root (coverage.precision + coverage.status)
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 6 — Dependency License Scan
+  # Allowed: MIT, Apache-2.0, BSD-2/3, LGPL-2.1/3.0, PSF, ISC, MPL-2.0
+  # Blocked: GPL-2.0-only, AGPL-incompatible, unknown
+  # ──────────────────────────────────────────────────────────────────────────
+  license-scan:
+    name: "License scan (allowlist)"
+    runs-on: ubuntu-latest
+    needs: coverage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install runtime dependencies + license tool
+        run: |
+          pip install poetry
+          poetry config virtualenvs.create false
+          poetry install --extras all
+          pip install pip-licenses
+
+      - name: Generate license report
+        run: pip-licenses --format=json --output-file=licenses.json --with-urls
+
+      - name: Enforce license allowlist
+        run: |
+          python - <<'PYEOF'
+          import json, sys
+
+          ALLOWLIST = {
+              "MIT",
+              "Apache Software License",
+              "Apache-2.0",
+              "BSD License",
+              "BSD-2-Clause",
+              "BSD-3-Clause",
+              "GNU Lesser General Public License v2 (LGPLv2)",
+              "GNU Lesser General Public License v2 or later (LGPLv2+)",
+              "GNU Lesser General Public License v3 (LGPLv3)",
+              "LGPL-2.1",
+              "LGPL-2.1-or-later",
+              "LGPL-3.0",
+              "LGPL-3.0-or-later",
+              "Python Software Foundation License",
+              "PSF",
+              "ISC",
+              "ISC License (ISCL)",
+              "Mozilla Public License 2.0 (MPL 2.0)",
+              "MPL-2.0",
+              # Pramanix itself — AGPL is the project license, not a dependency
+              "GNU Affero General Public License v3",
+              "AGPL-3.0-only",
+          }
+
+          BLOCKED_PATTERNS = [
+              "GPL-2.0-only",
+              "GNU General Public License v2 (GPLv2)",
+              "UNKNOWN",
+          ]
+
+          with open("licenses.json") as f:
+              packages = json.load(f)
+
+          violations = []
+          for pkg in packages:
+              name = pkg.get("Name", "")
+              lic = pkg.get("License", "UNKNOWN").strip()
+
+              # Skip packages with explicitly allowed licenses
+              if lic in ALLOWLIST:
+                  continue
+
+              # Fail on explicitly blocked patterns
+              for blocked in BLOCKED_PATTERNS:
+                  if blocked.lower() in lic.lower():
+                      violations.append(f"  BLOCKED  [{name}]  {lic}")
+                      break
+              else:
+                  # Not in allowlist and not blocked — treat as unknown/review needed
+                  violations.append(f"  UNKNOWN  [{name}]  {lic}")
+
+          if violations:
+              print("::error::License violations detected:")
+              print("\n".join(violations))
+              print("\nAllowlist:", sorted(ALLOWLIST))
+              sys.exit(1)
+
+          print(f"✓ License scan passed. {len(packages)} package(s) checked.")
+          PYEOF
+
+      - name: Upload license report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses.json

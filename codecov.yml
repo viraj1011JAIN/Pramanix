@@ -1,0 +1,41 @@
+# codecov.yml — Pramanix coverage gate configuration
+# Docs: https://docs.codecov.com/docs/codecovyml-reference
+#
+# Rules:
+#   - Project coverage must stay ≥95%.
+#   - Any PR that drops coverage by >0.5% fails the status check.
+
+coverage:
+  precision: 2
+  round: down
+  range: "90...100"
+
+  status:
+    project:
+      default:
+        # Absolute floor — any commit below 95% fails
+        target: 95%
+        # Allow up to 0.5% coverage drop (matches Phase 6 gate spec).
+        # PRs that drop coverage by more than 0.5% from the base commit fail.
+        threshold: 0.5%
+        if_not_found: failure
+        if_ci_failed: error
+
+    patch:
+      default:
+        # PR-level delta gate — fail if the PR itself adds < 80% covered new lines
+        target: 80%
+        threshold: 0%
+        if_not_found: failure
+        if_ci_failed: error
+
+  # Fail PR if total coverage drops by more than 0.5% from base
+  notify:
+    after_n_builds: 1
+    require_ci_to_pass: true
+
+ignore:
+  - "tests/**"
+  - "examples/**"
+  - "docs/**"
+  - "**/__pycache__/**"
