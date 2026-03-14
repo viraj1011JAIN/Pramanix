@@ -69,6 +69,7 @@ import asyncio
 import contextlib
 import os
 import re
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -163,6 +164,40 @@ except ImportError:
     def _span(name: str) -> Any:
         """No-op span when opentelemetry is not installed."""
         return contextlib.nullcontext()
+
+
+# ── Prometheus — graceful optional dependency ─────────────────────────────────
+# Each metric is a no-op when ``prometheus_client`` is absent, so there is zero
+# overhead on deployments that do not expose a /metrics endpoint.
+
+try:
+    import prometheus_client as _prom
+
+    _decisions_total = _prom.Counter(
+        "pramanix_decisions_total",
+        "Total policy decisions by outcome",
+        ["policy", "status"],
+    )
+    _decision_latency = _prom.Histogram(
+        "pramanix_decision_latency_seconds",
+        "End-to-end verify() latency in seconds",
+        ["policy"],
+        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+    )
+    _solver_timeouts_total = _prom.Counter(
+        "pramanix_solver_timeouts_total",
+        "Number of Z3 solver timeouts by policy",
+        ["policy"],
+    )
+    _validation_failures_total = _prom.Counter(
+        "pramanix_validation_failures_total",
+        "Number of intent/state validation failures by policy",
+        ["policy"],
+    )
+    _PROM_AVAILABLE = True
+
+except ImportError:
+    _PROM_AVAILABLE = False
 
 
 # ── Module-level resolver registry ───────────────────────────────────────────
@@ -466,6 +501,8 @@ class Guard:
             * ``Decision.validation_failure()``— Pydantic validation failed
         """
         decision_id = str(uuid.uuid4())
+        _t0 = time.perf_counter()
+        _metric_status = "error"  # overwritten before every return
         try:
             with _span("pramanix.guard.verify") as span:
                 if span is not None:
@@ -498,6 +535,7 @@ class Guard:
                     if self._policy_version is not None:
                         actual_version = state_values.get("state_version")
                         if actual_version is None:
+                            _metric_status = "validation_failure"
                             return Decision.validation_failure(
                                 reason=(
                                     "state_version is missing from state data. "
@@ -506,6 +544,7 @@ class Guard:
                                 )
                             )
                         if str(actual_version) != self._policy_version:
+                            _metric_status = "stale_state"
                             return Decision.stale_state(
                                 expected=self._policy_version,
                                 actual=str(actual_version),
@@ -530,6 +569,7 @@ class Guard:
                 # ── Step 6: Build Decision ────────────────────────────────────────
                 if result.sat:
                     decision_safe = Decision.safe(solver_time_ms=result.solver_time_ms)
+                    _metric_status = decision_safe.status.value
                     _log.info(
                         "pramanix.guard.decision",
                         decision_id=decision_id,
@@ -549,6 +589,7 @@ class Guard:
                     explanation=explanation,
                     solver_time_ms=result.solver_time_ms,
                 )
+                _metric_status = decision_unsafe.status.value
                 _log.info(
                     "pramanix.guard.decision",
                     decision_id=decision_id,
@@ -562,6 +603,7 @@ class Guard:
 
         except ValidationError as exc:
             decision = Decision.validation_failure(reason=str(exc))
+            _metric_status = decision.status.value
             _log.warning(
                 "pramanix.guard.decision",
                 decision_id=decision_id,
@@ -573,6 +615,7 @@ class Guard:
             return decision
         except StateValidationError as exc:
             decision = Decision.validation_failure(reason=str(exc))
+            _metric_status = decision.status.value
             _log.warning(
                 "pramanix.guard.decision",
                 decision_id=decision_id,
@@ -584,6 +627,7 @@ class Guard:
             return decision
         except SolverTimeoutError as exc:
             decision = Decision.timeout(label=exc.label, timeout_ms=exc.timeout_ms)
+            _metric_status = decision.status.value
             _log.warning(
                 "pramanix.guard.decision",
                 decision_id=decision_id,
@@ -595,6 +639,7 @@ class Guard:
             return decision
         except PramanixError as exc:
             decision = Decision.error(reason=str(exc))
+            _metric_status = decision.status.value
             _log.error(
                 "pramanix.guard.decision",
                 decision_id=decision_id,
@@ -608,6 +653,7 @@ class Guard:
             decision = Decision.error(
                 reason=f"Unexpected internal error ({type(exc).__name__}): {exc}"
             )
+            _metric_status = decision.status.value
             _log.error(
                 "pramanix.guard.decision",
                 decision_id=decision_id,
@@ -623,6 +669,18 @@ class Guard:
             # (context = asyncio Task or OS thread).  Prevents User A's resolved
             # field values from bleeding into User B's subsequent request.
             _resolver_registry.clear_cache()
+            if self._config.metrics_enabled and _PROM_AVAILABLE:
+                _policy_name = self._policy.__name__
+                _decisions_total.labels(
+                    policy=_policy_name, status=_metric_status
+                ).inc()
+                _decision_latency.labels(policy=_policy_name).observe(
+                    time.perf_counter() - _t0
+                )
+                if _metric_status == "timeout":
+                    _solver_timeouts_total.labels(policy=_policy_name).inc()
+                if _metric_status in ("validation_failure", "stale_state"):
+                    _validation_failures_total.labels(policy=_policy_name).inc()
 
     # ── verify_async ───────────────────────────────────────────────────────────
 
