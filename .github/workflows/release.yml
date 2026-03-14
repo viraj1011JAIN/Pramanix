@@ -1,0 +1,313 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix SLSA Level 3 Release Pipeline — v0.5
+#
+# Trigger: git tag matching v<major>.<minor>.<patch> or v<major>.<minor>.<patch>-rc.<n>
+#
+# Steps (in order):
+#   1. Version consistency check  — pyproject.toml == git tag == __version__
+#   2. Build                      — poetry build + twine check
+#   3. SBOM generation            — CycloneDX JSON
+#   4. OIDC publish to PyPI       — GitHub OIDC, no API token in secrets
+#   5. Sigstore artifact signing  — .sigstore.json per artifact
+#   6. GitHub Release             — CHANGELOG section as body, all artifacts attached
+#   7. Post-release smoke test    — clean venv, pip install, basic import
+#
+# Permissions:
+#   id-token:write    — GitHub OIDC for PyPI trusted publishing
+#   contents:write    — create GitHub Release
+#   attestations:write — Sigstore attestation upload
+
+name: Release (SLSA Level 3)
+
+on:
+  push:
+    tags:
+      # Release tags:  v1.2.3
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      # RC tags:       v1.2.3-rc.1
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+
+permissions:
+  id-token: write
+  contents: write
+  attestations: write
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  release:
+    name: "Release ${{ github.ref_name }}"
+    runs-on: ubuntu-latest
+
+    steps:
+      # ────────────────────────────────────────────────────────────────────
+      # Checkout with full history so CHANGELOG section extraction works
+      # ────────────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 1 — Version Consistency Check
+      # Assert pyproject.toml == git tag == __version__ == CHANGELOG entry
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 1/7 — Version consistency check"
+        run: |
+          # Strip leading 'v' from git tag
+          GIT_TAG="${{ github.ref_name }}"
+          VERSION="${GIT_TAG#v}"
+          echo "Verifying version: $VERSION (tag: $GIT_TAG)"
+
+          # 1a. pyproject.toml
+          PYPROJECT_VERSION=$(python - <<'PYEOF'
+          import re, sys
+          content = open("pyproject.toml").read()
+          m = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+          if not m:
+              print("ERROR: could not parse version from pyproject.toml", file=sys.stderr)
+              sys.exit(1)
+          print(m.group(1))
+          PYEOF
+          )
+          echo "pyproject.toml version: $PYPROJECT_VERSION"
+          if [[ "$PYPROJECT_VERSION" != "$VERSION" ]]; then
+            echo "::error::Version mismatch: pyproject.toml=$PYPROJECT_VERSION, tag=$VERSION"
+            echo "Fix: update [tool.poetry] version in pyproject.toml before tagging."
+            exit 1
+          fi
+
+          # 1b. src/pramanix/__init__.py __version__
+          INIT_VERSION=$(python -c "
+          import re, sys
+          content = open('src/pramanix/__init__.py').read()
+          m = re.search(r'__version__\s*=\s*[\"\']([\d.]+(?:-rc\.\d+)?)[\"\'\"']', content)
+          if not m:
+              print('ERROR: __version__ not found', file=sys.stderr)
+              sys.exit(1)
+          print(m.group(1))
+          ")
+          echo "__init__.py __version__: $INIT_VERSION"
+          if [[ "$INIT_VERSION" != "$VERSION" ]]; then
+            echo "::error::Version mismatch: __init__.py=$INIT_VERSION, tag=$VERSION"
+            echo "Fix: update __version__ in src/pramanix/__init__.py before tagging."
+            exit 1
+          fi
+
+          # 1c. CHANGELOG.md contains section for this version
+          if ! grep -qF "## [${VERSION}]" CHANGELOG.md 2>/dev/null && \
+             ! grep -qF "## ${VERSION}" CHANGELOG.md 2>/dev/null; then
+            echo "::error::CHANGELOG.md does not contain a section for version $VERSION"
+            echo "Fix: add '## [$VERSION] - $(date +%Y-%m-%d)' section to CHANGELOG.md"
+            exit 1
+          fi
+
+          echo "✓ All version checks passed: $VERSION"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "GIT_TAG=$GIT_TAG" >> "$GITHUB_ENV"
+          # Detect RC tags
+          if [[ "$GIT_TAG" == *"-rc."* ]]; then
+            echo "IS_PRERELEASE=true" >> "$GITHUB_ENV"
+            echo "PYPI_TARGET=testpypi" >> "$GITHUB_ENV"
+          else
+            echo "IS_PRERELEASE=false" >> "$GITHUB_ENV"
+            echo "PYPI_TARGET=pypi" >> "$GITHUB_ENV"
+          fi
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 2 — Build
+      # poetry build → twine check → wheel purity verification
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 2/7 — Build wheel and sdist"
+        run: |
+          pip install poetry twine
+          poetry build
+
+          echo "=== Build artifacts ==="
+          ls -lh dist/
+
+          echo "--- twine check ---"
+          twine check dist/*
+
+          echo "--- Wheel purity check ---"
+          # Pure-Python wheel contains no compiled extensions
+          for WHL in dist/*.whl; do
+            echo "Checking: $WHL"
+            python - "$WHL" <<'PYEOF'
+          import zipfile, sys, os
+          whl = sys.argv[1]
+          with zipfile.ZipFile(whl) as z:
+              names = z.namelist()
+          exts = [n for n in names if n.endswith(('.so', '.pyd', '.dll'))]
+          if exts:
+              print(f"WARNING: compiled extensions found in wheel: {exts}", file=sys.stderr)
+              # Not a hard failure — z3-solver ships native lib; pramanix itself is pure Python
+          else:
+              print(f"✓ Pure Python wheel confirmed: {os.path.basename(whl)}")
+          PYEOF
+          done
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 3 — SBOM Generation (CycloneDX)
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 3/7 — Generate CycloneDX SBOM"
+        run: |
+          pip install cyclonedx-bom
+
+          # Install the package so cyclonedx-py can enumerate its deps
+          pip install poetry
+          poetry config virtualenvs.create false
+          poetry install --extras all
+
+          cyclonedx-py poetry \
+            --output pramanix-sbom.cdx.json \
+            --format json
+
+          echo "=== SBOM summary ==="
+          python - <<'PYEOF'
+          import json
+          with open("pramanix-sbom.cdx.json") as f:
+              sbom = json.load(f)
+          components = sbom.get("components", [])
+          print(f"SBOM contains {len(components)} component(s)")
+          # Verify key direct deps are present
+          names = {c.get("name","").lower() for c in components}
+          required = {"pydantic", "z3-solver", "structlog"}
+          missing = required - names
+          if missing:
+              print(f"WARNING: expected components not found in SBOM: {missing}")
+          else:
+              print(f"✓ All required direct dependencies found in SBOM")
+          PYEOF
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pramanix-sbom
+          path: pramanix-sbom.cdx.json
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 4 — OIDC Publish to PyPI (no API token — GitHub OIDC identity)
+      # RC tags → Test PyPI; release tags → production PyPI
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 4a/7 — Publish to Test PyPI (RC tags only)"
+        if: env.IS_PRERELEASE == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          attestations: true
+          verbose: true
+
+      - name: "Step 4b/7 — Publish to PyPI (release tags only)"
+        if: env.IS_PRERELEASE == 'false'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+          verbose: true
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 5 — Sigstore Artifact Signing
+      # Signs .whl and .tar.gz; produces .sigstore.json bundles
+      # Bundle proves: artifact hash + GitHub Actions workflow + commit SHA
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 5/7 — Sign artifacts with Sigstore"
+        uses: sigstore/gh-action-sigstore-python@v3
+        with:
+          inputs: >-
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: Verify sigstore bundles were created
+        run: |
+          echo "=== Signed artifacts ==="
+          ls -lh dist/
+          # Confirm .sigstore.json bundles exist for each artifact
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            bundle="${artifact}.sigstore.json"
+            if [[ ! -f "$bundle" ]]; then
+              echo "::error::Missing sigstore bundle for: $artifact"
+              exit 1
+            fi
+            echo "✓ $bundle"
+          done
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 6 — GitHub Release
+      # Extract CHANGELOG section for this version as release body
+      # Attach: wheel, sdist, sigstore bundles, SBOM
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 6/7 — Extract CHANGELOG section"
+        run: |
+          VERSION="${{ env.RELEASE_VERSION }}"
+          # Extract the section between ## [VERSION] and the next ## heading
+          NOTES=$(sed -n "/^## \[${VERSION}\]\|^## ${VERSION}/,/^## /{ /^## ${VERSION}\|^## \[${VERSION}\]/!{ /^## /d; p } }" CHANGELOG.md)
+          if [[ -z "$NOTES" ]]; then
+            NOTES="See [CHANGELOG.md](CHANGELOG.md) for details."
+          fi
+          # Write to file for the release action (avoids shell escaping issues)
+          echo "$NOTES" > release-notes.md
+          echo "=== Release notes preview ==="
+          head -20 release-notes.md
+
+      - name: "Step 6/7 — Create GitHub Release"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.GIT_TAG }}
+          name: "Pramanix ${{ env.RELEASE_VERSION }}"
+          body_path: release-notes.md
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/*.sigstore.json
+            pramanix-sbom.cdx.json
+          fail_on_unmatched_files: true
+
+      # ────────────────────────────────────────────────────────────────────
+      # STEP 7 — Post-Release Smoke Test
+      # Clean ubuntu runner, pip install from PyPI, basic import
+      # Uses 120s CDN propagation wait before installing
+      # ────────────────────────────────────────────────────────────────────
+      - name: "Step 7/7 — Post-release smoke test"
+        run: |
+          VERSION="${{ env.RELEASE_VERSION }}"
+          PYPI_TARGET="${{ env.PYPI_TARGET }}"
+
+          if [[ "$PYPI_TARGET" == "testpypi" ]]; then
+            INDEX_URL="https://test.pypi.org/simple/"
+            EXTRA_INDEX="--extra-index-url https://pypi.org/simple/"
+          else
+            INDEX_URL="https://pypi.org/simple/"
+            EXTRA_INDEX=""
+          fi
+
+          echo "Waiting 120s for PyPI CDN propagation..."
+          sleep 120
+
+          # Create a clean virtual environment
+          python -m venv /tmp/smoke-venv
+          source /tmp/smoke-venv/bin/activate
+
+          echo "--- Installing pramanix==$VERSION ---"
+          pip install --index-url "$INDEX_URL" $EXTRA_INDEX "pramanix==$VERSION"
+
+          echo "--- Basic import smoke test ---"
+          python -c "from pramanix import Guard, Policy, Field, E, Decision; print('OK')"
+
+          echo "--- Installing pramanix[all]==$VERSION ---"
+          pip install --index-url "$INDEX_URL" $EXTRA_INDEX "pramanix[all]==$VERSION"
+
+          echo "--- Full extras smoke test ---"
+          python -c "
+          from pramanix import Guard, Policy, Field, E, Decision
+          from pramanix.translator import Translator, TranslatorContext
+          print('pramanix[all] import OK')
+          "
+
+          echo "✓ Post-release smoke test passed for pramanix==$VERSION"
