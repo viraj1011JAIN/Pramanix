@@ -33,11 +33,15 @@ Critical design invariants
 """
 from __future__ import annotations
 
+import hashlib
+import hmac as _hmac_mod
+import json as _json_mod
 import logging
+import secrets as _secrets_mod
 import threading
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from pramanix.decision import Decision
 from pramanix.exceptions import WorkerError
@@ -54,6 +58,51 @@ _log = logging.getLogger(__name__)
 # Grace period before force-killing stalled processes during recycle.
 _RECYCLE_GRACE_S: float = 10.0
 
+# ── HMAC Result Integrity Seal ────────────────────────────────────────────────
+#
+# A random key generated once in the HOST process at module import time.
+# In async-process mode it is forwarded to child processes as a function
+# argument so they can sign their result dicts before returning them via IPC.
+# The host verifies the HMAC before trusting the deserialized decision, making
+# it impossible for a compromised worker to silently forge an allowed=True
+# result without knowledge of the key.
+#
+# Key rotation: the key is regenerated on every process restart, so a leaked
+# key from a terminated process cannot be replayed.
+#
+# _EphemeralKey guarantees:
+#   * repr()/str() return '<EphemeralKey: redacted>'  — safe to log.
+#   * __reduce__ raises TypeError  — prevents accidental pickle.dump to disk.
+#   * .bytes is the only route to the raw bytes (explicit IPC forwarding only).
+
+
+class _EphemeralKey:
+    """Secret-key wrapper that is log-safe and not serialisable to disk."""
+
+    __slots__ = ("_b",)
+
+    def __init__(self, raw: bytes) -> None:
+        self._b = raw
+
+    @property
+    def bytes(self) -> bytes:
+        """Raw key bytes for HMAC operations and explicit IPC forwarding."""
+        return self._b
+
+    def __repr__(self) -> str:
+        return "<EphemeralKey: redacted>"
+
+    __str__ = __repr__
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError(
+            "_EphemeralKey must not be serialised to disk. "
+            "Pass .bytes explicitly for IPC."
+        )
+
+
+_RESULT_SEAL_KEY = _EphemeralKey(_secrets_mod.token_bytes(32))
+
 
 # ── Module-level free functions (must be picklable for ProcessPoolExecutor) ────
 
@@ -64,14 +113,22 @@ def _warmup_worker() -> None:
     This function runs *inside* the worker (thread or process).  It is a
     module-level free function so that ``ProcessPoolExecutor`` can pickle it
     as an import reference rather than a closure.
+
+    A private ``z3.Context()`` is created for this call so that concurrent
+    warmup submissions to a ``ThreadPoolExecutor`` never share Z3's global
+    context (which is not thread-safe).
     """
     import z3  # — intentional local import inside worker
 
-    s = z3.Solver()
-    s.set("timeout", 1_000)
-    s.add(z3.Real("__warmup_x") >= 0)
-    s.check()
-    del s
+    ctx = z3.Context()
+    try:
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 1_000)
+        s.add(z3.Real("__warmup_x", ctx) >= z3.RealVal(0, ctx))
+        s.check()
+        del s
+    finally:
+        del ctx
 
 
 def _worker_solve(
@@ -119,6 +176,70 @@ def _worker_solve(
         return Decision.error(
             reason=f"Unexpected worker error ({type(exc).__name__}): {exc}"
         ).to_dict()
+
+
+def _worker_solve_sealed(
+    policy_cls: type[Policy],
+    values: dict[str, Any],
+    timeout_ms: int,
+    seal_key: bytes,
+) -> dict[str, Any]:
+    """Run :func:`_worker_solve` and return an HMAC-SHA256-signed envelope.
+
+    The envelope layout is::
+
+        {"_p": <json-payload-string>, "_t": <hmac-sha256-hex-digest>}
+
+    where ``_p`` is the canonical ``sort_keys`` JSON serialisation of the inner
+    decision dict produced by :func:`_worker_solve`, and ``_t`` is its
+    HMAC-SHA256 tag using *seal_key*.
+
+    This function must be a module-level free function so that
+    :class:`~concurrent.futures.ProcessPoolExecutor` can pickle it by
+    fully-qualified import path.
+
+    Args:
+        policy_cls: The Policy *class* to verify (picklable by import path).
+        values:     Merged plain-dict of all field values.
+        timeout_ms: Z3 per-solver timeout in milliseconds.
+        seal_key:   HMAC key generated in the host process; forwarded here
+                    as a plain ``bytes`` argument (picklable).
+
+    Returns:
+        A sealed envelope dict.  The caller must use :func:`_unseal_decision`
+        to verify and unwrap before constructing a :class:`Decision`.
+    """
+    result = _worker_solve(policy_cls, values, timeout_ms)
+    payload = _json_mod.dumps(result, sort_keys=True, separators=(",", ":")).encode()
+    tag = _hmac_mod.new(seal_key, payload, hashlib.sha256).hexdigest()
+    return {"_p": payload.decode(), "_t": tag}
+
+
+def _unseal_decision(sealed: dict[str, Any]) -> dict[str, Any]:
+    """Verify the HMAC tag in *sealed* and return the inner decision dict.
+
+    Uses :func:`hmac.compare_digest` (constant-time comparison) to prevent
+    timing-side-channel attacks when comparing the expected and received tags.
+
+    Args:
+        sealed: The envelope dict produced by :func:`_worker_solve_sealed`.
+
+    Returns:
+        The inner plain decision dict (ready for :meth:`WorkerPool._dict_to_decision`).
+
+    Raises:
+        ValueError:  HMAC tag does not match — result was tampered or corrupted.
+        KeyError:    Envelope is malformed (missing ``_p`` or ``_t`` keys).
+    """
+    payload = sealed["_p"].encode()
+    expected = _hmac_mod.new(_RESULT_SEAL_KEY.bytes, payload, hashlib.sha256).hexdigest()
+    if not _hmac_mod.compare_digest(sealed["_t"], expected):
+        raise ValueError(
+            "Decision integrity seal violated: HMAC mismatch. "
+            "Worker result may have been tampered with."
+        )
+    result: dict[str, Any] = _json_mod.loads(payload)
+    return result
 
 
 def _drain_executor(executor: Executor, grace_s: float) -> None:
@@ -273,11 +394,30 @@ class WorkerPool:
         if not self._alive:
             return Decision.error(reason="WorkerPool is not running.")
         try:
-            future: Future[dict[str, Any]] = self._executor.submit(
-                _worker_solve, policy_cls, values, timeout_ms
-            )
-            result_dict = future.result()  # blocks until worker returns
-            decision = self._dict_to_decision(result_dict)
+            if self.mode == "async-process":
+                # Process mode: sign the result with an HMAC seal so the host
+                # can detect any IPC tampering before trusting the decision.
+                future: Future[dict[str, Any]] = self._executor.submit(
+                    _worker_solve_sealed, policy_cls, values, timeout_ms,
+                    _RESULT_SEAL_KEY.bytes,
+                )
+                sealed = future.result()
+                try:
+                    result_dict = _unseal_decision(sealed)
+                except (ValueError, KeyError) as exc:
+                    _log.error("WorkerPool: HMAC seal violation — %s", exc)
+                    decision = Decision.error(
+                        reason="Worker result integrity check failed — HMAC mismatch."
+                    )
+                else:
+                    decision = self._dict_to_decision(result_dict)
+            else:
+                # Thread mode: shared memory — no IPC, no seal needed.
+                future = self._executor.submit(
+                    _worker_solve, policy_cls, values, timeout_ms
+                )
+                result_dict = future.result()
+                decision = self._dict_to_decision(result_dict)
         except WorkerError:
             raise
         except Exception as exc:
