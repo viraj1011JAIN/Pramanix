@@ -38,6 +38,8 @@ __all__ = [
     "UnderDailyLimit",
     "UnderSingleTxLimit",
     "RiskScoreBelow",
+    "SecureBalance",
+    "MinimumReserve",
 ]
 
 
@@ -113,3 +115,50 @@ def RiskScoreBelow(risk_score: Field, threshold: Field) -> ConstraintExpr:
             "Risk score too high: risk_score ({risk_score}) >= threshold ({threshold})."
         )
     )
+
+
+def SecureBalance(
+    balance: Field, amount: Field, minimum_reserve: Field
+) -> ConstraintExpr:
+    """Enforce a post-transaction minimum-reserve floor.
+
+    Security-hardened replacement for :func:`NonNegativeBalance`.  Instead
+    of ``balance - amount >= 0``, this primitive checks
+    ``balance - amount >= minimum_reserve``, preventing full-drain attacks
+    and ensuring a non-trivial floor even for zero-reserve configurations.
+
+    Use this primitive in any policy that handles real monetary value.
+    Pair it with a policy ``Field`` for ``minimum_reserve`` (e.g. 0.01).
+
+    DSL: ``(E(balance) - E(amount) >= E(minimum_reserve))``
+
+    Args:
+        balance:         Field representing the current account balance.
+        amount:          Field representing the transfer/withdrawal amount.
+        minimum_reserve: Field for the minimum post-transaction balance floor.
+
+    Example::
+
+        minimum_reserve = Field("minimum_reserve", Decimal, "Real")
+
+        SecureBalance(cls.balance, cls.amount, cls.minimum_reserve)
+    """
+    return (
+        (E(balance) - E(amount) >= E(minimum_reserve))
+        .named("minimum_reserve_maintained")
+        .explain(
+            "Transfer blocked: post-transaction balance ({balance} - {amount}) "
+            "would fall below the minimum reserve ({minimum_reserve})."
+        )
+    )
+
+
+def MinimumReserve(
+    balance: Field, amount: Field, minimum_reserve: Field
+) -> ConstraintExpr:
+    """Alias for :func:`SecureBalance` — identical semantics.
+
+    Prefer :func:`SecureBalance` for new policies.  This alias is provided
+    for readability when the field is named ``minimum_reserve``.
+    """
+    return SecureBalance(balance, amount, minimum_reserve)
