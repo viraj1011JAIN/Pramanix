@@ -29,7 +29,7 @@ from pramanix.solver import solve
 
 _affected = Field("affected_instances", int, "Int")
 _total = Field("total_instances", int, "Int")
-_circuit_open = Field("circuit_open", bool, "Bool")
+_circuit_state = Field("circuit_state", str, "String")
 _approved = Field("deployment_approved", bool, "Bool")
 _approver_count = Field("approver_count", int, "Int")
 _replicas = Field("requested_replicas", int, "Int")
@@ -76,19 +76,25 @@ class TestBlastRadiusCheck:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CircuitBreakerState
-# SRE circuit breaker: circuit_open == False (CLOSED = healthy)
+# SRE circuit breaker: circuit_state != "OPEN"
+# Supports CLOSED / OPEN / HALF-OPEN three-state lifecycle
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_INV_CIRCUIT = [CircuitBreakerState(_circuit_open)]
+_INV_CIRCUIT = [CircuitBreakerState(_circuit_state)]
 
 
 class TestCircuitBreakerState:
     def test_sat_circuit_closed_healthy(self) -> None:
-        result = solve(_INV_CIRCUIT, {"circuit_open": False}, timeout_ms=5_000)
+        result = solve(_INV_CIRCUIT, {"circuit_state": "CLOSED"}, timeout_ms=5_000)
+        assert result.sat is True
+
+    def test_sat_circuit_half_open_probe(self) -> None:
+        """HALF-OPEN allows one probe request through — not blocked."""
+        result = solve(_INV_CIRCUIT, {"circuit_state": "HALF-OPEN"}, timeout_ms=5_000)
         assert result.sat is True
 
     def test_unsat_circuit_open_tripped(self) -> None:
-        result = solve(_INV_CIRCUIT, {"circuit_open": True}, timeout_ms=5_000)
+        result = solve(_INV_CIRCUIT, {"circuit_state": "OPEN"}, timeout_ms=5_000)
         assert result.sat is False
         assert any(v.label == "circuit_breaker_state" for v in result.violated)
 

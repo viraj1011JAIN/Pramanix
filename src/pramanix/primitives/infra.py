@@ -154,28 +154,37 @@ def BlastRadiusCheck(
     )
 
 
-def CircuitBreakerState(circuit_open: Field) -> ConstraintExpr:
+def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
     """Block execution when the downstream circuit breaker is open (tripped).
 
-    DSL: ``E(circuit_open) == False``
+    DSL: ``E(circuit_state) != "OPEN"``
 
-    Encoding: The field must be Bool-sorted.  ``True`` means the circuit is
-    OPEN (fault state — requests are short-circuited).  ``False`` means the
-    circuit is CLOSED (healthy — requests flow normally).
+    Encoding: The field must be String-sorted (``Field(..., str, "String")``).
+    Supported states follow the standard three-state circuit breaker pattern:
+
+    * ``"CLOSED"``    — healthy; requests flow normally.
+    * ``"OPEN"``      — tripped; requests are short-circuited immediately.
+    * ``"HALF-OPEN"`` — recovery probe; one request allowed through to test
+                        if the downstream has recovered.
+
+    This string-based encoding supports the full ``CLOSED / OPEN / HALF-OPEN``
+    lifecycle without separate Bool fields, and is safe to extend with custom
+    states (e.g. ``"FORCED-OPEN"`` for maintenance windows).
 
     SRE principle: Circuit breaker pattern (Fowler) — when an upstream service
     repeatedly fails, trip the breaker to fail fast and protect the downstream,
     rather than allowing cascading timeouts.
 
     Args:
-        circuit_open: Field (bool, Bool) — True when circuit is OPEN/tripped.
+        circuit_state: Field (str, String) — current circuit breaker state.
+            Must be one of ``"CLOSED"``, ``"OPEN"``, or ``"HALF-OPEN"``.
     """
     return (
-        (E(circuit_open) == False)  # noqa: E712 — Z3 DSL, not Python equality
+        (E(circuit_state) != "OPEN")
         .named("circuit_breaker_state")
         .explain(
-            "Request blocked: circuit breaker is OPEN (circuit_open={circuit_open}). "
-            "Downstream service is unhealthy — fail fast."
+            'Request blocked: circuit_state="{circuit_state}" — circuit breaker '
+            "is OPEN. Downstream service is unhealthy — fail fast."
         )
     )
 
