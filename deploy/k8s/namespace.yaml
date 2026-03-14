@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — Kubernetes Namespace
+#
+# All pramanix resources live in the dedicated `pramanix` namespace.
+# Creating a dedicated namespace provides:
+#   - Resource isolation (quotas, LimitRanges can be applied per-namespace)
+#   - RBAC scope reduction (ServiceAccounts scoped to this namespace only)
+#   - NetworkPolicy scope (policies apply to pods in this namespace)
+#   - Clean separation from other workloads in the cluster
+#
+# apply:   kubectl apply -f deploy/k8s/namespace.yaml
+# verify:  kubectl get namespace pramanix
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/managed-by: kubectl
+    # Label required for NetworkPolicy namespaceSelector rules
+    kubernetes.io/metadata.name: pramanix

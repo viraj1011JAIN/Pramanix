@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — Kubernetes Service
+#
+# ClusterIP service exposing port 8000 to other pods within the cluster.
+# External traffic must go through an Ingress controller or LoadBalancer.
+#
+# The service name `pramanix` is used as the DNS entry for in-cluster calls:
+#   http://pramanix.pramanix.svc.cluster.local:8000
+#
+# apply:   kubectl apply -f deploy/k8s/service.yaml
+# verify:  kubectl describe service pramanix -n pramanix
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pramanix
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/component: guardrail-engine
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pramanix
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8000
+      targetPort: http

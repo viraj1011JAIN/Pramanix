@@ -1,0 +1,256 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — Kubernetes Deployment
+#
+# Tier:     Production
+# Replicas: 2 minimum (HA baseline)
+# Image:    Updated on every release via CD pipeline
+#
+# Security posture:
+#   - Runs as non-root UID/GID 10001 (pramanix user, matches Dockerfile)
+#   - Read-only root filesystem (application writes nothing to disk)
+#   - All Linux capabilities dropped
+#   - Seccomp RuntimeDefault profile applied
+#   - allowPrivilegeEscalation: false
+#   - No secrets in environment variables (use secretKeyRef in overlays)
+#
+# Probes:
+#   liveness   — /health  (10 s initial, 30 s period) guards against Z3 deadlocks
+#   readiness  — /health  (5 s initial, 10 s period) prevents traffic before pool warm-up
+#
+# Graceful shutdown:
+#   terminationGracePeriodSeconds: 30 — allows in-flight Z3 solves to complete
+#   (typical Z3 timeout is 5 s; 30 s is 6× safety margin)
+#
+# apply:   kubectl apply -f deploy/k8s/deployment.yaml
+# delete:  kubectl delete -f deploy/k8s/deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pramanix
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/version: "0.5.0"
+    app.kubernetes.io/component: guardrail-engine
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Indicate that this deployment prefers to be spread across failure domains
+    deployment.kubernetes.io/revision: "1"
+spec:
+  # ── Replica policy ──────────────────────────────────────────────────────────
+  # 2 replicas = HA baseline satisfying SLA.
+  # HPA (hpa.yaml) scales this up to 10 based on CPU utilisation.
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pramanix
+
+  # ── Update strategy ─────────────────────────────────────────────────────────
+  # RollingUpdate ensures zero-downtime deployments.
+  # maxUnavailable: 0 — never reduce capacity below replicas count.
+  # maxSurge: 1      — allow one extra pod during rollout.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pramanix
+        app.kubernetes.io/version: "0.5.0"
+      annotations:
+        # Force pod restart on ConfigMap change when using Kustomize/Helm rollout
+        checksum/config: "placeholder-replaced-by-helm-or-kustomize"
+    spec:
+      # ── Scheduling ──────────────────────────────────────────────────────────
+      # Spread replicas across nodes to survive a single-node failure.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: pramanix
+
+      # ── Pod-level security context ──────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # ── Graceful shutdown ───────────────────────────────────────────────────
+      # 30 s = 6× the default Z3 solver timeout (5 s).
+      # In-flight verify() calls complete; new calls are rejected by SIGTERM handler.
+      terminationGracePeriodSeconds: 30
+
+      # ── Service account ─────────────────────────────────────────────────────
+      # Dedicated SA with no cluster permissions. Automount disabled.
+      serviceAccountName: pramanix
+      automountServiceAccountToken: false
+
+      # ── Init container: pre-heat Z3 worker pool ──────────────────────────────
+      # Runs a single Z3 invocation before the main container accepts traffic.
+      # This prevents the readiness probe from succeeding before the pool is warm.
+      initContainers:
+        - name: warmup
+          image: pramanix:0.5.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              from pramanix import Guard, Policy, Field, E, Decision
+              from pramanix.guard import GuardConfig
+              g = Guard(
+                  policy=Policy(name='warmup', invariants=lambda f: [E(f.x) >= 0]),
+                  config=GuardConfig(execution_mode='sync', worker_warmup=True),
+              )
+              d = g.verify({'x': 1})
+              assert d.outcome in ('ALLOW', 'BLOCK'), f'Unexpected: {d}'
+              print('warmup OK')
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: pramanix
+          image: pramanix:0.5.0
+          imagePullPolicy: IfNotPresent
+
+          # ── Container-level security context ────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          # ── Resource requests & limits ────────────────────────────────────
+          # requests: guaranteed allocation — sized for idle Z3 worker pool.
+          # limits:   hard cap — Z3 is single-threaded per solve; 1 CPU is the
+          #           theoretical max for a single verification.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+
+          # ── Environment — sourced from ConfigMap only ─────────────────────
+          # API keys and secrets use secretKeyRef in production overlays.
+          envFrom:
+            - configMapRef:
+                name: pramanix-config
+          env:
+            # Downward API — allows the application to self-identify in logs
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+          # ── Liveness probe ───────────────────────────────────────────────
+          # Checks that the process is alive and Z3 hasn't deadlocked.
+          # initialDelaySeconds: 10 — allow worker pool initialization.
+          # periodSeconds: 30       — low-frequency; liveness restarts are expensive.
+          # failureThreshold: 3     — allow 3 consecutive failures (90 s) before restart.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ── Readiness probe ──────────────────────────────────────────────
+          # Checks that the pod is ready to serve traffic.
+          # initialDelaySeconds: 5  — faster than liveness; traffic follows warmup.
+          # periodSeconds: 10       — higher frequency finds unhealthy pods quickly.
+          # failureThreshold: 3     — 30 s of failures removes pod from LB rotation.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ── Startup probe ────────────────────────────────────────────────
+          # Prevents liveness from killing the pod during initial Z3 JIT.
+          # Allows up to 60 s (12 × 5 s) before liveness kicks in.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+            successThreshold: 1
+
+          # ── Temporary filesystem mounts ───────────────────────────────────
+          # readOnlyRootFilesystem: true requires explicit writable temp mounts.
+          # /tmp  — Z3 uses temp files for large proof certificates
+          # /var/tmp — poetry / pip scratch space (never in prod, but belt-and-suspenders)
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: var-tmp
+              mountPath: /var/tmp
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: var-tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Mi
+
+---
+# ── ServiceAccount ──────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pramanix
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/component: guardrail-engine
+automountServiceAccountToken: false

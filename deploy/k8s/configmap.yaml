@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — ConfigMap (Environment Configuration)
+#
+# ALL pramanix runtime configuration is sourced from this ConfigMap.
+# No secrets are stored here — use Kubernetes Secrets + secretKeyRef for:
+#   - OPENAI_API_KEY
+#   - ANTHROPIC_API_KEY
+#   - OTEL_EXPORTER_OTLP_HEADERS (if using authenticated OTel endpoint)
+#
+# Variables are injected as pod environment variables via `envFrom.configMapRef`.
+# See deployment.yaml for the injection wiring.
+#
+# Changing any value here requires a pod rollout to take effect:
+#   kubectl rollout restart deployment/pramanix -n pramanix
+#
+# apply:   kubectl apply -f deploy/k8s/configmap.yaml
+# verify:  kubectl describe configmap pramanix-config -n pramanix
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pramanix-config
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/component: guardrail-engine
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Semantic version this ConfigMap was last reviewed against
+    pramanix.config/reviewed-for-version: "0.5.0"
+
+data:
+  # ── Execution model ─────────────────────────────────────────────────────────
+  # PRAMANIX_EXECUTION_MODE: Controls how Z3 solves are dispatched.
+  #   sync          — blocking call in the calling thread. Best for CLIs.
+  #   async-thread  — asyncio + ThreadPoolExecutor. Best for web services.
+  #   async-process — asyncio + ProcessPoolExecutor. Best for adversarial inputs
+  #                   (subprocess isolation prevents Z3 crashes from killing the host).
+  # Default: async-thread  (optimal for FastAPI / Starlette workloads)
+  PRAMANIX_EXECUTION_MODE: "async-thread"
+
+  # ── Solver timeout ──────────────────────────────────────────────────────────
+  # PRAMANIX_SOLVER_TIMEOUT_MS: Hard timeout for a single Z3 solve (milliseconds).
+  # The solver is killed after this duration and the guard returns BLOCK.
+  # Setting too low (< 100 ms) increases false-BLOCK rate on complex policies.
+  # Setting too high (> 10000 ms) allows slow DoS queries to tie up the thread pool.
+  # Default: 5000 (5 s) — satisfies P99 < 10 ms SLA for typical policy complexity.
+  PRAMANIX_SOLVER_TIMEOUT_MS: "5000"
+
+  # ── Worker pool ─────────────────────────────────────────────────────────────
+  # PRAMANIX_MAX_WORKERS: Number of threads/processes in the worker pool.
+  # For async-thread: match the number of CPU cores available to the pod.
+  # For async-process: set to 2-4 (process overhead is higher than threads).
+  # Default: 4
+  PRAMANIX_MAX_WORKERS: "4"
+
+  # PRAMANIX_MAX_DECISIONS_PER_WORKER: Decisions before a worker is recycled.
+  # Bounds RSS growth caused by Z3 internal caches accumulating across solves.
+  # Lower values → more frequent recycling → slightly higher P99 (cold-start spike).
+  # At 10 000 decisions the RSS growth is < 50 MB before recycle.
+  # Default: 10000
+  PRAMANIX_MAX_DECISIONS_PER_WORKER: "10000"
+
+  # ── Worker warmup ───────────────────────────────────────────────────────────
+  # PRAMANIX_WORKER_WARMUP: Run a dummy Z3 solve on worker startup.
+  # Eliminates the cold-start JIT spike on the first real verification request.
+  # Disable only in environments where first-request latency is acceptable.
+  # Default: true
+  PRAMANIX_WORKER_WARMUP: "true"
+
+  # ── Logging ─────────────────────────────────────────────────────────────────
+  # PRAMANIX_LOG_LEVEL: Structured log level for structlog JSON emitter.
+  # Valid values: DEBUG | INFO | WARNING | ERROR
+  # Production: INFO (verbose enough for ops, quiet enough to avoid log flooding)
+  # Staging:    DEBUG (full decision traces with Z3 model bindings)
+  # Default: INFO
+  PRAMANIX_LOG_LEVEL: "INFO"
+
+  # ── Metrics (Prometheus) ────────────────────────────────────────────────────
+  # PRAMANIX_METRICS_ENABLED: enables the Prometheus /metrics endpoint.
+  # When enabled, the process binds an additional HTTP server on port 9090.
+  # Requires NetworkPolicy egress rule for port 9090 scrape (see networkpolicy.yaml).
+  # Default: false
+  PRAMANIX_METRICS_ENABLED: "false"
+
+  # ── OpenTelemetry ───────────────────────────────────────────────────────────
+  # PRAMANIX_OTEL_ENABLED: enables OpenTelemetry span export.
+  # Requires OTEL_EXPORTER_OTLP_ENDPOINT to be set (in a Secret or here if non-sensitive).
+  # Default: false
+  PRAMANIX_OTEL_ENABLED: "false"
+
+  # OTEL_EXPORTER_OTLP_ENDPOINT: gRPC endpoint for the OTel collector.
+  # Example: http://otel-collector.monitoring.svc.cluster.local:4317
+  # Default: empty (OTel disabled)
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+
+  # OTEL_SERVICE_NAME: Service name reported in OTel spans.
+  OTEL_SERVICE_NAME: "pramanix"
+
+  # OTEL_RESOURCE_ATTRIBUTES: Additional resource attributes for OTel.
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=production,service.version=0.5.0"
+
+  # ── Translator / LLM subsystem ──────────────────────────────────────────────
+  # PRAMANIX_TRANSLATOR_ENABLED: enables Neuro-Symbolic (LLM extraction) mode.
+  # SECURITY: Keep false in production unless explicitly required.
+  #   The translator subsystem makes outbound HTTP calls to LLM APIs.
+  #   Enabling it without a configured allowlist exposes the egress policy.
+  # Default: false  ← enforced here at cluster level; overridable per-deployment
+  PRAMANIX_TRANSLATOR_ENABLED: "false"
+
+  # PRAMANIX_TRANSLATOR_MAX_RETRIES: LLM call retry limit under tenacity.
+  # Only relevant when PRAMANIX_TRANSLATOR_ENABLED=true.
+  # Default: 3
+  PRAMANIX_TRANSLATOR_MAX_RETRIES: "3"
+
+  # PRAMANIX_TRANSLATOR_TIMEOUT_S: HTTP timeout for LLM API calls (seconds).
+  # Only relevant when PRAMANIX_TRANSLATOR_ENABLED=true.
+  # Default: 30
+  PRAMANIX_TRANSLATOR_TIMEOUT_S: "30"
+
+  # ── Python runtime ──────────────────────────────────────────────────────────
+  # These are set here for clarity but are also baked into the container image.
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"

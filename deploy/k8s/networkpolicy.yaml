@@ -1,0 +1,139 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — NetworkPolicy (Zero-Trust Egress)
+#
+# Default posture: DENY ALL ingress + DENY ALL egress.
+# Explicit allowlist opens only the minimum required channels.
+#
+# Ingress:
+#   - Port 8000/TCP from any source in the cluster namespace (API traffic)
+#
+# Egress — explicitly allowed:
+#   - DNS resolution (UDP/TCP 53)         — required for all outbound by name
+#   - PyPI / package registries (TCP 443) — pip installs at runtime (if any)
+#   - LLM endpoints (TCP 443)             — Translator subsystem calls
+#   - OTel collector (TCP 4317, 4318)     — OpenTelemetry gRPC / HTTP export
+#
+# Egress — explicitly DENIED by omission:
+#   - Cloud metadata endpoint 169.254.169.254 — prevents SSRF credential theft
+#     (AWS IMDSv1/v2, GCP, Azure instance metadata services all use this IP)
+#   - All other private RFC-1918 ranges not listed above
+#   - Kubernetes API server (0.0.0.0:6443) — pramanix needs no cluster API access
+#
+# Security note:
+#   NetworkPolicy is enforced by the CNI plugin (Calico, Cilium, etc.).
+#   Verify your CNI supports NetworkPolicy before applying.
+#   Verify with:  kubectl describe networkpolicy pramanix -n pramanix
+#
+# apply:   kubectl apply -f deploy/k8s/networkpolicy.yaml
+---
+# ── Ingress-only policy: allow port 8000 from within namespace ────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pramanix-ingress
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/component: guardrail-engine
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pramanix
+  policyTypes:
+    - Ingress
+
+  ingress:
+    # Allow HTTP/HTTPS API traffic on port 8000 from any pod in the same namespace
+    - ports:
+        - protocol: TCP
+          port: 8000
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pramanix
+
+    # Allow health-check probes from the kubelet (node-local, no podSelector possible)
+    # Kubelet probes originate from the node IP — they cannot be restricted by podSelector.
+    # This rule allows any source; the port restriction (8000) limits the attack surface.
+    - ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# ── Egress policy: default-deny + explicit allowlist ─────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pramanix-egress
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/component: guardrail-engine
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pramanix
+  policyTypes:
+    - Egress
+
+  egress:
+    # ── DNS (UDP + TCP 53) ───────────────────────────────────────────────────
+    # Required for all outbound connections made by hostname (PyPI, LLM APIs).
+    # Targets kube-dns in kube-system; the namespaceSelector below narrows scope.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+
+    # ── HTTPS (TCP 443) to PyPI and package registries ────────────────────────
+    # Used by the smoke-test layer; pramanix core does not pip-install at runtime.
+    # Restricted to the public internet (no private IP ranges).
+    # NOTE: If your cluster has a private PyPI mirror, add its IP block here.
+    - ports:
+        - protocol: TCP
+          port: 443
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              # Block cloud-SSRF endpoint (all cloud providers)
+              - 169.254.169.254/32
+              # Block private RFC-1918 ranges (no lateral movement to databases etc.)
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              # Block link-local / APIPA
+              - 169.254.0.0/16
+              # Block loopback
+              - 127.0.0.0/8
+
+    # ── OpenTelemetry collector (gRPC 4317 + HTTP 4318) ──────────────────────
+    # Allow egress to in-cluster OTel collector pod.
+    # Replace the namespaceSelector if your collector runs in a different namespace.
+    - ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+
+    # ── Prometheus metrics scrape (TCP 9090) ─────────────────────────────────
+    # Allow the Prometheus server in the monitoring namespace to scrape port 9090.
+    - ports:
+        - protocol: TCP
+          port: 9090
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring

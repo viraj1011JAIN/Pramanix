@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — HorizontalPodAutoscaler
+#
+# Scaling policy:
+#   Target CPU utilisation: 70 % (leaves 30 % headroom for Z3 burst solves)
+#   minReplicas: 2   — never drop below HA baseline
+#   maxReplicas: 10  — bounded to prevent runaway spin-up costs
+#
+# Scale-down stabilisation (300 s):
+#   Z3 worker pools take ~200 ms to warm up after recycle.  Rapid scale-down
+#   followed by immediate scale-up "thrashes" the worker pool, causing
+#   cold-start P99 spikes.  The 300 s window prevents this by smoothing
+#   brief CPU troughs (e.g., after a batch of fast ALLOW decisions).
+#
+# Scale-up policy:
+#   Pods: +4 pods max per 60 s — aggressive but bounded.
+#   percent: +100 % max per 60 s — allows rapid doubling for burst traffic.
+#
+# Prerequisites:
+#   metrics-server must be installed in the cluster.
+#   kubectl top nodes  (verify metrics-server is active before applying)
+#
+# apply:   kubectl apply -f deploy/k8s/hpa.yaml
+# status:  kubectl describe hpa pramanix -n pramanix
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pramanix
+  namespace: pramanix
+  labels:
+    app.kubernetes.io/name: pramanix
+    app.kubernetes.io/component: guardrail-engine
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pramanix
+
+  # ── Replica bounds ─────────────────────────────────────────────────────────
+  minReplicas: 2
+  maxReplicas: 10
+
+  # ── Scaling metrics ────────────────────────────────────────────────────────
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Fire scale-up when average CPU across all pods exceeds 70 %.
+          # Z3 solves are CPU-bound; CPU is the correct primary signal.
+          averageUtilization: 70
+
+    # Secondary: memory utilisation guard — Z3 RSS can grow under long-running
+    # sessions; scale up early to prevent OOM kills at the limit (512Mi).
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: AverageValue
+          # Alert at 384 Mi (75 % of the 512 Mi limit)
+          averageValue: 384Mi
+
+  # ── Scaling behavior ───────────────────────────────────────────────────────
+  behavior:
+    scaleUp:
+      # Aggressive scale-up: respond to CPU spikes within 60 s.
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 4
+          periodSeconds: 60
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+      selectPolicy: Max
+
+    scaleDown:
+      # Conservative scale-down: 300 s stabilisation window.
+      # Rationale: prevents Z3 worker pool thrash on brief CPU troughs.
+      # A trough lasting < 5 min is considered transient; do not evict pods.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 120
+      selectPolicy: Min
