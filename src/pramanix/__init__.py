@@ -7,7 +7,7 @@ Public API contract — these are the ONLY names that are considered stable.
 All other internal modules may change without notice.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
@@ -15,13 +15,18 @@ from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
 from pramanix.exceptions import (
     ConfigurationError,
+    ExtractionFailureError,
+    ExtractionMismatchError,
     FieldTypeError,
     GuardError,
     GuardViolationError,
+    InjectionBlockedError,
     InvariantLabelError,
+    LLMTimeoutError,
     PolicyCompilationError,
     PolicyError,
     PramanixError,
+    SemanticPolicyViolation,
     SolverError,
     SolverTimeoutError,
     StateValidationError,
@@ -32,6 +37,7 @@ from pramanix.exceptions import (
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
+from pramanix.resolvers import ResolverRegistry
 
 __all__ = [
     # Core result
@@ -48,7 +54,10 @@ __all__ = [
     "GuardConfig",
     # Decorator
     "guard",
-    # Exceptions
+    # Resolver cache (data-bleed guard) — singleton excluded intentionally:
+    # interact with the registry through Guard configuration, not directly.
+    "ResolverRegistry",
+    # Exceptions — core
     "PramanixError",
     "PolicyError",
     "PolicyCompilationError",
@@ -63,4 +72,11 @@ __all__ = [
     "WorkerError",
     "GuardViolationError",
     "ConfigurationError",
+    # Exceptions — translator (Phase 4)
+    "ExtractionFailureError",
+    "ExtractionMismatchError",
+    "LLMTimeoutError",
+    # Exceptions — hardening (Phase 4)
+    "SemanticPolicyViolation",
+    "InjectionBlockedError",
 ]

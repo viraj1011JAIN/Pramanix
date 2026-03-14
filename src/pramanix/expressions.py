@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable  # noqa: TCH003
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple, Optional
+from typing import Any, Literal, NamedTuple
 
 from pramanix.exceptions import PolicyCompilationError
 
@@ -326,8 +326,8 @@ class ConstraintExpr:
     def __init__(
         self,
         node: Any,
-        label: Optional[str] = None,
-        explanation: Optional[str] = None,
+        label: str | None = None,
+        explanation: str | None = None,
     ) -> None:
         self.node = node
         self.label = label
