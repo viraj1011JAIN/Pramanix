@@ -4,11 +4,13 @@
   <br />
   <em>Deterministic Neuro-Symbolic Guardrails for Autonomous AI Agents</em>
   <br /><br />
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12-blue?logo=python&logoColor=white" alt="Python 3.11 | 3.12"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-green" alt="License: AGPL-3.0"></a>
-  <a href="https://github.com/viraj1011JAIN/Pramanix/actions"><img src="https://img.shields.io/badge/build-passing-brightgreen?logo=githubactions&logoColor=white" alt="CI"></a>
-  <a href="https://pypi.org/project/pramanix/"><img src="https://img.shields.io/badge/pypi-v0.1.0-orange?logo=pypi&logoColor=white" alt="PyPI"></a>
-  <a href="https://pepy.tech/project/pramanix"><img src="https://img.shields.io/badge/downloads-0-lightgrey" alt="Downloads"></a>
+  <a href="https://github.com/viraj1011JAIN/Pramanix/actions/workflows/ci.yml"><img src="https://github.com/viraj1011JAIN/Pramanix/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://codecov.io/gh/viraj1011JAIN/Pramanix"><img src="https://codecov.io/gh/viraj1011JAIN/Pramanix/branch/main/graph/badge.svg" alt="Coverage"></a>
+  <a href="https://pypi.org/project/pramanix/"><img src="https://img.shields.io/pypi/v/pramanix?logo=pypi&logoColor=white&color=orange" alt="PyPI"></a>
+  <a href="https://pypi.org/project/pramanix/"><img src="https://img.shields.io/pypi/dm/pramanix?logo=pypi&logoColor=white" alt="Downloads"></a>
+  <a href="https://slsa.dev/"><img src="https://slsa.dev/images/gh-badge-level3.svg" alt="SLSA Level 3"></a>
   <br /><br />
 </p>
 

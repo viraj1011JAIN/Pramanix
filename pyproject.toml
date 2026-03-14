@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "pramanix"
-version = "0.1.0"
+version = "0.5.0"
 description = "Deterministic neuro-symbolic guardrails for autonomous AI agents"
 authors = ["Viraj Jain <viraj@pramanix.dev>"]
 license = "AGPL-3.0-only"
@@ -14,13 +14,12 @@ repository = "https://github.com/viraj1011JAIN/Pramanix"
 documentation = "https://github.com/viraj1011JAIN/Pramanix#readme"
 keywords = ["ai-safety", "guardrails", "smt", "z3", "formal-verification", "neuro-symbolic"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Security",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "License :: OSI Approved :: GNU Affero General Public License v3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -30,28 +29,30 @@ classifiers = [
 packages = [{include = "pramanix", from = "src"}]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.14"
+python = ">=3.11,<3.14"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"
 prometheus-client = "^0.19"
 httpx = {version = "^0.27", optional = true}
 openai = {version = "^1.10", optional = true}
+anthropic = {version = "^0.25", optional = true}
+tenacity = {version = "^8.2", optional = true}
 opentelemetry-sdk = {version = "^1.20", optional = true}
 opentelemetry-exporter-otlp-proto-grpc = {version = "^1.20", optional = true}
 
 [tool.poetry.extras]
-translator = ["httpx", "openai"]
+translator = ["httpx", "openai", "anthropic", "tenacity"]
 otel = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
-all = ["httpx", "openai", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
+all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.4"
+pytest = "^8.3"
 pytest-asyncio = "^0.23"
-pytest-cov = "^4.1"
-hypothesis = "^6.92"
-mypy = "^1.7"
-ruff = "^0.1"
+pytest-cov = "^5.0"
+hypothesis = "^6.100"
+mypy = "^1.11"
+ruff = "^0.5"
 
 # Optional dev extras for integration testing
 # httpx = {version = "^0.27", optional = true}
@@ -59,7 +60,7 @@ ruff = "^0.1"
 
 [tool.mypy]
 strict = true
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -83,9 +84,24 @@ module = [
 ]
 ignore_missing_imports = true
 
+# Optional translator extras — not installed in type-check CI env.
+# Each import is guarded by a try/except ImportError at runtime.
+[[tool.mypy.overrides]]
+module = [
+    "openai",
+    "openai.*",
+    "anthropic",
+    "anthropic.*",
+    "httpx",
+    "httpx.*",
+    "tenacity",
+    "tenacity.*",
+]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -104,7 +120,6 @@ select = [
 ]
 ignore = [
     "E501",    # line length — handled by formatter
-    "UP007",   # use X | Y for union types — keep Optional for 3.10 compat
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -114,6 +129,22 @@ ignore = [
 # Tests also use ConstraintExpr at runtime (not just type-checking) via invariants() return type.
 "tests/integration/*.py" = ["T20", "TCH"]
 "tests/unit/*.py" = ["TCH"]
+# Adversarial test vectors use OWASP-style uppercase labels (A-X) to match the
+# checklist specification. N802 suppressed — renaming would break traceability.
+"tests/adversarial/test_field_overflow.py" = ["N802"]
+"tests/adversarial/test_id_injection.py" = ["N802"]
+# test_prompt_injection.py: N802 same as above. RUF001/003: the fullwidth digits
+# (５, ０) in test_F_unicode_fullwidth_digits_in_string are intentional test
+# vectors verifying that sanitise_user_input() normalises them correctly.
+"tests/adversarial/test_prompt_injection.py" = ["N802", "RUF001", "RUF003"]
+# exceptions.py: SemanticPolicyViolation is an API-stable public name exported
+# in __all__ since v0.1. Renaming to SemanticPolicyViolationError would be a
+# breaking API change. N818 suppressed with justification.
+"src/pramanix/exceptions.py" = ["N818"]
+# _sanitise.py: the docstring examples showing NFKC normalisation deliberately
+# contain fullwidth chars (Ａ, ５) to illustrate the before/after transform.
+# These are documentation-only and do not affect runtime behaviour.
+"src/pramanix/translator/_sanitise.py" = ["RUF002"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pramanix"]
