@@ -56,8 +56,7 @@ def NonNegativeBalance(balance: Field, amount: Field) -> ConstraintExpr:
         (E(balance) - E(amount) >= 0)
         .named("non_negative_balance")
         .explain(
-            "Insufficient funds: balance ({balance}) minus amount ({amount}) "
-            "would be negative."
+            "Insufficient funds: balance ({balance}) minus amount ({amount}) " "would be negative."
         )
     )
 
@@ -74,9 +73,7 @@ def UnderDailyLimit(amount: Field, daily_limit: Field) -> ConstraintExpr:
     return (
         (E(amount) <= E(daily_limit))
         .named("under_daily_limit")
-        .explain(
-            "Daily limit exceeded: amount ({amount}) exceeds daily_limit ({daily_limit})."
-        )
+        .explain("Daily limit exceeded: amount ({amount}) exceeds daily_limit ({daily_limit}).")
     )
 
 
@@ -93,8 +90,7 @@ def UnderSingleTxLimit(amount: Field, tx_limit: Field) -> ConstraintExpr:
         (E(amount) <= E(tx_limit))
         .named("under_single_tx_limit")
         .explain(
-            "Single-transaction limit exceeded: amount ({amount}) "
-            "exceeds tx_limit ({tx_limit})."
+            "Single-transaction limit exceeded: amount ({amount}) " "exceeds tx_limit ({tx_limit})."
         )
     )
 
@@ -111,15 +107,11 @@ def RiskScoreBelow(risk_score: Field, threshold: Field) -> ConstraintExpr:
     return (
         (E(risk_score) < E(threshold))
         .named("risk_score_below_threshold")
-        .explain(
-            "Risk score too high: risk_score ({risk_score}) >= threshold ({threshold})."
-        )
+        .explain("Risk score too high: risk_score ({risk_score}) >= threshold ({threshold}).")
     )
 
 
-def SecureBalance(
-    balance: Field, amount: Field, minimum_reserve: Field
-) -> ConstraintExpr:
+def SecureBalance(balance: Field, amount: Field, minimum_reserve: Field) -> ConstraintExpr:
     """Enforce a post-transaction minimum-reserve floor.
 
     Security-hardened replacement for :func:`NonNegativeBalance`.  Instead
@@ -153,9 +145,7 @@ def SecureBalance(
     )
 
 
-def MinimumReserve(
-    balance: Field, amount: Field, minimum_reserve: Field
-) -> ConstraintExpr:
+def MinimumReserve(balance: Field, amount: Field, minimum_reserve: Field) -> ConstraintExpr:
     """Alias for :func:`SecureBalance` — identical semantics.
 
     Prefer :func:`SecureBalance` for new policies.  This alias is provided

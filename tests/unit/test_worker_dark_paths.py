@@ -18,7 +18,6 @@ Coverage targets
 from __future__ import annotations
 
 import threading
-import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
@@ -26,10 +25,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pramanix import E, Field, Policy
-from pramanix.decision import Decision
 from pramanix.exceptions import SolverTimeoutError, WorkerError
 from pramanix.worker import WorkerPool, _drain_executor, _force_kill_processes
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Minimal policy
@@ -204,11 +201,10 @@ class TestWorkerPoolLifecycle:
             max_decisions_per_worker=1000,
             warmup=False,
         )
-        with patch.object(
-            pool, "_make_executor", side_effect=OSError("disk full")
+        with patch.object(pool, "_make_executor", side_effect=OSError("disk full")), pytest.raises(
+            WorkerError, match="disk full"
         ):
-            with pytest.raises(WorkerError, match="disk full"):
-                pool.spawn()
+            pool.spawn()
 
     def test_spawn_is_idempotent_when_alive(self) -> None:
         pool = WorkerPool(
@@ -219,9 +215,7 @@ class TestWorkerPoolLifecycle:
         )
         pool.spawn()
         # Second spawn should be a no-op — _make_executor called once only
-        with patch.object(
-            pool, "_make_executor"
-        ) as mock_make:
+        with patch.object(pool, "_make_executor") as mock_make:
             pool.spawn()
         mock_make.assert_not_called()
         pool.shutdown()
@@ -234,9 +228,7 @@ class TestWorkerPoolLifecycle:
             warmup=False,
         )
         pool.spawn()
-        pool._executor.shutdown = MagicMock(
-            side_effect=RuntimeError("shutdown error")
-        )
+        pool._executor.shutdown = MagicMock(side_effect=RuntimeError("shutdown error"))
         with patch("pramanix.worker._log") as mock_log:
             pool.shutdown()
         assert mock_log.error.called
@@ -282,9 +274,7 @@ class TestWorkerPoolSubmitSolve:
         pool._executor.submit.side_effect = RuntimeError("executor dead")
 
         with patch("pramanix.worker._log"):
-            result = pool.submit_solve(
-                _P, {"amount": Decimal("50")}, 5000
-            )
+            result = pool.submit_solve(_P, {"amount": Decimal("50")}, 5000)
 
         assert not result.allowed
         assert result.explanation is not None
@@ -298,9 +288,7 @@ class TestWorkerPoolSubmitSolve:
             warmup=False,
         )
         pool.spawn()
-        result = pool.submit_solve(
-            _P, {"amount": Decimal("50")}, 5000
-        )
+        result = pool.submit_solve(_P, {"amount": Decimal("50")}, 5000)
         assert result.allowed
         # After recycling, pool should still be alive
         assert pool._alive
@@ -406,13 +394,12 @@ class TestWorkerPoolRecycle:
         original_executor = pool._executor
         pool._counter = 1  # trigger recycle on next check
 
-        with patch("pramanix.worker._log") as mock_log:
-            with patch.object(
-                pool,
-                "_make_executor",
-                side_effect=OSError("can't create"),
-            ):
-                pool._recycle()
+        with patch("pramanix.worker._log") as mock_log, patch.object(
+            pool,
+            "_make_executor",
+            side_effect=OSError("can't create"),
+        ):
+            pool._recycle()
 
         # Old executor should be restored
         assert pool._executor is original_executor

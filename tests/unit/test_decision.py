@@ -35,10 +35,10 @@ except ImportError:
 
 
 class TestSolverStatus:
-    """SolverStatus must be a str-subclass enum with six well-defined members."""
+    """SolverStatus must be a str-subclass enum with eight well-defined members."""
 
     def test_member_count(self) -> None:
-        assert len(SolverStatus) == 6
+        assert len(SolverStatus) == 8
 
     @pytest.mark.parametrize(
         ("member", "expected_value"),
@@ -73,8 +73,17 @@ class TestSolverStatus:
         assert SolverStatus("unsafe") is SolverStatus.UNSAFE
 
     def test_all_members_accessible(self) -> None:
-        """Access by name should work for all six members."""
-        names = {"SAFE", "UNSAFE", "TIMEOUT", "ERROR", "STALE_STATE", "VALIDATION_FAILURE"}
+        """Access by name should work for all eight members."""
+        names = {
+            "SAFE",
+            "UNSAFE",
+            "TIMEOUT",
+            "ERROR",
+            "STALE_STATE",
+            "VALIDATION_FAILURE",
+            "RATE_LIMITED",
+            "CACHE_HIT",
+        }
         assert {m.name for m in SolverStatus} == names
 
 
@@ -424,7 +433,15 @@ class TestImmutability:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _EXPECTED_KEYS = frozenset(
-    {"decision_id", "allowed", "status", "violated_invariants", "explanation", "solver_time_ms", "metadata"}
+    {
+        "decision_id",
+        "allowed",
+        "status",
+        "violated_invariants",
+        "explanation",
+        "solver_time_ms",
+        "metadata",
+    }
 )
 
 
@@ -489,9 +506,7 @@ class TestToDict:
             Decision.validation_failure(reason="bad field"),
         ],
     )
-    def test_all_factories_produce_json_serialisable_dicts(
-        self, factory_result: Decision
-    ) -> None:
+    def test_all_factories_produce_json_serialisable_dicts(self, factory_result: Decision) -> None:
         d = factory_result.to_dict()
         json.dumps(d)  # Must not raise
 

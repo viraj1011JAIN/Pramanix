@@ -117,6 +117,4 @@ def validate_state(
     try:
         return state_model.model_validate(raw_data, strict=True)
     except _PydanticValidationError as exc:
-        raise ValidationError(
-            f"State validation failed for {state_model.__name__}: {exc}"
-        ) from exc
+        raise ValidationError(f"State validation failed for {state_model.__name__}: {exc}") from exc

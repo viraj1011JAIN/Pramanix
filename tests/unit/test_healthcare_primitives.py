@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from pramanix.expressions import Field
 from pramanix.primitives.healthcare import (
     BreakGlassAuth,
@@ -257,7 +255,7 @@ _INV_PEDS = [PediatricDoseBound(_dose_per_kg, _weight_kg, _ABSOLUTE_MAX)]
 
 class TestPediatricDoseBound:
     def test_sat_low_dose_light_child(self) -> None:
-        # 5 mg/kg × 20 kg = 100 mg ≤ 500 mg
+        # 5 mg/kg x 20 kg = 100 mg ≤ 500 mg
         result = solve(
             _INV_PEDS,
             {"dose_per_kg": Decimal("5"), "weight_kg": Decimal("20")},
@@ -266,7 +264,7 @@ class TestPediatricDoseBound:
         assert result.sat is True
 
     def test_unsat_high_dose_heavy_child_exceeds_cap(self) -> None:
-        # 15 mg/kg × 40 kg = 600 mg > 500 mg
+        # 15 mg/kg x 40 kg = 600 mg > 500 mg
         result = solve(
             _INV_PEDS,
             {"dose_per_kg": Decimal("15"), "weight_kg": Decimal("40")},
@@ -276,7 +274,7 @@ class TestPediatricDoseBound:
         assert any(v.label == "pediatric_dose_bound" for v in result.violated)
 
     def test_boundary_exact_max(self) -> None:
-        # 10 mg/kg × 50 kg = 500 mg == 500 mg → SAT (<=)
+        # 10 mg/kg x 50 kg = 500 mg == 500 mg → SAT (<=)
         result = solve(
             _INV_PEDS,
             {"dose_per_kg": Decimal("10"), "weight_kg": Decimal("50")},
@@ -285,7 +283,7 @@ class TestPediatricDoseBound:
         assert result.sat is True
 
     def test_unsat_exceeds_by_1mg(self) -> None:
-        # 10.1 mg/kg × 50 kg = 505 mg > 500 mg
+        # 10.1 mg/kg x 50 kg = 505 mg > 500 mg
         result = solve(
             _INV_PEDS,
             {"dose_per_kg": Decimal("10.1"), "weight_kg": Decimal("50")},

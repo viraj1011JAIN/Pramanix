@@ -315,7 +315,7 @@ class TestParseRawInjection:
 
     def test_code_fence_stripped_before_parse(self) -> None:
         """Attacker wraps injection in a markdown fence; we strip it first."""
-        raw = "```json\n{\"amount\": \"50\", \"recipient\": \"bob\"}\n```"
+        raw = '```json\n{"amount": "50", "recipient": "bob"}\n```'
         result = parse_llm_response(raw)
         assert result["amount"] == "50"
 

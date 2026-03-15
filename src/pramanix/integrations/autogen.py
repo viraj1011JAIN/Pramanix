@@ -34,7 +34,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_autogen_rejection
@@ -121,9 +122,9 @@ class PramanixToolCallback:
         async def _guarded(**kwargs: Any) -> str:
             # ── Step 1: Validate kwargs against intent schema ─────────────────
             try:
-                intent: dict[str, Any] = (
-                    intent_schema.model_validate(kwargs, strict=False).model_dump()
-                )
+                intent: dict[str, Any] = intent_schema.model_validate(
+                    kwargs, strict=False
+                ).model_dump()
             except Exception as exc:
                 # Return a safe rejection string — never raise.
                 from pramanix.decision import Decision
@@ -139,9 +140,7 @@ class PramanixToolCallback:
             except Exception as exc:
                 from pramanix.decision import Decision
 
-                err_decision = Decision.error(
-                    reason=f"State provider error: {exc}"
-                )
+                err_decision = Decision.error(reason=f"State provider error: {exc}")
                 return format_autogen_rejection(err_decision, intent)
 
             # ── Step 3: Guard verify ──────────────────────────────────────────
@@ -150,9 +149,7 @@ class PramanixToolCallback:
             except Exception as exc:
                 from pramanix.decision import Decision
 
-                err_decision = Decision.error(
-                    reason=f"Guard verification error: {exc}"
-                )
+                err_decision = Decision.error(reason=f"Guard verification error: {exc}")
                 return format_autogen_rejection(err_decision, intent)
 
             # ── Step 4: ALLOW — call fn ───────────────────────────────────────
@@ -162,7 +159,7 @@ class PramanixToolCallback:
                     if asyncio.iscoroutine(result):
                         result = await result
                     return str(result)
-                except Exception as exc:
+                except Exception:
                     # Propagate genuine execution errors — only policy blocks
                     # are silently returned.  Caller can handle fn exceptions.
                     raise
@@ -231,4 +228,4 @@ async def _get_state_inner(state_provider: Callable[[], Any]) -> dict[str, Any]:
     result = state_provider()
     if asyncio.iscoroutine(result):
         result = await result
-    return result  # type: ignore[return-value]
+    return result  # type: ignore[no-any-return]

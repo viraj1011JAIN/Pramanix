@@ -124,8 +124,7 @@ class OpenAICompatTranslator:
 
         except retryable as exc:
             raise LLMTimeoutError(
-                f"OpenAI model '{self.model}' unreachable after "
-                f"{attempts} attempt(s): {exc}",
+                f"OpenAI model '{self.model}' unreachable after " f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc

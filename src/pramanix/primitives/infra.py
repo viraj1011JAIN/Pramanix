@@ -24,12 +24,13 @@ Example::
 """
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from pramanix.expressions import E
 
 if TYPE_CHECKING:
+    from decimal import Decimal
+
     from pramanix.expressions import ConstraintExpr, Field
 
 __all__ = [
@@ -58,9 +59,7 @@ def MinReplicas(replicas: Field, min_replicas: Field) -> ConstraintExpr:
     return (
         (E(replicas) >= E(min_replicas))
         .named("min_replicas")
-        .explain(
-            "Scale-down blocked: replicas ({replicas}) < min_replicas ({min_replicas})."
-        )
+        .explain("Scale-down blocked: replicas ({replicas}) < min_replicas ({min_replicas}).")
     )
 
 
@@ -76,9 +75,7 @@ def MaxReplicas(replicas: Field, max_replicas: Field) -> ConstraintExpr:
     return (
         (E(replicas) <= E(max_replicas))
         .named("max_replicas")
-        .explain(
-            "Scale-up blocked: replicas ({replicas}) > max_replicas ({max_replicas})."
-        )
+        .explain("Scale-up blocked: replicas ({replicas}) > max_replicas ({max_replicas}).")
     )
 
 
@@ -94,9 +91,7 @@ def WithinCPUBudget(cpu_request: Field, cpu_budget: Field) -> ConstraintExpr:
     return (
         (E(cpu_request) <= E(cpu_budget))
         .named("within_cpu_budget")
-        .explain(
-            "CPU budget exceeded: cpu_request ({cpu_request}) > cpu_budget ({cpu_budget})."
-        )
+        .explain("CPU budget exceeded: cpu_request ({cpu_request}) > cpu_budget ({cpu_budget}).")
     )
 
 
@@ -113,8 +108,7 @@ def WithinMemoryBudget(mem_request: Field, mem_budget: Field) -> ConstraintExpr:
         (E(mem_request) <= E(mem_budget))
         .named("within_memory_budget")
         .explain(
-            "Memory budget exceeded: mem_request ({mem_request}) "
-            "> mem_budget ({mem_budget})."
+            "Memory budget exceeded: mem_request ({mem_request}) " "> mem_budget ({mem_budget})."
         )
     )
 
@@ -240,7 +234,7 @@ def ReplicaBudget(
         ((E(requested_replicas) >= min_replicas) & (E(requested_replicas) <= max_replicas))
         .named("replica_budget")
         .explain(
-            f"Replica count {{requested_replicas}} is outside budget [{min_replicas}–{max_replicas}]. "
+            f"Replica count {{requested_replicas}} is outside budget [{min_replicas}-{max_replicas}]. "
             "Adjust HPA/VPA configuration."
         )
     )

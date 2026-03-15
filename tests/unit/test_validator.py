@@ -151,7 +151,9 @@ class TestValidateState:
     def test_model_without_state_version_field_raises_state_validation_error(self) -> None:
         """Compile-time check: the model schema must declare state_version: str."""
         with pytest.raises(StateValidationError):
-            validate_state(_StateWithoutVersionField, {"balance": Decimal("100"), "is_frozen": False})
+            validate_state(
+                _StateWithoutVersionField, {"balance": Decimal("100"), "is_frozen": False}
+            )
 
     def test_model_with_wrong_version_type_raises_state_validation_error(self) -> None:
         """state_version must be annotated as str, not int or anything else."""
@@ -192,13 +194,17 @@ class TestValidateState:
 
         with pytest.raises(ValidationError):
             try:
-                validate_state(_FullState, {"state_version": "1.0", "balance": "bad", "is_frozen": False})
+                validate_state(
+                    _FullState, {"state_version": "1.0", "balance": "bad", "is_frozen": False}
+                )
             except pydantic.ValidationError:
                 pytest.fail("Raw pydantic.ValidationError escaped validate_state()")
 
     def test_state_validation_error_message_mentions_field_name(self) -> None:
         try:
-            validate_state(_StateWithoutVersionField, {"balance": Decimal("100"), "is_frozen": False})
+            validate_state(
+                _StateWithoutVersionField, {"balance": Decimal("100"), "is_frozen": False}
+            )
         except StateValidationError as err:
             assert "state_version" in str(err)
         else:

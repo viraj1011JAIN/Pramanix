@@ -13,7 +13,6 @@ import pytest
 
 from pramanix.exceptions import ExtractionFailureError
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # translator/__init__.py — lazy __getattr__ imports
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -74,30 +73,30 @@ class TestTranslatorLazyImports:
 
 class TestCreateTranslator:
     def test_gpt_prefix_routes_to_openai_compat(self) -> None:
-        from pramanix.translator.redundant import create_translator
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+        from pramanix.translator.redundant import create_translator
 
         t = create_translator("gpt-4o")
         assert isinstance(t, OpenAICompatTranslator)
         assert t.model == "gpt-4o"
 
     def test_o1_prefix_routes_to_openai_compat(self) -> None:
-        from pramanix.translator.redundant import create_translator
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+        from pramanix.translator.redundant import create_translator
 
         t = create_translator("o1-preview")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_o3_prefix_routes_to_openai_compat(self) -> None:
-        from pramanix.translator.redundant import create_translator
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+        from pramanix.translator.redundant import create_translator
 
         t = create_translator("o3-mini")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_chatgpt_prefix_routes_to_openai_compat(self) -> None:
-        from pramanix.translator.redundant import create_translator
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+        from pramanix.translator.redundant import create_translator
 
         t = create_translator("chatgpt-4o-latest")
         assert isinstance(t, OpenAICompatTranslator)

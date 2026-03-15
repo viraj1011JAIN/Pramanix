@@ -19,7 +19,6 @@ Coverage targets
 from __future__ import annotations
 
 import json
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,8 +27,8 @@ from pydantic import BaseModel
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.ollama import OllamaTranslator
 
-
 # ── Minimal intent schema for testing ────────────────────────────────────────
+
 
 class _TransferIntent(BaseModel):
     amount: float
@@ -38,15 +37,14 @@ class _TransferIntent(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_ollama_response(content: str, status_code: int = 200) -> MagicMock:
     """Build a mock httpx.Response with Ollama /api/chat shape."""
     resp = MagicMock()
     resp.status_code = status_code
     resp.text = f"HTTP {status_code}"
     if status_code == 200:
-        resp.json.return_value = {
-            "message": {"role": "assistant", "content": content}
-        }
+        resp.json.return_value = {"message": {"role": "assistant", "content": content}}
     else:
         resp.json.side_effect = Exception("non-200 body is not JSON")
     return resp
@@ -130,6 +128,7 @@ class TestOllamaTranslatorSuccess:
     async def test_context_parameter_accepted(self) -> None:
         """context is accepted but not forwarded to the LLM; extraction must still succeed."""
         from pramanix.translator.base import TranslatorContext
+
         payload = json.dumps({"amount": 10.0, "recipient": "acc_789"})
         resp = _make_ollama_response(payload)
         ctx = TranslatorContext(request_id="req-1", user_id="user-1")
@@ -189,9 +188,8 @@ class TestOllamaTranslatorNetworkErrors:
         client_cm.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
 
         t = OllamaTranslator()
-        with patch("httpx.AsyncClient", return_value=client_cm):
-            with pytest.raises(LLMTimeoutError, match="timed out"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch("httpx.AsyncClient", return_value=client_cm), pytest.raises(LLMTimeoutError, match="timed out"):
+            await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_connect_error_raises_llm_timeout_error(self) -> None:
@@ -201,14 +199,11 @@ class TestOllamaTranslatorNetworkErrors:
         client_cm = AsyncMock()
         client_cm.__aenter__ = AsyncMock(return_value=client_cm)
         client_cm.__aexit__ = AsyncMock(return_value=False)
-        client_cm.post = AsyncMock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
+        client_cm.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
 
         t = OllamaTranslator()
-        with patch("httpx.AsyncClient", return_value=client_cm):
-            with pytest.raises(LLMTimeoutError, match="connection failed"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch("httpx.AsyncClient", return_value=client_cm), pytest.raises(LLMTimeoutError, match="connection failed"):
+            await t.extract("transfer 100", _TransferIntent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -295,6 +290,5 @@ class TestOllamaTranslatorMissingDependency:
     async def test_missing_httpx_raises_import_error(self) -> None:
         """If httpx is not installed, extract() must raise ImportError immediately."""
         t = OllamaTranslator()
-        with patch.dict("sys.modules", {"httpx": None}):  # type: ignore[dict-item]
-            with pytest.raises(ImportError, match="httpx"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch.dict("sys.modules", {"httpx": None}), pytest.raises(ImportError, match="httpx"):  # type: ignore[dict-item]
+            await t.extract("transfer 100", _TransferIntent)

@@ -27,6 +27,8 @@ Design notes
 """
 from __future__ import annotations
 
+import enum
+from dataclasses import dataclass as _dataclass
 from decimal import Decimal
 from typing import Any, cast
 
@@ -44,6 +46,51 @@ from pramanix.expressions import (
 )
 
 __all__: list[str] = []  # internal module — nothing re-exported via pramanix.*
+
+
+# ── Phase 10 — Expression Tree Pre-compilation ────────────────────────────────
+
+
+class NodeKind(str, enum.Enum):
+    """Classification of an expression tree node for cached metadata."""
+
+    FIELD_REF = "field_ref"
+    LITERAL = "literal"
+    BINOP = "binop"
+    CMPOP = "cmpop"
+    BOOLOP = "boolop"
+    CONSTRAINT = "constraint"
+
+
+@_dataclass(frozen=True)
+class InvariantMeta:
+    """Cached metadata for one invariant's expression tree.
+
+    Contains ONLY Python-level information extracted from the expression tree
+    at compile time. No Z3 objects. Safe to share across requests and threads.
+
+    Fields:
+        label:            Invariant name (from .named())
+        explain_template: Human-readable template (from .explain())
+        field_refs:       Names of all Field objects referenced in this invariant
+        tree_repr:        Structural fingerprint for equivalence testing
+        has_literal:      True if any literal values appear in the tree
+    """
+
+    label: str
+    explain_template: str
+    field_refs: frozenset[str]
+    tree_repr: str
+    has_literal: bool
+
+    def __post_init__(self) -> None:
+        if not self.label:
+            raise ValueError("InvariantMeta.label cannot be empty")
+        if not self.field_refs:
+            raise ValueError(
+                f"InvariantMeta for '{self.label}' has no field references — "
+                "every invariant must reference at least one Field"
+            )
 
 
 # ── Z3 variable and value constructors ───────────────────────────────────────
@@ -286,3 +333,147 @@ def collect_fields(node: Any) -> dict[str, Field]:
             return collect_fields(l)
         case _:
             return {}
+
+
+# ── Phase 10 — Policy compile helpers ─────────────────────────────────────────
+
+
+def compile_policy(invariants: list[Any]) -> list[InvariantMeta]:
+    """Walk all invariants ONCE at Guard init time and cache metadata.
+
+    Called exactly once per Guard instance at __init__() time.
+    Result is stored as Guard._compiled_meta and reused on every
+    request. The walk is never repeated at request time.
+
+    Returns a list of InvariantMeta, one per invariant.
+
+    Raises PolicyCompilationError if:
+    - Any invariant has no .named() label
+    - Any invariant has no field references
+    - Any invariant has duplicate labels
+
+    Security guarantee: this function produces ONLY Python-level
+    metadata. No Z3 objects are created or stored.
+    """
+    from pramanix.exceptions import PolicyCompilationError
+
+    seen_labels: set[str] = set()
+    result: list[InvariantMeta] = []
+
+    for inv in invariants:
+        label = getattr(inv, "label", None)
+        if not label:
+            raise PolicyCompilationError(
+                "Every invariant must have a .named() label. "
+                "Use: (E(field) >= 0).named('invariant_name')"
+            )
+
+        if label in seen_labels:
+            raise PolicyCompilationError(
+                f"Duplicate invariant label: '{label}'. " "Every invariant must have a unique name."
+            )
+        seen_labels.add(label)
+
+        explain = getattr(inv, "explanation", "") or ""
+        field_refs = frozenset(_collect_field_names(inv))
+
+        if not field_refs:
+            raise PolicyCompilationError(
+                f"Invariant '{label}' references no Fields. "
+                "Every invariant must reference at least one Field via E()."
+            )
+
+        has_literal = _tree_has_literal(inv)
+        tree_repr = _tree_repr(inv)
+
+        result.append(
+            InvariantMeta(
+                label=label,
+                explain_template=explain,
+                field_refs=field_refs,
+                tree_repr=tree_repr,
+                has_literal=has_literal,
+            )
+        )
+
+    return result
+
+
+def _collect_field_names(node: Any) -> list[str]:
+    """Recursively collect all Field names from an expression tree node.
+
+    Handles ConstraintExpr by unwrapping .node attribute.
+    Delegates all standard AST nodes to existing collect_fields().
+    """
+    # ConstraintExpr wrapper — unwrap .node to get inner expression
+    # ConstraintExpr has __slots__ = ("node", "label", "explanation")
+    # We detect it by presence of "label" attribute (not on AST nodes)
+    if (
+        hasattr(node, "label")
+        and hasattr(node, "node")
+        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp)
+    ):
+        inner = getattr(node, "node", None)
+        if inner is not None:
+            return _collect_field_names(inner)
+
+    # Standard expression nodes — delegate to existing collect_fields()
+    return list(collect_fields(node).keys())
+
+
+def _tree_has_literal(node: Any) -> bool:
+    """Return True if the tree contains any literal constant value."""
+    # Unwrap ConstraintExpr
+    if (
+        hasattr(node, "label")
+        and hasattr(node, "node")
+        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp)
+    ):
+        inner = getattr(node, "node", None)
+        if inner is not None:
+            return _tree_has_literal(inner)
+
+    match node:
+        case _Literal():
+            return True
+        case _BinOp(left=l, right=r) | _CmpOp(left=l, right=r):
+            return _tree_has_literal(l) or _tree_has_literal(r)
+        case _BoolOp(operands=ops):
+            return any(_tree_has_literal(op) for op in ops)
+        case _InOp(values=vs):
+            return len(vs) > 0  # _InOp values are all _Literal nodes
+        case _:
+            return False
+
+
+def _tree_repr(node: Any) -> str:
+    """Produce a canonical string representation of an expression tree.
+
+    Used for equivalence testing and debugging. Not on hot path.
+    """
+    # Unwrap ConstraintExpr
+    if (
+        hasattr(node, "label")
+        and hasattr(node, "node")
+        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp)
+    ):
+        inner = getattr(node, "node", None)
+        label = getattr(node, "label", "") or ""
+        if inner is not None:
+            return f"Constraint({label},{_tree_repr(inner)})"
+
+    match node:
+        case _FieldRef(field=f):
+            return f"Field({f.name})"
+        case _Literal(value=v):
+            return f"Lit({v!r})"
+        case _BinOp(op=op, left=l, right=r):
+            return f"BinOp({op},{_tree_repr(l)},{_tree_repr(r)})"
+        case _CmpOp(op=op, left=l, right=r):
+            return f"CmpOp({op},{_tree_repr(l)},{_tree_repr(r)})"
+        case _BoolOp(op=op, operands=ops):
+            return f"BoolOp({op},{','.join(_tree_repr(o) for o in ops)})"
+        case _InOp(left=l, values=vs):
+            return f"InOp({_tree_repr(l)},{[_tree_repr(v) for v in vs]})"
+        case _:
+            return f"Unknown({type(node).__name__})"

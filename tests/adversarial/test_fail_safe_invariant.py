@@ -89,11 +89,7 @@ class _StablePolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named(
-                "non_negative_balance"
-            )
-        ]
+        return [(E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance")]
 
 
 _VALID_INTENT = {"amount": Decimal("100.00")}
@@ -106,9 +102,9 @@ def _make_guard() -> Guard:
 
 def _assert_fail_safe(decision: object, context: str) -> None:
     """Common assertion: result must be a Decision with allowed=False."""
-    assert isinstance(decision, Decision), (
-        f"{context}: expected Decision, got {type(decision).__name__}"
-    )
+    assert isinstance(
+        decision, Decision
+    ), f"{context}: expected Decision, got {type(decision).__name__}"
     assert decision.allowed is False, (
         f"{context}: expected allowed=False, got allowed=True. "
         "CRITICAL: Guard.verify() returned True on an error path — SECURITY VIOLATION."
@@ -231,6 +227,7 @@ class TestStage4VersionAndKeyConflict:
 
     def test_conflicting_intent_state_keys_returns_error(self) -> None:
         """Intent and state sharing a key key → ValueError → Decision.error(False)."""
+
         # No Pydantic models: raw dict mode, where key conflict is possible.
         class _RawPolicy(Policy):
             class Meta:
@@ -264,9 +261,7 @@ class TestStage5SolverFailures:
         guard = _make_guard()
         with patch(
             "pramanix.guard.solve",
-            side_effect=SolverTimeoutError(
-                label="non_negative_balance", timeout_ms=5000
-            ),
+            side_effect=SolverTimeoutError(label="non_negative_balance", timeout_ms=5000),
         ):
             decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
         _assert_fail_safe(decision, "patched SolverTimeoutError")

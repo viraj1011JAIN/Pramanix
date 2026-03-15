@@ -18,14 +18,13 @@ Coverage targets
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
 from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.exceptions import SemanticPolicyViolation
-
 
 # ===============================================================
 # Minimal policies
@@ -45,9 +44,7 @@ class _MinimalPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) >= 0)
-            .named("non_negative")
-            .explain("amount {amount} must be >= 0"),
+            (E(_amount_field) >= 0).named("non_negative").explain("amount {amount} must be >= 0"),
         ]
 
 
@@ -73,9 +70,7 @@ class _ModelledPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) >= 0)
-            .named("non_negative")
-            .explain("amount {amount} must be >= 0"),
+            (E(_amount_field) >= 0).named("non_negative").explain("amount {amount} must be >= 0"),
         ]
 
 
@@ -85,25 +80,19 @@ class _ModelledPolicy(Policy):
 
 
 class TestEnvInt:
-    def test_valid_env_var_returns_int(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_valid_env_var_returns_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_int
 
         monkeypatch.setenv("PRAMANIX_SOLVER_TIMEOUT_MS", "9999")
         assert _env_int("SOLVER_TIMEOUT_MS", 5000) == 9999
 
-    def test_invalid_env_var_returns_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_invalid_env_var_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_int
 
         monkeypatch.setenv("PRAMANIX_SOLVER_TIMEOUT_MS", "not_a_number")
         assert _env_int("SOLVER_TIMEOUT_MS", 5000) == 5000
 
-    def test_missing_env_var_returns_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_env_var_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_int
 
         monkeypatch.delenv("PRAMANIX_SOLVER_TIMEOUT_MS", raising=False)
@@ -116,33 +105,25 @@ class TestEnvInt:
 
 
 class TestEnvBool:
-    def test_true_string_returns_true(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_true_string_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_bool
 
         monkeypatch.setenv("PRAMANIX_METRICS_ENABLED", "true")
         assert _env_bool("METRICS_ENABLED", False) is True
 
-    def test_one_string_returns_true(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_one_string_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_bool
 
         monkeypatch.setenv("PRAMANIX_METRICS_ENABLED", "1")
         assert _env_bool("METRICS_ENABLED", False) is True
 
-    def test_false_string_returns_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_false_string_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_bool
 
         monkeypatch.setenv("PRAMANIX_METRICS_ENABLED", "false")
         assert _env_bool("METRICS_ENABLED", True) is False
 
-    def test_missing_env_var_returns_default(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_env_var_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.guard import _env_bool
 
         monkeypatch.delenv("PRAMANIX_METRICS_ENABLED", raising=False)
@@ -164,32 +145,20 @@ class TestFmt:
     def test_normal_interpolation_works(self) -> None:
         from pramanix.guard import _fmt
 
-        inv = (
-            (E(_amount_field) >= 0)
-            .named("lbl")
-            .explain("amount is {amount}")
-        )
+        inv = (E(_amount_field) >= 0).named("lbl").explain("amount is {amount}")
         assert _fmt(inv, {"amount": "50"}) == "amount is 50"
 
     def test_missing_key_returns_raw_template(self) -> None:
         from pramanix.guard import _fmt
 
-        inv = (
-            (E(_amount_field) >= 0)
-            .named("lbl")
-            .explain("value={missing_key}")
-        )
+        inv = (E(_amount_field) >= 0).named("lbl").explain("value={missing_key}")
         result = _fmt(inv, {"amount": "50"})
         assert result == "value={missing_key}"
 
     def test_bad_format_spec_returns_raw_template(self) -> None:
         from pramanix.guard import _fmt
 
-        inv = (
-            (E(_amount_field) >= 0)
-            .named("lbl")
-            .explain("{amount!invalid_conversion}")
-        )
+        inv = (E(_amount_field) >= 0).named("lbl").explain("{amount!invalid_conversion}")
         result = _fmt(inv, {"amount": "50"})
         assert result == "{amount!invalid_conversion}"
 
@@ -209,36 +178,26 @@ class TestSemanticPostConsensusCheck:
         self._call({"other": "value"}, {})
 
     def test_invalid_amount_raises(self) -> None:
-        with pytest.raises(
-            SemanticPolicyViolation, match="not a valid number"
-        ):
+        with pytest.raises(SemanticPolicyViolation, match="not a valid number"):
             self._call({"amount": "not-a-decimal"}, {})
 
     def test_zero_amount_raises(self) -> None:
-        with pytest.raises(
-            SemanticPolicyViolation, match="must be positive"
-        ):
+        with pytest.raises(SemanticPolicyViolation, match="must be positive"):
             self._call({"amount": "0"}, {})
 
     def test_negative_amount_raises(self) -> None:
-        with pytest.raises(
-            SemanticPolicyViolation, match="must be positive"
-        ):
+        with pytest.raises(SemanticPolicyViolation, match="must be positive"):
             self._call({"amount": "-50"}, {})
 
     def test_balance_below_minimum_reserve_raises(self) -> None:
-        with pytest.raises(
-            SemanticPolicyViolation, match="minimum reserve"
-        ):
+        with pytest.raises(SemanticPolicyViolation, match="minimum reserve"):
             self._call(
                 {"amount": "900"},
                 {"balance": "1000", "minimum_reserve": "200"},
             )
 
     def test_full_balance_drain_raises(self) -> None:
-        with pytest.raises(
-            SemanticPolicyViolation, match="secondary human approval"
-        ):
+        with pytest.raises(SemanticPolicyViolation, match="secondary human approval"):
             self._call(
                 {"amount": "1000"},
                 {"balance": "1000", "minimum_reserve": "0"},
@@ -251,9 +210,7 @@ class TestSemanticPostConsensusCheck:
         )
 
     def test_daily_limit_exceeded_raises(self) -> None:
-        with pytest.raises(
-            SemanticPolicyViolation, match="daily limit"
-        ):
+        with pytest.raises(SemanticPolicyViolation, match="daily limit"):
             self._call(
                 {"amount": "600"},
                 {
@@ -299,9 +256,7 @@ def async_thread_guard():
 
 class TestVerifyAsyncThreadMode:
     @pytest.mark.asyncio
-    async def test_allow_with_decimal_intent_and_state(
-        self, async_thread_guard: Guard
-    ) -> None:
+    async def test_allow_with_decimal_intent_and_state(self, async_thread_guard: Guard) -> None:
         """dict->validate_intent + validate_state + version check (ALLOW)."""
         result = await async_thread_guard.verify_async(
             intent={"amount": Decimal("50")},
@@ -327,9 +282,7 @@ class TestVerifyAsyncThreadMode:
         assert result.status == SolverStatus.VALIDATION_FAILURE
 
     @pytest.mark.asyncio
-    async def test_stale_state_version_returns_stale(
-        self, async_thread_guard: Guard
-    ) -> None:
+    async def test_stale_state_version_returns_stale(self, async_thread_guard: Guard) -> None:
         """Wrong state_version -> stale_state (line 746)."""
         from pramanix import SolverStatus
 
@@ -474,9 +427,7 @@ class TestOtelSpanAttributes:
                 state={"state_version": "1.0"},
             )
 
-        calls = [
-            str(c) for c in mock_span.set_attribute.call_args_list
-        ]
+        calls = [str(c) for c in mock_span.set_attribute.call_args_list]
         assert any("decision_id" in c for c in calls)
 
 
@@ -497,12 +448,8 @@ class TestPrometheusMetrics:
             patch.object(_guard_mod, "_PROM_AVAILABLE", True),
             patch.object(_guard_mod, "_decisions_total", mock_counter),
             patch.object(_guard_mod, "_decision_latency", mock_histogram),
-            patch.object(
-                _guard_mod, "_solver_timeouts_total", MagicMock()
-            ),
-            patch.object(
-                _guard_mod, "_validation_failures_total", MagicMock()
-            ),
+            patch.object(_guard_mod, "_solver_timeouts_total", MagicMock()),
+            patch.object(_guard_mod, "_validation_failures_total", MagicMock()),
         ):
             cfg = GuardConfig(metrics_enabled=True)
             g = Guard(policy=_MinimalPolicy, config=cfg)

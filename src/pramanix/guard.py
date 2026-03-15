@@ -123,15 +123,12 @@ def _redact_secrets_processor(
     Matches keys containing: ``secret``, ``api_key``, ``apikey``, ``token``,
     ``hmac``, ``password``, ``passwd``, ``credential``, ``private_key``.
     """
-    return {
-        k: (_REDACTED if _SECRET_KEY_RE.search(k) else v)
-        for k, v in event_dict.items()
-    }
+    return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else v) for k, v in event_dict.items()}
 
 
 structlog.configure(
     processors=[
-        _redact_secrets_processor,          # must be first — sanitise before anything else
+        _redact_secrets_processor,  # must be first — sanitise before anything else
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
@@ -259,33 +256,23 @@ class GuardConfig:
         translator_enabled:       Enable LLM-based intent translation (M3).
     """
 
-    execution_mode: str = field(
-        default_factory=lambda: _env_str("EXECUTION_MODE", "sync")
-    )
-    solver_timeout_ms: int = field(
-        default_factory=lambda: _env_int("SOLVER_TIMEOUT_MS", 5_000)
-    )
-    max_workers: int = field(
-        default_factory=lambda: _env_int("MAX_WORKERS", 4)
-    )
+    execution_mode: str = field(default_factory=lambda: _env_str("EXECUTION_MODE", "sync"))
+    solver_timeout_ms: int = field(default_factory=lambda: _env_int("SOLVER_TIMEOUT_MS", 5_000))
+    max_workers: int = field(default_factory=lambda: _env_int("MAX_WORKERS", 4))
     max_decisions_per_worker: int = field(
         default_factory=lambda: _env_int("MAX_DECISIONS_PER_WORKER", 10_000)
     )
-    worker_warmup: bool = field(
-        default_factory=lambda: _env_bool("WORKER_WARMUP", True)
+    worker_warmup: bool = field(default_factory=lambda: _env_bool("WORKER_WARMUP", True))
+    log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
+    metrics_enabled: bool = field(default_factory=lambda: _env_bool("METRICS_ENABLED", False))
+    otel_enabled: bool = field(default_factory=lambda: _env_bool("OTEL_ENABLED", False))
+    translator_enabled: bool = field(default_factory=lambda: _env_bool("TRANSLATOR_ENABLED", False))
+    fast_path_enabled: bool = field(default_factory=lambda: _env_bool("FAST_PATH_ENABLED", False))
+    fast_path_rules: tuple[Any, ...] = field(default_factory=tuple)
+    shed_latency_threshold_ms: float = field(
+        default_factory=lambda: float(_env_str("SHED_LATENCY_THRESHOLD_MS", "200"))
     )
-    log_level: str = field(
-        default_factory=lambda: _env_str("LOG_LEVEL", "INFO")
-    )
-    metrics_enabled: bool = field(
-        default_factory=lambda: _env_bool("METRICS_ENABLED", False)
-    )
-    otel_enabled: bool = field(
-        default_factory=lambda: _env_bool("OTEL_ENABLED", False)
-    )
-    translator_enabled: bool = field(
-        default_factory=lambda: _env_bool("TRANSLATOR_ENABLED", False)
-    )
+    shed_worker_pct: float = field(default_factory=lambda: float(_env_str("SHED_WORKER_PCT", "90")))
 
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
@@ -295,8 +282,7 @@ class GuardConfig:
             )
         if self.max_workers <= 0:
             raise ConfigurationError(
-                f"GuardConfig.max_workers must be a positive integer, "
-                f"got {self.max_workers}."
+                f"GuardConfig.max_workers must be a positive integer, " f"got {self.max_workers}."
             )
         valid_modes = {"sync", "async-thread", "async-process"}
         if self.execution_mode not in valid_modes:
@@ -307,6 +293,7 @@ class GuardConfig:
 
 
 # ── Explanation formatter ─────────────────────────────────────────────────────
+
 
 def _semantic_post_consensus_check(
     intent_dict: dict[str, Any],
@@ -343,9 +330,7 @@ def _semantic_post_consensus_check(
     try:
         amount = Decimal(str(raw_amount))
     except InvalidOperation as exc:
-        raise SemanticPolicyViolation(
-            f"amount is not a valid number: {raw_amount!r}"
-        ) from exc
+        raise SemanticPolicyViolation(f"amount is not a valid number: {raw_amount!r}") from exc
 
     if amount <= 0:
         raise SemanticPolicyViolation(f"amount must be positive, got {amount}")
@@ -451,10 +436,43 @@ class Guard:
                 max_workers=self._config.max_workers,
                 max_decisions_per_worker=self._config.max_decisions_per_worker,
                 warmup=self._config.worker_warmup,
+                latency_threshold_ms=self._config.shed_latency_threshold_ms,
+                worker_pct=self._config.shed_worker_pct,
             )
             self._pool.spawn()
         else:
             self._pool = None
+
+        # ── Phase 10.3: Semantic fast-path ────────────────────────────────────
+        from pramanix.fast_path import FastPathEvaluator as _FastPathEvaluator
+
+        if self._config.fast_path_enabled and self._config.fast_path_rules:
+            self._fast_path: _FastPathEvaluator | None = _FastPathEvaluator(
+                self._config.fast_path_rules
+            )
+        else:
+            self._fast_path = None
+
+        # ── Phase 10.1: Pre-compile expression tree metadata ──────────────
+        import logging as _logging
+
+        from pramanix.transpiler import compile_policy as _compile_policy
+
+        _ph10_log = _logging.getLogger(__name__)
+        try:
+            self._compiled_meta: list[Any] = _compile_policy(self._policy.invariants())
+            _ph10_log.debug(
+                "Policy compiled",
+                extra={
+                    "policy": getattr(self._policy, "__name__", str(self._policy)),
+                    "invariant_count": len(self._compiled_meta),
+                    "field_count": len(
+                        {f for meta in self._compiled_meta for f in meta.field_refs}
+                    ),
+                },
+            )
+        except Exception:
+            raise  # compile_policy failures are fatal at init time
 
     # ── verify ────────────────────────────────────────────────────────────────
 
@@ -559,6 +577,33 @@ class Guard:
                         )
                     values: dict[str, Any] = {**intent_values, **state_values}
 
+                    # ── Phase 10.1: Field presence pre-check ──────────────────────────────
+                    # Fast O(n_fields) check using compiled metadata — short-circuits Z3
+                    # for the common case of missing required fields.
+                    _combined_keys = set(values.keys())
+                    _missing_fields = []
+                    for _meta in self._compiled_meta:
+                        _absent = _meta.field_refs - _combined_keys
+                        if _absent:
+                            _missing_fields.append((_meta.label, _absent))
+
+                    if _missing_fields:
+                        _missing_str = "; ".join(
+                            f"'{_lbl}' needs {sorted(_flds)}" for _lbl, _flds in _missing_fields
+                        )
+                        _metric_status = "error"
+                        return Decision.error(reason=f"Missing required fields: {_missing_str}")
+
+                    # ── Phase 10.3: Semantic fast-path pre-screen ─────────────────────────
+                    if self._fast_path is not None:
+                        _fp_result = self._fast_path.evaluate(intent_values, state_values)
+                        if _fp_result.blocked:
+                            _metric_status = "unsafe"
+                            return Decision.unsafe(
+                                violated_invariants=(_fp_result.rule_name or "fast_path_block",),
+                                explanation=_fp_result.reason,
+                            )
+
                 # ── Step 5: Z3 solve (solver.py adds pramanix.z3_solve child span) ──
                 result: _SolveResult = solve(
                     self._policy.invariants(),
@@ -581,9 +626,7 @@ class Guard:
                     return decision_safe
 
                 filtered = [inv for inv in result.violated if inv.label]
-                explanation = "; ".join(
-                    e for inv in filtered if (e := _fmt(inv, values))
-                )
+                explanation = "; ".join(e for inv in filtered if (e := _fmt(inv, values)))
                 decision_unsafe = Decision.unsafe(
                     violated_invariants=tuple(label for inv in filtered if (label := inv.label)),
                     explanation=explanation,
@@ -671,12 +714,8 @@ class Guard:
             _resolver_registry.clear_cache()
             if self._config.metrics_enabled and _PROM_AVAILABLE:
                 _policy_name = self._policy.__name__
-                _decisions_total.labels(
-                    policy=_policy_name, status=_metric_status
-                ).inc()
-                _decision_latency.labels(policy=_policy_name).observe(
-                    time.perf_counter() - _t0
-                )
+                _decisions_total.labels(policy=_policy_name, status=_metric_status).inc()
+                _decision_latency.labels(policy=_policy_name).observe(time.perf_counter() - _t0)
                 if _metric_status == "timeout":
                     _solver_timeouts_total.labels(policy=_policy_name).inc()
                 if _metric_status in ("validation_failure", "stale_state"):
@@ -807,9 +846,7 @@ class Guard:
             except WorkerError as exc:
                 return Decision.error(reason=str(exc))
             except Exception as exc:
-                return Decision.error(
-                    reason=f"Process worker error ({type(exc).__name__}): {exc}"
-                )
+                return Decision.error(reason=f"Process worker error ({type(exc).__name__}): {exc}")
 
         return Decision.error(reason=f"Unknown execution_mode: {mode!r}")
 
@@ -897,9 +934,7 @@ class Guard:
         ) as exc:
             return Decision.error(reason=str(exc))
         except Exception as exc:
-            return Decision.error(
-                reason=f"Translator error ({type(exc).__name__}): {exc}"
-            )
+            return Decision.error(reason=f"Translator error ({type(exc).__name__}): {exc}")
 
     # ── shutdown ────────────────────────────────────────────────────────────────────
 

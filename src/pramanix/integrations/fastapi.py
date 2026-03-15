@@ -29,29 +29,27 @@ import asyncio
 import functools
 import json
 import time
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Literal
 
+from pramanix.audit.signer import DecisionSigner
 from pramanix.exceptions import GuardViolationError
 from pramanix.guard import Guard, GuardConfig
 
 try:
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request
+    from starlette.requests import Request  # noqa: F401
     from starlette.responses import JSONResponse, Response
-    from starlette.types import ASGIApp
+    from starlette.types import ASGIApp  # noqa: F401
 
     _STARLETTE_AVAILABLE = True
     _BaseHTTPMiddleware: type = BaseHTTPMiddleware
 except ImportError:  # pragma: no cover
     _STARLETTE_AVAILABLE = False
-    _BaseHTTPMiddleware = object  # type: ignore[assignment, misc]
+    _BaseHTTPMiddleware = object
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
-    from starlette.middleware.base import RequestResponseEndpoint
-    from starlette.requests import Request
     from starlette.responses import Response
-    from starlette.types import ASGIApp
 
 __all__ = ["PramanixMiddleware", "pramanix_route"]
 
@@ -102,9 +100,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
         timing_budget_ms: float = 50.0,
     ) -> None:
         if not _STARLETTE_AVAILABLE:
-            raise ImportError(
-                "FastAPI/Starlette required: pip install 'pramanix[fastapi]'"
-            )
+            raise ImportError("FastAPI/Starlette required: pip install 'pramanix[fastapi]'")
         super().__init__(app)
         self._intent_model = intent_model
         self._state_loader = state_loader
@@ -113,6 +109,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
         # Default to async-thread since we are in an async ASGI context.
         effective_config = config or GuardConfig(execution_mode="async-thread")
         self._guard: Guard = Guard(policy, effective_config)
+        self._signer = DecisionSigner()
 
     async def dispatch(self, request: Any, call_next: Any) -> Any:
         """Run the Pramanix guard pipeline for each incoming request."""
@@ -172,7 +169,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
             pad = max(0.0, self._timing_budget_s - elapsed)
             if pad > 0.0:
                 await asyncio.sleep(pad)
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=403,
                 content={
                     "decision_id": decision.decision_id,
@@ -181,9 +178,19 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
                     "explanation": decision.explanation,
                 },
             )
+            signed = self._signer.sign(decision)
+            if signed:
+                response.headers["X-Pramanix-Proof"] = signed.token
+                response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
+            return response
 
         # ── 8. ALLOW path — forward to route handler ──────────────────────────
-        return await call_next(request)
+        response = await call_next(request)
+        signed = self._signer.sign(decision)
+        if signed:
+            response.headers["X-Pramanix-Proof"] = signed.token
+            response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
+        return response
 
 
 def pramanix_route(
@@ -246,9 +253,7 @@ def pramanix_route(
             except ImportError:
                 pass
 
-            decision = await _guard.verify_async(
-                intent=intent or {}, state=state or {}
-            )
+            decision = await _guard.verify_async(intent=intent or {}, state=state or {})
 
             if not decision.allowed:
                 if on_block == "raise":

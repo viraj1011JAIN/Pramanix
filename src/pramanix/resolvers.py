@@ -63,8 +63,8 @@ class ResolverRegistry:
         # default=None so every fresh context (asyncio Task or OS thread) starts
         # without a cache; _get_cache() lazily creates an isolated dict on
         # first access within this context, never sharing a parent's dict.
-        self._cache_var: contextvars.ContextVar[dict[str, Any] | None] = (
-            contextvars.ContextVar("pramanix_resolver_cache", default=None)
+        self._cache_var: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+            "pramanix_resolver_cache", default=None
         )
 
     # ── Registration ─────────────────────────────────────────────────────────
@@ -82,9 +82,7 @@ class ResolverRegistry:
             TypeError: If *resolver* is not callable.
         """
         if not callable(resolver):
-            raise TypeError(
-                f"resolver for '{name}' must be callable, got {type(resolver)!r}"
-            )
+            raise TypeError(f"resolver for '{name}' must be callable, got {type(resolver)!r}")
         self._resolvers[name] = resolver
 
     # ── Resolution ───────────────────────────────────────────────────────────

@@ -52,14 +52,18 @@ _AUTOGEN_NAMES = {"PramanixToolCallback"}
 def __getattr__(name: str) -> object:
     if name in _FASTAPI_NAMES:
         from pramanix.integrations import fastapi as _m
+
         return getattr(_m, name)
     if name in _LANGCHAIN_NAMES:
         from pramanix.integrations import langchain as _m  # type: ignore[no-redef]
+
         return getattr(_m, name)
     if name in _LLAMA_NAMES:
         from pramanix.integrations import llamaindex as _m  # type: ignore[no-redef]
+
         return getattr(_m, name)
     if name in _AUTOGEN_NAMES:
         from pramanix.integrations import autogen as _m  # type: ignore[no-redef]
+
         return getattr(_m, name)
     raise AttributeError(f"module 'pramanix.integrations' has no attribute {name!r}")

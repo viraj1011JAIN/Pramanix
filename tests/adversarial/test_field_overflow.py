@@ -69,25 +69,20 @@ def _pair_extra(amount: str, recipient: str, **extra: Any):
 
 
 class TestRecipientLengthOverflow:
-
     @pytest.mark.asyncio
     async def test_P_recipient_exceeds_max_length_is_blocked(self) -> None:
         """recipient string longer than max_length=64 → ExtractionFailureError."""
         long_recipient = "a" * 65  # one byte over the limit
         a, b = _pair("50", long_recipient)
         with pytest.raises(ExtractionFailureError, match="Schema validation failed"):
-            await extract_with_consensus(
-                "send 50 to aaaa…", TransferIntent, (a, b)
-            )
+            await extract_with_consensus("send 50 to aaaa…", TransferIntent, (a, b))
 
     @pytest.mark.asyncio
     async def test_recipient_at_max_length_boundary_is_allowed(self) -> None:
         """recipient string exactly 64 chars → passes Pydantic → allowed."""
         exact_length = "b" * 64
         a, b = _pair("50", exact_length)
-        result = await extract_with_consensus(
-            "send 50 to bbbb…", TransferIntent, (a, b)
-        )
+        result = await extract_with_consensus("send 50 to bbbb…", TransferIntent, (a, b))
         assert len(result["recipient"]) == 64
 
     @pytest.mark.asyncio
@@ -103,23 +98,18 @@ class TestRecipientLengthOverflow:
         kb_recipient = "x" * 1024
         a, b = _pair("100", kb_recipient)
         with pytest.raises(ExtractionFailureError):
-            await extract_with_consensus(
-                "transfer 100 dollars", TransferIntent, (a, b)
-            )
+            await extract_with_consensus("transfer 100 dollars", TransferIntent, (a, b))
 
 
 # ── R/S: amount at and above upper boundary ───────────────────────────────────
 
 
 class TestAmountBoundaryOverflow:
-
     @pytest.mark.asyncio
     async def test_R_amount_exactly_at_le_boundary_is_allowed(self) -> None:
         """amount == 1_000_000 satisfies le=1_000_000 → allowed."""
         a, b = _pair("1000000", "alice")
-        result = await extract_with_consensus(
-            "transfer one million", TransferIntent, (a, b)
-        )
+        result = await extract_with_consensus("transfer one million", TransferIntent, (a, b))
         assert result["amount"] == Decimal("1000000")
 
     @pytest.mark.asyncio
@@ -127,27 +117,21 @@ class TestAmountBoundaryOverflow:
         """amount == 1_000_001 violates le=1_000_000 → ExtractionFailureError."""
         a, b = _pair("1000001", "alice")
         with pytest.raises(ExtractionFailureError, match="Schema validation failed"):
-            await extract_with_consensus(
-                "transfer 1000001 dollars", TransferIntent, (a, b)
-            )
+            await extract_with_consensus("transfer 1000001 dollars", TransferIntent, (a, b))
 
     @pytest.mark.asyncio
     async def test_T_zero_amount_violates_gt_zero(self) -> None:
         """amount == 0 violates gt=0 → ExtractionFailureError."""
         a, b = _pair("0", "alice")
         with pytest.raises(ExtractionFailureError, match="Schema validation failed"):
-            await extract_with_consensus(
-                "transfer zero dollars", TransferIntent, (a, b)
-            )
+            await extract_with_consensus("transfer zero dollars", TransferIntent, (a, b))
 
     @pytest.mark.asyncio
     async def test_U_astronomically_large_amount_is_blocked(self) -> None:
         """10^30 is far above le=1_000_000 → ExtractionFailureError."""
         a, b = _pair("1" + "0" * 30, "alice")
         with pytest.raises(ExtractionFailureError):
-            await extract_with_consensus(
-                "transfer all the money", TransferIntent, (a, b)
-            )
+            await extract_with_consensus("transfer all the money", TransferIntent, (a, b))
 
     @pytest.mark.asyncio
     async def test_V_high_precision_decimal_within_bounds_is_normalised(self) -> None:
@@ -155,9 +139,7 @@ class TestAmountBoundaryOverflow:
         Decimal handles arbitrary precision correctly."""
         # 0.0000000001 is > 0 and <= 1_000_000 → valid
         a, b = _pair("0.0000000001", "alice")
-        result = await extract_with_consensus(
-            "send a tiny fraction", TransferIntent, (a, b)
-        )
+        result = await extract_with_consensus("send a tiny fraction", TransferIntent, (a, b))
         assert result["amount"] == Decimal("0.0000000001")
         assert result["amount"] > 0
 
@@ -166,15 +148,12 @@ class TestAmountBoundaryOverflow:
 
 
 class TestCombinedBoundaryAndExtraFields:
-
     @pytest.mark.asyncio
     async def test_W_all_fields_at_max_valid_values(self) -> None:
         """Both fields simultaneously at their maximum valid values → allowed."""
         max_recipient = "z" * 64
         a, b = _pair("1000000", max_recipient)
-        result = await extract_with_consensus(
-            "max transfer", TransferIntent, (a, b)
-        )
+        result = await extract_with_consensus("max transfer", TransferIntent, (a, b))
         assert result["amount"] == Decimal("1000000")
         assert len(result["recipient"]) == 64
 
@@ -182,9 +161,7 @@ class TestCombinedBoundaryAndExtraFields:
     async def test_X_extra_injected_field_is_silently_ignored(self) -> None:
         """LLM injects an unexpected field ('evil': true) — Pydantic ignores it."""
         a, b = _pair_extra("50", "alice", evil=True, admin_override="yes")
-        result = await extract_with_consensus(
-            "send 50 to alice", TransferIntent, (a, b)
-        )
+        result = await extract_with_consensus("send 50 to alice", TransferIntent, (a, b))
         # Only the declared fields should be present
         assert set(result.keys()) == {"amount", "recipient"}
         assert "evil" not in result
@@ -194,9 +171,7 @@ class TestCombinedBoundaryAndExtraFields:
     async def test_type_coercion_string_to_decimal(self) -> None:
         """Pydantic coerces string '50' to Decimal(50) — expected behaviour."""
         a, b = _pair("50", "alice")
-        result = await extract_with_consensus(
-            "send fifty dollars to alice", TransferIntent, (a, b)
-        )
+        result = await extract_with_consensus("send fifty dollars to alice", TransferIntent, (a, b))
         assert isinstance(result["amount"], Decimal)
         assert result["amount"] == Decimal("50")
 

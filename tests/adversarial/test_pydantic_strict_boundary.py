@@ -61,6 +61,7 @@ from pramanix.validator import validate_intent, validate_state
 
 class _TransferIntent(BaseModel):
     """Intent model: amount must be a well-typed Decimal."""
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
     amount: Decimal
@@ -68,6 +69,7 @@ class _TransferIntent(BaseModel):
 
 class _AccountState(BaseModel):
     """Full state model with required state_version."""
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
     state_version: str
@@ -77,6 +79,7 @@ class _AccountState(BaseModel):
 
 class _StateMissingVersion(BaseModel):
     """State model that forgot to declare state_version — policy author bug."""
+
     model_config = ConfigDict(strict=True)
 
     balance: Decimal
@@ -84,6 +87,7 @@ class _StateMissingVersion(BaseModel):
 
 class _StateVersionWrongType(BaseModel):
     """State model where state_version is int — policy author bug."""
+
     model_config = ConfigDict(strict=True)
 
     state_version: int  # wrong! should be str
@@ -288,13 +292,13 @@ class TestGuardEndToEndBoundary:
     @pytest.mark.parametrize(
         "bad_amount",
         [
-            "100",         # string
-            100,           # int
-            100.0,         # float
-            None,          # null
-            [],            # list
-            {},            # dict
-            False,         # bool (common coercion trap)
+            "100",  # string
+            100,  # int
+            100.0,  # float
+            None,  # null
+            [],  # list
+            {},  # dict
+            False,  # bool (common coercion trap)
         ],
     )
     def test_all_non_decimal_amounts_rejected(self, bad_amount: Any) -> None:

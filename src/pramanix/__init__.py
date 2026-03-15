@@ -7,10 +7,12 @@ Public API contract — these are the ONLY names that are considered stable.
 All other internal modules may change without notice.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
+from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor
+from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
 from pramanix.exceptions import (
@@ -36,6 +38,7 @@ from pramanix.exceptions import (
 )
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
+from pramanix.identity import JWTIdentityLinker
 from pramanix.policy import Policy
 from pramanix.resolvers import ResolverRegistry
 
@@ -79,4 +82,13 @@ __all__ = [
     # Exceptions — hardening (Phase 4)
     "SemanticPolicyViolation",
     "InjectionBlockedError",
+    # Phase 9 — Pillar 1: Cryptographic audit
+    "DecisionSigner",
+    "DecisionVerifier",
+    "MerkleAnchor",
+    # Phase 9 — Pillar 3: Zero-trust identity
+    "JWTIdentityLinker",
+    # Phase 9 — Pillar 4: Adaptive circuit breaker
+    "AdaptiveCircuitBreaker",
+    "CircuitBreakerConfig",
 ]

@@ -61,9 +61,7 @@ class TestColdStartWarmup:
         p50 = latencies[int(len(latencies) * 0.50)]
         p99 = latencies[int(len(latencies) * 0.99)]
         mean = statistics.mean(latencies)
-        print(
-            f"\n[warmup=True]  P50={p50:.1f}ms  P99={p99:.1f}ms  mean={mean:.1f}ms"
-        )
+        print(f"\n[warmup=True]  P50={p50:.1f}ms  P99={p99:.1f}ms  mean={mean:.1f}ms")
         # Warmup guard: P99 must be reasonable (< 500ms is a loose but safe bound)
         assert p99 < 500.0, f"P99={p99:.1f}ms exceeded 500ms with warmup=True"
 
@@ -74,9 +72,7 @@ class TestColdStartWarmup:
         p50 = latencies[int(len(latencies) * 0.50)]
         p99 = latencies[int(len(latencies) * 0.99)]
         mean = statistics.mean(latencies)
-        print(
-            f"\n[warmup=False] P50={p50:.1f}ms  P99={p99:.1f}ms  mean={mean:.1f}ms"
-        )
+        print(f"\n[warmup=False] P50={p50:.1f}ms  P99={p99:.1f}ms  mean={mean:.1f}ms")
         # We only assert that all decisions were completed (no hangs)
         assert len(latencies) == 30
 
@@ -103,6 +99,4 @@ class TestColdStartWarmup:
         latencies.sort()
         p99 = latencies[int(len(latencies) * 0.99)]
         print(f"\n[recycle, warmup=True] P99={p99:.1f}ms")
-        assert p99 < 200.0, (
-            f"P99={p99:.1f}ms exceeded 200ms after recycle with warmup=True"
-        )
+        assert p99 < 200.0, f"P99={p99:.1f}ms exceeded 200ms after recycle with warmup=True"

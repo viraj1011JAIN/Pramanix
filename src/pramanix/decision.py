@@ -83,6 +83,12 @@ class SolverStatus(str, enum.Enum):
     VALIDATION_FAILURE = "validation_failure"
     """Pydantic validation of intent or state data failed."""
 
+    RATE_LIMITED = "rate_limited"
+    """Request shed by adaptive load limiter (fail-safe: always blocks)."""
+
+    CACHE_HIT = "cache_hit"
+    """Observability tag: intent extracted from LRU/Redis cache; Z3 still ran."""
+
 
 # ── Decision ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +99,7 @@ _BLOCKED_STATUSES: frozenset[SolverStatus] = frozenset(
         SolverStatus.ERROR,
         SolverStatus.STALE_STATE,
         SolverStatus.VALIDATION_FAILURE,
+        SolverStatus.RATE_LIMITED,
     }
 )
 
@@ -310,6 +317,31 @@ class Decision:
         return cls(
             allowed=False,
             status=SolverStatus.VALIDATION_FAILURE,
+            explanation=reason,
+            metadata=dict(metadata) if metadata is not None else {},
+        )
+
+    # ── Factory: RATE_LIMITED ─────────────────────────────────────────────────────
+
+    @classmethod
+    def rate_limited(
+        cls,
+        reason: str = "Request shed by adaptive load limiter. Retry after backoff.",
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> Decision:
+        """Construct a *blocked* decision for a shed request.
+
+        Returns allowed=False, status=RATE_LIMITED.
+        The caller MUST NOT allow the action regardless of this decision.
+
+        Args:
+            reason:   Human-readable shedding explanation.
+            metadata: Optional caller-supplied tracing data.
+        """
+        return cls(
+            allowed=False,
+            status=SolverStatus.RATE_LIMITED,
             explanation=reason,
             metadata=dict(metadata) if metadata is not None else {},
         )

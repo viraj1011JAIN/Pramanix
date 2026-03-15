@@ -51,14 +51,14 @@ _INJECTION_RE = re.compile(
     r"|jailbreak"
     r"|developer\s+mode"
     # Instruction tokens used by open-source model families
-    r"|\[INST\]"                                      # Llama 2
-    r"|\<\<SYS\>\>"                                   # Llama 2 system block
-    r"|<\|im_start\|>"                                # ChatML (Mistral/OpenChat)
-    r"|<\|eot_id\|>"                                  # Llama 3
-    r"|<\|begin_of_text\|>"                           # Llama 3 BOS
+    r"|\[INST\]"  # Llama 2
+    r"|\<\<SYS\>\>"  # Llama 2 system block
+    r"|<\|im_start\|>"  # ChatML (Mistral/OpenChat)
+    r"|<\|eot_id\|>"  # Llama 3
+    r"|<\|begin_of_text\|>"  # Llama 3 BOS
     # Fake system-message injection
-    r"|system\s*:\s*(?=[A-Za-z])"                     # "SYSTEM: do X"
-    r"|\{\s*[\"']role[\"']\s*:\s*[\"']system[\"']"    # embedded JSON role
+    r"|system\s*:\s*(?=[A-Za-z])"  # "SYSTEM: do X"
+    r"|\{\s*[\"']role[\"']\s*:\s*[\"']system[\"']"  # embedded JSON role
     # Persona / override phrases
     r"|override\s+safety"
     r"|pretend\s+you\s+are"

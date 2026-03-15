@@ -114,11 +114,11 @@ class TestCleanJson:
         assert json.loads(_clean_json(raw)) == {"amount": 100}
 
     def test_strips_json_code_fence(self) -> None:
-        raw = "```json\n{\"amount\": 100}\n```"
+        raw = '```json\n{"amount": 100}\n```'
         assert json.loads(_clean_json(raw)) == {"amount": 100}
 
     def test_strips_plain_code_fence(self) -> None:
-        raw = "```\n{\"amount\": 100}\n```"
+        raw = '```\n{"amount": 100}\n```'
         assert json.loads(_clean_json(raw)) == {"amount": 100}
 
     def test_strips_surrounding_prose(self) -> None:
@@ -136,7 +136,7 @@ class TestCleanJson:
         assert result == ""
 
     def test_case_insensitive_json_fence(self) -> None:
-        raw = "```JSON\n{\"key\": \"val\"}\n```"
+        raw = '```JSON\n{"key": "val"}\n```'
         assert json.loads(_clean_json(raw)) == {"key": "val"}
 
 
@@ -150,7 +150,7 @@ class TestParseLlmResponse:
         assert result == {"amount": "500", "recipient": "Alice"}
 
     def test_json_in_markdown_fence(self) -> None:
-        raw = "```json\n{\"amount\": \"100\"}\n```"
+        raw = '```json\n{"amount": "100"}\n```'
         assert parse_llm_response(raw) == {"amount": "100"}
 
     def test_raises_extraction_failure_on_invalid_json(self) -> None:
@@ -359,18 +359,23 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_strict_keys_all_fields_match_passes(self) -> None:
         """strict_keys (default): all fields agree → no exception."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         result = await extract_with_consensus(
-            "send 50 to alice", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+            "send 50 to alice",
+            SimpleIntent,
+            (FA(), FB()),  # type: ignore[arg-type]
             agreement_mode="strict_keys",
         )
         assert result["recipient"] == "alice"
@@ -378,19 +383,24 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_strict_keys_single_field_mismatch_blocks(self) -> None:
         """strict_keys: any field disagreement raises ExtractionMismatchError."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "99", "recipient": "alice"}  # amount differs
 
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
-                "ambiguous", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+                "ambiguous",
+                SimpleIntent,
+                (FA(), FB()),  # type: ignore[arg-type]
                 agreement_mode="strict_keys",
             )
         assert "amount" in exc_info.value.mismatches
@@ -398,18 +408,23 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_unanimous_identical_dicts_passes(self) -> None:
         """unanimous: exact equality → passes."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "100", "recipient": "bob"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "100", "recipient": "bob"}
 
         result = await extract_with_consensus(
-            "pay bob 100", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+            "pay bob 100",
+            SimpleIntent,
+            (FA(), FB()),  # type: ignore[arg-type]
             agreement_mode="unanimous",
         )
         assert result["amount"] == Decimal("100")
@@ -417,19 +432,24 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_unanimous_any_diff_blocks(self) -> None:
         """unanimous: any field disagreement → ExtractionMismatchError."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "bob"}  # recipient differs
 
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
-                "ambiguous", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+                "ambiguous",
+                SimpleIntent,
+                (FA(), FB()),  # type: ignore[arg-type]
                 agreement_mode="unanimous",
             )
         assert "recipient" in exc_info.value.mismatches
@@ -437,19 +457,24 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_lenient_critical_mismatch_blocks(self) -> None:
         """lenient: critical field disagrees → ExtractionMismatchError."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "999", "recipient": "alice"}  # amount is critical
 
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
-                "ambiguous", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+                "ambiguous",
+                SimpleIntent,
+                (FA(), FB()),  # type: ignore[arg-type]
                 agreement_mode="lenient",
                 critical_fields=frozenset({"amount"}),
             )
@@ -459,19 +484,24 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_lenient_non_critical_mismatch_passes(self) -> None:
         """lenient: non-critical field disagrees → passes; result from model A."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 # recipient is NOT in critical_fields → non-critical diff
                 return {"amount": "50", "recipient": "ALICE"}
 
         result = await extract_with_consensus(
-            "pay alice 50", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+            "pay alice 50",
+            SimpleIntent,
+            (FA(), FB()),  # type: ignore[arg-type]
             agreement_mode="lenient",
             critical_fields=frozenset({"amount"}),
         )
@@ -482,19 +512,24 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_lenient_no_critical_fields_acts_like_strict_keys(self) -> None:
         """lenient with critical_fields=None treats all fields as critical."""
+
         class FA:
             model = "a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FB:
             model = "b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "bob"}
 
         with pytest.raises(ExtractionMismatchError):
             await extract_with_consensus(
-                "ambiguous", SimpleIntent, (FA(), FB()),  # type: ignore[arg-type]
+                "ambiguous",
+                SimpleIntent,
+                (FA(), FB()),  # type: ignore[arg-type]
                 agreement_mode="lenient",
                 critical_fields=None,  # all fields treated as critical
             )
@@ -504,92 +539,117 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_both_models_fail_raises_extraction_failure(self) -> None:
         """Both models raise → composite ExtractionFailureError."""
+
         class FailA:
             model = "fail-a"
+
             async def extract(self, text, intent_schema, context=None):
                 raise ExtractionFailureError("[fail-a] bad JSON")
 
         class FailB:
             model = "fail-b"
+
             async def extract(self, text, intent_schema, context=None):
                 raise ExtractionFailureError("[fail-b] server error")
 
         with pytest.raises(ExtractionFailureError, match="Both translators failed"):
             await extract_with_consensus(
-                "send 50", SimpleIntent, (FailA(), FailB()),  # type: ignore[arg-type]
+                "send 50",
+                SimpleIntent,
+                (FailA(), FailB()),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_both_models_timeout_raises_llm_timeout(self) -> None:
         """When both fail and at least one is a timeout, LLMTimeoutError is raised."""
+
         class TimeoutA:
             model = "to-a"
+
             async def extract(self, text, intent_schema, context=None):
                 raise LLMTimeoutError("A timed out", model="to-a", attempts=3)
 
         class FailB:
             model = "fail-b"
+
             async def extract(self, text, intent_schema, context=None):
                 raise ExtractionFailureError("[fail-b] bad JSON")
 
         with pytest.raises(LLMTimeoutError):
             await extract_with_consensus(
-                "send 50", SimpleIntent, (TimeoutA(), FailB()),  # type: ignore[arg-type]
+                "send 50",
+                SimpleIntent,
+                (TimeoutA(), FailB()),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_model_a_fails_model_b_succeeds_blocks_with_name(self) -> None:
         """Model A fails; model B succeeds → ExtractionFailureError naming model A."""
+
         class FailA:
             model = "broken-a"
+
             async def extract(self, text, intent_schema, context=None):
                 raise ExtractionFailureError("[broken-a] server 500")
 
         class OkB:
             model = "ok-b"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         with pytest.raises(ExtractionFailureError, match="broken-a") as exc_info:
             await extract_with_consensus(
-                "send 50", SimpleIntent, (FailA(), OkB()),  # type: ignore[arg-type]
+                "send 50",
+                SimpleIntent,
+                (FailA(), OkB()),  # type: ignore[arg-type]
             )
         assert "ok-b" in str(exc_info.value)  # names the succeeding model too
 
     @pytest.mark.asyncio
     async def test_model_b_fails_model_a_succeeds_blocks_with_name(self) -> None:
         """Model B fails; model A succeeds → ExtractionFailureError naming model B."""
+
         class OkA:
             model = "ok-a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class FailB:
             model = "broken-b"
+
             async def extract(self, text, intent_schema, context=None):
                 raise ExtractionFailureError("[broken-b] timeout")
 
         with pytest.raises(ExtractionFailureError, match="broken-b"):
             await extract_with_consensus(
-                "send 50", SimpleIntent, (OkA(), FailB()),  # type: ignore[arg-type]
+                "send 50",
+                SimpleIntent,
+                (OkA(), FailB()),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_model_b_timeout_raises_llm_timeout_error(self) -> None:
         """Model B times out while A succeeds → LLMTimeoutError (not ExtractionFailure)."""
+
         class OkA:
             model = "ok-a"
+
             async def extract(self, text, intent_schema, context=None):
                 return {"amount": "50", "recipient": "alice"}
 
         class TimeoutB:
             model = "to-b"
+
             async def extract(self, text, intent_schema, context=None):
                 raise LLMTimeoutError("B timed out", model="to-b", attempts=3)
 
         with pytest.raises(LLMTimeoutError) as exc_info:
             await extract_with_consensus(
-                "send 50", SimpleIntent, (OkA(), TimeoutB()),  # type: ignore[arg-type]
+                "send 50",
+                SimpleIntent,
+                (OkA(), TimeoutB()),  # type: ignore[arg-type]
             )
         assert exc_info.value.model == "to-b"
 
@@ -732,7 +792,9 @@ class TestOpenAICompatTranslator:
             side_effect=openai.APITimeoutError(request=MagicMock())
         )
 
-        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(LLMTimeoutError) as exc_info:
+        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(
+            LLMTimeoutError
+        ) as exc_info:
             await translator.extract("pay", SimpleIntent)
 
         assert exc_info.value.model == "gpt-4o"
@@ -755,7 +817,9 @@ class TestOpenAICompatTranslator:
         )
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_err)
 
-        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(ExtractionFailureError, match="401"):
+        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(
+            ExtractionFailureError, match="401"
+        ):
             await translator.extract("pay", SimpleIntent)
 
     @pytest.mark.asyncio
@@ -773,7 +837,9 @@ class TestOpenAICompatTranslator:
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(ExtractionFailureError, match="empty"):
+        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(
+            ExtractionFailureError, match="empty"
+        ):
             await translator.extract("pay", SimpleIntent)
 
     @pytest.mark.asyncio
@@ -789,7 +855,9 @@ class TestOpenAICompatTranslator:
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(ExtractionFailureError):
+        with patch("openai.AsyncOpenAI", return_value=mock_client), pytest.raises(
+            ExtractionFailureError
+        ):
             await translator.extract("pay", SimpleIntent)
 
 
@@ -830,7 +898,9 @@ class TestAnthropicTranslator:
             side_effect=anthropic.APITimeoutError(request=MagicMock())
         )
 
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client), pytest.raises(LLMTimeoutError) as exc_info:
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client), pytest.raises(
+            LLMTimeoutError
+        ) as exc_info:
             await translator.extract("pay", SimpleIntent)
 
         assert exc_info.value.model == "claude-opus-4-5"
@@ -851,7 +921,9 @@ class TestAnthropicTranslator:
         )
         mock_client.messages.create = AsyncMock(side_effect=mock_err)
 
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client), pytest.raises(ExtractionFailureError, match="401"):
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client), pytest.raises(
+            ExtractionFailureError, match="401"
+        ):
             await translator.extract("pay", SimpleIntent)
 
     @pytest.mark.asyncio
@@ -866,7 +938,9 @@ class TestAnthropicTranslator:
         mock_client = MagicMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client), pytest.raises(ExtractionFailureError, match="no text content"):
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client), pytest.raises(
+            ExtractionFailureError, match="no text content"
+        ):
             await translator.extract("pay", SimpleIntent)
 
 
@@ -934,7 +1008,6 @@ class TestGuardParseAndVerify:
 
     @pytest.mark.asyncio
     async def test_error_decision_on_extraction_failure(self) -> None:
-
         guard = self._make_guard()
 
         with patch(
@@ -952,7 +1025,6 @@ class TestGuardParseAndVerify:
 
     @pytest.mark.asyncio
     async def test_error_decision_on_mismatch(self) -> None:
-
         guard = self._make_guard()
 
         mismatch = ExtractionMismatchError(
@@ -977,7 +1049,6 @@ class TestGuardParseAndVerify:
 
     @pytest.mark.asyncio
     async def test_error_decision_on_llm_timeout(self) -> None:
-
         guard = self._make_guard()
 
         with patch(

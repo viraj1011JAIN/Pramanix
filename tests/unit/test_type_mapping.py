@@ -80,9 +80,7 @@ class TestUnsupportedTypes:
             type(None),
         ],
     )
-    def test_unsupported_type_raises_policy_compilation_error(
-        self, unsupported_type: type
-    ) -> None:
+    def test_unsupported_type_raises_policy_compilation_error(self, unsupported_type: type) -> None:
         with pytest.raises(PolicyCompilationError):
             python_type_to_z3_sort(unsupported_type)
 

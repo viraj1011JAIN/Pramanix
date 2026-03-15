@@ -44,6 +44,7 @@ from transpiler_spike import (  # noqa: E402
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def balance_field() -> Field:
     return Field("balance", Decimal, "Real")
@@ -77,6 +78,7 @@ def base_values() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 1. Tree construction -- no eager evaluation
 # ---------------------------------------------------------------------------
+
 
 class TestTreeConstruction:
     def test_e_returns_expressionnode(self, balance_field: Field) -> None:
@@ -135,7 +137,7 @@ class TestTreeConstruction:
     def test_named_explain_are_immutable(self, balance_field: Field) -> None:
         orig = E(balance_field) >= 0
         named = orig.named("lbl")
-        assert orig.label is None   # original unmodified
+        assert orig.label is None  # original unmodified
         assert named.label == "lbl"
 
     def test_bool_ops_build_tree(self, balance_field: Field, amount_field: Field) -> None:
@@ -164,6 +166,7 @@ class TestTreeConstruction:
 # 2. Literal conversion -- exact arithmetic
 # ---------------------------------------------------------------------------
 
+
 class TestLiteralConversion:
     def test_int_becomes_real_val(self) -> None:
         v = _z3_lit(42)
@@ -188,6 +191,7 @@ class TestLiteralConversion:
         # Z3 rational: numerator/denominator
         frac = model[x].as_fraction()
         from fractions import Fraction
+
         assert frac == Fraction(1, 10)
 
     def test_float_exact_via_decimal(self) -> None:
@@ -198,6 +202,7 @@ class TestLiteralConversion:
         s.add(x == v)
         assert s.check() == z3.sat
         from fractions import Fraction
+
         model = s.model()
         assert model[x].as_fraction() == Fraction(10001, 100)
 
@@ -209,6 +214,7 @@ class TestLiteralConversion:
 # ---------------------------------------------------------------------------
 # 3. Transpiler -- tree -> Z3 AST
 # ---------------------------------------------------------------------------
+
 
 class TestTranspiler:
     def test_field_ref_real(self, balance_field: Field) -> None:
@@ -230,9 +236,7 @@ class TestTranspiler:
         with pytest.raises(ValueError, match="Unknown z3_type"):
             _transpile(_FieldRef(f))
 
-    def test_arithmetic_sub(
-        self, balance_field: Field, amount_field: Field
-    ) -> None:
+    def test_arithmetic_sub(self, balance_field: Field, amount_field: Field) -> None:
         node = _BinOp("sub", _FieldRef(balance_field), _FieldRef(amount_field))
         z3expr = _transpile(node)
         assert z3.is_arith(z3expr)
@@ -280,15 +284,14 @@ class TestTranspiler:
 # 4. _collect_fields
 # ---------------------------------------------------------------------------
 
+
 class TestCollectFields:
     def test_collects_single_field(self, balance_field: Field) -> None:
         node = _FieldRef(balance_field)
         result = _collect_fields(node)
         assert result == {"balance": balance_field}
 
-    def test_collects_from_binop(
-        self, balance_field: Field, amount_field: Field
-    ) -> None:
+    def test_collects_from_binop(self, balance_field: Field, amount_field: Field) -> None:
         node = _BinOp("sub", _FieldRef(balance_field), _FieldRef(amount_field))
         result = _collect_fields(node)
         assert set(result) == {"balance", "amount"}
@@ -296,9 +299,7 @@ class TestCollectFields:
     def test_literal_returns_empty(self) -> None:
         assert _collect_fields(_Literal(42)) == {}
 
-    def test_collects_from_boolop(
-        self, balance_field: Field, frozen_field: Field
-    ) -> None:
+    def test_collects_from_boolop(self, balance_field: Field, frozen_field: Field) -> None:
         lhs = _CmpOp("ge", _FieldRef(balance_field), _Literal(0))
         rhs = _CmpOp("eq", _FieldRef(frozen_field), _Literal(False))
         node = _BoolOp("and", (lhs, rhs))
@@ -310,6 +311,7 @@ class TestCollectFields:
 # 5. Phase 1 gate tests — the five mandated scenarios
 # ---------------------------------------------------------------------------
 
+
 class TestPhase1Gate:
     """Five mandatory gate tests specified in the Phase 1 blueprint."""
 
@@ -317,25 +319,19 @@ class TestPhase1Gate:
     def invs(self) -> list[ConstraintExpr]:
         return REFERENCE_INVARIANTS
 
-    def test_gate_1_sat_normal_transaction(
-        self, invs: list[ConstraintExpr]
-    ) -> None:
+    def test_gate_1_sat_normal_transaction(self, invs: list[ConstraintExpr]) -> None:
         """SAT: balance=1000, amount=100, frozen=False -- all satisfied."""
         r = verify(invs, {"balance": 1000, "amount": 100, "daily_limit": 5000, "is_frozen": False})
         assert r.sat is True
         assert r.unsat_core_labels == []
 
-    def test_gate_2_unsat_single_overdraft(
-        self, invs: list[ConstraintExpr]
-    ) -> None:
+    def test_gate_2_unsat_single_overdraft(self, invs: list[ConstraintExpr]) -> None:
         """UNSAT single: balance=50, amount=1000 -> core=['non_negative_balance'] exactly."""
         r = verify(invs, {"balance": 50, "amount": 1000, "daily_limit": 5000, "is_frozen": False})
         assert r.sat is False
         assert r.unsat_core_labels == ["non_negative_balance"]
 
-    def test_gate_3_unsat_multiple_overdraft_and_frozen(
-        self, invs: list[ConstraintExpr]
-    ) -> None:
+    def test_gate_3_unsat_multiple_overdraft_and_frozen(self, invs: list[ConstraintExpr]) -> None:
         """UNSAT multiple: both non_negative_balance AND account_not_frozen violated."""
         r = verify(invs, {"balance": 50, "amount": 1000, "daily_limit": 5000, "is_frozen": True})
         assert r.sat is False
@@ -343,16 +339,12 @@ class TestPhase1Gate:
         assert "account_not_frozen" in r.unsat_core_labels
         assert len(r.unsat_core_labels) == 2
 
-    def test_gate_4_sat_boundary_exact(
-        self, invs: list[ConstraintExpr]
-    ) -> None:
+    def test_gate_4_sat_boundary_exact(self, invs: list[ConstraintExpr]) -> None:
         """SAT boundary: balance=100, amount=100 -> 100-100=0 >= 0 is exactly true."""
         r = verify(invs, {"balance": 100, "amount": 100, "daily_limit": 5000, "is_frozen": False})
         assert r.sat is True
 
-    def test_gate_5_unsat_boundary_breach_decimal(
-        self, invs: list[ConstraintExpr]
-    ) -> None:
+    def test_gate_5_unsat_boundary_breach_decimal(self, invs: list[ConstraintExpr]) -> None:
         """UNSAT boundary: amount=100.01 breaches balance=100 by exactly 0.01."""
         r = verify(
             invs,
@@ -366,9 +358,7 @@ class TestPhase1Gate:
         assert r.sat is False
         assert "non_negative_balance" in r.unsat_core_labels
 
-    def test_gate_5_float_boundary_breach(
-        self, invs: list[ConstraintExpr]
-    ) -> None:
+    def test_gate_5_float_boundary_breach(self, invs: list[ConstraintExpr]) -> None:
         """Same boundary breach with float -- exact conversion via Decimal(str(v))."""
         r = verify(
             invs,
@@ -386,6 +376,7 @@ class TestPhase1Gate:
 # ---------------------------------------------------------------------------
 # 6. verify() -- additional coverage
 # ---------------------------------------------------------------------------
+
 
 class TestVerify:
     def test_daily_limit_violated_alone(self) -> None:

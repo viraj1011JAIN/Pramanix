@@ -49,9 +49,7 @@ def RoleMustBeIn(role: Field, allowed_roles: list[Any]) -> ConstraintExpr:
         E(role)
         .is_in(allowed_roles)
         .named("role_must_be_in_allowed_set")
-        .explain(
-            "Access denied: role ({role}) is not in the set of allowed roles."
-        )
+        .explain("Access denied: role ({role}) is not in the set of allowed roles.")
     )
 
 
@@ -84,7 +82,6 @@ def DepartmentMustBeIn(department: Field, allowed_departments: list[Any]) -> Con
         .is_in(allowed_departments)
         .named("department_must_be_in_allowed_set")
         .explain(
-            "Access denied: department ({department}) is not in the "
-            "set of allowed departments."
+            "Access denied: department ({department}) is not in the " "set of allowed departments."
         )
     )

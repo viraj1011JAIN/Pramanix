@@ -63,11 +63,7 @@ class OllamaTranslator:
         timeout: float = 60.0,
     ) -> None:
         self.model = model
-        resolved_url = (
-            base_url
-            or os.environ.get("OLLAMA_BASE_URL")
-            or _DEFAULT_BASE_URL
-        )
+        resolved_url = base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
         self._base_url = resolved_url.rstrip("/")
         self._timeout = timeout
 

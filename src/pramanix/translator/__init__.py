@@ -38,6 +38,7 @@ __all__ = [
     "create_translator",
 ]
 
+
 # Lazy imports so that missing optional deps only raise at usage time,
 # not at `import pramanix`.
 def __getattr__(name: str) -> object:
@@ -54,4 +55,3 @@ def __getattr__(name: str) -> object:
 
         return OllamaTranslator
     raise AttributeError(f"module 'pramanix.translator' has no attribute {name!r}")
-

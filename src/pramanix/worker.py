@@ -33,12 +33,14 @@ Critical design invariants
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import hmac as _hmac_mod
 import json as _json_mod
 import logging
 import secrets as _secrets_mod
 import threading
+import time as _time_module
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -51,12 +53,113 @@ if TYPE_CHECKING:
 
     from pramanix.policy import Policy
 
-__all__ = ["WorkerPool"]
+__all__ = ["WorkerPool", "AdaptiveConcurrencyLimiter"]
 
 _log = logging.getLogger(__name__)
 
 # Grace period before force-killing stalled processes during recycle.
 _RECYCLE_GRACE_S: float = 10.0
+
+
+# ── Phase 10.4: Adaptive Concurrency Limiter ──────────────────────────────────
+
+
+class AdaptiveConcurrencyLimiter:
+    """Adaptive load shedder for the Z3 worker pool.
+
+    Sheds requests when BOTH conditions are met simultaneously:
+    1. active_workers >= max_workers * shed_worker_pct/100
+    2. p99_solver_latency_ms > shed_latency_threshold_ms
+
+    Dual-condition prevents false positives:
+    - High workers alone may be a healthy burst
+    - High latency alone may be a transient GC pause
+    - Both together signals genuine overload
+
+    INVARIANT: shed decisions always have allowed=False.
+    INVARIANT: Shedding is NEVER the cause of allowed=True.
+    """
+
+    _LATENCY_WINDOW_SECONDS = 60.0
+
+    def __init__(
+        self,
+        max_workers: int,
+        latency_threshold_ms: float | None = None,
+        worker_pct: float | None = None,
+    ) -> None:
+        import os as _os
+
+        self._max_workers = max_workers
+        self._latency_threshold = (
+            latency_threshold_ms
+            if latency_threshold_ms is not None
+            else float(_os.environ.get("PRAMANIX_SHED_LATENCY_THRESHOLD_MS", "200"))
+        )
+        self._worker_pct = (
+            worker_pct
+            if worker_pct is not None
+            else float(_os.environ.get("PRAMANIX_SHED_WORKER_PCT", "90"))
+        )
+        self._active = 0
+        self._lock = threading.Lock()
+        self._latency_window: collections.deque[tuple[float, float]] = collections.deque()
+        self._shed_count = 0
+
+    @property
+    def active_workers(self) -> int:
+        return self._active
+
+    @property
+    def shed_count(self) -> int:
+        return self._shed_count
+
+    def acquire(self) -> bool:
+        """Try to acquire a worker slot.
+
+        Returns True if the request should proceed.
+        Returns False if the request should be shed.
+        Never raises.
+        """
+        with self._lock:
+            self._active += 1
+            should_shed = self._check_shed_conditions()
+            if should_shed:
+                self._active -= 1
+                self._shed_count += 1
+                return False
+            return True
+
+    def release(self, latency_ms: float) -> None:
+        """Release a worker slot and record the solve latency."""
+        with self._lock:
+            self._active = max(0, self._active - 1)
+            now = _time_module.monotonic()
+            self._latency_window.append((now, latency_ms))
+            # Evict entries outside the 60s window
+            cutoff = now - self._LATENCY_WINDOW_SECONDS
+            while self._latency_window and self._latency_window[0][0] < cutoff:
+                self._latency_window.popleft()
+
+    def _check_shed_conditions(self) -> bool:
+        """Check both shedding conditions. Called under lock."""
+        saturation_pct = (self._active / self._max_workers) * 100
+        if saturation_pct < self._worker_pct:
+            return False
+
+        p99 = self._compute_p99()
+        if p99 is None:
+            return False
+        return p99 > self._latency_threshold
+
+    def _compute_p99(self) -> float | None:
+        """Compute P99 over the sliding window. Called under lock."""
+        if len(self._latency_window) < 10:
+            return None
+        latencies: list[float] = sorted(entry[1] for entry in self._latency_window)
+        idx = int(len(latencies) * 0.99)
+        return latencies[min(idx, len(latencies) - 1)]
+
 
 # ── HMAC Result Integrity Seal ────────────────────────────────────────────────
 #
@@ -96,8 +199,7 @@ class _EphemeralKey:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError(
-            "_EphemeralKey must not be serialised to disk. "
-            "Pass .bytes explicitly for IPC."
+            "_EphemeralKey must not be serialised to disk. " "Pass .bytes explicitly for IPC."
         )
 
 
@@ -287,9 +389,7 @@ def _force_kill_processes(executor: ProcessPoolExecutor) -> None:
                     proc.kill()
                     _log.warning("worker.drain: killed hung process pid=%s", proc.pid)
                 except Exception as exc:
-                    _log.error(
-                        "worker.drain: failed to kill pid=%s: %s", proc.pid, exc
-                    )
+                    _log.error("worker.drain: failed to kill pid=%s: %s", proc.pid, exc)
     except Exception as exc:
         _log.error("worker.drain: unexpected error during force-kill: %s", exc)
 
@@ -319,6 +419,8 @@ class WorkerPool:
     max_decisions_per_worker: int
     warmup: bool = True
     grace_s: float = _RECYCLE_GRACE_S
+    latency_threshold_ms: float | None = None
+    worker_pct: float | None = None
 
     # Internals — not in constructor parameters.
     _executor: Executor = field(init=False, repr=False)
@@ -330,6 +432,11 @@ class WorkerPool:
         self._lock = threading.Lock()
         self._counter = 0
         self._alive = False
+        self._shed_limiter = AdaptiveConcurrencyLimiter(
+            max_workers=self.max_workers,
+            latency_threshold_ms=self.latency_threshold_ms,
+            worker_pct=self.worker_pct,
+        )
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -350,9 +457,7 @@ class WorkerPool:
             self._counter = 0
             self._alive = True
         except Exception as exc:
-            raise WorkerError(
-                f"WorkerPool.spawn failed ({type(exc).__name__}): {exc}"
-            ) from exc
+            raise WorkerError(f"WorkerPool.spawn failed ({type(exc).__name__}): {exc}") from exc
 
     def shutdown(self, wait: bool = True) -> None:
         """Gracefully shut down the pool.
@@ -393,12 +498,24 @@ class WorkerPool:
         """
         if not self._alive:
             return Decision.error(reason="WorkerPool is not running.")
+
+        # Adaptive load shedding
+        if not self._shed_limiter.acquire():
+            return Decision.rate_limited(
+                "Request shed: Z3 worker pool saturated with high latency. " "Retry after backoff."
+            )
+
+        _t0_shed = _time_module.monotonic()
+
         try:
             if self.mode == "async-process":
                 # Process mode: sign the result with an HMAC seal so the host
                 # can detect any IPC tampering before trusting the decision.
                 future: Future[dict[str, Any]] = self._executor.submit(
-                    _worker_solve_sealed, policy_cls, values, timeout_ms,
+                    _worker_solve_sealed,
+                    policy_cls,
+                    values,
+                    timeout_ms,
                     _RESULT_SEAL_KEY.bytes,
                 )
                 sealed = future.result()
@@ -407,24 +524,26 @@ class WorkerPool:
                 except (ValueError, KeyError) as exc:
                     _log.error("WorkerPool: HMAC seal violation — %s", exc)
                     decision = Decision.error(
-                        reason="Worker result integrity check failed — HMAC mismatch."
+                        reason=("Worker result integrity check failed" " — HMAC mismatch.")
                     )
                 else:
                     decision = self._dict_to_decision(result_dict)
             else:
                 # Thread mode: shared memory — no IPC, no seal needed.
-                future = self._executor.submit(
-                    _worker_solve, policy_cls, values, timeout_ms
-                )
+                future = self._executor.submit(_worker_solve, policy_cls, values, timeout_ms)
                 result_dict = future.result()
                 decision = self._dict_to_decision(result_dict)
         except WorkerError:
+            self._shed_limiter.release(9999.0)
             raise
         except Exception as exc:
             _log.error("WorkerPool.submit_solve error: %s", exc)
             decision = Decision.error(
-                reason=f"Worker dispatch failed ({type(exc).__name__}): {exc}"
+                reason=(f"Worker dispatch failed ({type(exc).__name__}): {exc}")
             )
+            self._shed_limiter.release(9999.0)
+        else:
+            self._shed_limiter.release((_time_module.monotonic() - _t0_shed) * 1000)
 
         # Host-side counter — zero IPC, zero lock contention on fast path.
         with self._lock:
@@ -445,17 +564,12 @@ class WorkerPool:
             import multiprocessing
 
             mp_ctx = multiprocessing.get_context("spawn")
-            return ProcessPoolExecutor(
-                max_workers=self.max_workers, mp_context=mp_ctx
-            )
+            return ProcessPoolExecutor(max_workers=self.max_workers, mp_context=mp_ctx)
         raise WorkerError(f"Unknown worker mode: {self.mode!r}")
 
     def _run_warmup(self) -> None:
         """Submit ``_warmup_worker`` to every slot.  Best-effort."""
-        futures = [
-            self._executor.submit(_warmup_worker)
-            for _ in range(self.max_workers)
-        ]
+        futures = [self._executor.submit(_warmup_worker) for _ in range(self.max_workers)]
         for fut in futures:
             try:
                 fut.result(timeout=30.0)

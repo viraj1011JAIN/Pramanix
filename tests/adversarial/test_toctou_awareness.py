@@ -66,11 +66,7 @@ class _TransferPolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named(
-                "non_negative_balance"
-            )
-        ]
+        return [(E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance")]
 
 
 _GUARD = Guard(_TransferPolicy)
@@ -121,8 +117,8 @@ class TestTOCTOUContract:
         # T2: account state is mutated externally — version rotated to "2.0"
         # (In production this is the attacker's concurrent transaction completing.)
         mutated_state = {
-            "balance": Decimal("0.00"),     # drained
-            "state_version": "2.0",         # version rotated by the mutation
+            "balance": Decimal("0.00"),  # drained
+            "state_version": "2.0",  # version rotated by the mutation
         }
 
         # T3: host re-verifies using the ORIGINAL intent but NEW state — STALE detected
@@ -132,9 +128,9 @@ class TestTOCTOUContract:
             state=mutated_state,
         )
         # The guard detects version mismatch before reaching the Z3 solver.
-        assert stale_decision.allowed is False, (
-            "TOCTOU contract: Decision must be blocked when state_version changes."
-        )
+        assert (
+            stale_decision.allowed is False
+        ), "TOCTOU contract: Decision must be blocked when state_version changes."
         assert stale_decision.status is SolverStatus.STALE_STATE, (
             f"Expected STALE_STATE but got {stale_decision.status}. "
             "Check Guard.verify() step 4 (version check)."
@@ -158,7 +154,7 @@ class TestTOCTOUContract:
         """If state_version is absent entirely the request is blocked immediately."""
         decision = _GUARD.verify(
             intent={"amount": Decimal("100.00")},
-            state={"balance": Decimal("1000.00")},   # no state_version key
+            state={"balance": Decimal("1000.00")},  # no state_version key
         )
         assert decision.allowed is False
         # status is VALIDATION_FAILURE (missing field) not STALE_STATE (mismatch)
@@ -169,6 +165,7 @@ class TestTOCTOUContract:
     def test_updated_state_with_matching_version_passes(self) -> None:
         """After a mutation, if the host RE-PROVISIONS the guard with the new
         Policy.Meta.version, a fresh verify with matching state_version passes."""
+
         # Note: this test re-creates the guard with version "2.0" to simulate
         # a policy upgrade.  In production the guard is recreated on deploy.
         class _PolicyV2(Policy):
@@ -181,9 +178,7 @@ class TestTOCTOUContract:
             @classmethod
             def invariants(cls) -> list[ConstraintExpr]:
                 return [
-                    (E(cls.balance) - E(cls.amount) >= Decimal("0")).named(
-                        "non_negative_balance"
-                    )
+                    (E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance")
                 ]
 
         guard_v2 = Guard(_PolicyV2)

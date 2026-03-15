@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "pramanix"
-version = "0.5.0"
+version = "0.7.0"
 description = "Deterministic neuro-symbolic guardrails for autonomous AI agents"
 authors = ["Viraj Jain <viraj@pramanix.dev>"]
 license = "AGPL-3.0-only"
@@ -28,6 +28,9 @@ classifiers = [
 ]
 packages = [{include = "pramanix", from = "src"}]
 
+[tool.poetry.scripts]
+pramanix = "pramanix.cli:main"
+
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
 pydantic = "^2.5"
@@ -45,6 +48,7 @@ starlette = {version = ">=0.37", optional = true}
 langchain-core = {version = ">=0.1", optional = true}
 llama-index-core = {version = ">=0.10", optional = true}
 pyautogen = {version = ">=0.2", optional = true}
+redis = {version = ">=5.0", optional = true}
 
 [tool.poetry.extras]
 translator = ["httpx", "openai", "anthropic", "tenacity"]
@@ -54,7 +58,10 @@ langchain = ["langchain-core"]
 llamaindex = ["llama-index-core"]
 autogen = ["pyautogen"]
 integrations = ["fastapi", "starlette", "httpx", "langchain-core", "llama-index-core", "pyautogen"]
-all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen"]
+identity = ["redis"]
+audit = []
+circuit-breaker = []
+all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -98,6 +105,17 @@ ignore_missing_imports = true
 # Each import is guarded by a try/except ImportError at runtime.
 [[tool.mypy.overrides]]
 module = [
+    "pramanix.audit",
+    "pramanix.audit.*",
+    "pramanix.identity",
+    "pramanix.identity.*",
+    "pramanix.circuit_breaker",
+    "pramanix.cli",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
     "openai",
     "openai.*",
     "anthropic",
@@ -116,6 +134,10 @@ module = [
     "starlette.*",
     "fastapi",
     "fastapi.*",
+    "redis",
+    "redis.*",
+    "testcontainers",
+    "testcontainers.*",
 ]
 ignore_missing_imports = true
 

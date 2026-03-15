@@ -72,9 +72,7 @@ def After(timestamp: Field, cutoff: Field) -> ConstraintExpr:
     return (
         (E(timestamp) > E(cutoff))
         .named("after_cutoff")
-        .explain(
-            "Too early: timestamp ({timestamp}) is not after cutoff ({cutoff})."
-        )
+        .explain("Too early: timestamp ({timestamp}) is not after cutoff ({cutoff}).")
     )
 
 
@@ -90,9 +88,7 @@ def Before(timestamp: Field, cutoff: Field) -> ConstraintExpr:
     return (
         (E(timestamp) < E(cutoff))
         .named("before_cutoff")
-        .explain(
-            "Too late: timestamp ({timestamp}) is not before cutoff ({cutoff})."
-        )
+        .explain("Too late: timestamp ({timestamp}) is not before cutoff ({cutoff}).")
     )
 
 
@@ -110,7 +106,5 @@ def NotExpired(expiry_ts: Field, now_ts: Field) -> ConstraintExpr:
     return (
         (E(expiry_ts) > E(now_ts))
         .named("not_expired")
-        .explain(
-            "Entity has expired: expiry_ts ({expiry_ts}) <= now_ts ({now_ts})."
-        )
+        .explain("Entity has expired: expiry_ts ({expiry_ts}) <= now_ts ({now_ts}).")
     )

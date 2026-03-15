@@ -44,12 +44,13 @@ Example::
 """
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from pramanix.expressions import E
 
 if TYPE_CHECKING:
+    from decimal import Decimal
+
     from pramanix.expressions import ConstraintExpr, Field
 
 __all__ = [
@@ -144,7 +145,7 @@ def DosageGradientCheck(
 
     Regulatory: Joint Commission NPSG 03.06.01 / ISMP — dose titration safety
     requires that per-step dose increases not exceed a pre-defined gradient
-    (commonly 25–50 % for opioids and narrow-therapeutic-index drugs).
+    (commonly 25-50 % for opioids and narrow-therapeutic-index drugs).
 
     Args:
         new_dose:         Field (Decimal, Real) — proposed new dose.
@@ -217,13 +218,13 @@ def PediatricDoseBound(
         dose_per_kg:  Field (Decimal, Real) — dose in mg/kg (or mcg/kg etc.).
         weight_kg:    Field (Decimal, Real) — patient weight in kg.
         absolute_max: Decimal — hard absolute dose ceiling in the same unit as
-            ``dose_per_kg × weight_kg`` (e.g., mg).
+            ``dose_per_kg x weight_kg`` (e.g., mg).
     """
     return (
         (E(dose_per_kg) * E(weight_kg) <= absolute_max)
         .named("pediatric_dose_bound")
         .explain(
-            "Paediatric dose ceiling exceeded: dose_per_kg ({dose_per_kg}) × "
+            "Paediatric dose ceiling exceeded: dose_per_kg ({dose_per_kg}) x "
             "weight_kg ({weight_kg}) exceeds absolute maximum of "
             f"{absolute_max}. (AAP / FDA PREA paediatric dosing cap)"
         )

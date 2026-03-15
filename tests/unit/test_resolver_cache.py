@@ -136,9 +136,9 @@ class TestClearCache:
         barrier = threading.Barrier(2)
 
         def thread_fn(label: str) -> None:
-            reg.resolve("x")          # warm the cache
-            barrier.wait()            # both threads warmed
-            reg.clear_cache()         # each thread clears its own cache
+            reg.resolve("x")  # warm the cache
+            barrier.wait()  # both threads warmed
+            reg.clear_cache()  # each thread clears its own cache
             thread_result[label] = reg.resolve("x")  # re-resolve
 
         t1 = threading.Thread(target=thread_fn, args=("t1",))
@@ -174,14 +174,12 @@ class TestThreadLocalIsolation:
             local_reg = make_registry()
             local_reg.register("balance", lambda: user_balance)
 
-            local_reg.resolve("balance")   # warm the cache
-            barrier.wait()                 # synchronise: both threads active
+            local_reg.resolve("balance")  # warm the cache
+            barrier.wait()  # synchronise: both threads active
 
             value = local_reg.resolve("balance")
             if value != user_balance:
-                errors.append(
-                    f"{label}: expected {user_balance}, got {value} (DATA BLEED!)"
-                )
+                errors.append(f"{label}: expected {user_balance}, got {value} (DATA BLEED!)")
             local_reg.clear_cache()
 
         t_a = threading.Thread(target=simulate_request, args=(1_000, "user_a"))
@@ -207,7 +205,7 @@ class TestThreadLocalIsolation:
                 return value
 
             reg.register(f"field_{label}", resolver)
-            reg.resolve(f"field_{label}")   # prime
+            reg.resolve(f"field_{label}")  # prime
             barrier.wait()
             # Accessing the *other* thread's field key must still work
             # (resolver is global), but the cache is per-thread.

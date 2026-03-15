@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from pramanix.expressions import Field
 from pramanix.primitives.infra import (
     BlastRadiusCheck,
@@ -49,28 +47,38 @@ _INV_BLAST = [BlastRadiusCheck(_affected, _total, _MAX_BLAST)]
 class TestBlastRadiusCheck:
     def test_sat_small_canary_rollout(self) -> None:
         # 5 of 200 = 2.5% < 5%
-        result = solve(_INV_BLAST, {"affected_instances": 5, "total_instances": 200}, timeout_ms=5_000)
+        result = solve(
+            _INV_BLAST, {"affected_instances": 5, "total_instances": 200}, timeout_ms=5_000
+        )
         assert result.sat is True
 
     def test_unsat_large_rollout_exceeds_blast_limit(self) -> None:
         # 20 of 200 = 10% > 5%
-        result = solve(_INV_BLAST, {"affected_instances": 20, "total_instances": 200}, timeout_ms=5_000)
+        result = solve(
+            _INV_BLAST, {"affected_instances": 20, "total_instances": 200}, timeout_ms=5_000
+        )
         assert result.sat is False
         assert any(v.label == "blast_radius_check" for v in result.violated)
 
     def test_boundary_exactly_at_limit(self) -> None:
         # 10 of 200 = 5.0% == 5% → SAT (<=)
-        result = solve(_INV_BLAST, {"affected_instances": 10, "total_instances": 200}, timeout_ms=5_000)
+        result = solve(
+            _INV_BLAST, {"affected_instances": 10, "total_instances": 200}, timeout_ms=5_000
+        )
         assert result.sat is True
 
     def test_unsat_one_over_limit(self) -> None:
         # 11 of 200 = 5.5% > 5%
-        result = solve(_INV_BLAST, {"affected_instances": 11, "total_instances": 200}, timeout_ms=5_000)
+        result = solve(
+            _INV_BLAST, {"affected_instances": 11, "total_instances": 200}, timeout_ms=5_000
+        )
         assert result.sat is False
 
     def test_sat_single_instance(self) -> None:
         # 1 of 1000 = 0.1% — trivially below any blast limit
-        result = solve(_INV_BLAST, {"affected_instances": 1, "total_instances": 1000}, timeout_ms=5_000)
+        result = solve(
+            _INV_BLAST, {"affected_instances": 1, "total_instances": 1000}, timeout_ms=5_000
+        )
         assert result.sat is True
 
 
@@ -186,8 +194,8 @@ class TestReplicaBudget:
 # Kubernetes resource limits: cpu <= 2000m AND mem <= 4096 MiB
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_CPU_LIMIT = 2000   # 2 cores in millicores
-_MEM_LIMIT = 4096   # 4 GiB in MiB
+_CPU_LIMIT = 2000  # 2 cores in millicores
+_MEM_LIMIT = 4096  # 4 GiB in MiB
 _INV_RESOURCE = [CPUMemoryGuard(_cpu_milli, _mem_mib, _CPU_LIMIT, _MEM_LIMIT)]
 
 

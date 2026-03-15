@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from pramanix.expressions import Field
 from pramanix.primitives.fintech import (
     AntiStructuring,
@@ -132,21 +130,29 @@ _INV_STRUCTURING = [AntiStructuring(_cumulative_amount, _THRESHOLD)]
 
 class TestAntiStructuring:
     def test_sat_below_threshold(self) -> None:
-        result = solve(_INV_STRUCTURING, {"cumulative_amount": Decimal("9999.99")}, timeout_ms=5_000)
+        result = solve(
+            _INV_STRUCTURING, {"cumulative_amount": Decimal("9999.99")}, timeout_ms=5_000
+        )
         assert result.sat is True
 
     def test_unsat_at_threshold(self) -> None:
         """Exactly $10,000 triggers CTR — constraint is strictly < threshold."""
-        result = solve(_INV_STRUCTURING, {"cumulative_amount": Decimal("10000.00")}, timeout_ms=5_000)
+        result = solve(
+            _INV_STRUCTURING, {"cumulative_amount": Decimal("10000.00")}, timeout_ms=5_000
+        )
         assert result.sat is False
         assert any(v.label == "anti_structuring" for v in result.violated)
 
     def test_unsat_above_threshold(self) -> None:
-        result = solve(_INV_STRUCTURING, {"cumulative_amount": Decimal("10500.00")}, timeout_ms=5_000)
+        result = solve(
+            _INV_STRUCTURING, {"cumulative_amount": Decimal("10500.00")}, timeout_ms=5_000
+        )
         assert result.sat is False
 
     def test_boundary_one_cent_below(self) -> None:
-        result = solve(_INV_STRUCTURING, {"cumulative_amount": Decimal("9999.99")}, timeout_ms=5_000)
+        result = solve(
+            _INV_STRUCTURING, {"cumulative_amount": Decimal("9999.99")}, timeout_ms=5_000
+        )
         assert result.sat is True
 
 
@@ -334,16 +340,15 @@ class TestKYCTierCheck:
 # ═══════════════════════════════════════════════════════════════════════════════
 # TradingWindowCheck
 # SEC Rule 10b5-1: window_open <= time_of_day_secs <= window_close
-# NYSE: 09:30–16:00 ET = 34200–57600 seconds
+# NYSE: 09:30-16:00 ET = 34200-57600 seconds
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_WINDOW_OPEN = 34_200   # 09:30 ET
+_WINDOW_OPEN = 34_200  # 09:30 ET
 _WINDOW_CLOSE = 57_600  # 16:00 ET
 _INV_TRADING = [TradingWindowCheck(_time_of_day_secs, _WINDOW_OPEN, _WINDOW_CLOSE)]
 
 
 class TestTradingWindowCheck:
-
     def test_sat_within_trading_hours(self) -> None:
         result = solve(_INV_TRADING, {"time_of_day_secs": 43_200}, timeout_ms=5_000)  # noon
         assert result.sat is True

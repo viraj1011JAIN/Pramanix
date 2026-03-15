@@ -64,11 +64,7 @@ class _BankingPolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named(
-                "non_negative_balance"
-            )
-        ]
+        return [(E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance")]
 
 
 # Shared guard, sync mode — 10 threads all call guard.verify() concurrently.
@@ -83,16 +79,16 @@ _GUARD = Guard(_BankingPolicy, GuardConfig(execution_mode="sync"))
 # values* — the sentinel gap makes cross-contamination immediately visible.
 
 _SCENARIOS: list[tuple[int, Decimal, Decimal, bool]] = [
-    (0, Decimal("1000.00"), Decimal("100.00"), True),   # safe by 900
-    (1, Decimal("2000.00"), Decimal("500.00"), True),   # safe by 1500
-    (2, Decimal("5000.00"), Decimal("999.99"), True),   # safe by ~4000
-    (3, Decimal("10.00"),   Decimal("9.99"),   True),   # safe by 0.01
-    (4, Decimal("50000.00"), Decimal("1.00"),  True),   # very safe
-    (5, Decimal("100.00"),  Decimal("100.01"), False),  # unsafe by 0.01
-    (6, Decimal("0.00"),    Decimal("1.00"),   False),  # zero balance
-    (7, Decimal("999.99"),  Decimal("1000.00"), False), # unsafe by 0.01
-    (8, Decimal("250.00"),  Decimal("500.00"),  False), # unsafe by 250
-    (9, Decimal("1.00"),    Decimal("99999.00"), False),# wildly unsafe
+    (0, Decimal("1000.00"), Decimal("100.00"), True),  # safe by 900
+    (1, Decimal("2000.00"), Decimal("500.00"), True),  # safe by 1500
+    (2, Decimal("5000.00"), Decimal("999.99"), True),  # safe by ~4000
+    (3, Decimal("10.00"), Decimal("9.99"), True),  # safe by 0.01
+    (4, Decimal("50000.00"), Decimal("1.00"), True),  # very safe
+    (5, Decimal("100.00"), Decimal("100.01"), False),  # unsafe by 0.01
+    (6, Decimal("0.00"), Decimal("1.00"), False),  # zero balance
+    (7, Decimal("999.99"), Decimal("1000.00"), False),  # unsafe by 0.01
+    (8, Decimal("250.00"), Decimal("500.00"), False),  # unsafe by 250
+    (9, Decimal("1.00"), Decimal("99999.00"), False),  # wildly unsafe
 ]
 
 
@@ -164,9 +160,8 @@ class TestZ3ContextIsolation:
     def test_no_z3_exceptions_propagate(self) -> None:
         """No thread may raise a Z3Exception or any other uncaught error."""
         _, errors = self._run_all()
-        assert errors == [], (
-            f"Z3 exceptions escaped in {len(errors)} thread(s):\n"
-            + "\n".join(errors)
+        assert errors == [], f"Z3 exceptions escaped in {len(errors)} thread(s):\n" + "\n".join(
+            errors
         )
 
     def test_all_threads_produce_decisions(self) -> None:
@@ -233,13 +228,13 @@ class TestZ3ContextIsolation:
             if not r:
                 continue
             if r["allowed"]:
-                assert r["status"] is SolverStatus.SAFE, (
-                    f"allowed=True but status={r['status']} — Decision consistency violated."
-                )
+                assert (
+                    r["status"] is SolverStatus.SAFE
+                ), f"allowed=True but status={r['status']} — Decision consistency violated."
             else:
-                assert r["status"] is not SolverStatus.SAFE, (
-                    "allowed=False but status=SAFE — Decision consistency violated."
-                )
+                assert (
+                    r["status"] is not SolverStatus.SAFE
+                ), "allowed=False but status=SAFE — Decision consistency violated."
 
     def test_repeated_runs_are_deterministic(self) -> None:
         """Run the full 10-thread scenario three times and verify identical outcomes.

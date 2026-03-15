@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
@@ -162,7 +161,9 @@ def test_collateral_haircut_monotone(
     base_result = solve(inv, {"collateral": collateral, "loan": loan}, timeout_ms=5_000)
     if not base_result.sat:
         return  # Only test monotonicity from SAT baseline
-    better_result = solve(inv, {"collateral": collateral + extra_collateral, "loan": loan}, timeout_ms=5_000)
+    better_result = solve(
+        inv, {"collateral": collateral + extra_collateral, "loan": loan}, timeout_ms=5_000
+    )
     assert better_result.sat is True
 
 
@@ -192,9 +193,7 @@ def test_collateral_haircut_no_float_drift(
 
 @given(current=_positive_decimal, peak=_positive_decimal, max_dd=_pct)
 @settings(max_examples=1_000, deadline=None)
-def test_max_drawdown_agrees_with_python(
-    current: Decimal, peak: Decimal, max_dd: Decimal
-) -> None:
+def test_max_drawdown_agrees_with_python(current: Decimal, peak: Decimal, max_dd: Decimal) -> None:
     """Z3 agrees with Python: (peak - current) <= max_dd * peak iff SAT."""
     assume(peak >= current)  # drawdown semantics require current <= peak
     assume(peak > Decimal("0"))
@@ -247,11 +246,14 @@ def test_margin_requirement_monotone_equity(
 ) -> None:
     """Adding more equity to a passing margin check never causes a margin call."""
     inv = [MarginRequirement(_account_equity, _position_value, margin)]
-    base_result = solve(inv, {"account_equity": equity, "position_value": position}, timeout_ms=5_000)
+    base_result = solve(
+        inv, {"account_equity": equity, "position_value": position}, timeout_ms=5_000
+    )
     if not base_result.sat:
         return
     better_result = solve(
-        inv, {"account_equity": equity + extra, "position_value": position},
+        inv,
+        {"account_equity": equity + extra, "position_value": position},
         timeout_ms=5_000,
     )
     assert better_result.sat is True

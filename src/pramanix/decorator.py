@@ -98,9 +98,7 @@ def guard(
             else:
                 intent, state = args[0], args[1]
 
-            decision: Decision = await _guard_instance.verify_async(
-                intent=intent, state=state
-            )
+            decision: Decision = await _guard_instance.verify_async(intent=intent, state=state)
 
             if not decision.allowed:
                 if on_block == "raise":

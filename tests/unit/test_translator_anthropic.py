@@ -24,8 +24,8 @@ from pydantic import BaseModel
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.anthropic import AnthropicTranslator
 
-
 # ── Minimal intent schema ─────────────────────────────────────────────────────
+
 
 class _TransferIntent(BaseModel):
     amount: float
@@ -33,6 +33,7 @@ class _TransferIntent(BaseModel):
 
 
 # ── Mock Anthropic SDK helpers ────────────────────────────────────────────────
+
 
 def _make_content_block(text: str) -> MagicMock:
     block = MagicMock()
@@ -112,9 +113,8 @@ class TestAnthropicTranslatorMissingDeps:
     async def test_missing_anthropic_package_raises_import_error(self) -> None:
         t = AnthropicTranslator("claude-opus-4-6")
         # Remove the anthropic package from sys.modules
-        with patch.dict("sys.modules", {"anthropic": None}):  # type: ignore[dict-item]
-            with pytest.raises(ImportError, match="anthropic"):
-                await t.extract("send 100", _TransferIntent)
+        with patch.dict("sys.modules", {"anthropic": None}), pytest.raises(ImportError, match="anthropic"):  # type: ignore[dict-item]
+            await t.extract("send 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_missing_tenacity_raises_import_error(self) -> None:
@@ -123,9 +123,8 @@ class TestAnthropicTranslatorMissingDeps:
         # Block tenacity so the local `from tenacity import …` inside extract()
         # raises ImportError — mirrors production behaviour when the extra is absent.
         blocked: dict = {"tenacity": None}
-        with patch.dict("sys.modules", {**blocked, "anthropic": ant_mod}):
-            with pytest.raises(ImportError, match="tenacity"):
-                await t.extract("send 100", _TransferIntent)
+        with patch.dict("sys.modules", {**blocked, "anthropic": ant_mod}), pytest.raises(ImportError, match="tenacity"):
+            await t.extract("send 100", _TransferIntent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -136,7 +135,8 @@ class TestAnthropicTranslatorMissingDeps:
 class TestAnthropicTranslatorSuccess:
     @pytest.mark.asyncio
     async def test_valid_response_returns_parsed_dict(self) -> None:
-        import json  # noqa: PLC0415 — local import inside test method
+        import json  # — local import inside test method
+
         payload = json.dumps({"amount": 200.0, "recipient": "acc_ant"})
         resp = _make_anthropic_response(payload)
         ant_mod = _make_anthropic_module(resp)
@@ -162,6 +162,7 @@ class TestAnthropicTranslatorSuccess:
     @pytest.mark.asyncio
     async def test_context_parameter_accepted(self) -> None:
         import json
+
         from pramanix.translator.base import TranslatorContext
 
         payload = json.dumps({"amount": 10.0, "recipient": "acc_ctx"})
@@ -186,14 +187,11 @@ class TestAnthropicTranslatorApiErrors:
     async def test_api_status_error_raises_extraction_failure(self) -> None:
         ant_mod = _make_anthropic_module()
         err = ant_mod.APIStatusError("Forbidden", status_code=403)
-        ant_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
-            side_effect=err
-        )
+        ant_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(side_effect=err)
 
         t = AnthropicTranslator("claude-opus-4-6")
-        with patch.dict("sys.modules", {"anthropic": ant_mod}):
-            with pytest.raises(ExtractionFailureError, match="403"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch.dict("sys.modules", {"anthropic": ant_mod}), pytest.raises(ExtractionFailureError, match="403"):
+            await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_no_text_content_block_raises_extraction_failure(self) -> None:
@@ -204,9 +202,8 @@ class TestAnthropicTranslatorApiErrors:
         ant_mod = _make_anthropic_module(resp)
 
         t = AnthropicTranslator("claude-opus-4-6")
-        with patch.dict("sys.modules", {"anthropic": ant_mod}):
-            with pytest.raises(ExtractionFailureError, match="no text content"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch.dict("sys.modules", {"anthropic": ant_mod}), pytest.raises(ExtractionFailureError, match="no text content"):
+            await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_empty_content_list_raises_extraction_failure(self) -> None:
@@ -215,9 +212,8 @@ class TestAnthropicTranslatorApiErrors:
         ant_mod = _make_anthropic_module(resp)
 
         t = AnthropicTranslator("claude-opus-4-6")
-        with patch.dict("sys.modules", {"anthropic": ant_mod}):
-            with pytest.raises(ExtractionFailureError, match="no text content"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch.dict("sys.modules", {"anthropic": ant_mod}), pytest.raises(ExtractionFailureError, match="no text content"):
+            await t.extract("transfer 100", _TransferIntent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -231,31 +227,31 @@ class TestAnthropicTranslatorRetry:
         """APITimeoutError raised on all 3 attempts → LLMTimeoutError."""
         ant_mod = _make_anthropic_module()
         timeout_err = ant_mod.APITimeoutError("Request timed out")
-        ant_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
-            side_effect=timeout_err
-        )
+        ant_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(side_effect=timeout_err)
 
         t = AnthropicTranslator("claude-opus-4-6", timeout=0.001)
         # Use tenacity with 0-second waits to avoid slow tests
-        with patch.dict("sys.modules", {"anthropic": ant_mod}):
-            with patch("tenacity.wait_exponential", return_value=lambda *a, **k: 0):
-                with pytest.raises(LLMTimeoutError, match="unreachable"):
-                    await t.extract("transfer 100", _TransferIntent)
+        with (
+            patch.dict("sys.modules", {"anthropic": ant_mod}),
+            patch("tenacity.wait_exponential", return_value=lambda *a, **k: 0),
+            pytest.raises(LLMTimeoutError, match="unreachable"),
+        ):
+            await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_connection_error_exhausted_raises_llm_timeout_error(self) -> None:
         """APIConnectionError raised on all 3 attempts → LLMTimeoutError."""
         ant_mod = _make_anthropic_module()
         conn_err = ant_mod.APIConnectionError("Connection refused")
-        ant_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(
-            side_effect=conn_err
-        )
+        ant_mod.AsyncAnthropic.return_value.messages.create = AsyncMock(side_effect=conn_err)
 
         t = AnthropicTranslator("claude-opus-4-6", timeout=0.001)
-        with patch.dict("sys.modules", {"anthropic": ant_mod}):
-            with patch("tenacity.wait_exponential", return_value=lambda *a, **k: 0):
-                with pytest.raises(LLMTimeoutError):
-                    await t.extract("transfer 100", _TransferIntent)
+        with (
+            patch.dict("sys.modules", {"anthropic": ant_mod}),
+            patch("tenacity.wait_exponential", return_value=lambda *a, **k: 0),
+            pytest.raises(LLMTimeoutError),
+        ):
+            await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_invalid_inner_json_raises_extraction_failure(self) -> None:
@@ -263,6 +259,5 @@ class TestAnthropicTranslatorRetry:
         ant_mod = _make_anthropic_module(resp)
 
         t = AnthropicTranslator("claude-opus-4-6")
-        with patch.dict("sys.modules", {"anthropic": ant_mod}):
-            with pytest.raises(ExtractionFailureError, match="unparseable"):
-                await t.extract("transfer 100", _TransferIntent)
+        with patch.dict("sys.modules", {"anthropic": ant_mod}), pytest.raises(ExtractionFailureError, match="unparseable"):
+            await t.extract("transfer 100", _TransferIntent)

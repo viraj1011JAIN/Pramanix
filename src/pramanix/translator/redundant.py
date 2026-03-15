@@ -249,9 +249,7 @@ def _enforce_consensus(
         # Pydantic-validated dicts (extra fields are stripped by model_dump()),
         # but documents the intent that each schema field is load-bearing.
         mismatches = {
-            k: (dump_a.get(k), dump_b.get(k))
-            for k in all_keys
-            if dump_a.get(k) != dump_b.get(k)
+            k: (dump_a.get(k), dump_b.get(k)) for k in all_keys if dump_a.get(k) != dump_b.get(k)
         }
         if mismatches:
             field_list = ", ".join(f"'{k}'" for k in mismatches)
@@ -338,9 +336,7 @@ def create_translator(
     if model.startswith(("gpt-", "o1-", "o3-", "chatgpt-", "text-")):
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        return OpenAICompatTranslator(
-            model, api_key=api_key, base_url=base_url, timeout=timeout
-        )
+        return OpenAICompatTranslator(model, api_key=api_key, base_url=base_url, timeout=timeout)
 
     if model.startswith("claude-"):
         from pramanix.translator.anthropic import AnthropicTranslator

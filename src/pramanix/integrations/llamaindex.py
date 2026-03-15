@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 
-from pramanix.guard import Guard, GuardConfig
+from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_block_feedback
 
 __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
@@ -35,9 +36,9 @@ __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 # ── Optional LlamaIndex dependency ────────────────────────────────────────────
 
 try:  # pragma: no cover
-    from llama_index.core.tools import FunctionTool as _LlamaFunctionTool  # type: ignore[import-not-found]
-    from llama_index.core.tools import QueryEngineTool as _LlamaQueryEngineTool  # type: ignore[import-not-found]
-    from llama_index.core.tools.types import ToolMetadata, ToolOutput  # type: ignore[import-not-found]
+    from llama_index.core.tools import FunctionTool as _LlamaFunctionTool  # noqa: F401
+    from llama_index.core.tools import QueryEngineTool as _LlamaQueryEngineTool  # noqa: F401
+    from llama_index.core.tools.types import ToolMetadata, ToolOutput
 
     _LLAMA_AVAILABLE = True
 except ImportError:
@@ -53,8 +54,8 @@ except ImportError:
     class ToolOutput:  # type: ignore[no-redef]
         content: str = ""
         tool_name: str = ""
-        raw_input: dict = field(default_factory=dict)  # type: ignore[assignment]
-        raw_output: dict = field(default_factory=dict)  # type: ignore[assignment]
+        raw_input: dict[str, Any] = field(default_factory=dict)
+        raw_output: dict[str, Any] = field(default_factory=dict)
         is_error: bool = False
 
 
@@ -142,9 +143,9 @@ class PramanixFunctionTool:
 
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
-            intent: dict[str, Any] = (
-                self._intent_schema.model_validate(raw, strict=False).model_dump()
-            )
+            intent: dict[str, Any] = self._intent_schema.model_validate(
+                raw, strict=False
+            ).model_dump()
         except Exception as exc:
             return ToolOutput(
                 content=f"Pramanix: invalid input: {exc}",
@@ -223,7 +224,7 @@ class PramanixFunctionTool:
         result = self._state_provider()
         if asyncio.iscoroutine(result):
             result = await result
-        return result  # type: ignore[return-value]
+        return result  # type: ignore[no-any-return]
 
     # ── Class method factory ──────────────────────────────────────────────────
 
@@ -356,9 +357,9 @@ class PramanixQueryEngineTool:
 
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
-            intent: dict[str, Any] = (
-                self._intent_schema.model_validate(raw, strict=False).model_dump()
-            )
+            intent: dict[str, Any] = self._intent_schema.model_validate(
+                raw, strict=False
+            ).model_dump()
         except Exception as exc:
             return ToolOutput(
                 content=f"Pramanix: invalid input: {exc}",
@@ -444,4 +445,4 @@ class PramanixQueryEngineTool:
         result = self._state_provider()
         if asyncio.iscoroutine(result):
             result = await result
-        return result  # type: ignore[return-value]
+        return result  # type: ignore[no-any-return]

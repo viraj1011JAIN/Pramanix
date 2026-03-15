@@ -67,11 +67,7 @@ class _SealTestPolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named(
-                "non_negative_balance"
-            )
-        ]
+        return [(E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance")]
 
 
 _SAFE_VALUES = {"balance": Decimal("1000"), "amount": Decimal("100")}

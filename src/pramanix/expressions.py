@@ -265,9 +265,7 @@ class ExpressionNode:
                 "An empty membership set would make the constraint unsatisfiable "
                 "for all inputs and is most likely a policy-authoring error."
             )
-        return ConstraintExpr(
-            _InOp(left=self.node, values=tuple(_Literal(v) for v in items))
-        )
+        return ConstraintExpr(_InOp(left=self.node, values=tuple(_Literal(v) for v in items)))
 
     # ── Comparisons (produce ConstraintExpr) ──────────────────────────────────
 
@@ -406,5 +404,3 @@ def E(field: Field) -> ExpressionNode:  # noqa: N802
         An :class:`ExpressionNode` wrapping a ``_FieldRef`` AST leaf.
     """
     return ExpressionNode(_FieldRef(field))
-
-

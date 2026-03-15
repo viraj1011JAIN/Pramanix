@@ -68,9 +68,9 @@ class TestInjectionScorerFlagsIDs:
         user_input = "send 50 to ../../../etc/passwd"
         score = injection_confidence_score(user_input, extracted, [])
         # Non-alnum chars (/ and .) in recipient_id → +0.3
-        assert score >= 0.3, (
-            f"Expected injection-score ≥ 0.3 for path-injection recipient_id, got {score:.2f}"
-        )
+        assert (
+            score >= 0.3
+        ), f"Expected injection-score ≥ 0.3 for path-injection recipient_id, got {score:.2f}"
 
     @pytest.mark.asyncio
     async def test_K_injection_pattern_in_prompt_blocks_pipeline(self) -> None:
@@ -170,9 +170,9 @@ class TestAvailableAccountsWhitelist:
         # The extracted recipient passes Pydantic validation (it's a valid str)
         # but it is NOT in ctx.available_accounts — the host must reject it.
         assert result["recipient"] == fabricated
-        assert fabricated not in ctx.available_accounts, (
-            "Test verification: fabricated account must not be whitelisted"
-        )
+        assert (
+            fabricated not in ctx.available_accounts
+        ), "Test verification: fabricated account must not be whitelisted"
 
     @pytest.mark.asyncio
     async def test_M_id_embedded_in_prompt_sanitised(self) -> None:

@@ -8,32 +8,25 @@ autogen.py, and integrations/__init__.py after Phase 9 implementation.
 from __future__ import annotations
 
 import json
-import sys
 import types
 from decimal import Decimal
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
-# ── Ensure langchain_core is in sys.modules (mocked) before importing ─────────
-if "langchain_core" not in sys.modules:
-    _mock_lc_tools = MagicMock()
-    _mock_lc_tools.BaseTool = object
-    _mock_lc = MagicMock()
-    _mock_lc.tools = _mock_lc_tools
-    sys.modules["langchain_core"] = _mock_lc
-    sys.modules["langchain_core.tools"] = _mock_lc_tools
-
-# ── Ensure fastapi/starlette are real before matrix-test mock injection ────────
+# ── Skip entire module if required frameworks not installed ───────────────────
 pytest.importorskip("fastapi", reason="fastapi not installed")
 pytest.importorskip("starlette", reason="starlette not installed")
+pytest.importorskip("langchain_core", reason="langchain-core not installed")
 
-from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.integrations.autogen import PramanixToolCallback, _get_state_inner
-from pramanix.integrations.langchain import PramanixGuardedTool
-from pramanix.integrations.llamaindex import PramanixFunctionTool, PramanixQueryEngineTool
+from pramanix import E, Field, Guard, GuardConfig, Policy  # noqa: E402
+from pramanix.integrations.autogen import PramanixToolCallback, _get_state_inner  # noqa: E402
+from pramanix.integrations.langchain import PramanixGuardedTool  # noqa: E402
+from pramanix.integrations.llamaindex import (  # noqa: E402
+    PramanixFunctionTool,
+    PramanixQueryEngineTool,
+)
 
 # ── Shared policy definitions ─────────────────────────────────────────────────
 
@@ -68,11 +61,7 @@ class _BlockPolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list:
-        return [
-            (E(_amount) <= Decimal("0"))
-            .named("must_be_zero")
-            .explain("amount must be zero")
-        ]
+        return [(E(_amount) <= Decimal("0")).named("must_be_zero").explain("amount must be zero")]
 
 
 class _IntentModel(BaseModel):
@@ -157,9 +146,7 @@ def _make_httpx_client(app: Any) -> Any:
         import httpx
     except ImportError:
         pytest.skip("httpx not installed")
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
 class TestFastapiDarkPaths:
@@ -169,6 +156,7 @@ class TestFastapiDarkPaths:
     async def test_intent_validation_failure_returns_422(self) -> None:
         """Line 151-152: except Exception returns 422 when Pydantic rejects body."""
         from fastapi import FastAPI
+
         from pramanix.integrations.fastapi import PramanixMiddleware
 
         async def _state_loader(request: Any) -> dict:
@@ -200,6 +188,7 @@ class TestFastapiDarkPaths:
     async def test_state_loader_exception_returns_500(self) -> None:
         """Lines 160-161: except Exception returns 500 when state_loader raises."""
         from fastapi import FastAPI
+
         from pramanix.integrations.fastapi import PramanixMiddleware
 
         async def _failing_loader(request: Any) -> dict:
@@ -340,9 +329,7 @@ class TestLlamaindexFunctionTool:
 
     @pytest.mark.asyncio
     async def test_acall_block_returns_feedback(self) -> None:
-        output = await self._tool(guard=_guard_block()).acall(
-            json.dumps({"amount": "500"})
-        )
+        output = await self._tool(guard=_guard_block()).acall(json.dumps({"amount": "500"}))
         assert output.is_error is False
         assert len(output.content) > 0
 
@@ -475,17 +462,13 @@ class TestLlamaindexQueryEngineTool:
     @pytest.mark.asyncio
     async def test_acall_allow_neither_method(self) -> None:
         """Line 402-403: engine has neither aquery nor query → str(engine) used."""
-        output = await self._tool("plain-string-engine").acall(
-            json.dumps({"amount": "100"})
-        )
+        output = await self._tool("plain-string-engine").acall(json.dumps({"amount": "100"}))
         assert output.is_error is False
         assert "plain-string-engine" in output.content
 
     @pytest.mark.asyncio
     async def test_acall_block_returns_feedback(self) -> None:
-        output = await self._tool("x", guard=_guard_block()).acall(
-            json.dumps({"amount": "500"})
-        )
+        output = await self._tool("x", guard=_guard_block()).acall(json.dumps({"amount": "500"}))
         assert output.is_error is False
         assert len(output.content) > 0
 

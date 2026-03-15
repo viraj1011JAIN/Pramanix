@@ -26,6 +26,7 @@ guarantee the clear-box explanation path used in production is covered.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import ClassVar
 
 from pramanix.expressions import Field
 from pramanix.guard import _fmt
@@ -75,7 +76,7 @@ _min_reserve = Field("minimum_reserve", Decimal, "Real")
 
 
 class TestNotSuspended:
-    _INV = [NotSuspended(_is_suspended)]
+    _INV: ClassVar[list] = [NotSuspended(_is_suspended)]
 
     def test_sat_entity_active(self) -> None:
         result = solve(self._INV, {"is_suspended": False}, timeout_ms=5_000)
@@ -107,7 +108,7 @@ class TestNotSuspended:
 
 
 class TestStatusMustBe:
-    _INV = [StatusMustBe(_status, 1)]
+    _INV: ClassVar[list] = [StatusMustBe(_status, 1)]
 
     def test_sat_status_matches(self) -> None:
         result = solve(self._INV, {"status": 1}, timeout_ms=5_000)
@@ -144,7 +145,7 @@ class TestStatusMustBe:
 
 
 class TestFieldMustEqualInt:
-    _INV = [FieldMustEqual(_account_type, 42)]
+    _INV: ClassVar[list] = [FieldMustEqual(_account_type, 42)]
 
     def test_sat_value_matches(self) -> None:
         result = solve(self._INV, {"account_type": 42}, timeout_ms=5_000)
@@ -179,7 +180,7 @@ class TestFieldMustEqualInt:
 class TestFieldMustEqualString:
     """G.1: FieldMustEqual with a String-sorted field — cross-sort coverage."""
 
-    _INV = [FieldMustEqual(_region, "US")]
+    _INV: ClassVar[list] = [FieldMustEqual(_region, "US")]
 
     def test_sat_region_matches(self) -> None:
         result = solve(self._INV, {"region": "US"}, timeout_ms=5_000)
@@ -209,7 +210,7 @@ _ALLOWED_ROLES = [1, 2, 3]  # doctor=1, nurse=2, admin=3
 
 
 class TestRoleMustBeIn:
-    _INV = [RoleMustBeIn(_role, _ALLOWED_ROLES)]
+    _INV: ClassVar[list] = [RoleMustBeIn(_role, _ALLOWED_ROLES)]
 
     def test_sat_first_allowed_role(self) -> None:
         result = solve(self._INV, {"role": 1}, timeout_ms=5_000)
@@ -250,7 +251,7 @@ class TestRoleMustBeIn:
 
 
 class TestConsentRequired:
-    _INV = [ConsentRequired(_consent)]
+    _INV: ClassVar[list] = [ConsentRequired(_consent)]
 
     def test_sat_consent_given(self) -> None:
         result = solve(self._INV, {"consent": True}, timeout_ms=5_000)
@@ -284,7 +285,7 @@ _ALLOWED_DEPTS = [10, 20, 30]
 
 
 class TestDepartmentMustBeIn:
-    _INV = [DepartmentMustBeIn(_department, _ALLOWED_DEPTS)]
+    _INV: ClassVar[list] = [DepartmentMustBeIn(_department, _ALLOWED_DEPTS)]
 
     def test_sat_allowed_department(self) -> None:
         result = solve(self._INV, {"department": 10}, timeout_ms=5_000)
@@ -320,7 +321,7 @@ class TestDepartmentMustBeIn:
 
 
 class TestWithinTimeWindow:
-    _INV = [WithinTimeWindow(_ts, _ws, _we)]
+    _INV: ClassVar[list] = [WithinTimeWindow(_ts, _ws, _we)]
 
     def _vals(self, ts: int, ws: int, we: int) -> dict:
         return {"timestamp": ts, "window_start": ws, "window_end": we}
@@ -377,7 +378,7 @@ class TestWithinTimeWindow:
 
 
 class TestAfter:
-    _INV = [After(_ts, _cutoff)]
+    _INV: ClassVar[list] = [After(_ts, _cutoff)]
 
     def test_sat_timestamp_after_cutoff(self) -> None:
         result = solve(self._INV, {"timestamp": 200, "cutoff": 100}, timeout_ms=5_000)
@@ -420,7 +421,7 @@ class TestAfter:
 
 
 class TestBefore:
-    _INV = [Before(_ts, _cutoff)]
+    _INV: ClassVar[list] = [Before(_ts, _cutoff)]
 
     def test_sat_timestamp_before_cutoff(self) -> None:
         result = solve(self._INV, {"timestamp": 50, "cutoff": 100}, timeout_ms=5_000)
@@ -463,7 +464,7 @@ class TestBefore:
 
 
 class TestNotExpired:
-    _INV = [NotExpired(_expiry, _now)]
+    _INV: ClassVar[list] = [NotExpired(_expiry, _now)]
 
     def test_sat_not_yet_expired(self) -> None:
         result = solve(self._INV, {"expiry_ts": 2000, "now_ts": 1000}, timeout_ms=5_000)
@@ -505,7 +506,7 @@ class TestNotExpired:
 
 
 class TestNonNegativeBalance:
-    _INV = [NonNegativeBalance(_balance, _amount)]
+    _INV: ClassVar[list] = [NonNegativeBalance(_balance, _amount)]
 
     def test_sat_sufficient_balance(self) -> None:
         result = solve(
@@ -563,7 +564,7 @@ class TestNonNegativeBalance:
 
 
 class TestUnderDailyLimit:
-    _INV = [UnderDailyLimit(_amount, _daily_limit)]
+    _INV: ClassVar[list] = [UnderDailyLimit(_amount, _daily_limit)]
 
     def test_sat_under_limit(self) -> None:
         result = solve(
@@ -611,9 +612,7 @@ class TestUnderDailyLimit:
 
     def test_explanation_interpolates(self) -> None:
         inv = UnderDailyLimit(_amount, _daily_limit)
-        formatted = _fmt(
-            inv, {"amount": Decimal("600"), "daily_limit": Decimal("500")}
-        )
+        formatted = _fmt(inv, {"amount": Decimal("600"), "daily_limit": Decimal("500")})
         assert "daily_limit" in formatted
 
 
@@ -623,7 +622,7 @@ class TestUnderDailyLimit:
 
 
 class TestUnderSingleTxLimit:
-    _INV = [UnderSingleTxLimit(_amount, _tx_limit)]
+    _INV: ClassVar[list] = [UnderSingleTxLimit(_amount, _tx_limit)]
 
     def test_sat_under_limit(self) -> None:
         result = solve(
@@ -671,7 +670,7 @@ class TestUnderSingleTxLimit:
 
 
 class TestRiskScoreBelow:
-    _INV = [RiskScoreBelow(_risk_score, _threshold)]
+    _INV: ClassVar[list] = [RiskScoreBelow(_risk_score, _threshold)]
 
     def test_sat_score_below_threshold(self) -> None:
         result = solve(
@@ -729,7 +728,7 @@ class TestRiskScoreBelow:
 
 
 class TestSecureBalance:
-    _INV = [SecureBalance(_balance, _amount, _min_reserve)]
+    _INV: ClassVar[list] = [SecureBalance(_balance, _amount, _min_reserve)]
 
     def _vals(self, b: str, a: str, r: str) -> dict:
         return {
@@ -786,7 +785,7 @@ class TestSecureBalance:
 class TestMinimumReserve:
     """MinimumReserve is an alias — verify identical semantics."""
 
-    _INV = [MinimumReserve(_balance, _amount, _min_reserve)]
+    _INV: ClassVar[list] = [MinimumReserve(_balance, _amount, _min_reserve)]
 
     def test_sat_same_as_secure_balance(self) -> None:
         result = solve(

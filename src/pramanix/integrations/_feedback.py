@@ -1,11 +1,21 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Shared feedback string formatters for all ecosystem integrations.
+"""Block feedback formatters for Pramanix ecosystem integrations.
 
-Security note: these formatters NEVER leak invariant DSL source code,
-Z3 expressions, Policy class internals, or field definitions.  They only
-surface the human-readable .explain() templates and invariant labels that
-the policy author has explicitly chosen to expose.
+SECURITY CONTRACT:
+These formatters NEVER include raw intent or state field values.
+They use ONLY:
+  - decision.explanation (populated from author-supplied .explain() templates)
+  - decision.violated_invariants (invariant label names only)
+  - decision.decision_id (for audit correlation)
+  - decision.status (enum string)
+
+The .explain() template is the ONLY channel through which field values
+may appear in feedback — and only values the policy author explicitly
+chose to surface via {field_name} interpolation in .explain().
+
+Raw values from the intent dict are NEVER appended directly.
+This prevents binary-search policy probing by malicious agents.
 """
 from __future__ import annotations
 
@@ -17,29 +27,15 @@ if TYPE_CHECKING:
 __all__ = ["format_block_feedback", "format_autogen_rejection"]
 
 
-def _format_intent_values(intent: dict[str, Any]) -> str:
-    """Format intent dict as ``key=val; key2=val2`` pairs (safe, no DSL exposure)."""
-    return "; ".join(f"{k}={v}" for k, v in intent.items())
-
-
 def format_block_feedback(decision: Decision, intent: dict[str, Any]) -> str:
-    """Return a compact one-line block message suitable for tool output.
+    """Format a block decision as a LangChain-safe feedback string.
 
-    This formatter is intentionally minimal: it surfaces only the invariant
-    *labels* that the policy author chose to name (via ``.named()``) and the
-    human-readable ``.explain()`` text.  No Z3 internals, DSL source code, or
-    Field definitions are included.
+    The intent parameter is accepted for API compatibility but its raw
+    values are NEVER included in the output. Policy authors surface
+    field values through .explain() template interpolation only.
 
-    Format::
-
-        ACTION BLOCKED by Pramanix. Violated rules: {rules}: {explanation}. Current values: {k=v; ...}.
-
-    Args:
-        decision: A :class:`~pramanix.decision.Decision` with ``allowed=False``.
-        intent:   The raw intent dict that was verified.
-
-    Returns:
-        A single-line string safe to return as tool output or HTTP body text.
+    Output format:
+    ACTION BLOCKED [decision_id={id}]. Rules violated: {rules}. Reason: {explanation}.
     """
     rules = (
         ", ".join(decision.violated_invariants)
@@ -47,36 +43,20 @@ def format_block_feedback(decision: Decision, intent: dict[str, Any]) -> str:
         else "policy violation"
     )
     explanation = decision.explanation or "Action blocked by safety policy."
-    values_str = _format_intent_values(intent)
     return (
-        f"ACTION BLOCKED by Pramanix. "
-        f"Violated rules: {rules}: {explanation}. "
-        f"Current values: {values_str}."
+        f"ACTION BLOCKED [decision_id={decision.decision_id}]. "
+        f"Rules violated: {rules}. "
+        f"Reason: {explanation}."
     )
 
 
 def format_autogen_rejection(decision: Decision, intent: dict[str, Any]) -> str:
-    """Return a structured multi-line rejection message for AutoGen agent context.
+    """Format a block decision as a structured AutoGen rejection message.
 
-    Designed to be inserted as an agent message so that the orchestrating LLM
-    can understand exactly why the action was blocked and what to revise.
+    Multi-line format safe for agent conversation context.
+    Raw field values from intent are NEVER included.
 
-    Format (newline-separated)::
-
-        [PRAMANIX BLOCKED]
-        Decision ID: {id}
-        Status: {status}
-        Violated rules: {rules}
-        Reason: {explanation}
-        Input values: {k=v; ...}
-        Please revise the action and try again.
-
-    Args:
-        decision: A :class:`~pramanix.decision.Decision` with ``allowed=False``.
-        intent:   The raw intent dict that was verified.
-
-    Returns:
-        A multi-line string safe to use as an AutoGen agent reply.
+    The intent parameter is accepted for API compatibility only.
     """
     rules = (
         ", ".join(decision.violated_invariants)
@@ -84,19 +64,14 @@ def format_autogen_rejection(decision: Decision, intent: dict[str, Any]) -> str:
         else "policy violation"
     )
     explanation = decision.explanation or "Action blocked by safety policy."
-    values_str = _format_intent_values(intent)
     status_str = (
-        decision.status.value
-        if hasattr(decision.status, "value")
-        else str(decision.status)
+        decision.status.value if hasattr(decision.status, "value") else str(decision.status)
     )
-    lines = [
-        "[PRAMANIX BLOCKED]",
-        f"Decision ID: {decision.decision_id}",
-        f"Status: {status_str}",
-        f"Violated rules: {rules}",
-        f"Reason: {explanation}",
-        f"Input values: {values_str}",
-        "Please revise the action and try again.",
-    ]
-    return "\n".join(lines)
+    return (
+        f"[PRAMANIX BLOCKED]\n"
+        f"Decision ID: {decision.decision_id}\n"
+        f"Status: {status_str}\n"
+        f"Violated rules: {rules}\n"
+        f"Reason: {explanation}\n"
+        f"Please revise the action parameters and try again."
+    )

@@ -24,7 +24,6 @@ from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.decorator import guard
 from pramanix.exceptions import GuardViolationError
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Minimal schemas and policies
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,9 +80,7 @@ class _BlockPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) <= 0)
-            .named("must_be_zero")
-            .explain("amount {amount} must be zero"),
+            (E(_amount_field) <= 0).named("must_be_zero").explain("amount {amount} must be zero"),
         ]
 
 
@@ -348,9 +345,7 @@ class TestDecoratorClassMethod:
 
 class TestDecoratorConfigForwarding:
     def test_custom_config_passed_to_guard(self) -> None:
-        cfg = GuardConfig(
-            execution_mode="async-thread", solver_timeout_ms=2000
-        )
+        cfg = GuardConfig(execution_mode="async-thread", solver_timeout_ms=2000)
 
         @guard(policy=_AllowPolicy, config=cfg)
         async def fn(intent: dict, state: dict) -> dict:

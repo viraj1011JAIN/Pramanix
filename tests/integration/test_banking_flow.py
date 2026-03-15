@@ -285,9 +285,7 @@ class TestScenarioE:
             ("0.01", "0.02"),
         ],
     )
-    def test_sub_cent_precision_unsat(
-        self, guard: Guard, balance: str, amount: str
-    ) -> None:
+    def test_sub_cent_precision_unsat(self, guard: Guard, balance: str, amount: str) -> None:
         """All these must be UNSAT — exact rational arithmetic required."""
         d = guard.verify(_intent(amount), _state(balance=balance))
         assert d.allowed is False

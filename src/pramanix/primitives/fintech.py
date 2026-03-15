@@ -168,7 +168,10 @@ def WashSaleDetection(
     """
     window_secs = wash_window_days * 86_400
     return (
-        ((E(sell_epoch) - E(buy_epoch) >= window_secs) | (E(buy_epoch) - E(sell_epoch) >= window_secs))
+        (
+            (E(sell_epoch) - E(buy_epoch) >= window_secs)
+            | (E(buy_epoch) - E(sell_epoch) >= window_secs)
+        )
         .named("wash_sale_detection")
         .explain(
             "Wash-sale violation: buy/sell timestamps ({buy_epoch}, {sell_epoch}) "
@@ -189,7 +192,7 @@ def CollateralHaircut(
 
     Regulatory: Basel III LCR / ISDA CSA — a haircut is applied to collateral
     market value to account for price volatility and forced-sale discount.
-    Typical haircuts: G10 govvies 0–2 %, IG corps 5–15 %, equities 15–25 %.
+    Typical haircuts: G10 govvies 0-2 %, IG corps 5-15 %, equities 15-25 %.
 
     Args:
         collateral_value: Field (Decimal, Real) — current mark-to-market collateral.
@@ -279,7 +282,7 @@ def RiskScoreLimit(risk_score: Field, max_risk: Decimal) -> ConstraintExpr:
 
     DSL: ``E(risk_score) <= max_risk``
 
-    Risk scores are produced by AML/fraud models (range 0–1000 or 0.0–1.0
+    Risk scores are produced by AML/fraud models (range 0-1000 or 0.0-1.0
     depending on the scoring engine).  A score above ``max_risk`` triggers a
     block and routes the transaction to manual review.
 
@@ -318,7 +321,7 @@ def KYCTierCheck(kyc_tier: Field, required_tier: int) -> ConstraintExpr:
     financial institutions must verify customer identity commensurate with risk.
 
     Args:
-        kyc_tier:      Field (int, Int) — customer's completed KYC tier (0–3).
+        kyc_tier:      Field (int, Int) — customer's completed KYC tier (0-3).
         required_tier: Minimum KYC tier required for this product/transaction.
     """
     return (
@@ -346,7 +349,7 @@ def TradingWindowCheck(
 
     Regulatory: SEC Rule 10b5-1(c) / FINRA MRVP — insider-trading prevention
     plans must confine executions to pre-announced trading windows.  Common
-    window: NYSE 09:30–16:00 ET = 34200–57600 seconds past midnight UTC-5.
+    window: NYSE 09:30-16:00 ET = 34200-57600 seconds past midnight UTC-5.
 
     Args:
         time_of_day_secs: Field (int, Int) — seconds since midnight (caller computes epoch % 86400).
@@ -358,7 +361,7 @@ def TradingWindowCheck(
         .named("trading_window_check")
         .explain(
             "Trade rejected: time_of_day_secs={time_of_day_secs} is outside the permitted "
-            f"window [{window_open_secs}s–{window_close_secs}s]. "
+            f"window [{window_open_secs}s-{window_close_secs}s]. "
             "(SEC Rule 10b5-1(c) / FINRA MRVP trading window)"
         )
     )

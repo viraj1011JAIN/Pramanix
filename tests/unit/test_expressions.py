@@ -429,7 +429,6 @@ class TestIsIn:
         assert len(c.node.values) == 5
 
     def test_in_op_values_preserve_order(self) -> None:
-
         vals = [3, 1, 4, 1, 5]
         c = E(_count).is_in(vals)
         assert [v.value for v in c.node.values] == vals  # type: ignore[attr-defined,unused-ignore]

@@ -51,9 +51,9 @@ class TestSerializationBoundaryIntegration:
         # Reconstruct and walk all values
         unpickled_policy, unpickled_values, _ = pickle.loads(dumped)
         for v in unpickled_values.values():
-            assert not isinstance(v, BaseModel), (
-                f"Pydantic model found in worker payload: {type(v).__name__}"
-            )
+            assert not isinstance(
+                v, BaseModel
+            ), f"Pydantic model found in worker payload: {type(v).__name__}"
 
     def test_no_z3_objects_in_pickled_worker_args(self) -> None:
         """worker_solve args must contain no Z3 objects."""
@@ -64,9 +64,9 @@ class TestSerializationBoundaryIntegration:
         dumped = pickle.dumps(payload)
         unpickled_policy, unpickled_values, _ = pickle.loads(dumped)
         for v in unpickled_values.values():
-            assert not isinstance(v, z3.ExprRef), (
-                f"Z3 object found in worker payload: {type(v).__name__}"
-            )
+            assert not isinstance(
+                v, z3.ExprRef
+            ), f"Z3 object found in worker payload: {type(v).__name__}"
 
     def test_worker_solve_returns_correct_decision(self) -> None:
         """_worker_solve produces a correct SAT decision dict."""

@@ -44,9 +44,7 @@ def NotSuspended(is_suspended: Field) -> ConstraintExpr:
     return (
         (E(is_suspended) == False)  # noqa: E712
         .named("not_suspended")
-        .explain(
-            "Action blocked: the entity is suspended (is_suspended={is_suspended})."
-        )
+        .explain("Action blocked: the entity is suspended (is_suspended={is_suspended}).")
     )
 
 
@@ -69,9 +67,7 @@ def StatusMustBe(status: Field, expected_value: Any) -> ConstraintExpr:
         (
             (E(status) == expected_value)
             .named(label)
-            .explain(
-                f"Status mismatch: status ({{status}}) != expected {expected_value}."
-            )
+            .explain(f"Status mismatch: status ({{status}}) != expected {expected_value}.")
         ),
     )
 
@@ -94,8 +90,6 @@ def FieldMustEqual(field_obj: Field, value: Any) -> ConstraintExpr:
         (
             (E(field_obj) == value)
             .named(label)
-            .explain(
-                f"{{{field_obj.name}}} must equal {value}; got {{{field_obj.name}}}."
-            )
+            .explain(f"{{{field_obj.name}}} must equal {value}; got {{{field_obj.name}}}.")
         ),
     )
