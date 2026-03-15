@@ -139,9 +139,13 @@ class TestTranspileLeaves:
         expr = transpile(_Literal(42))
         assert z3.is_rational_value(expr)
 
+    def test_literal_string(self) -> None:
+        expr = transpile(_Literal("hello"))
+        assert z3.is_string_value(expr)
+
     def test_literal_unknown_type_raises(self) -> None:
         with pytest.raises(FieldTypeError):
-            transpile(_Literal("not-a-number"))
+            transpile(_Literal([1, 2, 3]))
 
     def test_unknown_node_type_raises(self) -> None:
         with pytest.raises(TranspileError, match="Unknown DSL AST node type"):

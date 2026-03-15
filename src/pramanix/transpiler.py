@@ -61,7 +61,7 @@ def z3_var(field: Field, ctx: z3.Context | None = None) -> z3.ExprRef:
 
     Raises:
         FieldTypeError: If ``field.z3_type`` is not one of ``"Real"``,
-            ``"Int"``, ``"Bool"``.
+            ``"Int"``, ``"Bool"``, ``"String"``.
     """
     if field.z3_type == "Real":
         return z3.Real(field.name, ctx)
@@ -69,6 +69,12 @@ def z3_var(field: Field, ctx: z3.Context | None = None) -> z3.ExprRef:
         return z3.Int(field.name, ctx)
     if field.z3_type == "Bool":
         return z3.Bool(field.name, ctx)
+    if field.z3_type == "String":
+        # z3.String(name) ignores the ctx argument in most z3-solver versions —
+        # it always creates the variable in Z3's global context, which is
+        # incompatible with the per-call z3.Context() used by solver.py.
+        # z3.Const(name, sort) correctly respects the provided context.
+        return cast(z3.ExprRef, z3.Const(field.name, z3.StringSort(ctx)))
     raise FieldTypeError(f"Unknown z3_type {field.z3_type!r} on field '{field.name}'.")
 
 
@@ -107,6 +113,8 @@ def z3_val(field: Field, value: Any, ctx: z3.Context | None = None) -> z3.ExprRe
             n, d = Decimal(str(value)).as_integer_ratio()
             return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
         return cast(z3.ExprRef, z3.RealVal(int(value), ctx))
+    if field.z3_type == "String":
+        return cast(z3.ExprRef, z3.StringVal(str(value), ctx))
     raise FieldTypeError(f"Unknown z3_type {field.z3_type!r} on field '{field.name}'.")
 
 
@@ -136,6 +144,8 @@ def _z3_lit(value: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
         return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
     if isinstance(value, int):
         return cast(z3.ExprRef, z3.RealVal(value, ctx))  # numeric literals → Real
+    if isinstance(value, str):
+        return cast(z3.ExprRef, z3.StringVal(value, ctx))
     raise FieldTypeError(f"Unsupported literal type in DSL expression: {type(value)!r}")
 
 
@@ -184,23 +194,36 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
             raise TranspileError(f"Unknown BinOp operator: {op!r}")
 
         case _CmpOp(op=op, left=l, right=r):
-            # Cast to ArithRef so pyright knows comparison operators are defined.
-            # Bool-sort comparisons (eq/ne on Bool fields) work correctly at
-            # Z3 runtime despite the cast — Z3's type system is independent.
-            lz = cast(z3.ArithRef, transpile(l, ctx))
-            rz = cast(z3.ArithRef, transpile(r, ctx))
-            if op == "ge":
-                return cast(z3.ExprRef, lz >= rz)
-            if op == "le":
-                return cast(z3.ExprRef, lz <= rz)
-            if op == "gt":
-                return cast(z3.ExprRef, lz > rz)
-            if op == "lt":
-                return cast(z3.ExprRef, lz < rz)
+            lz = transpile(l, ctx)
+            rz = transpile(r, ctx)
+
+            # eq/ne use Z3_mk_eq directly so that all sorts are handled
+            # correctly — including String (SeqRef), whose Python __eq__
+            # returns an AST-identity bool rather than a Z3 formula.
             if op == "eq":
-                return cast(z3.ExprRef, lz == rz)
+                return z3.BoolRef(
+                    z3.Z3_mk_eq(lz.ctx_ref(), lz.as_ast(), rz.as_ast()),
+                    lz.ctx,
+                )
             if op == "ne":
-                return cast(z3.ExprRef, lz != rz)
+                _eq = z3.BoolRef(
+                    z3.Z3_mk_eq(lz.ctx_ref(), lz.as_ast(), rz.as_ast()),
+                    lz.ctx,
+                )
+                return cast(z3.ExprRef, z3.Not(_eq))
+
+            # Arithmetic comparisons — only valid on Real / Int sorts.
+            # Cast is a type-checker hint only (no runtime effect).
+            lz_a = cast(z3.ArithRef, lz)
+            rz_a = cast(z3.ArithRef, rz)
+            if op == "ge":
+                return cast(z3.ExprRef, lz_a >= rz_a)
+            if op == "le":
+                return cast(z3.ExprRef, lz_a <= rz_a)
+            if op == "gt":
+                return cast(z3.ExprRef, lz_a > rz_a)
+            if op == "lt":
+                return cast(z3.ExprRef, lz_a < rz_a)
             raise TranspileError(f"Unknown CmpOp operator: {op!r}")
 
         case _BoolOp(op=op, operands=ops):
@@ -215,9 +238,18 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
 
         case _InOp(left=l, values=vs):
             # Transpile as a Z3 disjunction: (field == v1) | (field == v2) | …
-            # This is the correct SMT encoding for membership tests.
+            # Use Z3_mk_eq (not Python ==) so String-sorted fields work correctly.
             lz = transpile(l, ctx)
-            disjuncts = [cast(z3.ExprRef, lz == transpile(v, ctx)) for v in vs]
+            disjuncts = [
+                cast(
+                    z3.ExprRef,
+                    z3.BoolRef(
+                        z3.Z3_mk_eq(lz.ctx_ref(), lz.as_ast(), transpile(v, ctx).as_ast()),
+                        lz.ctx,
+                    ),
+                )
+                for v in vs
+            ]
             if len(disjuncts) == 1:
                 return disjuncts[0]
             return cast(z3.ExprRef, z3.Or(*disjuncts))

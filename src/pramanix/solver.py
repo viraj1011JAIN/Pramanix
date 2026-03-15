@@ -78,6 +78,23 @@ class _SolveResult:
     """Wall-clock time spent in Z3 (milliseconds)."""
 
 
+# ── Sort-safe equality helper ─────────────────────────────────────────────────
+
+
+def _z3_eq(a: z3.ExprRef, b: z3.ExprRef) -> z3.BoolRef:
+    """Return a Z3 equality formula ``(= a b)`` that works for all sorts.
+
+    Python's ``==`` on Z3 ``SeqRef`` (String sort) objects falls through to
+    ``AstRef.__eq__`` which returns a *Python bool* (AST identity check) rather
+    than a Z3 ``BoolRef`` formula.  ``ArithRef`` and ``BoolRef`` override
+    ``__eq__`` correctly, but ``SeqRef`` does not.
+
+    Using ``Z3_mk_eq`` directly bypasses the Python operator and always
+    produces a Bool-sorted Z3 formula regardless of the operand sorts.
+    """
+    return z3.BoolRef(z3.Z3_mk_eq(a.ctx_ref(), a.as_ast(), b.as_ast()), a.ctx)
+
+
 # ── Value binding builder ─────────────────────────────────────────────────────
 
 
@@ -139,7 +156,7 @@ def _fast_check(
     s = z3.Solver(ctx=ctx)
     s.set("timeout", timeout_ms)
     for z3v, z3val in bindings:
-        s.add(z3v == z3val)
+        s.add(_z3_eq(z3v, z3val))
     for inv in invariants:
         s.add(transpile(inv.node, ctx))
     with _span("pramanix.z3_solve"):
@@ -184,7 +201,7 @@ def _attribute_violations(
         s = z3.Solver(ctx=ctx)
         s.set("timeout", timeout_ms)
         for z3v, z3val in bindings:
-            s.add(z3v == z3val)
+            s.add(_z3_eq(z3v, z3val))
         s.assert_and_track(transpile(inv.node, ctx), z3.Bool(label, ctx))
         with _span("pramanix.z3_solve"):
             result = s.check()
