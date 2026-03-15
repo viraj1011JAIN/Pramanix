@@ -648,6 +648,76 @@ All transitive dependencies are pinned in `poetry.lock` (committed to git).
 
 ---
 
+---
+
+## Integration Attack Surfaces (Phase 9)
+
+Each ecosystem integration (FastAPI, LangChain, LlamaIndex, AutoGen) adds a
+new attack surface.  This section documents the threats and mitigations for
+each integration point.
+
+### IA-1 — FastAPI / ASGI Middleware
+
+| Surface | Threat | Mitigation |
+|---------|--------|------------|
+| HTTP request body | Oversized payload causes DoS / memory exhaustion | 64 KB body limit (`max_body_bytes`); configurable per-deployment |
+| Content-Type header | Non-JSON payloads bypass schema validation | 415 rejection for any `Content-Type ≠ application/json` |
+| Response timing | ALLOW vs BLOCK timing difference reveals policy structure (timing oracle) | Constant-time padding: BLOCK responses padded to `timing_budget_ms` via `asyncio.sleep()` |
+| State loader | Async state loader can raise uncaught exceptions, leaking stack traces | State loader errors return 500 with generic message; stack trace never forwarded to client |
+| Intent model | Pydantic coercion may accept malformed types | `model_validate(strict=True)` — no silent coercion |
+
+**Recommended deployment hardening:**
+- Set `max_body_bytes=16384` (16 KB) for most banking APIs
+- Set `timing_budget_ms` to the P95 of your handler latency
+- Place behind a rate-limiting API gateway (Pramanix has no built-in rate limiter)
+
+### IA-2 — LangChain Tool Integration
+
+| Surface | Threat | Mitigation |
+|---------|--------|------------|
+| Feedback string | Agent extracts policy structure from block message | Feedback string uses only `.explain()` templates (author-controlled); never leaks DSL source or Z3 expressions |
+| Tool input (JSON) | Malformed/malicious JSON in `tool_input` | Hard parse failure raises `ValueError` (not swallowed) — LangChain surfaces it to the agent conversation |
+| State provider | Uncaught exception in state_provider | Exception propagates; never silently converted to ALLOW |
+| Sync wrapper | Blocking event loop via `asyncio.run()` | Uses `concurrent.futures.ThreadPoolExecutor` when called inside running event loop |
+
+**Critical:** `on_block` never raises — the feedback string IS the response.
+This is intentional: LangChain agents handle string returns, not exceptions.
+
+### IA-3 — LlamaIndex Tool Integration
+
+| Surface | Threat | Mitigation |
+|---------|--------|------------|
+| ToolOutput.is_error | Policy block incorrectly flagged as error causes agent retry | `is_error=False` for policy blocks — it is a legitimate decision, not a system error |
+| Query engine access | Query engine reached before verification completes | `verify_async()` called before `aquery()` — query engine never consulted for blocked requests |
+| aquery exception | Query engine raises; exception leaks internal state | Caller should wrap `acall()` — LlamaIndex exception handling is caller's responsibility |
+
+### IA-4 — AutoGen Tool Integration
+
+| Surface | Threat | Mitigation |
+|---------|--------|------------|
+| Tool function kwargs | Agent passes unexpected kwargs; causes TypeError | `model_validate(kwargs, strict=False)` — unexpected keys silently ignored by Pydantic |
+| Rejection message | Rejection contains internal error details | Only `decision_id`, `status`, and `.explain()` output surfaced; Python tracebacks never included |
+| Silent swallow | Wrapper catches all exceptions and returns string | Exceptions from state_provider logged but wrapped in rejection string (fail-safe) |
+| Agent retry loop | Agent retries blocked action infinitely | Rejection message includes "Please revise" guidance; host should implement retry limit |
+
+### Cross-Integration Invariants
+
+The following properties hold across **all** integration modules:
+
+1. **Fail-safe**: Any exception inside `Guard.verify_async()` returns a
+   blocked Decision — integrations never convert errors to ALLOW.
+2. **Decision carried**: Every blocked response includes `decision_id` for
+   audit trail correlation.
+3. **No DSL leakage**: Block feedback strings are derived exclusively from
+   author-supplied `.explain()` templates, not from Z3 AST or DSL source.
+4. **Async state loading**: All state loaders are `await`-ed — no blocking
+   I/O on the event loop.
+5. **No per-request Guard creation**: Guard instances are created once at
+   decoration/middleware-init time and reused — no cold-start Z3 overhead
+   per request.
+
+---
+
 ## Responsible Disclosure
 
 See `SECURITY.md` in the repository root for the vulnerability reporting

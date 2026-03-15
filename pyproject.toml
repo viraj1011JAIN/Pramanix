@@ -40,11 +40,21 @@ anthropic = {version = "^0.25", optional = true}
 tenacity = {version = "^8.2", optional = true}
 opentelemetry-sdk = {version = "^1.20", optional = true}
 opentelemetry-exporter-otlp-proto-grpc = {version = "^1.20", optional = true}
+fastapi = {version = ">=0.110,<1.0", optional = true}
+starlette = {version = ">=0.37", optional = true}
+langchain-core = {version = ">=0.1", optional = true}
+llama-index-core = {version = ">=0.10", optional = true}
+pyautogen = {version = ">=0.2", optional = true}
 
 [tool.poetry.extras]
 translator = ["httpx", "openai", "anthropic", "tenacity"]
 otel = ["opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
-all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc"]
+fastapi = ["fastapi", "starlette", "httpx"]
+langchain = ["langchain-core"]
+llamaindex = ["llama-index-core"]
+autogen = ["pyautogen"]
+integrations = ["fastapi", "starlette", "httpx", "langchain-core", "llama-index-core", "pyautogen"]
+all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -96,6 +106,16 @@ module = [
     "httpx.*",
     "tenacity",
     "tenacity.*",
+    "langchain_core",
+    "langchain_core.*",
+    "llama_index",
+    "llama_index.*",
+    "autogen",
+    "autogen.*",
+    "starlette",
+    "starlette.*",
+    "fastapi",
+    "fastapi.*",
 ]
 ignore_missing_imports = true
 
@@ -145,6 +165,11 @@ ignore = [
 # contain fullwidth chars (Ａ, ５) to illustrate the before/after transform.
 # These are documentation-only and do not affect runtime behaviour.
 "src/pramanix/translator/_sanitise.py" = ["RUF002"]
+"src/pramanix/integrations/*.py" = ["TCH"]
+"tests/integration/test_fastapi_middleware.py" = ["T20"]
+"tests/integration/test_langchain_tool.py" = ["T20"]
+"tests/integration/test_integration_matrix.py" = ["T20"]
+"examples/*.py" = ["T20", "TCH"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pramanix"]
