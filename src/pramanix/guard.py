@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import os
 import re
 import time
@@ -490,10 +491,11 @@ class Guard:
         """
         decision = self._verify_core(intent, state)
         if self._config.signer is not None:
-            sig = self._config.signer.sign(decision)
-            kid = self._config.signer.key_id()
-            object.__setattr__(decision, "signature", sig)
-            object.__setattr__(decision, "public_key_id", kid)
+            decision = dataclasses.replace(
+                decision,
+                signature=self._config.signer.sign(decision),
+                public_key_id=self._config.signer.key_id(),
+            )
         return decision
 
     def _verify_core(

@@ -40,10 +40,22 @@ def main() -> int:
     vp.add_argument("--key", help="Signing key (default: PRAMANIX_SIGNING_KEY env var)")
     vp.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON")
 
+    audit = sub.add_parser("audit", help="Audit log verification tools")
+    audit_sub = audit.add_subparsers(dest="audit_command")
+
+    av = audit_sub.add_parser("verify", help="Verify a JSONL audit log file")
+    av.add_argument("log_file", help="Path to JSONL audit log file")
+    av.add_argument("--public-key", required=True, help="Path to Ed25519 public key PEM file")
+    av.add_argument("--json", dest="as_json", action="store_true", help="Output results as JSON")
+    av.add_argument("--fail-fast", action="store_true", help="Stop at first invalid record")
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
         return _cmd_verify_proof(args)
+
+    if args.command == "audit":
+        return _cmd_audit(args)
 
     parser.print_help()
     return 2
@@ -109,6 +121,256 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
     else:
         print(f"INVALID  decision_id={result.decision_id}  error={result.error or 'signature mismatch'}")
         return 1
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    if not hasattr(args, "audit_command") or args.audit_command == "verify":
+        return _cmd_audit_verify(args)
+    print("Usage: pramanix audit verify <log_file> --public-key <key.pem>")
+    return 2
+
+
+def _cmd_audit_verify(args: argparse.Namespace) -> int:
+    """Verify a JSONL audit log file.
+
+    For each record:
+    1. Recompute decision_hash from stored fields (tamper detection)
+    2. Verify Ed25519 signature against decision_hash (authentication)
+
+    Exit code:
+        0 — all records valid
+        1 — any record tampered, invalid signature, or malformed
+        2 — usage error (file not found, bad key)
+    """
+    import json
+
+    pub_key_path = getattr(args, "public_key", None)
+    if not pub_key_path:
+        print("ERROR: --public-key is required", file=sys.stderr)
+        return 2
+
+    try:
+        with open(pub_key_path, "rb") as f:
+            public_key_pem = f.read()
+    except FileNotFoundError:
+        print(f"ERROR: Public key file not found: {pub_key_path}", file=sys.stderr)
+        return 2
+    except Exception as e:
+        print(f"ERROR: Cannot read public key: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        from pramanix.crypto import PramanixVerifier
+        verifier = PramanixVerifier(public_key_pem=public_key_pem)
+    except ImportError:
+        print("ERROR: cryptography package required. pip install cryptography", file=sys.stderr)
+        return 2
+    except Exception as e:
+        print(f"ERROR: Invalid public key: {e}", file=sys.stderr)
+        return 2
+
+    log_path = args.log_file
+    try:
+        log_file = open(log_path, "r", encoding="utf-8")
+    except FileNotFoundError:
+        print(f"ERROR: Log file not found: {log_path}", file=sys.stderr)
+        return 2
+
+    results = []
+    total = valid = tampered = invalid_sig = missing_sig = errors = 0
+    fail_fast = getattr(args, "fail_fast", False)
+
+    with log_file:
+        for line_num, line in enumerate(log_file, 1):
+            line = line.strip()
+            if not line:
+                continue
+
+            total += 1
+
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                errors += 1
+                result = {
+                    "line": line_num,
+                    "status": "ERROR",
+                    "decision_id": "UNKNOWN",
+                    "reason": "Invalid JSON on line",
+                }
+                results.append(result)
+                if not getattr(args, "as_json", False):
+                    print(f"[ERROR] line={line_num} — Invalid JSON")
+                if fail_fast:
+                    break
+                continue
+
+            decision_id = record.get("decision_id", "UNKNOWN")
+            stored_hash = record.get("decision_hash", "")
+            signature = record.get("signature", "")
+
+            try:
+                recomputed_hash = _recompute_hash(record)
+            except Exception as e:
+                errors += 1
+                result = {
+                    "line": line_num,
+                    "status": "ERROR",
+                    "decision_id": decision_id,
+                    "reason": f"Hash recomputation failed: {e}",
+                }
+                results.append(result)
+                if not getattr(args, "as_json", False):
+                    print(f"[ERROR] decision_id={decision_id} — {e}")
+                if fail_fast:
+                    break
+                continue
+
+            if recomputed_hash != stored_hash:
+                tampered += 1
+                result = {
+                    "line": line_num,
+                    "status": "TAMPERED",
+                    "decision_id": decision_id,
+                    "reason": "decision_hash mismatch — fields were modified",
+                    "stored_hash": stored_hash,
+                    "computed_hash": recomputed_hash,
+                }
+                results.append(result)
+                if not getattr(args, "as_json", False):
+                    print(
+                        f"[TAMPERED]    decision_id={decision_id} "
+                        f"| stored={stored_hash[:16]}... "
+                        f"computed={recomputed_hash[:16]}..."
+                    )
+                if fail_fast:
+                    break
+                continue
+
+            if not signature:
+                missing_sig += 1
+                result = {
+                    "line": line_num,
+                    "status": "MISSING_SIG",
+                    "decision_id": decision_id,
+                    "reason": "No signature field in record",
+                }
+                results.append(result)
+                if not getattr(args, "as_json", False):
+                    print(f"[MISSING_SIG] decision_id={decision_id}")
+                if fail_fast:
+                    break
+                continue
+
+            sig_valid = verifier.verify(
+                decision_hash=recomputed_hash,
+                signature=signature,
+            )
+
+            if not sig_valid:
+                invalid_sig += 1
+                result = {
+                    "line": line_num,
+                    "status": "INVALID_SIG",
+                    "decision_id": decision_id,
+                    "reason": "Ed25519 signature invalid — wrong key or tampered signature",
+                }
+                results.append(result)
+                if not getattr(args, "as_json", False):
+                    print(f"[INVALID_SIG] decision_id={decision_id}")
+                if fail_fast:
+                    break
+                continue
+
+            valid += 1
+            result = {
+                "line": line_num,
+                "status": "VALID",
+                "decision_id": decision_id,
+                "allowed": record.get("allowed"),
+            }
+            results.append(result)
+            if not getattr(args, "as_json", False):
+                verdict = "ALLOW" if record.get("allowed") else "BLOCK"
+                print(f"[VALID]       decision_id={decision_id} ({verdict})")
+
+    any_failure = (tampered + invalid_sig + missing_sig + errors) > 0
+
+    if getattr(args, "as_json", False):
+        summary = {
+            "total": total,
+            "valid": valid,
+            "tampered": tampered,
+            "invalid_sig": invalid_sig,
+            "missing_sig": missing_sig,
+            "errors": errors,
+            "all_valid": not any_failure,
+            "records": results,
+        }
+        print(json.dumps(summary, indent=2))
+    else:
+        print(f"\n{'─' * 60}")
+        print(f"Audit complete: {total} records")
+        print(f"  ✅ Valid:        {valid}")
+        if tampered:
+            print(f"  ❌ Tampered:     {tampered}")
+        if invalid_sig:
+            print(f"  ❌ Invalid sig:  {invalid_sig}")
+        if missing_sig:
+            print(f"  ⚠️  Missing sig:  {missing_sig}")
+        if errors:
+            print(f"  ⚠️  Errors:       {errors}")
+        print()
+        if not any_failure:
+            print("✅ AUDIT PASSED — All records verified")
+        else:
+            print("❌ AUDIT FAILED — See details above")
+
+    return 1 if any_failure else 0
+
+
+def _recompute_hash(record: dict) -> str:
+    """Recompute decision_hash from a JSONL audit record.
+
+    Must stay in sync with Decision._compute_hash().
+    """
+    import hashlib
+
+    from pramanix.decision import _make_json_safe
+
+    try:
+        import orjson
+
+        canonical = {
+            "allowed": bool(record.get("allowed", False)),
+            "explanation": str(record.get("explanation", "")),
+            "intent_dump": _make_json_safe(record.get("intent_dump", {})),
+            "policy": str(record.get("policy", "")),
+            "state_dump": _make_json_safe(record.get("state_dump", {})),
+            "status": str(record.get("status", "")),
+            "violated_invariants": sorted(
+                str(v) for v in record.get("violated_invariants", [])
+            ),
+        }
+        serialized = orjson.dumps(
+            canonical,
+            option=orjson.OPT_SORT_KEYS | orjson.OPT_NON_STR_KEYS,
+        )
+    except Exception:
+        import json as _json
+
+        canonical = {
+            "allowed": bool(record.get("allowed", False)),
+            "explanation": str(record.get("explanation", "")),
+            "policy": str(record.get("policy", "")),
+            "status": str(record.get("status", "")),
+            "violated_invariants": sorted(
+                str(v) for v in record.get("violated_invariants", [])
+            ),
+        }
+        serialized = _json.dumps(canonical, sort_keys=True, default=str).encode()
+
+    return hashlib.sha256(serialized).hexdigest()
 
 
 if __name__ == "__main__":
