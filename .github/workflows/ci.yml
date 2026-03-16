@@ -65,25 +65,22 @@ jobs:
       - name: Install bandit
         run: pip install "bandit>=1.7"
 
-      - name: Install poetry & export requirements
+      # Poetry 2.x dropped the built-in `export` command — requires the plugin.
+      # We install the project deps into the environment, then pip-audit scans
+      # the live environment directly (no requirements.txt intermediate file).
+      - name: Install project dependencies for scanning
         run: |
-          pip install poetry
+          pip install poetry "poetry-plugin-export>=1.6"
           poetry config virtualenvs.create false
-          # Export all deps (including optional extras) so pip-audit can scan them all
-          poetry export \
-            --without-hashes \
-            --with dev \
-            --extras all \
-            -f requirements.txt \
-            -o requirements.txt
-          echo "=== requirements.txt ===" && cat requirements.txt
+          poetry install --extras all --with dev
 
       - name: pip-audit — fail on any known CVE
+        # Scans the live installed environment — no requirements.txt needed.
         # To accept a specific CVE finding that you have reviewed and accepted,
         # add --ignore-vuln VULN-ID to the command below and document the
         # rationale in a comment.  Example (do not uncomment without a real CVE):
         #   --ignore-vuln GHSA-0000-0000-0000  # Accepted: only affects feature X we don't use
-        run: pip-audit --requirement requirements.txt --format=json --output pip-audit-report.json
+        run: pip-audit --skip-editable --format=json --output pip-audit-report.json
 
       - name: Upload pip-audit report
         if: always()
