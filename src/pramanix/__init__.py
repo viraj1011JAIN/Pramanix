@@ -7,11 +7,13 @@ Public API contract — these are the ONLY names that are considered stable.
 All other internal modules may change without notice.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor
+from pramanix.crypto import PramanixSigner, PramanixVerifier
+from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
@@ -91,4 +93,10 @@ __all__ = [
     # Phase 9 — Pillar 4: Adaptive circuit breaker
     "AdaptiveCircuitBreaker",
     "CircuitBreakerConfig",
+    # Phase 11 — Pillar 2: Ed25519 cryptographic signing
+    "PramanixSigner",
+    "PramanixVerifier",
+    # Phase 11 — Pillar 4: Compliance reporter
+    "ComplianceReporter",
+    "ComplianceReport",
 ]

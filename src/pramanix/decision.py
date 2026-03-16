@@ -38,8 +38,10 @@ The invariant ``allowed=True ↔ status=SAFE`` is enforced in ``__post_init__``.
 from __future__ import annotations
 
 import enum
+import hashlib
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 try:
@@ -60,7 +62,31 @@ except ImportError:  # pragma: no cover
         return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
-__all__ = ["Decision", "SolverStatus"]
+__all__ = ["Decision", "SolverStatus", "_make_json_safe"]
+
+
+def _make_json_safe(d: dict) -> dict:
+    """Convert a dict to JSON-safe types, preserving Decimal precision.
+
+    Decimal → str (exact representation, no float drift)
+    datetime → ISO 8601 UTC string
+    All other types → str fallback
+    """
+    result = {}
+    for k, v in sorted(d.items()):  # Sorted for determinism
+        if isinstance(v, Decimal):
+            result[str(k)] = str(v)
+        elif isinstance(v, bool):
+            result[str(k)] = v
+        elif isinstance(v, (int, float)):
+            result[str(k)] = v
+        elif isinstance(v, str):
+            result[str(k)] = v
+        elif hasattr(v, "isoformat"):  # datetime
+            result[str(k)] = v.isoformat()
+        else:
+            result[str(k)] = str(v)
+    return result
 
 # ---------------------------------------------------------------------------
 # Compatibility shim: FrozenInstanceError was added in Python 3.11.
@@ -167,6 +193,11 @@ class Decision:
     metadata: dict[str, Any] = field(default_factory=dict)
     solver_time_ms: float = 0.0
     decision_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    intent_dump: dict = field(default_factory=dict)
+    state_dump: dict = field(default_factory=dict)
+    decision_hash: str = field(default="")
+    signature: str | None = None
+    public_key_id: str | None = None
 
     # ── Cross-invariant validation ────────────────────────────────────────────
 
@@ -182,6 +213,34 @@ class Decision:
                 "Decision(allowed=False, status=SAFE) is inconsistent. "
                 "SAFE status implies the action is permitted."
             )
+        # Compute decision_hash if not already set
+        if not self.decision_hash:
+            object.__setattr__(self, "decision_hash", self._compute_hash())
+
+    # ── Hash computation ──────────────────────────────────────────────────────
+
+    def _compute_hash(self) -> str:
+        """Compute a deterministic SHA-256 hash of this Decision.
+
+        Canonical representation includes intent_dump, state_dump, policy,
+        status, allowed, violated_invariants, and explanation.
+        signature and public_key_id are intentionally excluded (not circular).
+        """
+        canonical = {
+            "allowed": bool(self.allowed),
+            "explanation": str(self.explanation or ""),
+            "intent_dump": _make_json_safe(self.intent_dump),
+            "policy": str(self.metadata.get("policy", "") if self.metadata else ""),
+            "state_dump": _make_json_safe(self.state_dump),
+            "status": str(self.status.value if hasattr(self.status, "value") else self.status),
+            "violated_invariants": sorted(str(v) for v in (self.violated_invariants or ())),
+        }
+        try:
+            serialized = _canonical_bytes(canonical)
+        except Exception:
+            import json
+            serialized = json.dumps(canonical, sort_keys=True, default=str).encode()
+        return hashlib.sha256(serialized).hexdigest()
 
     # ── Serialisation ─────────────────────────────────────────────────────────
 
@@ -203,6 +262,9 @@ class Decision:
             "explanation": self.explanation,
             "solver_time_ms": self.solver_time_ms,
             "metadata": dict(self.metadata),
+            "intent_dump": _make_json_safe(self.intent_dump),
+            "state_dump": _make_json_safe(self.state_dump),
+            "decision_hash": self.decision_hash,
         }
 
     # ── Factory: SAFE ─────────────────────────────────────────────────────────
@@ -213,18 +275,24 @@ class Decision:
         *,
         solver_time_ms: float = 0.0,
         metadata: dict[str, Any] | None = None,
-    ) -> Decision:
+        intent_dump: dict | None = None,
+        state_dump: dict | None = None,
+    ) -> "Decision":
         """Construct an *allowed* decision (all invariants satisfied).
 
         Args:
             solver_time_ms: Time spent in Z3 (milliseconds).
             metadata:       Optional caller-supplied tracing data.
+            intent_dump:    Serialized intent dict for hash replay.
+            state_dump:     Serialized state dict for hash replay.
         """
         return cls(
             allowed=True,
             status=SolverStatus.SAFE,
             solver_time_ms=solver_time_ms,
             metadata=dict(metadata) if metadata is not None else {},
+            intent_dump=dict(intent_dump) if intent_dump is not None else {},
+            state_dump=dict(state_dump) if state_dump is not None else {},
         )
 
     # ── Factory: UNSAFE ───────────────────────────────────────────────────────
@@ -237,7 +305,9 @@ class Decision:
         explanation: str = "",
         solver_time_ms: float = 0.0,
         metadata: dict[str, Any] | None = None,
-    ) -> Decision:
+        intent_dump: dict | None = None,
+        state_dump: dict | None = None,
+    ) -> "Decision":
         """Construct a *blocked* decision (one or more invariants violated).
 
         Args:
@@ -245,6 +315,8 @@ class Decision:
             explanation:         Human-readable summary of violations.
             solver_time_ms:      Time spent in Z3 (milliseconds).
             metadata:            Optional caller-supplied tracing data.
+            intent_dump:         Serialized intent dict for hash replay.
+            state_dump:          Serialized state dict for hash replay.
         """
         if not explanation and violated_invariants:
             explanation = "Invariant(s) violated: " + ", ".join(violated_invariants)
@@ -255,6 +327,8 @@ class Decision:
             explanation=explanation,
             solver_time_ms=solver_time_ms,
             metadata=dict(metadata) if metadata is not None else {},
+            intent_dump=dict(intent_dump) if intent_dump is not None else {},
+            state_dump=dict(state_dump) if state_dump is not None else {},
         )
 
     # ── Factory: TIMEOUT ──────────────────────────────────────────────────────

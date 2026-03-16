@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-17
+
+### Added
+
+- **Cryptographic Decision Hashing** (`src/pramanix/decision.py`) — every `Decision` now
+  carries a deterministic `decision_hash` (SHA-256 via orjson canonical bytes) over
+  `allowed`, `explanation`, `intent_dump`, `policy`, `state_dump`, `status`, and
+  `violated_invariants`. Hash is content-addressable; `decision_id` excluded by design.
+- **`intent_dump` / `state_dump` fields on `Decision`** — raw Python dicts capturing the
+  resolved intent and state values at verification time. Serialised via `_make_json_safe()`
+  (Decimal→str, preserving precision) at hash-computation and `to_dict()` boundaries.
+- **Ed25519 signing (`src/pramanix/crypto.py`)** — `PramanixSigner` / `PramanixVerifier`
+  using the `cryptography` library. `PramanixSigner.generate()` creates an ephemeral keypair;
+  production keys loaded from `PRAMANIX_SIGNING_KEY_PEM` env var or explicit PEM. Key rotation
+  tracked via `key_id` (SHA-256[:16] of public PEM). `verify()` / `verify_decision()` never
+  raise — return `False` on any failure.
+- **Guard signing integration** (`src/pramanix/guard.py`) — `GuardConfig.signer` optional
+  field; when set, `Guard.verify()` attaches `signature` and `public_key_id` to the returned
+  Decision via `dataclasses.replace()` (immutable, mypy-clean).
+- **Audit CLI subcommand** (`pramanix audit verify`) — verifies JSONL audit logs line by line.
+  Status labels: `[VALID]`, `[TAMPERED]`, `[INVALID_SIG]`, `[MISSING_SIG]`, `[ERROR]`.
+  Exit codes: 0 = all valid, 1 = any failure, 2 = usage error. Supports `--json`, `--fail-fast`.
+- **`ComplianceReporter` / `ComplianceReport`** (`src/pramanix/helpers/compliance.py`) —
+  maps Z3 unsat-core labels to structured compliance reports with 30+ regulatory citations
+  (BSA/AML, OFAC/SDN, IRC §1091, HIPAA, Basel III, SOX, SRE SLAs). Severity classification:
+  `CRITICAL_PREVENTION` / `HIGH` / `MEDIUM`. `to_json()` produces audit-ready JSON;
+  `to_pdf()` returns UTF-8 structured text (real PDF output planned for Phase 12).
+
+### Changed
+
+- `Decision.safe()` and `Decision.unsafe()` factory methods accept optional `intent_dump`
+  and `state_dump` kwargs, wired from `Guard._verify_core()`.
+- `Decision.to_dict()` now includes `intent_dump`, `state_dump`, and `decision_hash`.
+- `GuardConfig` gains optional `signer: PramanixSigner | None` field (default `None`).
+
+### New extras
+
+- `cryptography` extra (`pip install pramanix[crypto]`) — required for `PramanixSigner` /
+  `PramanixVerifier`. Included in the `all` extra.
+
 ## [0.7.0] - 2026-03-15
 
 ### Added

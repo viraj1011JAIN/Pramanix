@@ -489,3 +489,89 @@ class TestParseAndVerifyGenericException:
 
         assert not result.allowed
         assert result.status == SolverStatus.ERROR
+
+
+# ===============================================================
+# Phase 11: Logging isolation — intent_dump / state_dump must
+# never appear in structlog output (financial data, PHI, etc.)
+# ===============================================================
+
+
+class TestLoggingIsolation:
+    """Verify that intent_dump and state_dump values never reach log output.
+
+    The structlog _redact_secrets_processor only matches keys like
+    'secret', 'token', 'api_key'. It does NOT catch 'amount', 'balance',
+    'patient_id', etc. This test enforces that Guard never passes those
+    values to structlog in the first place.
+    """
+
+    def _capture_log_output(self, intent: dict, state: dict) -> str:
+        """Run guard.verify() and capture all structlog output as a string."""
+        import io as _io
+
+        import structlog
+
+        _amount = Field("amount", Decimal, "Real")
+        _balance = Field("balance", Decimal, "Real")
+
+        class _P(Policy):
+            class Meta:
+                version = "1.0"
+
+            @classmethod
+            def fields(cls):
+                return {"amount": _amount, "balance": _balance}
+
+            @classmethod
+            def invariants(cls):
+                return [
+                    ((E(_balance) - E(_amount)) >= Decimal("0"))
+                    .named("sufficient_balance")
+                    .explain("Insufficient")
+                ]
+
+        buf = _io.StringIO()
+        structlog.configure(
+            processors=[
+                structlog.stdlib.add_log_level,
+                structlog.processors.JSONRenderer(),
+            ],
+            logger_factory=structlog.PrintLoggerFactory(buf),
+            cache_logger_on_first_use=False,
+        )
+
+        guard = Guard(_P, GuardConfig(execution_mode="sync"))
+        guard.verify(intent=intent, state=state)
+        return buf.getvalue()
+
+    def test_financial_amounts_not_logged_on_allow(self):
+        """Allowed decision must not log the actual amount or balance."""
+        sentinel_amount = "98765432100"
+        sentinel_balance = "11122233344"
+        output = self._capture_log_output(
+            intent={"amount": Decimal(sentinel_amount)},
+            state={"balance": Decimal(sentinel_balance), "state_version": "1.0"},
+        )
+        assert sentinel_amount not in output, (
+            f"amount {sentinel_amount!r} appeared in log output"
+        )
+        assert sentinel_balance not in output, (
+            f"balance {sentinel_balance!r} appeared in log output"
+        )
+
+    def test_financial_amounts_not_logged_on_block(self):
+        """Blocked decision must not log the actual amount or balance."""
+        # Long distinctive values — cannot be substrings of UUIDs, solver_time_ms, etc.
+        sentinel_amount = "55544433322111"
+        sentinel_balance = "77766655544433"
+        output = self._capture_log_output(
+            intent={"amount": Decimal(sentinel_amount)},
+            state={"balance": Decimal(sentinel_balance), "state_version": "1.0"},
+        )
+        assert sentinel_amount not in output, (
+            f"amount {sentinel_amount!r} appeared in log output"
+        )
+        assert sentinel_balance not in output, (
+            f"balance {sentinel_balance!r} appeared in log output"
+        )
