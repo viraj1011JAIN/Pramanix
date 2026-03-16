@@ -57,8 +57,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install SAST tools
-        run: pip install pip-audit bandit semgrep
+      # Install audit tools in isolation to avoid dependency conflicts.
+      # semgrep is NOT installed via pip — it uses the official action below.
+      - name: Install pip-audit
+        run: pip install "pip-audit>=2.7"
+
+      - name: Install bandit
+        run: pip install "bandit>=1.7"
 
       - name: Install poetry & export requirements
         run: |
@@ -79,7 +84,6 @@ jobs:
         # rationale in a comment.  Example (do not uncomment without a real CVE):
         #   --ignore-vuln GHSA-0000-0000-0000  # Accepted: only affects feature X we don't use
         run: pip-audit --requirement requirements.txt --format=json --output pip-audit-report.json
-        continue-on-error: false
 
       - name: Upload pip-audit report
         if: always()
@@ -92,7 +96,6 @@ jobs:
         # -ll = HIGH and CRITICAL only (suppress LOW/MEDIUM noise)
         # -ii = only MEDIUM and HIGH confidence (suppress speculative findings)
         run: bandit -r src/pramanix/ -ll -ii -f json -o bandit-report.json
-        continue-on-error: false
 
       - name: Upload bandit report
         if: always()
@@ -101,23 +104,17 @@ jobs:
           name: bandit-report
           path: bandit-report.json
 
+      # semgrep uses its official action — no pip install required, handles
+      # binary download and rule fetching internally.
       - name: semgrep — fail on ERROR level findings
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/security-audit
+            p/owasp-top-ten
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
-        run: |
-          semgrep \
-            --config=auto \
-            --error \
-            --json \
-            --output semgrep-report.json \
-            src/pramanix/
-
-      - name: Upload semgrep report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: semgrep-report
-          path: semgrep-report.json
 
       # ── Secrets scan — fail if PRAMANIX_HMAC_SECRET or similar tokens ──────
       # Scans Python and YAML source files for hardcoded credentials.
