@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Pramanix Iron Gate CI Pipeline — v0.5
+# Pramanix Iron Gate CI Pipeline — v0.6
 #
 # Job execution order (dependency chain — fail-fast at each gate):
-#   sast → alpine-ban → lint-typecheck → test → coverage → license-scan
+#   sast → alpine-ban → lint-typecheck → test → coverage → trivy → license-scan
 #
 # Security rationale:
 #   SAST first: reject known-CVE deps before ANY test code runs.
@@ -10,7 +10,11 @@
 #   Lint/type third: reject broken code before spending compute on tests.
 #   Tests fourth: full adversarial + property suite, ordered unit→integ→prop→adv.
 #   Coverage fifth: enforce 95% floor; fail PRs that drop > 0.5%.
+#   Trivy sixth: container image CVE scan — fail on CRITICAL/HIGH.
 #   License last: expensive scan runs only after everything else passes.
+#
+# Nightly benchmark (schedule trigger):
+#   Runs latency_benchmark.py at 02:00 UTC; enforces P99 < 15ms gate.
 #
 # CRITICAL: Alpine base images are BANNED — Z3 requires glibc (Blueprint §48).
 # CRITICAL: Python 3.10 dropped — EOL December 2026.
@@ -23,6 +27,9 @@ on:
     branches: ["main", "dev", "feature/**", "fix/**"]
   pull_request:
     branches: ["main"]
+  schedule:
+    # Nightly benchmark — 02:00 UTC
+    - cron: "0 2 * * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -378,14 +385,46 @@ jobs:
           # via codecov.yml in the repo root (coverage.precision + coverage.status)
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 6 — Dependency License Scan
+  # JOB 6 — Container Image Security Scan (Trivy)
+  # Builds the production Docker image and scans for CRITICAL/HIGH CVEs.
+  # Fails if any CRITICAL or HIGH vulnerability is found.
+  # ──────────────────────────────────────────────────────────────────────────
+  trivy:
+    name: "Container scan (Trivy)"
+    runs-on: ubuntu-latest
+    needs: coverage
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build production image for scanning
+        run: docker build -f Dockerfile.production -t pramanix:ci-scan .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "pramanix:ci-scan"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+
+      - name: Upload Trivy SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+        continue-on-error: true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 7 — Dependency License Scan
   # Allowed: MIT, Apache-2.0, BSD-2/3, LGPL-2.1/3.0, PSF, ISC, MPL-2.0
   # Blocked: GPL-2.0-only, AGPL-incompatible, unknown
   # ──────────────────────────────────────────────────────────────────────────
   license-scan:
     name: "License scan (allowlist)"
     runs-on: ubuntu-latest
-    needs: coverage
+    needs: trivy
     steps:
       - uses: actions/checkout@v4
 
@@ -475,3 +514,36 @@ jobs:
         with:
           name: license-report
           path: licenses.json
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 8 — Nightly Latency Benchmark
+  # Runs only on the schedule trigger (02:00 UTC daily).
+  # Enforces P99 < 15ms gate — fails the job if the target is missed.
+  # ──────────────────────────────────────────────────────────────────────────
+  benchmark:
+    name: "Nightly latency benchmark (P99 < 15ms)"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry config virtualenvs.create false
+          poetry install --extras all
+
+      - name: Run latency benchmark (N=500)
+        run: python benchmarks/latency_benchmark.py --n 500
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results.json

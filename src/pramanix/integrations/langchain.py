@@ -137,6 +137,18 @@ def wrap_tools(
     result = []
     em = execute_map or {}
     for tool in tools:
+        _orig = getattr(tool, "_run", None)
+
+        def _make_default(
+            _t: Any,
+        ) -> Callable[[dict[str, Any]], Any]:
+            if _t is not None:
+                return lambda i: _t(json.dumps(i))
+            return lambda i: json.dumps(i)
+
+        _default_fn: Callable[[dict[str, Any]], Any] = (
+            em[tool.name] if tool.name in em else _make_default(_orig)
+        )
         result.append(
             PramanixGuardedTool(
                 name=tool.name,
@@ -144,7 +156,7 @@ def wrap_tools(
                 guard=guard,
                 intent_schema=intent_schema,
                 state_provider=state_provider,
-                execute_fn=em.get(tool.name),
+                execute_fn=_default_fn,
             )
         )
     return result

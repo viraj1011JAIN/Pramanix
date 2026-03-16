@@ -27,13 +27,14 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import json
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from pramanix.audit.signer import DecisionSigner
-from pramanix.exceptions import GuardViolationError
+from pramanix.exceptions import GuardViolationError, PolicyCompilationError
 from pramanix.guard import Guard, GuardConfig
 
 try:
@@ -231,6 +232,15 @@ def pramanix_route(
     def decorator(
         fn: Callable[..., Awaitable[Any]],
     ) -> Callable[..., Awaitable[Any]]:
+        sig = inspect.signature(fn)
+        params = set(sig.parameters.keys())
+        missing = [p for p in ("intent", "state") if p not in params]
+        if missing:
+            raise PolicyCompilationError(
+                f"pramanix_route: '{fn.__name__}' is missing required parameters: "
+                f"{missing}. Add 'intent: dict, state: dict' to the function signature."
+            )
+
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Extract intent and state from kwargs; fall back to positional args.

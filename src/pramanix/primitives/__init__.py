@@ -57,6 +57,7 @@ from pramanix.primitives.infra import (
     WithinMemoryBudget,
 )
 from pramanix.primitives.rbac import ConsentRequired, DepartmentMustBeIn, RoleMustBeIn
+from pramanix.primitives.roles import EnterpriseRole, HIPAARole
 from pramanix.primitives.time import After, Before, NotExpired, WithinTimeWindow
 
 __all__ = [
@@ -106,4 +107,7 @@ __all__ = [
     "ProdDeployApproval",
     "ReplicaBudget",
     "CPUMemoryGuard",
+    # Role constants
+    "HIPAARole",
+    "EnterpriseRole",
 ]

@@ -268,6 +268,20 @@ worst-case adversarial model outputs.
 
 ---
 
+### Threat Register
+
+| ID | Threat | STRIDE | Severity | CVSS v3.1 | Primary Mitigation | Residual Risk | Test Reference |
+|----|--------|--------|----------|-----------|--------------------|---------------|----------------|
+| T1 | Prompt injection via translator LLM | Tampering, EoP | HIGH | 8.1 | 5-layer defence (compiled DSL + extraction-only prompt + Pydantic strict + blind ID + dual-model consensus) | Numerically valid adversarial payload indistinguishable from legitimate request | `tests/adversarial/test_prompt_injection.py` — vectors A–J |
+| T2 | LLM-fabricated canonical IDs (IDOR) | Spoofing, Info Disclosure | HIGH | 7.5 | Blind ID resolution — LLM never sees real IDs; post-extraction UUID scorer | Resolver bugs in host code outside Pramanix scope | `tests/adversarial/test_id_injection.py` — vectors K–O |
+| T3 | Pydantic bypass via crafted dict | Tampering | HIGH | 7.2 | `strict=True` model validation; `extra="forbid"`; `safe_dump()` nested-model check | `float`→`Decimal` rounding if host omits `Field(strict=True)` | `tests/adversarial/test_field_overflow.py` — vectors P–X |
+| T4 | Z3 context poisoning via cross-worker AST sharing | Tampering, EoP | CRITICAL | 9.0 | Per-call private `z3.Context()`; process-pool isolation | None — per-call context is definitive fix | `tests/adversarial/test_z3_context_isolation.py` |
+| T5 | TOCTOU between `verify()` and action execution | Tampering | HIGH | 7.4 | `state_version` optimistic locking; `STALE_STATE` decision on version mismatch | Distributed lock gap between verify and DB UPDATE (host responsibility) | `tests/adversarial/test_toctou_awareness.py` |
+| T6 | Process boundary memory injection (IPC tampering) | Tampering | HIGH | 7.5 | HMAC-SHA256 sealed IPC envelope; `hmac.compare_digest` constant-time verify; ephemeral key per process | Kernel / hypervisor compromise can extract key (operational risk, accepted) | `tests/adversarial/test_hmac_ipc_integrity.py` |
+| T7 | Solver timeout exhaustion / DoS | Denial of Service | MEDIUM | 5.9 | Hard Z3 `timeout` budget; timeout → `Decision(allowed=False)`; telemetry alerting | Up to `solver_timeout_ms` CPU consumed per request (operator must rate-limit) | `tests/unit/test_solver.py`; `tests/adversarial/test_fail_safe_invariant.py` |
+
+---
+
 ### T1 — Prompt Injection via Translator
 
 | Attribute | Value |
