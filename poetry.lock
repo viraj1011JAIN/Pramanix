@@ -2512,10 +2512,9 @@ typing-extensions = ">=4.5.0"
 name = "orjson"
 version = "3.11.7"
 description = "Fast, correct Python JSON library supporting dataclasses, datetimes, and numpy"
-optional = true
+optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "(extra == \"langchain\" or extra == \"integrations\" or extra == \"all\") and platform_python_implementation != \"PyPy\""
 files = [
     {file = "orjson-3.11.7-cp310-cp310-macosx_10_15_x86_64.macosx_11_0_arm64.macosx_10_15_universal2.whl", hash = "sha256:a02c833f38f36546ba65a452127633afce4cf0dd7296b753d3bb54e55e5c0174"},
     {file = "orjson-3.11.7-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b63c6e6738d7c3470ad01601e23376aa511e50e1f3931395b9f9c722406d1a67"},
@@ -4759,4 +4758,4 @@ translator = ["anthropic", "httpx", "openai", "tenacity"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "5c81dd706d92e9884a6ebda02a8e9a891ae0b6646531956e9b74aecf6780c4c6"
+content-hash = "e11f29b9b95ce73bfed5b422fd220a64d1d1ed15b8781a5be50b615c9d086520"

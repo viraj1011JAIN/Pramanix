@@ -95,6 +95,7 @@ from pramanix.validator import validate_intent, validate_state
 from pramanix.worker import WorkerPool
 
 if TYPE_CHECKING:
+    from pramanix.crypto import PramanixSigner
     from pramanix.expressions import ConstraintExpr
     from pramanix.policy import Policy
 
@@ -273,6 +274,7 @@ class GuardConfig:
         default_factory=lambda: float(_env_str("SHED_LATENCY_THRESHOLD_MS", "200"))
     )
     shed_worker_pct: float = field(default_factory=lambda: float(_env_str("SHED_WORKER_PCT", "90")))
+    signer: "PramanixSigner | None" = field(default=None)
 
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
@@ -481,6 +483,24 @@ class Guard:
         intent: dict[str, Any] | BaseModel,
         state: dict[str, Any] | BaseModel,
     ) -> Decision:
+        """Verify *intent* and *state* against the policy invariants, then sign.
+
+        Delegates to _verify_core() and attaches an Ed25519 signature when
+        a signer is configured in GuardConfig.
+        """
+        decision = self._verify_core(intent, state)
+        if self._config.signer is not None:
+            sig = self._config.signer.sign(decision)
+            kid = self._config.signer.key_id()
+            object.__setattr__(decision, "signature", sig)
+            object.__setattr__(decision, "public_key_id", kid)
+        return decision
+
+    def _verify_core(
+        self,
+        intent: dict[str, Any] | BaseModel,
+        state: dict[str, Any] | BaseModel,
+    ) -> Decision:
         """Verify *intent* and *state* against the policy invariants.
 
         This method **never raises**.  All exceptions — Z3 timeouts,
@@ -602,6 +622,8 @@ class Guard:
                             return Decision.unsafe(
                                 violated_invariants=(_fp_result.rule_name or "fast_path_block",),
                                 explanation=_fp_result.reason,
+                                intent_dump=intent_values,
+                                state_dump=state_values,
                             )
 
                 # ── Step 5: Z3 solve (solver.py adds pramanix.z3_solve child span) ──
@@ -613,7 +635,11 @@ class Guard:
 
                 # ── Step 6: Build Decision ────────────────────────────────────────
                 if result.sat:
-                    decision_safe = Decision.safe(solver_time_ms=result.solver_time_ms)
+                    decision_safe = Decision.safe(
+                        solver_time_ms=result.solver_time_ms,
+                        intent_dump=intent_values,
+                        state_dump=state_values,
+                    )
                     _metric_status = decision_safe.status.value
                     _log.info(
                         "pramanix.guard.decision",
@@ -631,6 +657,8 @@ class Guard:
                     violated_invariants=tuple(label for inv in filtered if (label := inv.label)),
                     explanation=explanation,
                     solver_time_ms=result.solver_time_ms,
+                    intent_dump=intent_values,
+                    state_dump=state_values,
                 )
                 _metric_status = decision_unsafe.status.value
                 _log.info(

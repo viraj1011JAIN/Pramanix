@@ -441,6 +441,9 @@ _EXPECTED_KEYS = frozenset(
         "explanation",
         "solver_time_ms",
         "metadata",
+        "intent_dump",
+        "state_dump",
+        "decision_hash",
     }
 )
 
