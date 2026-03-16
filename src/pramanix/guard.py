@@ -150,9 +150,9 @@ _log = structlog.get_logger("pramanix.guard")
 # absent, so there is zero overhead on deployments that do not use tracing.
 
 try:
-    from opentelemetry import trace as _otel_trace
+    from opentelemetry import trace as _otel_trace  # pragma: no cover
 
-    def _span(name: str) -> Any:
+    def _span(name: str) -> Any:  # pragma: no cover
         """Return a live OTel span context-manager."""
         return _otel_trace.get_tracer("pramanix.guard").start_as_current_span(name)
 
@@ -193,8 +193,8 @@ try:
     )
     _PROM_AVAILABLE = True
 
-except ImportError:
-    _PROM_AVAILABLE = False
+except ImportError:  # pragma: no cover
+    _PROM_AVAILABLE = False  # pragma: no cover
 
 
 # ── Module-level resolver registry ───────────────────────────────────────────

@@ -5,8 +5,8 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://python.org)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.7.0-orange.svg)](src/pramanix/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1534%20passed-brightgreen.svg)](#test-results)
-[![Coverage](https://img.shields.io/badge/coverage-95.43%25-brightgreen.svg)](#test-results)
+[![Tests](https://img.shields.io/badge/tests-1592%20passed-brightgreen.svg)](#test-results)
+[![Coverage](https://img.shields.io/badge/coverage-97.76%25-brightgreen.svg)](#test-results)
 [![Z3 Powered](https://img.shields.io/badge/formal%20verification-Z3%20SMT-purple.svg)](https://github.com/Z3Prover/z3)
 
 ---
@@ -22,16 +22,17 @@
 7. [Key Features](#key-features)
 8. [Pramanix vs Other Solutions](#pramanix-vs-other-solutions)
 9. [Quick Start](#quick-start)
-10. [The Policy DSL](#the-policy-dsl)
-11. [Three Workflows](#three-workflows)
-12. [Architecture Deep Dive](#architecture-deep-dive)
-13. [File-by-File Reference](#file-by-file-reference)
-14. [Ecosystem Integrations](#ecosystem-integrations)
-15. [Production Deployment](#production-deployment)
-16. [Test Results & Coverage](#test-results--coverage)
-17. [Project Status](#project-status)
-18. [Roadmap](#roadmap)
-19. [License](#license)
+10. [Known Limitations](#known-limitations)
+11. [The Policy DSL](#the-policy-dsl)
+12. [Three Workflows](#three-workflows)
+13. [Architecture Deep Dive](#architecture-deep-dive)
+14. [File-by-File Reference](#file-by-file-reference)
+15. [Ecosystem Integrations](#ecosystem-integrations)
+16. [Production Deployment](#production-deployment)
+17. [Test Results & Coverage](#test-results--coverage)
+18. [Project Status](#project-status)
+19. [Roadmap](#roadmap)
+20. [License](#license)
 
 ---
 
@@ -39,7 +40,7 @@
 
 Pramanix (from Sanskrit *Pramāṇa* — "proof" or "valid knowledge" + Unix, meaning "composable") is an **execution firewall** that sits between an AI agent's *intent* and the real-world *action* it wants to take.
 
-Before any action executes — a bank transfer, a database write, an API call, a cloud deployment — Pramanix intercepts it and runs **formal mathematical verification** using the Z3 SMT (Satisfiability Modulo Theories) solver. Every ALLOW comes with a mathematical proof. Every BLOCK comes with a counterexample showing exactly which constraint was violated and why.
+Before any action executes — a bank transfer, a database write, an API call, a cloud deployment — Pramanix intercepts it and runs **formal mathematical verification** using the Z3 SMT (Satisfiability Modulo Theories) solver. Every ALLOW comes with a **formal proof that the submitted values satisfy all declared constraints**. Every BLOCK identifies exactly which constraint was violated and why.
 
 **In one sentence:** Pramanix makes it impossible for an AI agent to take an action that violates your safety rules, even if the AI is hallucinating, compromised, or behaving unexpectedly.
 
@@ -73,7 +74,7 @@ Traditional AI Pipeline:
   User Input → LLM → Action  ← No formal safety guarantee
 
 Pramanix Pipeline:
-  User Input → LLM → [PRAMANIX VERIFICATION WALL] → Action  ← Mathematically proven safe
+  User Input → LLM → [PRAMANIX VERIFICATION WALL] → Action  ← Formally verified against declared constraints
 ```
 
 ---
@@ -186,7 +187,7 @@ decision = guard.verify(intent=intent, state=state)
 
 | # | Feature | Description |
 |---|---------|-------------|
-| 1 | **Formal Verification** | Z3 SMT solver proves every ALLOW. Mathematical certainty, not probability. |
+| 1 | **Formal Verification** | Z3 SMT solver proves every ALLOW. Formal constraint verification, not probability. |
 | 2 | **Python Policy DSL** | Express safety rules in readable Python. No formal methods expertise required. |
 | 3 | **Fail-Safe Architecture** | `verify()` never raises. Any error → BLOCK. The firewall cannot be crashed open. |
 | 4 | **Semantic Fast-Path** | Pure Python O(1) pre-screener blocks obvious violations before Z3 runs. |
@@ -198,7 +199,7 @@ decision = guard.verify(intent=intent, state=state)
 | 10 | **Adaptive Load Shedding** | Dual-condition (worker saturation AND high latency) sheds load before cascade failure. |
 | 11 | **Adaptive Circuit Breaker** | 4-state FSM (CLOSED → OPEN → HALF_OPEN → CLOSED). 3 consecutive OPEN → ISOLATED. |
 | 12 | **Cryptographic Audit Trail** | HMAC-SHA256 decision tokens. MerkleAnchor for tamper-evident sequential proof chaining. |
-| 13 | **Zero-Trust Identity** | JWT identity linking with Redis state loader. Every decision tied to a verified identity. |
+| 13 | **Authenticated Decision Context (Zero-Trust Pattern)** | JWT identity linking with Redis state loader. Every decision tied to a verified identity. |
 | 14 | **HMAC IPC Sealing** | Worker results sealed with ephemeral per-Guard keys before crossing IPC boundary. Forgery → error. |
 | 15 | **Structured Logging** | structlog JSON with automatic secret redaction. Secrets never reach disk. |
 | 16 | **OpenTelemetry Tracing** | Optional distributed tracing. Each span carries `decision_id` for correlation. |
@@ -218,9 +219,9 @@ decision = guard.verify(intent=intent, state=state)
 |-----------|:--------:|:-------------------:|:-------------:|:------------:|:----------------:|:-----------:|
 | **Mathematical proof of safety** | ✅ | ❌ | ❌ | ❌ | ✅ (Rego logic) | ❌ |
 | **Counterexample on violation** | ✅ | ❌ | ❌ | ❌ | Partial | ❌ |
-| **Fail-safe: errors = BLOCK** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Fail-safe: errors = BLOCK** | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | **Works with natural language input** | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| **Immune to jailbreaks / prompt injection** | ✅ | ❌ | ❌ | ❌ | ✅ | Partial |
+| **Immune to jailbreaks / prompt injection** | Partial (Z3 only) | ❌ | ❌ | ❌ | ✅ | Partial |
 | **No LLM needed for verification** | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | **Cryptographic audit trail** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Circuit breaker + load shedding** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -230,6 +231,8 @@ decision = guard.verify(intent=intent, state=state)
 | **Per-invariant violation attribution** | ✅ | ❌ | ❌ | ❌ | Partial | ❌ |
 | **Zero eval/exec/ast.parse** | ✅ | N/A | N/A | N/A | N/A | N/A |
 | **Memory stable at 1M decisions** | ✅ | Unknown | Unknown | N/A | ✅ | ✅ |
+
+> **Note on "Immune to jailbreaks / prompt injection" (Partial):** When Phase 1 (LLM translator) is active via `parse_and_verify()`, the translator layer processes untrusted user input and is still vulnerable to adversarial extraction attempts. Only Phase 2 (Z3 verification) is fully immune — it evaluates mathematical structure and cannot be manipulated by natural language. If you use structured mode (`guard.verify()` directly), the full row applies without caveat.
 
 ### Why Pramanix Wins on the Critical Dimension
 
@@ -298,6 +301,11 @@ else:
     # "Insufficient balance: 200.00 < 500.00"
 ```
 
+> **DSL note:** `== False` is intentional — not a style error. `E(field)` returns an
+> `ExpressionNode` whose `__eq__` method returns a `ConstraintExpr`. Python's `is False`
+> checks object identity (always `False` for non-singletons). The `# noqa: E712` suppresses
+> the linter warning for this deliberate DSL pattern.
+
 ### Neuro-Symbolic Mode (Natural Language Input)
 
 ```python
@@ -324,6 +332,33 @@ def execute_transfer(amount: Decimal, balance: Decimal, ...):
 
 # fn.__guard__ exposes the Guard instance for introspection
 ```
+
+---
+
+## Known Limitations
+
+### Time-of-Check / Time-of-Use (TOCTOU)
+
+Pramanix verifies the state at the moment `guard.verify()` is called. It does not guarantee that state remains unchanged between verification and execution. In concurrent systems, two requests could both pass verification and then both execute — consuming a shared resource beyond the allowed limit.
+
+**Mitigation:** Compose Pramanix with optimistic locking, state version pinning, or transactional commit protocols at the execution layer. Pramanix is a pre-execution safety gate, not a distributed transaction coordinator.
+
+### Model Accuracy
+
+Z3 formally verifies that the *submitted values* satisfy your *declared constraints*. It does not verify that:
+- The state values were accurately fetched from the real system
+- The intent dict correctly represents what the executor will actually do
+- Your invariants fully capture your safety requirements
+
+**Mitigation:** Ensure state is fetched atomically and recently. Invariants should be reviewed by domain experts, not just engineers.
+
+### Z3 String Theory Limitations
+
+Z3's `String` sort uses sequence theory, which is decidable but slower and less expressive than arithmetic sorts. Complex string constraints (regex-like patterns, substring searches) may produce timeouts. For string-heavy policies, prefer `is_in()` membership checks over complex string expressions, and tune `solver_timeout_ms` accordingly.
+
+### Phase 1 Translator Security
+
+When `parse_and_verify()` is used (neuro-symbolic mode), the LLM extraction layer processes untrusted user input. The 6-layer injection hardening significantly reduces the attack surface, but a sufficiently sophisticated adversary who understands the extraction prompt design may still manipulate the structured output. Phase 2 (Z3) always runs and provides the binding safety guarantee regardless of what Phase 1 produces.
 
 ---
 
@@ -693,7 +728,7 @@ Guard.__init__()
 | `validator.py` | Pydantic validation | `validate_intent()`, `validate_state()` — strict mode validation against Policy.Meta models | Catches bad input at the boundary, before any Z3 resources are allocated. |
 | `resolvers.py` | Lazy field resolution | `ResolverRegistry` with thread-local cache, `clear_cache()` | Resolves dynamic state fields (e.g., from database) without data bleed between concurrent requests. |
 | `decorator.py` | Function decorator | `@guard(policy, config, on_block)`, `fn.__guard__` introspection | Allows transparent guardrail injection on any callable. |
-| `identity.py` | Zero-trust identity | `JWTIdentityLinker`, `RedisStateLoader` | Ties every decision to a cryptographically verified identity. |
+| `identity.py` | Authenticated Decision Context (Zero-Trust Pattern) | `JWTIdentityLinker`, `RedisStateLoader` | Ties every decision to a cryptographically verified identity. |
 | `audit.py` | Cryptographic audit | `DecisionSigner`, `DecisionVerifier`, `MerkleAnchor` | HMAC-SHA256 JWS tokens + Merkle chaining for tamper-evident audit log. |
 | `circuit_breaker.py` | Resilience FSM | `AdaptiveCircuitBreaker`, `CircuitBreakerConfig`, 4-state FSM | Prevents cascade failure when downstream system is degraded. |
 | `cli.py` | Command-line tool | `pramanix verify-proof` command, JSON output, exit codes | Audit token verification for CI/CD pipelines and operator tooling. |
@@ -934,12 +969,12 @@ Platform:  Windows / Python 3.11
 Test files: 28 files across 4 directories
 
 ===================== test summary ====================
-PASSED  1534
+PASSED  1592
 SKIPPED    2  (testcontainers/Docker: Redis not running in CI)
 FAILED     0
 ERRORS     0
 
-Coverage: 95.43%  (threshold: 95% ✅)
+Coverage: 97.76%  (threshold: 95% ✅)
 ```
 
 ### Performance Benchmarks
@@ -996,7 +1031,7 @@ No memory leak across any code path.
 ### What "Complete" Means
 
 - Every feature has a working implementation (zero mocks, zero stubs)
-- 95.43% test coverage with 1,534 tests passing
+- 97.76% test coverage with 1,592 tests passing
 - Memory stable at 1M decisions
 - All integrations (FastAPI, LangChain, AutoGen, LlamaIndex) tested end-to-end
 - Cryptographic audit trail verified
