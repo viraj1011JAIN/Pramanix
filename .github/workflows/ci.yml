@@ -541,9 +541,22 @@ jobs:
       - name: Run latency benchmark (N=500)
         run: python benchmarks/latency_benchmark.py --n 500
 
+      - name: Enforce P99 < 15ms gate
+        run: |
+          python - <<'PYEOF'
+          import json, sys
+          with open("benchmarks/results/latency_results.json") as f:
+              d = json.load(f)
+          p99 = d["p99_ms"]
+          if p99 >= 15.0:
+              print(f"::error::P99 REGRESSION: {p99:.2f}ms >= 15ms gate")
+              sys.exit(1)
+          print(f"P99 gate passed: {p99:.2f}ms < 15ms")
+          PYEOF
+
       - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: benchmark_results.json
+          path: benchmarks/results/latency_results.json

@@ -1,4 +1,7 @@
-# Security Architecture — Pramanix 5-Layer Prompt-Injection Defence
+# Security Architecture — Pramanix
+
+> Complete threat model, countermeasures, and test references for
+> security-critical deployments.
 
 > **Audience:** CISOs, security engineers, and AI safety reviewers evaluating
 > whether Pramanix is suitable for regulated or high-stakes environments.

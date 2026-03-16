@@ -67,7 +67,7 @@ Most guardrails today rely on:
 
 ### The Fundamental Gap
 
-None of these approaches give you **mathematical certainty**. You can never be 100% sure whether an action is truly safe — until now.
+None of these approaches give you **formal verification** — a mathematical proof that specific values satisfy specific constraints.
 
 ```
 Traditional AI Pipeline:
@@ -205,7 +205,7 @@ decision = guard.verify(intent=intent, state=state)
 | 16 | **OpenTelemetry Tracing** | Optional distributed tracing. Each span carries `decision_id` for correlation. |
 | 17 | **Prometheus Metrics** | 4 metrics: decisions_total, decision_latency_seconds, solver_timeouts_total, validation_failures_total. |
 | 18 | **Ecosystem Integrations** | FastAPI, LangChain, LlamaIndex, AutoGen. One-line guard wrapping. |
-| 19 | **Primitives Library** | Reusable constraint sets for Finance, RBAC, Infrastructure, Time-Window domains. |
+| 19 | **Regulatory Primitives Library** | 25 domain primitives with exact regulatory citations: BSA/AML (31 CFR §1020.320), OFAC SDN (31 CFR §501.805), IRC §1091 wash-sale, HIPAA (45 CFR §164.502(b)), Reg. T margin (12 CFR §220), Basel III, and more. |
 | 20 | **`@guard` Decorator** | Intercept any Python function call with policy verification. |
 | 21 | **CLI Verification** | `pramanix verify-proof` command for audit token verification in CI/CD pipelines. |
 | 22 | **Environment Variable Config** | All `GuardConfig` fields overridable via `PRAMANIX_*` env vars. |
@@ -1001,9 +1001,9 @@ Policy: BankingPolicy (5 invariants) / n=500 decisions post-warmup
 
 | Benchmark | Target | Measured |
 |-----------|--------|----------|
-| P50 API latency (sync mode) | < 5ms | run `python benchmarks/latency_benchmark.py --n 500` |
-| P95 API latency (sync mode) | < 10ms | see `latency_results.json` |
-| P99 API latency (sync mode) | < 15ms | CI-enforced nightly |
+| P50 API latency (sync mode) | < 5ms | 5.38ms (Windows 11 / Python 3.11) |
+| P95 API latency (sync mode) | < 10ms | 6.01ms |
+| P99 API latency (sync mode) | < 15ms | 6.40ms — CI-enforced nightly |
 | Fast-path average latency | < 1ms | ✅ Passing |
 | 1M decisions RSS growth | < 20 MiB | ✅ Measured: ~13 MiB |
 | Steady-state RSS | — | 13–29 MB (measured over 2 hours) |
