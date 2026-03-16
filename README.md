@@ -16,19 +16,19 @@
 
 > *Pramāṇa (Sanskrit: "proof / valid knowledge") + Unix (composable systems philosophy)*
 
-**Pramanix** is a production-grade Python SDK that places a **mathematically verified execution firewall** between AI agent intent and real-world consequences. Every action it approves carries a formal SMT proof. Every action it blocks carries a counterexample with full attribution. No ambiguity. No exceptions.
+**Pramanix** is a production-grade Python SDK that places a **mathematically verified execution firewall** between AI agent intent and real-world consequences. Every action it approves carries a formal Z3 SMT proof. Every action it blocks carries an exact counterexample with attributed invariant violations. No ambiguity. No exceptions.
 
 ```
 AI Agent: "Transfer $5,000 to account X"
-                    |
+                    │
               [ PRAMANIX ]
-                    |
+                    │
         Z3 SMT Solver verifies ALL invariants:
-          ✓  balance - amount >= 0      ... SAT
-          ✓  account_not_frozen         ... SAT
-          ✓  amount <= daily_limit      ... SAT
-          ✓  risk_score <= 0.8          ... SAT
-                    |
+          ✓  balance − amount ≥ 0          … SAT
+          ✓  account_not_frozen            … SAT
+          ✓  amount ≤ daily_limit          … SAT
+          ✓  risk_score ≤ 0.8             … SAT
+                    │
              ALLOW  (with cryptographic proof token)
 ```
 
@@ -55,12 +55,13 @@ AI Agent: "Transfer $5,000 to account X"
 - [Architecture](#architecture)
   - [Module Reference](#module-reference)
 - [Advanced Features](#advanced-features)
+  - [Primitives Library](#primitives-library)
   - [Semantic Fast-Path](#semantic-fast-path)
   - [Adaptive Load Shedding](#adaptive-load-shedding)
   - [Adaptive Circuit Breaker](#adaptive-circuit-breaker)
   - [Cryptographic Audit Trail](#cryptographic-audit-trail)
-  - [Zero-Trust Identity](#zero-trust-identity)
-  - [Primitives Library](#primitives-library)
+  - [Zero-Trust Identity (JWT)](#zero-trust-identity-jwt)
+  - [Intent Cache](#intent-cache)
 - [Ecosystem Integrations](#ecosystem-integrations)
   - [FastAPI](#fastapi)
   - [LangChain](#langchain)
@@ -79,13 +80,13 @@ AI Agent: "Transfer $5,000 to account X"
 
 ## Why Pramanix
 
-LLMs are **probabilistic token samplers**. They do not reason — they pattern-match. In regulated, high-stakes domains, this distinction is the difference between a deployable system and a liability.
+LLMs are **probabilistic token samplers**. They do not reason — they pattern-match. In regulated, high-stakes domains, this is the difference between a deployable system and a liability.
 
 | Domain | Risk Without Formal Verification |
 |---|---|
 | **FinTech** | Unauthorized transfers, balance overdraws, fraud bypass |
 | **Healthcare** | Unauthorized PHI access, consent violations, dosage errors |
-| **Cloud / Infra** | Destructive deletions, scaling beyond limits, IAM escalation |
+| **Cloud / Infra** | Destructive deletions, scaling beyond quotas, IAM escalation |
 | **Legal / Compliance** | Unauthorized attestations, regulatory filing errors |
 
 Current guardrail approaches are fundamentally broken:
@@ -94,9 +95,9 @@ Current guardrail approaches are fundamentally broken:
 |---|---|
 | **Rule-based (regex/if-then)** | Cannot reason about compound constraints. Breaks on edge cases. Unmaintainable at scale. |
 | **LLM-as-Judge** | Uses the same probabilistic tool to judge itself. Adversarial prompts override the judge. |
-| **OPA / Rego alone** | Handles authorization ("who can try") but not mathematical safety ("is this specific transfer safe given current state?"). |
+| **OPA / Rego alone** | Handles authorization ("who can try") but not mathematical safety ("is this specific action safe given current state?"). |
 
-**Pramanix replaces probabilistic judgment with formal satisfiability.** The Z3 SMT solver provides mathematically unambiguous answers — not confidence scores.
+**Pramanix replaces probabilistic judgment with formal satisfiability.** The Z3 SMT solver returns mathematically unambiguous SAT / UNSAT — not confidence scores.
 
 ---
 
@@ -104,22 +105,21 @@ Current guardrail approaches are fundamentally broken:
 
 | Feature | Description |
 |---|---|
-| **Z3 SMT Verification** | Every decision is backed by a formal proof (SAT) or counterexample (UNSAT). Not a confidence score — a mathematical guarantee. |
-| **Python-Native Policy DSL** | Write policies as Python class methods with `E()` expression trees. Full IDE autocomplete, type checking, mypy strict compatible. |
-| **Fail-Safe by Default** | Any error — LLM failure, timeout, type mismatch, config error — produces `BLOCK`, never `ALLOW`. Zero exceptions to this rule. |
-| **Invariant Attribution** | Every blocked action identifies exactly which invariants were violated via Z3 unsat cores. Full counterexample model values attached. |
-| **Dual Execution Modes** | **Structured Mode** for typed inputs. **Neuro-Symbolic Mode** for natural language with hardened dual-model LLM extraction. |
-| **Async-First Architecture** | Three modes: `sync`, `async-thread`, `async-process`. Optimized for FastAPI, Django, Celery, and scripts. |
-| **Worker Lifecycle Management** | Automatic worker recycling to bound Z3 native memory. Warmup solve eliminates cold-start JIT spikes. |
-| **Semantic Fast-Path** | Pure Python O(1) pre-screen blocks obvious violations before Z3 is invoked. Configurable rules (negative amount, frozen account, etc.). |
-| **Adaptive Load Shedding** | Dual-condition limiter (active workers % AND p99 latency) sheds excess load with `RATE_LIMITED` decisions before queue saturation. |
-| **Adaptive Circuit Breaker** | CLOSED → OPEN → HALF_OPEN → CLOSED state machine protects against Z3 pressure cascades. |
-| **Cryptographic Audit Trail** | Every `Decision` can be signed with HMAC-SHA256 JWS tokens. Merkle tree anchors immutable decision sequences. |
-| **Zero-Trust Identity** | Per-agent policy bindings loaded from Redis. Identity-linked constraints applied at verification time. |
-| **Ecosystem Integrations** | First-class FastAPI middleware, LangChain tool, LlamaIndex query engine, AutoGen agent wrappers. |
-| **Composable Primitives** | Pre-built, tested constraint libraries for finance, fintech, RBAC, infrastructure, healthcare, and time-based policies. |
-| **HMAC IPC Integrity** | Worker results are HMAC-sealed before crossing thread/process boundaries. Forgery attempts return `Decision.error()`. |
-| **SLSA Level 3 Supply Chain** | OIDC-authenticated PyPI publishing, Sigstore artifact signing, automated SBOM generation. |
+| **Z3 SMT Verification** | Every decision backed by a formal proof (SAT) or counterexample (UNSAT). Not a heuristic — a mathematical guarantee. |
+| **Python-Native Policy DSL** | Write policies as Python class attributes + `invariants()` classmethod. Full IDE autocomplete, mypy strict compatible, zero YAML/Rego. |
+| **Fail-Safe by Default** | Any error — LLM failure, timeout, type mismatch, IPC tampering — returns `BLOCK`. `ALLOW` requires positive Z3 proof. |
+| **Exact Violation Attribution** | Every blocked decision identifies which invariants failed via Z3 unsat cores. Exact counterexample model values attached. |
+| **Three Execution Modes** | `sync`, `async-thread`, `async-process` — match your server architecture. Worker pool with warmup and auto-recycling. |
+| **Semantic Fast-Path** | Pure Python O(1) pre-screen blocks obvious violations before Z3 is invoked (`fast_path.py`). Never false-positive. |
+| **Adaptive Load Shedding** | Dual-condition limiter: shed when `active_workers ≥ shed_worker_pct` AND `p99 > shed_latency_threshold_ms`. |
+| **Adaptive Circuit Breaker** | CLOSED → OPEN → HALF_OPEN → CLOSED state machine protects against Z3 solver pressure cascades. |
+| **Cryptographic Audit Trail** | HMAC-SHA256 JWS tokens per Decision. Merkle tree for tamper-evident immutable decision sequences. |
+| **Zero-Trust Identity (JWT)** | Per-agent JWT-based policy binding. Redis-backed state loader with signed claims verification. |
+| **HMAC IPC Integrity** | Worker results are sealed with an ephemeral HMAC key before crossing the thread/process boundary. Forgery → `Decision.error()`. |
+| **Dual-Model LLM Consensus** | `strict_keys`, `lenient`, `unanimous` agreement modes. Both models must agree before Z3 is consulted. |
+| **Composable Primitives** | Pre-built constraint factories for finance, fintech, RBAC, infra, healthcare, and time-based policies. |
+| **Observability Built-In** | Prometheus counters/histograms, OpenTelemetry span hooks, structured JSON logs with secret redaction. |
+| **SLSA Level 3 Supply Chain** | OIDC-authenticated PyPI publishing, Sigstore signing, automated SBOM. |
 
 ---
 
@@ -130,25 +130,23 @@ Pramanix operates on a **Two-Phase Execution Model**:
 ```
 Phase 1: INTENT EXTRACTION                    Phase 2: FORMAL VERIFICATION
 +---------------------------------+            +----------------------------------+
-|                                 |            |                                  |
-|  Structured     Neuro-Symbolic  |            |  Z3 SMT Solver                   |
-|  (typed dict)   (NLP → struct)  |            |                                  |
-|       |              |          |            |  For each invariant:             |
-|       |         [Translator]    |   ------>  |    assert_and_track(formula)     |
-|       |         [dual-model]    |            |    solver.check()                |
-|       |              |          |            |                                  |
-|       +------+-------+         |            |  SAT  → ALLOW (with proof)       |
-|              |                  |            |  UNSAT → BLOCK (counterexample   |
-|        [Pydantic v2]            |            |           + attributed labels)   |
-|        strict validation        |            |                                  |
-|              |                  |            |  LLM involvement: ZERO           |
-|        [Fast-Path Screen]       |            +----------------------------------+
-+---------------------------------+
+│                                 │            │                                  │
+│  Structured     Neuro-Symbolic  │            │  Z3 SMT Solver (solver.py)       │
+│  (typed dict)   (NLP → struct)  │            │                                  │
+│       │              │          │            │  For each invariant:             │
+│       │         [Translator]    │  ────────► │    assert_and_track(formula)     │
+│       │         [dual-model]    │            │    solver.check()                │
+│       │         [_sanitise.py]  │            │                                  │
+│       └──────┬───────┘          │            │  SAT  → Decision.safe()          │
+│              │                  │            │  UNSAT → Decision.unsafe()       │
+│       [Pydantic v2 strict]      │            │           + unsat_core()         │
+│       [Fast-Path Screen]        │            │           + counterexample       │
+│       [Load Shedder]            │            │                                  │
+│                                 │            │  LLM involvement: ZERO           │
++---------------------------------+            +----------------------------------+
 ```
 
-**The critical architectural invariant:** the LLM *never* decides safety policy. It only translates natural language to structured fields. All safety verification is performed by Z3 — deterministically, with mathematical guarantees.
-
-The fast-path screen (`fast_path.py`) runs pure Python checks before Z3 for common failure modes (negative amounts, frozen accounts). It can only BLOCK — never ALLOW.
+**Critical invariant:** The LLM *never* decides safety policy. It only extracts structured fields from natural language. All verification is Z3 — deterministic, with mathematical guarantees.
 
 ---
 
@@ -158,30 +156,30 @@ The fast-path screen (`fast_path.py`) runs pure Python checks before Z3 for comm
 pip install pramanix
 ```
 
-**Requirements:** Python 3.11+, z3-solver (installed automatically).
+**Requirements:** Python 3.11+, z3-solver (auto-installed), pydantic v2, structlog, prometheus-client.
 
 **Optional extras:**
 
 ```bash
 # LLM translation (Neuro-Symbolic mode)
-pip install 'pramanix[translator]'
+pip install 'pramanix[translator]'       # httpx + openai + anthropic + tenacity
 
 # FastAPI/Starlette middleware + route decorator
 pip install 'pramanix[fastapi]'
 
-# LangChain tool integration
+# LangChain tool integration (langchain-core >= 0.1)
 pip install 'pramanix[langchain]'
 
-# LlamaIndex query engine integration
+# LlamaIndex function/query-engine tools (llama-index-core >= 0.10)
 pip install 'pramanix[llamaindex]'
 
-# AutoGen agent integration
+# AutoGen agent integration (pyautogen >= 0.2)
 pip install 'pramanix[autogen]'
 
-# All ecosystem integrations
+# All ecosystem integrations at once
 pip install 'pramanix[integrations]'
 
-# Zero-trust identity (Redis-backed policy bindings)
+# Zero-trust identity (Redis-backed JWT policy bindings)
 pip install 'pramanix[identity]'
 
 # OpenTelemetry tracing
@@ -191,7 +189,7 @@ pip install 'pramanix[otel]'
 pip install 'pramanix[all]'
 ```
 
-> **Alpine Linux is NOT supported.** Z3's C++ runtime requires glibc. Use `python:3.11-slim` (Debian-based).
+> **Alpine Linux is NOT supported.** Z3's C++ runtime requires glibc. Use `python:3.11-slim` (Debian-based). Alpine musl causes segfaults and build failures with z3-solver.
 
 ---
 
@@ -199,7 +197,7 @@ pip install 'pramanix[all]'
 
 ### Structured Mode
 
-The most common pattern — your application provides typed intent and state directly.
+The primary integration pattern — your application provides typed intent and state directly.
 
 ```python
 from decimal import Decimal
@@ -209,149 +207,148 @@ from pydantic import BaseModel, Field as PydanticField
 from pramanix import Guard, GuardConfig, Policy, Field, E, Decision
 
 
-# 1. Define your intent and state models
+# 1. Pydantic models for Pramanix strict validation
 class TransferIntent(BaseModel):
     action: Literal["transfer"]
     amount: Decimal = PydanticField(gt=0, le=1_000_000)
     currency: str = PydanticField(pattern=r"^[A-Z]{3}$")
-    target_account_id: str
 
 class AccountState(BaseModel):
     balance: Decimal
     is_frozen: bool
-    daily_limit_remaining: Decimal
+    daily_limit: Decimal
     risk_score: float = PydanticField(ge=0.0, le=1.0)
-    state_version: str
+    state_version: str  # required — triggers STALE_STATE if mismatched
 
 
-# 2. Define your policy using the DSL
-_balance    = Field("balance", Decimal, "Real")
-_amount     = Field("amount", Decimal, "Real")
-_frozen     = Field("is_frozen", bool, "Bool")
-_daily_lim  = Field("daily_limit_remaining", Decimal, "Real")
-_risk       = Field("risk_score", float, "Real")
-
+# 2. Define the policy using the Python DSL
 class BankingPolicy(Policy):
     class Meta:
-        name = "BankingPolicy"
-        version = "1.0.0"
+        version = "1.0"
+        intent_model = TransferIntent
+        state_model  = AccountState
 
-    @classmethod
-    def fields(cls):
-        return {
-            "balance": _balance,
-            "amount": _amount,
-            "is_frozen": _frozen,
-            "daily_limit_remaining": _daily_lim,
-            "risk_score": _risk,
-        }
+    # Fields declared as class attributes — auto-discovered by fields()
+    amount      = Field("amount",      Decimal, "Real")
+    balance     = Field("balance",     Decimal, "Real")
+    daily_limit = Field("daily_limit", Decimal, "Real")
+    is_frozen   = Field("is_frozen",   bool,    "Bool")
+    risk_score  = Field("risk_score",  float,   "Real")
 
     @classmethod
     def invariants(cls):
         return [
-            (E(_balance) - E(_amount) >= 0)
+            # Access fields via cls.field_name inside invariants()
+            (E(cls.balance) - E(cls.amount) >= 0)
                 .named("non_negative_balance")
                 .explain("Transfer blocked: amount {amount} exceeds balance {balance}."),
 
-            (E(_frozen) == False)
+            (E(cls.is_frozen) == False)  # noqa: E712
                 .named("account_not_frozen")
                 .explain("Transfer blocked: account is currently frozen."),
 
-            (E(_amount) <= E(_daily_lim))
+            (E(cls.amount) <= E(cls.daily_limit))
                 .named("within_daily_limit")
-                .explain("Transfer blocked: {amount} exceeds daily limit {daily_limit_remaining}."),
+                .explain("Transfer blocked: {amount} exceeds daily limit {daily_limit}."),
 
-            (E(_risk) <= 0.8)
+            (E(cls.risk_score) <= 0.8)
                 .named("acceptable_risk_score")
                 .explain("Transfer blocked: risk score {risk_score} exceeds threshold 0.8."),
         ]
 
 
-# 3. Create a Guard and verify
-guard = Guard(policy=BankingPolicy, config=GuardConfig(
-    execution_mode="async-thread",
-    solver_timeout_ms=50,
-))
+# 3. Create a Guard (validates policy at construction time)
+guard = Guard(
+    policy=BankingPolicy,
+    config=GuardConfig(
+        execution_mode="async-thread",
+        solver_timeout_ms=100,
+    ),
+)
 
-async def handle_transfer():
-    intent = TransferIntent(
-        action="transfer",
-        amount=Decimal("5000"),
-        currency="USD",
-        target_account_id="acc_abc123",
-    )
-    state = AccountState(
-        balance=Decimal("10000"),
-        is_frozen=False,
-        daily_limit_remaining=Decimal("15000"),
-        risk_score=0.3,
-        state_version="2026-03-07T12:00:00Z",
-    )
 
-    decision: Decision = await guard.verify(intent=intent, state=state)
+# 4. Verify — always returns a Decision, never raises
+async def handle_transfer(amount: Decimal, balance: Decimal) -> None:
+    decision: Decision = await guard.verify_async(
+        intent={"action": "transfer", "amount": amount, "currency": "USD"},
+        state={"balance": balance, "is_frozen": False, "daily_limit": Decimal("10000"),
+               "risk_score": 0.3, "state_version": "1.0"},
+    )
 
     if decision.allowed:
-        # decision.status == SolverStatus.SAFE
-        print("Transfer approved", decision.decision_id)
+        # decision.status == SolverStatus.SAFE — Z3 proved all invariants hold
+        print(f"Approved [{decision.decision_id}] in {decision.solver_time_ms:.1f}ms")
     else:
-        print("Blocked:", decision.explanation)
-        print("Violated:", decision.violated_invariants)
-        print("Solver time:", decision.solver_time_ms, "ms")
+        # UNSAFE, TIMEOUT, ERROR, STALE_STATE, etc. — all blocked
+        print(f"Blocked: {decision.explanation}")
+        print(f"Violated: {decision.violated_invariants}")
 ```
 
 ### Neuro-Symbolic Mode
 
-When your input is natural language, Pramanix uses a hardened dual-model LLM translator to extract structured intent before Z3 verification.
+For natural language inputs, Pramanix uses a hardened dual-model translator pipeline before Z3 verification.
 
 ```python
-from pramanix import Guard, GuardConfig
-from pramanix.translator.redundant import RedundantTranslator
+from pramanix.translator.redundant import RedundantTranslator, create_translator
 from pramanix.translator.anthropic import AnthropicTranslator
 from pramanix.translator.ollama import OllamaTranslator
 
-# Dual-model consensus: both models must agree on critical fields
+# Dual-model consensus — both must agree on critical fields
 translator = RedundantTranslator(
     model_a=AnthropicTranslator(model="claude-haiku-4-5-20251001"),
     model_b=OllamaTranslator(model="llama3"),
-    agreement_mode="lenient",      # critical fields must agree
-    critical_fields=["amount", "target_account_id"],
+    agreement_mode="lenient",           # only critical_fields must agree
+    critical_fields=frozenset(["amount", "currency"]),
 )
 
-guard = Guard(
-    policy=BankingPolicy,
-    config=GuardConfig(translator_enabled=True),
-    translator=translator,
+# OR use the factory shorthand
+translator = create_translator(
+    model_a_type="anthropic",
+    model_b_type="ollama",
+    agreement_mode="strict_keys",
 )
 
 decision = await guard.parse_and_verify(
-    text="Transfer five thousand dollars to Alice's savings account",
+    text="Send five thousand US dollars",
     state=account_state,
+    translator=translator,
 )
-
-# The LLM extracts structured fields → Pydantic validates → Z3 verifies
-# LLM NEVER decides policy. LLM output is injection-screened before use.
+# Pipeline: sanitise → extract (parallel) → validate → consensus → Z3
 ```
 
-**Translator hardening** (`translator/_sanitise.py`):
-- Unicode NFKC normalization (collapses homoglyphs/full-width digits)
-- Input truncation (512 chars max by default)
-- Control character stripping
-- Injection pattern detection (GPT/Claude/Llama jailbreak patterns)
-- Confidence scoring with sub-penny amount anomaly detection
+**6-layer translator security pipeline** (`translator/redundant.py`, `translator/_sanitise.py`):
+
+1. **Unicode NFKC normalisation** — collapses homoglyphs and full-width digits
+2. **Parallel LLM extraction** — both models run concurrently via `asyncio.gather`
+3. **Partial-failure gate** — if either model fails, the request is immediately blocked
+4. **Pydantic schema validation** — both outputs must parse against `intent_schema`
+5. **Consensus check** — agreement mode determines which fields must match
+6. **Injection confidence gate** — heuristic score ≥ 0.5 raises `InjectionBlockedError`
 
 ### Decorator API
 
-Gate function execution directly — the function body only runs if Z3 approves.
+The `@guard` decorator gates an `async def` function — the body only runs if Z3 approves.
 
 ```python
-from pramanix.decorator import guarded
+from pramanix import guard, GuardConfig
 
-@guarded(policy=BankingPolicy, state_from="state")
-async def execute_transfer(intent: TransferIntent, state: AccountState):
-    # This body ONLY runs if all invariants pass.
-    # Otherwise, GuardViolationError is raised with the full Decision attached.
-    await actually_execute_transfer(intent)
+@guard(policy=BankingPolicy, config=GuardConfig(execution_mode="async-thread"))
+async def execute_transfer(intent: dict, state: dict) -> dict:
+    # Only reached when Decision.allowed is True
+    # On block: raises GuardViolationError with the full Decision attached
+    return {"status": "transferred"}
+
+
+# Soft mode — return the Decision instead of raising on block
+@guard(policy=BankingPolicy, on_block="return")
+async def execute_transfer_soft(intent: dict, state: dict) -> dict | Decision:
+    return {"status": "transferred"}
+
+# The Guard instance is accessible for introspection
+execute_transfer.__guard__   # → Guard instance
 ```
+
+> The `@guard` decorator validates the policy and creates the `Guard` instance **once at decoration time**, not per-call.
 
 ---
 
@@ -359,73 +356,72 @@ async def execute_transfer(intent: TransferIntent, state: AccountState):
 
 ### Policy DSL
 
-Policies are **pure Python classmethods** — no YAML, no Rego, no string-based DSL. Full IDE autocomplete and mypy strict compatible.
+Policies are **Python classes** — no YAML, no Rego. Full IDE autocomplete, mypy strict compatible.
 
 ```python
-from pramanix import Policy, Field, E
 from decimal import Decimal
-
-# Declare fields as module-level constants
-balance = Field("balance", Decimal, "Real")
-amount  = Field("amount",  Decimal, "Real")
-frozen  = Field("is_frozen", bool, "Bool")
-role    = Field("role", str, "Int")   # String enums projected to Int via is_in()
+from pramanix import Policy, Field, E
 
 class MyPolicy(Policy):
     class Meta:
-        name = "MyPolicy"
-        version = "1.0.0"
+        version = "2.0"                    # optional: enables state_version check
+        intent_model = MyIntentModel       # optional: Pydantic strict validation
+        state_model  = MyStateModel        # optional: must have state_version field
 
-    @classmethod
-    def fields(cls):
-        return {"balance": balance, "amount": amount, "is_frozen": frozen, "role": role}
+    # Declare fields directly as class attributes
+    balance = Field("balance", Decimal, "Real")   # (field_name, python_type, z3_sort)
+    amount  = Field("amount",  Decimal, "Real")
+    frozen  = Field("is_frozen", bool,  "Bool")
+    role    = Field("role", str, "Int")            # strings projected to Int via is_in()
 
     @classmethod
     def invariants(cls):
         return [
-            (E(balance) - E(amount) >= 0)
-                .named("non_negative_balance")
-                .explain("Insufficient balance: {amount} > {balance}"),
+            (E(cls.balance) - E(cls.amount) >= 0)
+                .named("non_negative_balance")        # required — used in violation attribution
+                .explain("Balance {balance} < amount {amount}."),
 
-            (E(frozen) == False)
-                .named("not_frozen")
+            (E(cls.frozen) == False)                  # noqa: E712
+                .named("account_not_frozen")
                 .explain("Account is frozen."),
 
-            E(role).is_in(["admin", "manager"])
+            E(cls.role).is_in(["admin", "manager"])
                 .named("authorized_role")
-                .explain("Role {role} is not authorized."),
+                .explain("Role '{role}' not permitted."),
         ]
 ```
 
-**Expression operators** (all compile to Z3 AST — zero `eval()`/`exec()`):
+**Field constructor:** `Field(name: str, python_type: type, z3_sort: Literal["Real", "Int", "Bool"])`
 
-| Operation | Syntax | Compiles To |
+**Expression operators** (all compile to Z3 AST — zero `eval()`/`exec()`/`ast.parse()`):
+
+| Operator | Syntax | Z3 output |
 |---|---|---|
-| Arithmetic | `E(a) + E(b)`, `- E(b)`, `* E(b)`, `/ E(b)` | Z3 `ArithRef` ops |
-| Comparison | `>=`, `<=`, `>`, `<`, `==`, `!=` | Z3 `BoolRef` constraints |
+| Arithmetic | `E(a) + E(b)`, `- E(b)`, `* E(b)`, `/ E(b)` | `ArithRef` |
+| Comparison | `>= <= > < == !=` | `BoolRef` |
 | Boolean AND | `expr_a & expr_b` | `z3.And(a, b)` |
 | Boolean OR | `expr_a \| expr_b` | `z3.Or(a, b)` |
-| Boolean NOT | `~expr` (on `ConstraintExpr`) | `z3.Not(a)` |
-| Membership | `E(role).is_in(["admin", "doctor"])` | `z3.Or(x == v1, x == v2, ...)` |
-| Naming | `.named("invariant_name")` | Z3 `assert_and_track` label |
-| Explanation | `.explain("template {field}")` | Human-readable violation message |
+| Boolean NOT | `~constraint_expr` | `z3.Not(a)` |
+| Membership | `E(role).is_in(["admin", "dr"])` | `z3.Or(x==v1, x==v2, …)` |
+| Label | `.named("label")` | `assert_and_track` label |
+| Explanation | `.explain("template {field}")` | human-readable violation message |
 
-> **Important:** Use `&` / `|` operators, NOT Python `and` / `or`. Python keywords evaluate immediately and bypass the expression tree.
+> Use `&` / `|` operators, **not** Python `and` / `or` — those evaluate immediately and bypass the expression tree. Use `==` not `is` for boolean field comparisons.
 
 ### The Decision Object
 
-Every `verify()` call returns an immutable `Decision` frozen dataclass (`decision.py`):
+Every `verify()` / `verify_async()` call returns an immutable frozen dataclass (`decision.py`).
 
 ```python
 @dataclass(frozen=True)
 class Decision:
-    allowed: bool              # True IFF status == SAFE
-    status: SolverStatus       # SAFE | UNSAFE | TIMEOUT | ERROR | STALE_STATE | ...
-    violated_invariants: tuple[str, ...]
-    explanation: str
-    metadata: dict[str, Any]
-    solver_time_ms: float
-    decision_id: str           # UUID4 — unique per verification call
+    allowed: bool               # True IFF status == SolverStatus.SAFE
+    status: SolverStatus        # SAFE | UNSAFE | TIMEOUT | ERROR | STALE_STATE | …
+    violated_invariants: tuple[str, ...]    # labels of failed invariants
+    explanation: str            # human-readable (filled by .explain() template)
+    metadata: dict[str, Any]    # caller-supplied tracing data
+    solver_time_ms: float       # wall-clock Z3 time in ms
+    decision_id: str            # UUID4 — unique per verify() call
 ```
 
 **Status codes:**
@@ -433,43 +429,39 @@ class Decision:
 | Status | Meaning | `allowed` |
 |---|---|---|
 | `SAFE` | All invariants satisfied — Z3 returned SAT | `true` |
-| `UNSAFE` | One or more invariants violated — Z3 returned UNSAT | `false` |
+| `UNSAFE` | One or more invariants violated — Z3 UNSAT | `false` |
 | `TIMEOUT` | Z3 exceeded `solver_timeout_ms` | `false` |
-| `ERROR` | Unexpected internal error (fail-safe always blocks) | `false` |
-| `STALE_STATE` | `state_version` mismatch | `false` |
-| `VALIDATION_FAILURE` | Pydantic validation of intent or state failed | `false` |
-| `RATE_LIMITED` | Request shed by adaptive load limiter | `false` |
+| `ERROR` | Internal error (fail-safe — never propagates) | `false` |
+| `STALE_STATE` | `state_version` ≠ `Meta.version` | `false` |
+| `VALIDATION_FAILURE` | Pydantic strict validation failed | `false` |
+| `RATE_LIMITED` | Shed by adaptive load limiter | `false` |
 
-Decisions serialize cleanly:
+**Factory methods:** `Decision.safe()`, `.unsafe()`, `.timeout()`, `.error()`, `.stale_state()`, `.validation_failure()`, `.rate_limited()`
 
+**Serialisation:**
 ```python
 d = decision.to_dict()
-# {
-#   "decision_id": "550e8400-...",
-#   "allowed": false,
-#   "status": "unsafe",
-#   "violated_invariants": ["non_negative_balance"],
-#   "explanation": "Transfer blocked: amount 5000 exceeds balance 100.",
-#   "solver_time_ms": 7.3,
-#   "metadata": {}
-# }
+# {"decision_id": "…", "allowed": false, "status": "unsafe",
+#  "violated_invariants": ["non_negative_balance"],
+#  "explanation": "Transfer blocked: amount 5000 exceeds balance 100.",
+#  "solver_time_ms": 7.3, "metadata": {}}
 ```
 
 ### Execution Modes
 
-Choose based on your server architecture:
-
 ```
-Is your server async (FastAPI, Starlette)?
-|
-+-- YES --> Heavy policies (>50 constraints)?
-|           +-- YES --> execution_mode = "async-process"   (GIL-free, separate Z3 context)
-|           +-- NO  --> execution_mode = "async-thread"    (DEFAULT, shared memory)
-|
-+-- NO  --> execution_mode = "sync"   (Django, Flask, Celery, scripts)
+Is your server async (FastAPI, Starlette, AIOHTTP)?
+│
+├── YES → Heavy policies (15+ invariants / BitVec)?
+│         ├── YES → execution_mode = "async-process"   (GIL-free, isolated Z3 context)
+│         └── NO  → execution_mode = "async-thread"    (DEFAULT)
+│
+└── NO  → execution_mode = "sync"   (Django, Flask, Celery, scripts)
 ```
 
-**Worker lifecycle:** Workers auto-recycle after `max_decisions_per_worker` (default 10,000) to prevent Z3 native memory accumulation. `worker_warmup=True` (default) runs a dummy Z3 solve on spawn to eliminate the JIT cold-start latency spike.
+**Worker lifecycle:** Workers auto-recycle after `max_decisions_per_worker` verifications (default 10,000) to prevent Z3 C++ native memory accumulation. `worker_warmup=True` (default) runs a dummy Z3 solve on spawn to eliminate the JIT cold-start latency spike.
+
+**HMAC IPC sealing:** In `async-process` mode, an ephemeral `_EphemeralKey` is generated per-Guard. Worker results are HMAC-SHA256 sealed before crossing the process boundary. The host verifies the seal before trusting the result — a compromised worker process cannot forge `Decision(allowed=True)`.
 
 ---
 
@@ -478,352 +470,411 @@ Is your server async (FastAPI, Starlette)?
 ### Banking — Transfer Verification
 
 ```python
-decision = await guard.verify(
-    intent=TransferIntent(action="transfer", amount=Decimal("5000"), currency="USD", target_account_id="acc_x"),
-    state=AccountState(balance=Decimal("100"), is_frozen=False, daily_limit_remaining=Decimal("10000"), risk_score=0.3, state_version="v1"),
-)
+from pramanix.primitives.finance import NonNegativeBalance, UnderDailyLimit, SecureBalance
 
+class BankingPolicy(Policy):
+    balance         = Field("balance",         Decimal, "Real")
+    amount          = Field("amount",          Decimal, "Real")
+    daily_limit     = Field("daily_limit",     Decimal, "Real")
+    minimum_reserve = Field("minimum_reserve", Decimal, "Real")
+    is_frozen       = Field("is_frozen",       bool,    "Bool")
+
+    @classmethod
+    def invariants(cls):
+        return [
+            SecureBalance(cls.balance, cls.amount, cls.minimum_reserve),  # primitives
+            UnderDailyLimit(cls.amount, cls.daily_limit),
+            (E(cls.is_frozen) == False).named("not_frozen").explain("Account frozen."),  # noqa: E712
+        ]
+
+# Overdraft attempt → UNSAFE
+decision = await guard.verify_async(
+    intent={"amount": Decimal("5000"), "currency": "USD"},
+    state={"balance": Decimal("100"), "daily_limit": Decimal("10000"),
+           "minimum_reserve": Decimal("0.01"), "is_frozen": False, "state_version": "1.0"},
+)
 assert decision.allowed is False
-assert decision.status.value == "unsafe"
-assert "non_negative_balance" in decision.violated_invariants
-# decision.explanation: "Transfer blocked: amount 5000 exceeds balance 100."
+assert "minimum_reserve_maintained" in decision.violated_invariants
 ```
 
 ### Healthcare — PHI Access Control
 
 ```python
-_role    = Field("user_role", str, "Int")
-_consent = Field("patient_consent", bool, "Bool")
-_dept    = Field("department_match", bool, "Bool")
+from pramanix.primitives.rbac import RoleMustBeIn, ConsentRequired, DepartmentMustBeIn
 
 class PHIAccessPolicy(Policy):
-    class Meta:
-        name = "PHIAccessPolicy"
-        version = "1.0.0"
-
-    @classmethod
-    def fields(cls):
-        return {"user_role": _role, "patient_consent": _consent, "department_match": _dept}
+    role    = Field("user_role",         str,  "Int")
+    consent = Field("patient_consent",   bool, "Bool")
+    dept    = Field("department_match",  bool, "Bool")
 
     @classmethod
     def invariants(cls):
         return [
-            E(_role).is_in(["doctor", "nurse", "admin"])
-                .named("authorized_role")
-                .explain("PHI access blocked: role {user_role} is not authorized."),
-
-            (E(_consent) == True)
-                .named("patient_consent_required")
-                .explain("PHI access blocked: patient has not provided consent."),
-
-            (E(_dept) == True)
-                .named("department_match_required")
-                .explain("PHI access blocked: requester is not in patient department."),
+            RoleMustBeIn(cls.role, ["doctor", "nurse", "admin"]),
+            ConsentRequired(cls.consent),
+            DepartmentMustBeIn(cls.dept),
         ]
 ```
 
-See `src/pramanix/primitives/healthcare.py` for pre-built PHI, HIPAA, and clinical primitives.
+See `src/pramanix/primitives/healthcare.py` for PHI least-privilege, HIPAA consent, dosage gradient, break-glass auth, and pediatric dose bounds.
 
 ### Cloud Infrastructure — Replica Scaling
 
 ```python
-_target  = Field("target_replicas", int, "Int")
-_min     = Field("minimum_replicas", int, "Int")
-_max     = Field("maximum_replicas", int, "Int")
-_is_prod = Field("is_production", bool, "Bool")
+from pramanix.primitives.infra import MinReplicas, MaxReplicas, ReplicaBudget
 
 class ScalingPolicy(Policy):
-    class Meta:
-        name = "ScalingPolicy"
-        version = "1.0.0"
-
-    @classmethod
-    def fields(cls):
-        return {"target_replicas": _target, "minimum_replicas": _min, "maximum_replicas": _max, "is_production": _is_prod}
+    target  = Field("target_replicas",  int,  "Int")
+    minimum = Field("minimum_replicas", int,  "Int")
+    maximum = Field("maximum_replicas", int,  "Int")
+    is_prod = Field("is_production",    bool, "Bool")
 
     @classmethod
     def invariants(cls):
         return [
-            (E(_target) >= E(_min))
-                .named("above_minimum")
-                .explain("Scale blocked: {target_replicas} < minimum {minimum_replicas}."),
-
-            (E(_target) <= E(_max))
-                .named("below_maximum")
-                .explain("Scale blocked: {target_replicas} > maximum {maximum_replicas}."),
-
-            (~E(_is_prod) | (E(_target) >= 2))
+            MinReplicas(cls.target, cls.minimum),
+            MaxReplicas(cls.target, cls.maximum),
+            # Production HA: prod deployments require ≥ 2 replicas
+            (~E(cls.is_prod) | (E(cls.target) >= 2))
                 .named("production_ha_minimum")
-                .explain("Scale blocked: production requires >= 2 replicas."),
+                .explain("Production requires ≥ 2 replicas."),
         ]
 ```
 
-See `src/pramanix/primitives/infra.py` for pre-built Kubernetes, Docker, IAM, and cloud scaling primitives.
+See `src/pramanix/primitives/infra.py` for CPU budget, memory budget, blast-radius, prod approval, and combined guards.
 
 ---
 
 ## Architecture
 
 ```
-                              +==============+
-                              ||   CALLER   ||
-                              || (FastAPI / ||
-                              ||  LangChain ||
-                              ||  AutoGen)  ||
-                              +======+======+
-                                     |  guard.verify(intent, state)
-                                     v
-                   +--------------------------------------------+
-                   |                GUARD  (guard.py)           |
-                   |  +-----------+   +-----------+             |
-                   |  | Translator|   | Validator |             |
-                   |  | (optional)|   | Pydantic  |             |
-                   |  +-----+-----+   +-----+-----+             |
-                   |        |               |                   |
-                   |        +-------+-------+                   |
-                   |                |                           |
-                   |  +-------------v-----------+               |
-                   |  |   Semantic Fast-Path     |               |
-                   |  |   (fast_path.py)         |               |
-                   |  |   O(1) pre-screen        |               |
-                   |  +-------------+-----------+               |
-                   |                |                           |
-                   |  +-------------v-----------+               |
-                   |  |  Adaptive Load Shedder   |               |
-                   |  |  (worker.py)             |               |
-                   |  +-------------+-----------+               |
-                   |                |                           |
-                   |  +-------------v-----------+               |
-                   |  |  Resolver Registry       |               |
-                   |  |  (resolvers.py)          |               |
-                   |  |  runs on asyncio loop    |               |
-                   |  +-------------+-----------+               |
-                   |                |                           |
-                   |  [Thread/Process Boundary — HMAC-sealed]   |
-                   |                |                           |
-                   |  +-------------v-----------+               |
-                   |  |     Worker              |               |
-                   |  |  +-----------------+   |               |
-                   |  |  |   TRANSPILER    |   |               |
-                   |  |  |   (transpiler.py)|  |               |
-                   |  |  |   DSL → Z3 AST  |   |               |
-                   |  |  +--------+--------+   |               |
-                   |  |           |             |               |
-                   |  |  +--------v--------+   |               |
-                   |  |  |   Z3 SOLVER     |   |               |
-                   |  |  |   (solver.py)   |   |               |
-                   |  |  |  assert_and_    |   |               |
-                   |  |  |  track / unsat  |   |               |
-                   |  |  |  core / timeout |   |               |
-                   |  |  +--------+--------+   |               |
-                   |  +----------+-----------+  |               |
-                   |             |               |               |
-                   |  [HMAC verify on return]   |               |
-                   |             |               |               |
-                   |  +----------v-----------+   |               |
-                   |  |   Decision Builder    |   |               |
-                   |  |   (decision.py)       |   |               |
-                   |  |   immutable frozenDC  |   |               |
-                   |  +----------+-----------+   |               |
-                   |             |               |               |
-                   |  +----------v-----------+   |               |
-                   |  |    Telemetry          |   |               |
-                   |  |    (telemetry.py)     |   |               |
-                   |  |    Prometheus + OTel  |   |               |
-                   |  +----------+-----------+   |               |
-                   +--------------------------------------------+
-                                 |
-                          Decision (returned)
-                                 |
-                   +-------------v-----------+
-                   |  Audit Signer           |
-                   |  (audit/signer.py)      |
-                   |  HMAC-SHA256 JWS token  |
-                   +-------------------------+
+                              ┌══════════════┐
+                              ║    CALLER    ║
+                              ║ FastAPI /    ║
+                              ║ LangChain /  ║
+                              ║ AutoGen      ║
+                              └──────┬───────┘
+                                     │  guard.verify_async(intent, state)
+                                     ▼
+                   ┌────────────────────────────────────┐
+                   │              GUARD  (guard.py)      │
+                   │                                     │
+                   │  ┌──────────────────────────────┐  │
+                   │  │  Translator (optional)        │  │
+                   │  │  • AnthropicTranslator        │  │
+                   │  │  • OllamaTranslator           │  │
+                   │  │  • OpenAICompatTranslator     │  │
+                   │  │  • RedundantTranslator        │  │
+                   │  │    (dual-model consensus)     │  │
+                   │  └──────────────┬───────────────┘  │
+                   │                 │                   │
+                   │  ┌──────────────▼───────────────┐  │
+                   │  │  Validator (validator.py)     │  │
+                   │  │  Pydantic v2 strict mode      │  │
+                   │  └──────────────┬───────────────┘  │
+                   │                 │                   │
+                   │  ┌──────────────▼───────────────┐  │
+                   │  │  Semantic Fast-Path            │  │
+                   │  │  (fast_path.py)               │  │
+                   │  │  Pure Python O(1) pre-screen  │  │
+                   │  │  Can only BLOCK, never ALLOW  │  │
+                   │  └──────────────┬───────────────┘  │
+                   │                 │                   │
+                   │  ┌──────────────▼───────────────┐  │
+                   │  │  Adaptive Load Shedder        │  │
+                   │  │  (worker.py AdaptiveLimiter)  │  │
+                   │  │  shed when ≥90% workers busy  │  │
+                   │  │  AND p99 > 200ms              │  │
+                   │  └──────────────┬───────────────┘  │
+                   │                 │                   │
+                   │  ┌──────────────▼───────────────┐  │
+                   │  │  Resolver Registry            │  │
+                   │  │  (resolvers.py)               │  │
+                   │  │  ContextVar cache isolation   │  │
+                   │  └──────────────┬───────────────┘  │
+                   │                 │                   │
+                   │    ┌────────────┴─────────────┐    │
+                   │    │  Thread/Process Boundary  │    │
+                   │    │  HMAC-SHA256 sealed IPC   │    │
+                   │    └────────────┬─────────────┘    │
+                   │                 │                   │
+                   │  ┌──────────────▼───────────────┐  │
+                   │  │  Worker (worker.py)           │  │
+                   │  │  ┌──────────────────────┐    │  │
+                   │  │  │  TRANSPILER          │    │  │
+                   │  │  │  (transpiler.py)     │    │  │
+                   │  │  │  DSL → Z3 AST        │    │  │
+                   │  │  │  compile_policy()    │    │  │
+                   │  │  └──────────┬───────────┘    │  │
+                   │  │             │                 │  │
+                   │  │  ┌──────────▼───────────┐    │  │
+                   │  │  │  Z3 SOLVER           │    │  │
+                   │  │  │  (solver.py)         │    │  │
+                   │  │  │  assert_and_track()  │    │  │
+                   │  │  │  unsat_core()        │    │  │
+                   │  │  │  timeout enforced    │    │  │
+                   │  │  └──────────┬───────────┘    │  │
+                   │  └────────────┬┘                │  │
+                   │               │  HMAC verify     │  │
+                   │  ┌────────────▼─────────────┐   │  │
+                   │  │  Decision Builder         │   │  │
+                   │  │  (decision.py)            │   │  │
+                   │  │  frozen dataclass         │   │  │
+                   │  └────────────┬─────────────┘   │  │
+                   │               │                  │  │
+                   │  ┌────────────▼─────────────┐   │  │
+                   │  │  Telemetry (telemetry.py) │   │  │
+                   │  │  Prometheus + OTel spans  │   │  │
+                   │  └────────────┬─────────────┘   │  │
+                   └───────────────┼─────────────────┘
+                                   │
+                            Decision (returned)
+                                   │
+                   ┌───────────────▼─────────────────┐
+                   │  Audit Trail (audit/)            │
+                   │  DecisionSigner → JWS token      │
+                   │  MerkleAnchor  → tamper-evident  │
+                   └──────────────────────────────────┘
 ```
 
 ### Module Reference
 
-| Module | Responsibility |
-|---|---|
-| `guard.py` | SDK entrypoint — policy compilation, worker pool, `verify()`, `parse_and_verify()` |
-| `policy.py` | `Policy` base class — `fields()` / `invariants()` classmethods, `Meta` config, `validate()` |
-| `expressions.py` | `E()` function, `Field`, `ExpressionNode`, `ConstraintExpr` — lazy expression tree via operator overloading |
-| `transpiler.py` | DSL expression tree → Z3 AST. `compile_policy()` for pre-compilation metadata. Zero `ast.parse`/`eval`/`exec`. |
-| `solver.py` | Z3 wrapper — context isolation, `assert_and_track`, unsat core attribution, configurable timeouts |
-| `worker.py` | Worker spawn/warmup/recycle lifecycle, `AdaptiveConcurrencyLimiter`, HMAC IPC sealing |
-| `decision.py` | Immutable `Decision` frozen dataclass, `SolverStatus` enum, factory class-methods |
-| `validator.py` | Pydantic v2 strict schema validation layer |
-| `resolvers.py` | Lazy field resolution with per-decision `ContextVar` cache isolation |
-| `fast_path.py` | Semantic fast-path evaluator — pure Python O(1) pre-screen before Z3 |
-| `telemetry.py` | Prometheus counters/histograms, OpenTelemetry span hooks, structured JSON logs |
-| `decorator.py` | `@guarded` decorator — raises `GuardViolationError` with attached `Decision` on block |
-| `exceptions.py` | All Pramanix exception types (`PolicyCompilationError`, `ExtractionFailureError`, etc.) |
-| `helpers/` | Serialization utilities (`serialization.py`), Z3 type mappings (`type_mapping.py`) |
+| Module | Public API | Responsibility |
+|---|---|---|
+| `guard.py` | `Guard`, `GuardConfig` | SDK entrypoint — compile policy, manage worker pool, `verify()` / `verify_async()` / `parse_and_verify()` |
+| `policy.py` | `Policy` | Base class — `fields()` auto-discovery, `invariants()` classmethod, `validate()`, `Meta` inner class |
+| `expressions.py` | `E`, `Field`, `ConstraintExpr`, `ExpressionNode` | Lazy expression tree via operator overloading → AST nodes |
+| `transpiler.py` | `compile_policy()`, `collect_fields()`, `InvariantMeta` | DSL AST → Z3 AST. Zero `ast.parse`/`eval`/`exec`. |
+| `solver.py` | `solve()`, `_SolveResult` | Z3 context isolation, `assert_and_track`, unsat core, configurable timeouts |
+| `worker.py` | `WorkerPool`, `AdaptiveConcurrencyLimiter`, `_EphemeralKey` | Worker spawn/warmup/recycle, HMAC IPC sealing, load shedding |
+| `decision.py` | `Decision`, `SolverStatus` | Immutable frozen dataclass, factory methods, `to_dict()` |
+| `validator.py` | `validate_intent()`, `validate_state()` | Pydantic v2 strict schema validation |
+| `resolvers.py` | `ResolverRegistry` | Lazy field resolution with `ContextVar` per-request cache isolation |
+| `fast_path.py` | `SemanticFastPath`, `FastPathEvaluator`, `FastPathResult` | Pure Python O(1) pre-screen rules before Z3 |
+| `decorator.py` | `guard()` | `@guard(policy=…)` decorator factory for async functions |
+| `exceptions.py` | 19 exception classes | Full hierarchy from `PramanixError` base |
+| `telemetry.py` | Prometheus + OTel hooks | `pramanix_decisions_total`, `pramanix_decision_latency_seconds`, `pramanix_solver_timeouts_total` |
+| `helpers/serialization.py` | `safe_dump()` | JSON-safe serialization helper |
+| `helpers/type_mapping.py` | `python_type_to_z3_sort()` | Python type → Z3 sort mapping |
 | **Translator** | | |
-| `translator/base.py` | `BaseTranslator` ABC — `translate(text, schema)` interface |
-| `translator/anthropic.py` | Anthropic Claude translator (streaming + block-level extraction) |
-| `translator/ollama.py` | Ollama local-model translator (OpenAI-compatible JSON mode) |
-| `translator/openai_compat.py` | OpenAI / OpenAI-compatible endpoint translator |
-| `translator/redundant.py` | Dual-model consensus translator (`strict_keys`, `lenient`, `unanimous` agreement modes) |
-| `translator/_sanitise.py` | Pre-LLM input sanitisation + injection confidence scoring |
-| `translator/_json.py` | Robust JSON extraction (handles markdown fences, prose, nesting) |
-| `translator/_cache.py` | LRU + optional Redis intent cache |
-| `translator/_prompt.py` | Extraction prompt templates |
+| `translator/base.py` | `Translator`, `TranslatorContext` | ABC for LLM translation backends |
+| `translator/anthropic.py` | `AnthropicTranslator` | Claude (streaming + content block extraction) |
+| `translator/ollama.py` | `OllamaTranslator` | Ollama local models (OpenAI-compatible JSON mode) |
+| `translator/openai_compat.py` | `OpenAICompatTranslator` | OpenAI / compatible endpoints |
+| `translator/redundant.py` | `RedundantTranslator`, `extract_with_consensus()`, `create_translator()` | Dual-model consensus, 6-layer security pipeline |
+| `translator/_sanitise.py` | `sanitise_user_input()`, `injection_confidence_score()` | Unicode normalise, truncate, control-strip, injection-detect |
+| `translator/_json.py` | `parse_llm_response()` | JSON extraction from LLM prose/markdown |
+| `translator/_cache.py` | `IntentCache` | LRU + optional Redis intent result cache |
+| `translator/_prompt.py` | `build_system_prompt()` | Extraction prompt template builder |
 | **Audit** | | |
-| `audit/signer.py` | `DecisionSigner` — HMAC-SHA256 JWS token generation |
-| `audit/verifier.py` | `DecisionVerifier` — token verification and payload extraction |
-| `audit/merkle.py` | `MerkleAnchor` — append-only Merkle tree for immutable decision sequences |
+| `audit/signer.py` | `DecisionSigner`, `SignedDecision` | HMAC-SHA256 JWS token generation |
+| `audit/verifier.py` | `DecisionVerifier`, `VerificationResult` | JWS token verification and payload extraction |
+| `audit/merkle.py` | `MerkleAnchor`, `MerkleProof` | Append-only SHA-256 Merkle tree |
 | **Identity** | | |
-| `identity/linker.py` | `IdentityLinker` — per-agent policy binding resolution |
-| `identity/redis_loader.py` | `RedisIdentityLoader` — Redis-backed identity store |
+| `identity/linker.py` | `JWTIdentityLinker`, `IdentityClaims` | JWT-based per-agent policy binding |
+| `identity/redis_loader.py` | `RedisStateLoader` | Redis-backed identity/state store |
 | **Circuit Breaker** | | |
-| `circuit_breaker.py` | `AdaptiveCircuitBreaker` — CLOSED/OPEN/HALF_OPEN/ISOLATED state machine |
+| `circuit_breaker.py` | `AdaptiveCircuitBreaker`, `CircuitBreakerConfig`, `CircuitState` | CLOSED/OPEN/HALF_OPEN/ISOLATED state machine |
 | **Integrations** | | |
-| `integrations/fastapi.py` | `PramanixMiddleware` (ASGI) + `@pramanix_route` decorator factory |
-| `integrations/langchain.py` | `PramanixGuardTool` — LangChain `BaseTool` with policy enforcement |
-| `integrations/llamaindex.py` | `PramanixGuardEngine` — LlamaIndex `BaseQueryEngine` wrapper |
-| `integrations/autogen.py` | `PramanixGuardAgent` — AutoGen `ConversableAgent` with action interception |
+| `integrations/fastapi.py` | `PramanixMiddleware`, `pramanix_route()` | ASGI middleware + per-route decorator factory |
+| `integrations/langchain.py` | `PramanixGuardedTool`, `wrap_tools()` | LangChain `BaseTool` subclass with Z3 gate |
+| `integrations/llamaindex.py` | `PramanixFunctionTool`, `PramanixQueryEngineTool` | LlamaIndex tool wrappers with policy enforcement |
+| `integrations/autogen.py` | `PramanixToolCallback` | AutoGen callable decorator (v0.2 + v0.4 compatible) |
 | **Primitives** | | |
-| `primitives/finance.py` | Overdraft, daily limit, compliance (AML/KYC), multi-currency constraints |
-| `primitives/fintech.py` | Cryptocurrency, DeFi, payment rails, liquidity constraints |
-| `primitives/rbac.py` | Role-based access control, separation of duties, permission escalation |
-| `primitives/infra.py` | Kubernetes scaling, Docker resource limits, IAM policies, cloud quotas |
-| `primitives/healthcare.py` | PHI access, HIPAA, consent verification, clinical safety constraints |
-| `primitives/time.py` | Business hours, maintenance windows, cooldown periods, rate windows |
-| `primitives/common.py` | Shared building blocks used across domain primitives |
+| `primitives/finance.py` | `NonNegativeBalance`, `UnderDailyLimit`, `UnderSingleTxLimit`, `RiskScoreBelow`, `SecureBalance`, `MinimumReserve` | Core financial constraints |
+| `primitives/fintech.py` | `SufficientBalance`, `VelocityCheck`, `AntiStructuring`, `WashSaleDetection`, `CollateralHaircut`, `MaxDrawdown`, `SanctionsScreen`, `RiskScoreLimit`, `KYCTierCheck`, `TradingWindowCheck`, `MarginRequirement` | Advanced fintech / DeFi / trading constraints |
+| `primitives/rbac.py` | `RoleMustBeIn`, `ConsentRequired`, `DepartmentMustBeIn` | Role-based access control |
+| `primitives/infra.py` | `MinReplicas`, `MaxReplicas`, `WithinCPUBudget`, `WithinMemoryBudget`, `BlastRadiusCheck`, `CircuitBreakerState`, `ProdDeployApproval`, `ReplicaBudget`, `CPUMemoryGuard` | Kubernetes, Docker, cloud infrastructure |
+| `primitives/healthcare.py` | `PHILeastPrivilege`, `ConsentActive`, `DosageGradientCheck`, `BreakGlassAuth`, `PediatricDoseBound` | PHI access, HIPAA, clinical safety |
+| `primitives/time.py` | `WithinTimeWindow`, `After`, `Before`, `NotExpired` | Business hours, maintenance windows, cooldown periods |
+| `primitives/common.py` | `NotSuspended`, `StatusMustBe`, `FieldMustEqual` | Cross-domain building blocks |
 | **CLI** | | |
-| `cli.py` | `pramanix verify-proof <token>` — CLI for cryptographic proof verification |
+| `cli.py` | `main()` | `pramanix verify-proof` — cryptographic proof CLI |
 
 ---
 
 ## Advanced Features
 
-### Semantic Fast-Path
+### Primitives Library
 
-Pre-screen obvious violations in pure Python before Z3 is invoked. Runs < 0.1ms. Can only BLOCK — never ALLOW.
+Pre-built, composable constraint factories — pass your `Field` class attributes directly:
 
 ```python
-from pramanix import Guard, GuardConfig
+from pramanix.primitives.finance import NonNegativeBalance, SecureBalance, UnderDailyLimit
+from pramanix.primitives.fintech import AntiStructuring, VelocityCheck, KYCTierCheck
+from pramanix.primitives.rbac import RoleMustBeIn, ConsentRequired
+from pramanix.primitives.infra import MinReplicas, MaxReplicas, WithinCPUBudget
+from pramanix.primitives.healthcare import PHILeastPrivilege, ConsentActive, BreakGlassAuth
+from pramanix.primitives.time import WithinTimeWindow, NotExpired
+
+class HighSecurityBankingPolicy(Policy):
+    balance         = Field("balance",         Decimal, "Real")
+    amount          = Field("amount",          Decimal, "Real")
+    daily_limit     = Field("daily_limit",     Decimal, "Real")
+    minimum_reserve = Field("minimum_reserve", Decimal, "Real")
+    kyc_tier        = Field("kyc_tier",        int,     "Int")
+    tx_count_24h    = Field("tx_count_24h",    int,     "Int")
+    role            = Field("user_role",       str,     "Int")
+
+    @classmethod
+    def invariants(cls):
+        return [
+            SecureBalance(cls.balance, cls.amount, cls.minimum_reserve),
+            UnderDailyLimit(cls.amount, cls.daily_limit),
+            AntiStructuring(cls.amount, cls.tx_count_24h),   # AML structuring detection
+            KYCTierCheck(cls.amount, cls.kyc_tier),           # KYC tier enforcement
+            RoleMustBeIn(cls.role, ["teller", "manager"]),
+        ]
+```
+
+### Semantic Fast-Path
+
+Pre-screen obvious violations in O(1) pure Python before Z3. Architecture contract: **can only BLOCK, never ALLOW.**
+
+```python
 from pramanix.fast_path import SemanticFastPath
 
-guard = Guard(
-    policy=BankingPolicy,
-    config=GuardConfig(
-        fast_path_enabled=True,
-        fast_path_rules=(
-            SemanticFastPath.negative_amount("amount"),
-            SemanticFastPath.zero_or_negative_balance("balance"),
-            SemanticFastPath.frozen_account("is_frozen"),
-        )
-    )
+config = GuardConfig(
+    fast_path_enabled=True,
+    fast_path_rules=(
+        SemanticFastPath.negative_amount("amount"),          # amount < 0
+        SemanticFastPath.zero_or_negative_balance("balance"), # balance ≤ 0
+        SemanticFastPath.account_frozen("is_frozen"),         # is_frozen == True
+        SemanticFastPath.exceeds_hard_cap("amount", cap=1_000_000),  # absolute ceiling
+        SemanticFastPath.amount_exceeds_balance("amount", "balance"), # obvious overdraft
+    ),
 )
+# Fast-path runs AFTER Pydantic validation, BEFORE Z3
+# A fast-path block saves the full Z3 solver round-trip (~5–30ms)
 ```
 
 ### Adaptive Load Shedding
 
-Dual-condition load shedder in `worker.py` prevents queue saturation:
+Dual-condition shedder in `WorkerPool` returns `Decision.rate_limited()` when the system is under pressure:
 
 ```python
 config = GuardConfig(
-    shed_worker_pct=0.9,         # shed when ≥90% of workers are active
-    shed_latency_threshold_ms=45, # AND p99 latency > 45ms
+    shed_worker_pct=90,            # shed when ≥90% of workers are active (default)
+    shed_latency_threshold_ms=200, # AND measured p99 latency > 200ms (default)
+    max_workers=8,
 )
-# Returns Decision.rate_limited() instead of queuing when both conditions hold.
+# Both conditions must hold simultaneously — prevents false positives on transient spikes
 ```
+
+Prometheus metric: `pramanix_decisions_total{status="rate_limited", policy="…"}`
 
 ### Adaptive Circuit Breaker
 
-Wraps a `Guard` with CLOSED → OPEN → HALF_OPEN → CLOSED state machine:
+Wraps any `Guard` with a 4-state machine that protects against Z3 solver pressure cascades:
 
 ```python
-from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
+from pramanix import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
 breaker = AdaptiveCircuitBreaker(
     guard=guard,
     config=CircuitBreakerConfig(
-        pressure_threshold_ms=40.0,
-        failure_threshold=5,
-        recovery_seconds=30.0,
-        namespace="banking",
+        pressure_threshold_ms=40.0,       # solver_time_ms > 40ms → "pressure" signal
+        consecutive_pressure_count=5,     # 5 consecutive → OPEN
+        recovery_seconds=30.0,            # wait 30s before HALF_OPEN probe
+        isolation_threshold=3,            # 3 consecutive OPEN episodes → ISOLATED
+        failsafe_mode="block_all",        # OPEN/ISOLATED always BLOCK
+        namespace="banking",              # Prometheus label namespace
     )
 )
 
-# Use exactly like a Guard — transparent wrapper
+# Transparent wrapper — same API as Guard
 decision = await breaker.verify_async(intent=intent, state=state)
 
-# Prometheus: pramanix_circuit_state{namespace="banking", state="closed"} 1
+# State introspection
+status = breaker.status  # CircuitBreakerStatus(state=CircuitState.CLOSED, …)
+
+# Manual reset from ISOLATED (requires ops intervention)
+breaker.reset()
 ```
 
-After 3 consecutive OPEN episodes, transitions to `ISOLATED` state requiring manual `breaker.reset()`.
+**State transitions:**
+```
+CLOSED ──(5 slow solves)──► OPEN ──(30s)──► HALF_OPEN
+                                               │  ├── probe success → CLOSED
+                                               │  └── probe failure → OPEN
+                            OPEN ──(×3)──► ISOLATED (manual reset required)
+```
+
+Prometheus: `pramanix_circuit_state{namespace="banking", state="closed|open|half_open|isolated"} 1`
 
 ### Cryptographic Audit Trail
 
-Every `Decision` can be signed with a HMAC-SHA256 JWS token. Merkle tree provides tamper-evident sequencing.
+Every `Decision` can be signed with HMAC-SHA256 JWS and anchored in a Merkle tree:
 
 ```python
-from pramanix.audit.signer import DecisionSigner
-from pramanix.audit.verifier import DecisionVerifier
-from pramanix.audit.merkle import MerkleAnchor
+from pramanix import DecisionSigner, DecisionVerifier, MerkleAnchor
+import os
 
-# Signing (at guard.verify() time)
+# At guard.verify() time — sign the decision
 signer = DecisionSigner(signing_key=os.environ["PRAMANIX_SIGNING_KEY"])
 signed = signer.sign(decision)
-# signed.token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IlBSQU1BTklYLVBST09GIn0..."
+# signed.token  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IlBSQU1BTklYLVBST09GIn0…"
+# signed.decision_id = decision.decision_id
+# signed.issued_at   = unix timestamp (ms)
 
-# Verification (audit / compliance tooling)
+if signed is None:
+    # Key missing or too short (<32 chars) — signer silently returns None
+    pass
+
+# In audit / compliance tooling — verify proof token
 verifier = DecisionVerifier(signing_key=os.environ["PRAMANIX_SIGNING_KEY"])
 result = verifier.verify(signed.token)
 assert result.valid
 assert result.decision_id == decision.decision_id
+assert result.allowed == decision.allowed
+print(result.status, result.violated_invariants, result.explanation)
 
-# Merkle anchoring for immutable audit sequences
+# Merkle tree for immutable decision sequencing
 anchor = MerkleAnchor()
 anchor.add(decision.decision_id)
+anchor.add(decision2.decision_id)
 proof = anchor.prove(decision.decision_id)
-assert proof.verify()
+assert proof is not None
+assert proof.verify()  # False after any tampering
 ```
 
-Generate a production signing key:
+**Generate a production signing key:**
 ```bash
 python -c "import secrets; print(secrets.token_hex(64))"
 ```
 
-### Zero-Trust Identity
+Minimum key length: 32 characters. Recommended: 64+ hex chars (256-bit entropy).
 
-Redis-backed per-agent policy bindings:
+### Zero-Trust Identity (JWT)
+
+Per-agent JWT-based policy bindings backed by Redis:
 
 ```python
-from pramanix.identity.linker import IdentityLinker
-from pramanix.identity.redis_loader import RedisIdentityLoader
+from pramanix import JWTIdentityLinker
+from pramanix.identity.redis_loader import RedisStateLoader
 
-loader = RedisIdentityLoader(redis_url="redis://localhost:6379/0")
-linker = IdentityLinker(loader=loader)
+# JWT claims define which policy this agent uses and what constraints apply
+linker = JWTIdentityLinker(
+    signing_key=os.environ["PRAMANIX_JWT_SECRET"],
+    state_loader=RedisStateLoader(redis_url="redis://localhost:6379/0"),
+)
 
-# Resolve which policy applies to this agent
-policy_cls = await linker.resolve(agent_id="agent-abc123")
-guard = Guard(policy=policy_cls, config=GuardConfig())
+claims = linker.verify_token(agent_jwt_token)
+# IdentityClaims(agent_id="agent-abc", policy_name="BankingPolicy", …)
 ```
 
-### Primitives Library
+### Intent Cache
 
-Pre-built, composable constraint factories:
+LRU + optional Redis cache for translated intent results (skip repeated LLM calls):
 
 ```python
-from pramanix.primitives.finance import (
-    overdraft_protection,
-    daily_transfer_limit,
-    aml_amount_threshold,
-)
-from pramanix.primitives.rbac import (
-    role_in,
-    requires_mfa,
-    separation_of_duties,
-)
-from pramanix.primitives.time import (
-    within_business_hours,
-    not_in_maintenance_window,
-)
+from pramanix.translator._cache import IntentCache
+
+# Auto-configures from PRAMANIX_REDIS_URL env var
+cache = IntentCache.from_env(max_size=1024, ttl_seconds=300)
+
+# Check stats
+print(cache.stats())   # {"hits": 42, "misses": 8, "size": 50}
 ```
 
 ---
@@ -833,25 +884,31 @@ from pramanix.primitives.time import (
 ### FastAPI
 
 ```python
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pramanix.integrations.fastapi import PramanixMiddleware, pramanix_route
 
 app = FastAPI()
+guard = Guard(policy=BankingPolicy, config=GuardConfig())
 
-# Option 1: ASGI middleware — intercepts every request
+# Option 1: ASGI middleware — intercepts every request before route handlers
 app.add_middleware(
     PramanixMiddleware,
     guard=guard,
-    state_loader=fetch_account_state,
-    timing_budget_ms=100,       # constant-time BLOCK responses
-    max_body_bytes=65536,        # memory exhaustion protection
+    state_loader=fetch_account_state,   # async callable: request → state dict
+    timing_budget_ms=100,                # constant-time BLOCK to prevent timing oracles
+    max_body_bytes=65_536,               # memory exhaustion protection
 )
 
 # Option 2: Per-route decorator
 @app.post("/transfer")
-@pramanix_route(policy=BankingPolicy, state_from=fetch_account_state)
-async def transfer(intent: TransferIntent):
-    await execute_transfer(intent)  # only called if Z3 approves
+@pramanix_route(guard=guard, state_loader=fetch_account_state)
+async def transfer(intent: TransferIntent) -> dict[str, str]:
+    await execute_transfer(intent)
+    return {"status": "ok"}
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    await guard.shutdown()
 ```
 
 Install: `pip install 'pramanix[fastapi]'`
@@ -859,15 +916,27 @@ Install: `pip install 'pramanix[fastapi]'`
 ### LangChain
 
 ```python
-from pramanix.integrations.langchain import PramanixGuardTool
+from pramanix.integrations.langchain import PramanixGuardedTool, wrap_tools
 
-tool = PramanixGuardTool(
+# Single guarded tool
+tool = PramanixGuardedTool(
+    name="transfer_funds",
+    description="Transfer funds between accounts — guarded by Pramanix Z3 verification",
     guard=guard,
-    name="transfer_guard",
-    description="Verify financial transfer safety before execution",
+    intent_schema=TransferIntent,
+    state_provider=lambda: get_account_state(),
 )
 
-# Use in any LangChain agent — tool.run() returns Decision JSON
+# Wrap an existing list of BaseTool instances
+guarded_tools = wrap_tools(
+    tools=[existing_tool],
+    guard=guard,
+    intent_schema=TransferIntent,
+    state_provider=state_provider,
+)
+
+# Use in any LangChain agent
+from langchain.agents import initialize_agent, AgentType
 agent = initialize_agent(tools=[tool], llm=llm, agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION)
 ```
 
@@ -876,15 +945,26 @@ Install: `pip install 'pramanix[langchain]'`
 ### LlamaIndex
 
 ```python
-from pramanix.integrations.llamaindex import PramanixGuardEngine
+from pramanix.integrations.llamaindex import PramanixFunctionTool, PramanixQueryEngineTool
 
-engine = PramanixGuardEngine(
+# Function tool — wraps any callable with policy enforcement
+tool = PramanixFunctionTool(
+    fn=execute_transfer,
     guard=guard,
-    base_engine=your_query_engine,
+    intent_schema=TransferIntent,
+    state_provider=lambda: get_account_state(),
+    name="transfer",
+    description="Transfer funds — Z3 verified",
 )
 
-# All queries pass through Pramanix verification before reaching base_engine
-response = await engine.aquery("Transfer $5000 to Alice")
+# Query engine tool — wraps an existing query engine
+engine_tool = PramanixQueryEngineTool.from_function_tool(
+    function_tool=tool,
+    description="Verified financial query engine",
+)
+
+# tool.call(input) / await tool.acall(input)
+output = await tool.acall({"amount": "5000", "currency": "USD"})
 ```
 
 Install: `pip install 'pramanix[llamaindex]'`
@@ -892,16 +972,31 @@ Install: `pip install 'pramanix[llamaindex]'`
 ### AutoGen
 
 ```python
-from pramanix.integrations.autogen import PramanixGuardAgent
+from pramanix.integrations.autogen import PramanixToolCallback
 
-agent = PramanixGuardAgent(
-    name="FinanceAgent",
+# Works as a decorator for any async or sync tool function
+callback = PramanixToolCallback(
     guard=guard,
-    system_message="You are a financial operations agent.",
+    intent_schema=TransferIntent,
+    state_provider=lambda: get_state(),
 )
 
-# All agent actions are intercepted and verified by Pramanix before execution
+@assistant.register_for_execution()
+@assistant.register_for_llm(description="Transfer funds")
+@callback
+async def transfer(amount: float, recipient: str) -> str:
+    return f"Transferred {amount} to {recipient}"
+
+# Class-method variant
+guarded_fn = PramanixToolCallback.wrap(
+    transfer,
+    guard=guard,
+    intent_schema=TransferIntent,
+    state_provider=state_provider,
+)
 ```
+
+Policy violations return structured rejection strings (not exceptions) so the orchestrating LLM can adapt gracefully.
 
 Install: `pip install 'pramanix[autogen]'`
 
@@ -911,17 +1006,16 @@ Install: `pip install 'pramanix[autogen]'`
 
 | | **Pramanix** | **OPA / Rego** | **LLM-as-Judge** | **Regex / Rules** | **LangChain Callbacks** |
 |---|---|---|---|---|---|
-| **Verification basis** | Z3 SMT (mathematical proof) | Datalog evaluation | Probabilistic sampling | Pattern matching | LLM heuristic |
-| **Guarantees** | Formal: SAT / UNSAT | Policy evaluation | None | Syntactic only | None |
-| **Compound constraints** | Native (arithmetic, boolean, membership) | Limited arithmetic | Unreliable | Manual, brittle | None |
-| **Counterexamples** | Exact model values from Z3 | No | No | No | No |
-| **Adversarial resistance** | DSL compiled to bytecode — injection unreachable | Rego is interpretable | Vulnerable to jailbreak | Trivially bypassable | Vulnerable |
-| **Audit trail** | Cryptographic JWS + Merkle tree | Evaluation log | Confidence score | Match/no-match | Callback log |
+| **Verification basis** | Z3 SMT (formal proof) | Datalog evaluation | Probabilistic | Pattern matching | LLM heuristic |
+| **Guarantees** | Formal SAT / UNSAT | Policy evaluation result | None | Syntactic only | None |
+| **Compound constraints** | Native (arith + bool + membership) | Limited arithmetic | Unreliable | Manual, brittle | None |
+| **Counterexamples** | Exact Z3 model values | No | No | No | No |
+| **Adversarial resistance** | Policy is compiled bytecode — LLM cannot reach it | Rego is interpretable | Vulnerable to jailbreak | Trivially bypassable | Vulnerable |
+| **Audit trail** | HMAC-SHA256 JWS + Merkle tree | Evaluation log | Confidence score | Match log | Callback log |
 | **LLM dependency** | Optional, firewalled, dual-model consensus | None | Required | None | Required |
-| **Python integration** | Native SDK | HTTP/gRPC sidecar | Library | Library | Library |
-| **Best for** | Mathematical safety of high-stakes actions | Authorization (who can try) | Content filtering | Simple format checks | Observability hooks |
+| **Best for** | Mathematical safety of high-stakes actions | Authorization ("who can try") | Content filtering | Format validation | Observability hooks |
 
-> **Recommended production architecture:** OPA handles authorization ("can this user attempt a transfer?"). Pramanix handles mathematical safety ("is this specific transfer safe given current state?"). They are complementary, not competing.
+> **Recommended production architecture:** OPA handles authorization — "can this user/agent *attempt* this action?". Pramanix handles mathematical safety — "is this *specific instance* of the action safe given current state?". They are complementary.
 
 ---
 
@@ -931,49 +1025,56 @@ Install: `pip install 'pramanix[autogen]'`
 from pramanix import GuardConfig
 
 config = GuardConfig(
-    # Execution
+    # Execution backend
     execution_mode="async-thread",        # "sync" | "async-thread" | "async-process"
-    solver_timeout_ms=50,                 # 10–10,000ms (default: 50)
-    max_workers=4,                        # 1–64 (default: 4)
 
-    # Worker Lifecycle
-    max_decisions_per_worker=10_000,      # Recycle to flush Z3 native memory (default: 10,000)
-    worker_warmup=True,                   # Dummy solve on spawn (eliminates cold-start JIT spike)
+    # Z3 solver
+    solver_timeout_ms=5_000,              # per-invariant timeout in ms (default: 5000)
 
-    # Semantic Fast-Path (Phase 10)
-    fast_path_enabled=False,              # Enable pure-Python pre-screen (default: False)
-    fast_path_rules=(),                   # SemanticFastPath rules to apply
+    # Worker pool
+    max_workers=4,                        # thread/process pool size (default: 4)
+    max_decisions_per_worker=10_000,      # recycle threshold — bounds Z3 native memory
+    worker_warmup=True,                   # dummy solve on spawn (eliminates JIT spike)
 
-    # Adaptive Load Shedding
-    shed_worker_pct=0.9,                  # Shed when ≥90% workers active (default: 0.9)
-    shed_latency_threshold_ms=45.0,       # AND p99 > 45ms (default: 45.0)
+    # Semantic fast-path (default: disabled)
+    fast_path_enabled=False,
+    fast_path_rules=(),                   # tuple of SemanticFastPath rule callables
 
-    # Observability
+    # Adaptive load shedding (dual-condition)
+    shed_worker_pct=90,                   # shed when ≥N% workers active (default: 90)
+    shed_latency_threshold_ms=200,        # AND p99 > N ms (default: 200)
+
+    # Observability (default: off)
     log_level="INFO",
-    metrics_enabled=True,                 # Prometheus counters/histograms
+    metrics_enabled=False,                # Prometheus counters/histograms
     otel_enabled=False,
     otel_endpoint=None,                   # e.g. "http://otel-collector:4317"
 
-    # Translator (disabled by default)
+    # Translator (default: disabled)
     translator_enabled=False,
 )
 ```
 
-**Environment variables:**
+All fields can be set via `PRAMANIX_*` environment variables (read at construction time):
 
 ```bash
 PRAMANIX_EXECUTION_MODE=async-thread
-PRAMANIX_SOLVER_TIMEOUT_MS=50
+PRAMANIX_SOLVER_TIMEOUT_MS=5000
 PRAMANIX_MAX_WORKERS=8
 PRAMANIX_MAX_DECISIONS_PER_WORKER=10000
 PRAMANIX_WORKER_WARMUP=true
+PRAMANIX_FAST_PATH_ENABLED=false
+PRAMANIX_SHED_WORKER_PCT=90
+PRAMANIX_SHED_LATENCY_THRESHOLD_MS=200
 PRAMANIX_LOG_LEVEL=INFO
-PRAMANIX_METRICS_ENABLED=true
+PRAMANIX_METRICS_ENABLED=false
 PRAMANIX_OTEL_ENABLED=false
 PRAMANIX_OTEL_ENDPOINT=http://otel-collector:4317
 PRAMANIX_TRANSLATOR_ENABLED=false
-PRAMANIX_SIGNING_KEY=<hex-64-char-key>   # Audit trail signing key
+PRAMANIX_SIGNING_KEY=<hex-64-char-key>   # audit trail signing
 ```
+
+**Environment variable precedence:** `PRAMANIX_*` env var overrides the coded default but is superseded by an explicit constructor argument.
 
 ---
 
@@ -983,58 +1084,59 @@ PRAMANIX_SIGNING_KEY=<hex-64-char-key>   # Audit trail signing key
 
 | Threat | Mitigation |
 |---|---|
-| **Prompt injection** | Policy is compiled Python bytecode — injection cannot reach it. The LLM is optional and isolated by `_sanitise.py` injection scanner. |
-| **LLM hallucination** | LLM never invents IDs or decides policy. All LLM output passes strict Pydantic validation. Dual-model consensus required. |
+| **Prompt injection** | Policy is compiled Python bytecode — inaccessible from user input. LLM is optional, isolated, and scanned by `_sanitise.py`. |
+| **LLM hallucination** | LLM never invents IDs or decides safety. All LLM output must pass Pydantic strict validation + dual-model consensus. |
+| **Unicode evasion** | NFKC normalisation collapses full-width digits, homoglyphs, and lookalike characters before any parsing. |
+| **Sub-penny injection** | `injection_confidence_score()` flags anomalous micro-amounts (0 < amount < 0.10). Configurable threshold per currency/domain. |
+| **Worker process compromise** | `_EphemeralKey` generates a random HMAC key per Guard. Worker results are sealed before IPC. Unsealing failure → `Decision.error()`. |
 | **Numeric logic errors** | Z3 `RealSort` arithmetic is exact. Decimal values use `as_integer_ratio()` — no IEEE 754 approximation. |
-| **Race conditions (TOCTOU)** | `state_version` binding detected by `STALE_STATE`. Host must verify freshness before committing approved actions. |
-| **Worker process compromise** | Worker results are HMAC-SHA256 sealed before crossing the IPC boundary. Tampered results return `Decision.error()`. |
-| **Opaque decisions** | Full unsat core with exact Z3 model values in every BLOCK decision. Complete audit trail for regulators. |
-| **Sub-penny injection** | `_sanitise.injection_confidence_score()` flags anomalous micro-amounts. Configurable threshold per currency. |
-| **Unicode evasion** | NFKC normalization collapses full-width digits and homoglyphs before any parsing. |
-| **Resource exhaustion** | Input truncation (512 chars default), body size cap (FastAPI middleware), adaptive load shedding. |
+| **TOCTOU / race conditions** | `state_version` binding. `Meta.version` mismatch returns `Decision.stale_state()`. Host must verify freshness before commit. |
+| **Secret leakage in logs** | `_redact_secrets_processor` in structlog chain scrubs any event-dict key matching `secret|api_key|token|hmac|password|…` |
+| **Memory exhaustion** | Input truncation (512 chars), body size cap (FastAPI middleware), worker recycling (Z3 native memory bounded). |
+| **Opaque decisions** | Full unsat core with exact Z3 model counterexample in every BLOCK. Complete audit trail for regulators. |
 
 ### Fail-Safe Guarantee
 
 ```
-decision(action, state) = ALLOW   IFF   Z3.check(policy ∧ state) = SAT
-decision(action, state) = BLOCK   in ALL other cases
+decision(action, state) = ALLOW   ⟺   Z3.check(policy ∧ state) = SAT
 
-"All other cases" includes:
+decision(action, state) = BLOCK   in ALL other cases:
   UNSAT | TIMEOUT | UNKNOWN | EXCEPTION | TYPE_ERROR |
   NETWORK_FAILURE | CONFIG_ERROR | SERIALIZATION_ERROR |
-  IPC_SEAL_FAILURE | PYDANTIC_VALIDATION_ERROR
+  IPC_SEAL_FAILURE | PYDANTIC_VALIDATION_FAILURE |
+  STALE_STATE | RATE_LIMITED | INJECTION_DETECTED
 ```
 
-No action is approved by elimination. Every approval requires **positive proof**.
+No action is approved by elimination. Every `ALLOW` requires **positive Z3 proof**. `Guard.verify()` and `Guard.verify_async()` **never raise** — every exception path returns `Decision.error()`.
 
 ---
 
 ## Performance
 
-| Metric | Target | Notes |
+| Metric | Target | Conditions |
 |---|---|---|
-| **P50 latency** | < 5ms | Simple policies (2–5 invariants, Real + Bool) |
-| **P95 latency** | < 15ms | Includes serialization overhead |
+| **P50 latency** | < 5ms | Simple policy, 2–5 invariants, Real + Bool, async-thread |
+| **P95 latency** | < 15ms | Including serialization and Pydantic validation |
 | **P99 latency** | < 30ms | With worker warmup enabled |
-| **Throughput** | > 100 RPS sustained | Per Guard instance, async-thread mode |
-| **Memory (1M decisions)** | RSS growth < 50MB | With worker recycling at 10K decisions |
-| **Fast-path latency** | < 0.1ms | Pure Python pre-screen, no Z3 invocation |
+| **Throughput** | > 100 RPS sustained | Per Guard instance, async-thread, simple policy |
+| **Memory (1M decisions)** | RSS growth < 50MB | With worker recycling at 10K decisions/worker |
+| **Fast-path latency** | < 0.1ms | Pure Python pre-screen, no Z3 |
 
 **Solver timeout calibration:**
 
-| Policy Complexity | Recommended Timeout |
+| Policy Complexity | Recommended `solver_timeout_ms` |
 |---|---|
-| Simple (2–5 invariants, Real + Bool) | 10–20ms |
-| Medium (5–15 invariants, mixed types) | 20–50ms (default) |
-| Complex (15+ invariants, BitVec, `is_in` membership) | 100–500ms |
+| Simple (2–5 invariants, Real + Bool only) | 50–200ms |
+| Medium (5–15 invariants, mixed sorts) | 200–1000ms |
+| Complex (15+ invariants, `is_in`, BitVec) | 1000–5000ms (default) |
 
-**Observability (Prometheus metrics emitted by `telemetry.py`):**
-
+**Prometheus metrics emitted by `telemetry.py`:**
 ```
-pramanix_decisions_total{status="safe|unsafe|timeout|error|...", policy="..."}
-pramanix_decision_latency_seconds{policy="...", execution_mode="..."}
-pramanix_solver_timeouts_total{policy="..."}
-pramanix_circuit_state{namespace="...", state="closed|open|half_open|isolated"}
+pramanix_decisions_total{policy="…", status="safe|unsafe|timeout|error|…"}
+pramanix_decision_latency_seconds{policy="…"}   (buckets: 1ms–2.5s)
+pramanix_solver_timeouts_total{policy="…"}
+pramanix_validation_failures_total{policy="…"}
+pramanix_circuit_state{namespace="…", state="closed|open|half_open|isolated"}
 ```
 
 ---
@@ -1044,7 +1146,7 @@ pramanix_circuit_state{namespace="...", state="closed|open|half_open|isolated"}
 ### Docker
 
 ```dockerfile
-# python:3.11-slim is required — Alpine is NOT supported (Z3 requires glibc)
+# python:3.11-slim is REQUIRED — Alpine (musl) is NOT supported by z3-solver
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -1053,14 +1155,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY pyproject.toml poetry.lock ./
-RUN pip install poetry && poetry install --only main --no-interaction --no-ansi
+RUN pip install poetry && poetry install --only main --no-interaction
 
 COPY src/ src/
 
-# Non-root user for security
+# Non-root user
 RUN useradd -m -u 1001 pramanix && chown -R pramanix:pramanix /app
 USER pramanix
 
+EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
 ```
 
@@ -1073,39 +1176,56 @@ env:
   - name: PRAMANIX_MAX_WORKERS
     value: "8"
   - name: PRAMANIX_SOLVER_TIMEOUT_MS
-    value: "50"
+    value: "5000"
+  - name: PRAMANIX_METRICS_ENABLED
+    value: "true"
+  - name: PRAMANIX_OTEL_ENABLED
+    value: "true"
+  - name: PRAMANIX_OTEL_ENDPOINT
+    value: "http://otel-collector:4317"
   - name: PRAMANIX_SIGNING_KEY
     valueFrom:
       secretKeyRef:
         name: pramanix-secrets
         key: signing-key
-  - name: PRAMANIX_OTEL_ENDPOINT
-    value: "http://otel-collector:4317"
 ```
 
 ### FastAPI Complete Example
 
 ```python
 from fastapi import FastAPI
-from pramanix import Guard, GuardConfig
+from pramanix import Guard, GuardConfig, AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.integrations.fastapi import PramanixMiddleware
 
 app = FastAPI()
-guard = Guard(policy=BankingPolicy, config=GuardConfig(
-    execution_mode="async-thread",
-    solver_timeout_ms=50,
-    metrics_enabled=True,
-))
+
+guard = Guard(
+    policy=BankingPolicy,
+    config=GuardConfig(
+        execution_mode="async-thread",
+        solver_timeout_ms=200,
+        max_workers=8,
+        metrics_enabled=True,
+        fast_path_enabled=True,
+        fast_path_rules=(SemanticFastPath.negative_amount(),),
+    ),
+)
+
+breaker = AdaptiveCircuitBreaker(
+    guard=guard,
+    config=CircuitBreakerConfig(namespace="banking"),
+)
 
 app.add_middleware(
     PramanixMiddleware,
-    guard=guard,
-    state_loader=fetch_account_state,
-    timing_budget_ms=100,
+    guard=breaker,           # wrap the circuit breaker, not the guard directly
+    state_loader=fetch_state,
+    timing_budget_ms=150,
+    max_body_bytes=65_536,
 )
 
 @app.on_event("shutdown")
-async def shutdown():
+async def shutdown() -> None:
     await guard.shutdown()
 ```
 
@@ -1125,12 +1245,15 @@ PRAMANIX_SIGNING_KEY=<key> pramanix verify-proof eyJhbGciOiJIUzI1NiJ9...
 echo "eyJ..." | PRAMANIX_SIGNING_KEY=<key> pramanix verify-proof --stdin
 
 # Machine-readable JSON output
-pramanix verify-proof eyJ... --json | jq .decision_id
+PRAMANIX_SIGNING_KEY=<key> pramanix verify-proof eyJ... --json | jq .allowed
 
-# Exit codes: 0=valid, 1=invalid/error, 2=usage error
+# Pass key inline (overrides env var)
+pramanix verify-proof eyJ... --key <signing-key>
 ```
 
-Generate a production signing key:
+**Exit codes:** `0` = valid, `1` = invalid or verification error, `2` = usage error (missing token/key).
+
+**Generate a production signing key:**
 ```bash
 python -c "import secrets; print(secrets.token_hex(64))"
 ```
@@ -1140,32 +1263,32 @@ python -c "import secrets; print(secrets.token_hex(64))"
 ## Contributing
 
 ```bash
-# Clone and setup
+# Clone and install
 git clone https://github.com/viraj1011JAIN/Pramanix.git
 cd Pramanix
+pip install -e ".[all]"           # install with all optional extras
+pip install pytest pytest-asyncio pytest-cov hypothesis mypy ruff
 
-# Install all dependencies
-pip install -e ".[all]"
-pip install -e ".[dev]"  # or: poetry install --with dev
-
-# Run tests (skip API-dependent integration tests)
+# Run tests (skip API-key-dependent integration tests)
 pytest tests/unit/ tests/adversarial/ tests/property/ tests/perf/ -q
+pytest tests/integration/ -k "not (openai or anthropic or redis or zero_trust)" -q
 
-# Run with coverage
-pytest tests/unit/ tests/adversarial/ tests/property/ --cov=src/pramanix --cov-report=term-missing
+# With coverage (must reach 95%)
+pytest tests/unit/ tests/adversarial/ tests/property/ \
+  --cov=src/pramanix --cov-report=term-missing --cov-fail-under=95
 
-# Lint + type check
+# Lint and type check (must be clean)
 ruff check src/ tests/
 mypy src/pramanix/ --strict
 ```
 
 **Development rules:**
-- All policies must compile at `Guard.__init__()` time — no runtime surprises from bad invariants
-- Every error path must produce `Decision(allowed=False)` — exceptions never propagate to callers
+- Policy authoring errors must surface at `Guard.__init__()` time via `Policy.validate()` — never at first request
+- Every error path must return `Decision(allowed=False)` — `verify()` / `verify_async()` never raise
 - Use `assert_and_track` (not `solver.add`) for all invariants — unsat core attribution is mandatory
-- Never pickle Pydantic models — always `model_dump()` before crossing thread/process boundaries
-- Alpine Docker images are banned — Z3 requires glibc; use `python:3.11-slim`
-- Use direct `isinstance()` in conditionals for type narrowing — bool variables don't narrow in mypy strict
+- Use `model_dump()` before crossing `ProcessPoolExecutor` — never pickle Pydantic models
+- Use direct `isinstance()` checks in conditionals for mypy type narrowing — bool variable assignment doesn't narrow
+- Alpine Docker images are banned — use `python:3.11-slim`
 
 ---
 
