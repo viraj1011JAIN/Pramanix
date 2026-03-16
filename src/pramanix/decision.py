@@ -42,6 +42,24 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+try:
+    import orjson as _orjson
+
+    def _canonical_bytes(payload: dict[str, Any]) -> bytes:
+        """Deterministic canonical bytes via orjson (sorted keys, non-str keys)."""
+        return _orjson.dumps(
+            payload,
+            option=_orjson.OPT_SORT_KEYS | _orjson.OPT_NON_STR_KEYS,
+        )
+
+except ImportError:  # pragma: no cover
+    import json as _json
+
+    def _canonical_bytes(payload: dict[str, Any]) -> bytes:  # pragma: no cover
+        """Deterministic canonical bytes via stdlib json (sorted keys)."""
+        return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+
 __all__ = ["Decision", "SolverStatus"]
 
 # ---------------------------------------------------------------------------

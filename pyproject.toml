@@ -188,6 +188,8 @@ ignore = [
 # These are documentation-only and do not affect runtime behaviour.
 "src/pramanix/translator/_sanitise.py" = ["RUF002"]
 "src/pramanix/integrations/*.py" = ["TCH"]
+# CLI is a terminal entry point — print() is the intended output mechanism.
+"src/pramanix/cli.py" = ["T20"]
 "tests/integration/test_fastapi_middleware.py" = ["T20"]
 "tests/integration/test_langchain_tool.py" = ["T20"]
 "tests/integration/test_integration_matrix.py" = ["T20"]

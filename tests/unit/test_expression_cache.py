@@ -51,7 +51,7 @@ class BankingPolicy(Policy):
             ((E(_balance) - E(_amount)) >= Decimal("0"))
             .named("sufficient_balance")
             .explain("Balance insufficient"),
-            (E(_frozen) is False).named("account_not_frozen").explain("Account is frozen"),
+            (E(_frozen) == False).named("account_not_frozen").explain("Account is frozen"),  # noqa: E712
             (E(_amount) <= E(_limit))
             .named("within_daily_limit")
             .explain("Amount exceeds daily limit"),

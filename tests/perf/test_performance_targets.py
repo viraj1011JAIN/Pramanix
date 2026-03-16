@@ -42,7 +42,7 @@ class PerfPolicy(Policy):
             ((E(_balance) - E(_amount)) >= Decimal("0"))
             .named("sufficient_balance")
             .explain("Insufficient balance"),
-            (E(_frozen) is False).named("account_not_frozen").explain("Frozen"),
+            (E(_frozen) == False).named("account_not_frozen").explain("Frozen"),  # noqa: E712
             (E(_amount) <= E(_limit)).named("within_daily_limit").explain("Limit"),
             (E(_risk) <= 0.8).named("acceptable_risk").explain("Risk"),
             (E(_amount) > Decimal("0")).named("positive_amount").explain("Positive"),

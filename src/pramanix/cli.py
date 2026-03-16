@@ -21,6 +21,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json as _json
 import os
 import sys
 from datetime import UTC, datetime
@@ -51,12 +52,17 @@ def main() -> int:
 def _cmd_verify_proof(args: argparse.Namespace) -> int:
     if args.stdin:
         token = sys.stdin.read().strip()
+        if not token:
+            print("Provide token via argument or stdin.", file=sys.stderr)
+            return 2
     elif args.token:
         token = args.token.strip()
     else:
+        print("Provide token via positional argument or --stdin.", file=sys.stderr)
         return 2
 
     if not token:
+        print("Provide token: empty input.", file=sys.stderr)
         return 2
 
     key = args.key or os.environ.get("PRAMANIX_SIGNING_KEY", "")
@@ -68,11 +74,12 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
 
         verifier = DecisionVerifier(signing_key=key)
         result = verifier.verify(token)
-    except ValueError:
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     if args.as_json:
-        output = {
+        output: dict[str, object] = {
             "valid": result.valid,
             "decision_id": result.decision_id,
             "allowed": result.allowed,
@@ -84,19 +91,23 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
         }
         if result.error:
             output["error"] = result.error
+        print(_json.dumps(output))
         return 0 if result.valid else 1
 
     if result.valid:
         try:
-            datetime.fromtimestamp(result.issued_at, tz=UTC).isoformat()
+            ts = datetime.fromtimestamp(result.issued_at, tz=UTC).isoformat()
         except Exception:
-            str(result.issued_at)
+            ts = str(result.issued_at)
+        status_line = f"status={result.status}"
         if result.violated_invariants:
-            pass
+            status_line += f"  violated={result.violated_invariants}"
         if result.explanation:
-            pass
+            status_line += f"  explanation={result.explanation!r}"
+        print(f"VALID  decision_id={result.decision_id}  issued_at={ts}  {status_line}")
         return 0
     else:
+        print(f"INVALID  decision_id={result.decision_id}  error={result.error or 'signature mismatch'}")
         return 1
 
 

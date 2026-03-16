@@ -45,7 +45,7 @@ class FPPolicy(Policy):
             ((E(_balance) - E(_amount)) >= Decimal("0"))
             .named("sufficient_balance")
             .explain("Insufficient balance"),
-            (E(_frozen) is False).named("account_not_frozen").explain("Account is frozen"),
+            (E(_frozen) == False).named("account_not_frozen").explain("Account is frozen"),  # noqa: E712
             (E(_amount) <= E(_limit)).named("within_daily_limit").explain("Exceeds daily limit"),
             (E(_risk) <= 0.8).named("acceptable_risk").explain("Risk too high"),
             (E(_amount) > Decimal("0")).named("positive_amount").explain("Must be positive"),
