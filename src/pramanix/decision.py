@@ -113,6 +113,22 @@ class SolverStatus(str, enum.Enum):
 
 # ── Decision ──────────────────────────────────────────────────────────────────
 
+# SolverStatus three-way taxonomy — every member must belong to exactly one:
+#
+#   1. BLOCKING      — in _BLOCKED_STATUSES; Decision.allowed=False enforced.
+#                      Signals either a policy outcome (UNSAFE, CONSENSUS_FAILURE)
+#                      or an operational/fault condition (TIMEOUT, ERROR, etc.).
+#
+#   2. SAFE          — only SolverStatus.SAFE; Decision.allowed=True enforced.
+#                      The sole path to permitting an action.
+#
+#   3. OBSERVABILITY — currently {CACHE_HIT}; decorates an existing SAFE/UNSAFE
+#                      decision for metrics/tracing purposes.  Neither blocking
+#                      nor safe on its own.
+#
+# If you add a new SolverStatus member, classify it here consciously.
+# tests/unit/test_decision.py::test_safe_is_the_only_non_blocked_non_observability_status
+# will fail until you do.
 _BLOCKED_STATUSES: frozenset[SolverStatus] = frozenset(
     {
         SolverStatus.UNSAFE,
