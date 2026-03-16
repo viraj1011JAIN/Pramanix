@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from pramanix.decision import Decision, SolverStatus
+from pramanix.decision import Decision, SolverStatus, _BLOCKED_STATUSES
 
 # ── Compatibility: FrozenInstanceError added in Python 3.11 ──────────────────
 try:
@@ -35,10 +35,7 @@ except ImportError:
 
 
 class TestSolverStatus:
-    """SolverStatus must be a str-subclass enum with nine well-defined members."""
-
-    def test_member_count(self) -> None:
-        assert len(SolverStatus) == 9
+    """SolverStatus must be a str-subclass enum with well-defined members."""
 
     @pytest.mark.parametrize(
         ("member", "expected_value"),
@@ -49,6 +46,9 @@ class TestSolverStatus:
             (SolverStatus.ERROR, "error"),
             (SolverStatus.STALE_STATE, "stale_state"),
             (SolverStatus.VALIDATION_FAILURE, "validation_failure"),
+            (SolverStatus.RATE_LIMITED, "rate_limited"),
+            (SolverStatus.CONSENSUS_FAILURE, "consensus_failure"),
+            (SolverStatus.CACHE_HIT, "cache_hit"),
         ],
     )
     def test_member_values(self, member: SolverStatus, expected_value: str) -> None:
@@ -72,20 +72,24 @@ class TestSolverStatus:
         assert SolverStatus("safe") is SolverStatus.SAFE
         assert SolverStatus("unsafe") is SolverStatus.UNSAFE
 
-    def test_all_members_accessible(self) -> None:
-        """Access by name should work for all nine members."""
-        names = {
-            "SAFE",
-            "UNSAFE",
-            "TIMEOUT",
-            "ERROR",
-            "STALE_STATE",
-            "VALIDATION_FAILURE",
-            "RATE_LIMITED",
-            "CONSENSUS_FAILURE",
-            "CACHE_HIT",
-        }
-        assert {m.name for m in SolverStatus} == names
+    def test_blocked_statuses_are_a_subset(self) -> None:
+        """Every entry in _BLOCKED_STATUSES must be a valid SolverStatus member."""
+        assert _BLOCKED_STATUSES <= frozenset(SolverStatus)
+
+    def test_safe_is_the_only_non_blocked_non_observability_status(self) -> None:
+        """Architectural invariant: SAFE is the only status that permits action.
+
+        CACHE_HIT is an observability tag attached to an existing SAFE/UNSAFE
+        decision; it is intentionally excluded from _BLOCKED_STATUSES.  Every
+        other status must block.  If a new status is added without being
+        classified, this test fails — forcing an explicit decision.
+        """
+        observability_tags = {SolverStatus.CACHE_HIT}
+        unclassified = frozenset(SolverStatus) - _BLOCKED_STATUSES - observability_tags - {SolverStatus.SAFE}
+        assert unclassified == frozenset(), (
+            f"New status members are not classified as blocked or observability-only: "
+            f"{unclassified}. Add them to _BLOCKED_STATUSES or observability_tags."
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
