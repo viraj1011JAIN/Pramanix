@@ -763,3 +763,79 @@ process, contact information, and SLA commitments.
 
 5. **No rate limiting** — Pramanix does not implement request rate limiting.
    Callers must apply their own throttling at the API gateway layer.
+
+---
+
+## Phase 11: Cryptographic Audit Trail & Key Management
+
+### Ed25519 Signing Keys
+
+Pramanix v0.8.0 introduces **Ed25519 asymmetric signing** for non-repudiation of Decisions.
+
+#### Key Generation
+
+```python
+from pramanix.crypto import PramanixSigner
+
+signer = PramanixSigner.generate()          # ephemeral — development only
+private_pem = signer.private_key_pem()      # bytes — store encrypted at rest
+public_pem  = signer.public_key_pem()       # bytes — safe to distribute
+```
+
+#### Key Storage Requirements
+
+| Environment | Recommended storage |
+|-------------|---------------------|
+| Development | Ephemeral (auto-generated, loud warning logged) |
+| Staging     | Environment variable `PRAMANIX_SIGNING_KEY_PEM` |
+| Production  | HSM / cloud KMS (AWS KMS, GCP Cloud HSM, Azure Key Vault) |
+
+**Never** store private key PEM in:
+- Source code or git history
+- Unencrypted config files
+- Application logs
+
+#### Key Rotation
+
+`key_id` is a 16-hex-character SHA-256 prefix of the public key PEM,
+logged with every signed Decision. To rotate:
+
+1. Generate a new keypair via `PramanixSigner.generate()`.
+2. Update `PRAMANIX_SIGNING_KEY_PEM` in your secret manager.
+3. Keep the old **public** key for verifying historical JSONL records.
+4. Run `pramanix audit verify <log.jsonl> --public-key <old_pub.pem>` to
+   validate records signed under the previous key before archiving.
+
+#### Verification
+
+```python
+from pramanix.crypto import PramanixVerifier
+
+verifier = PramanixVerifier(public_key_pem=public_pem)
+ok = verifier.verify_decision(decision)     # True / False — never raises
+```
+
+Or via CLI:
+
+```bash
+pramanix audit verify decisions.jsonl --public-key pub.pem
+# [VALID]         dec-id-1  (hash: abc123...)
+# [TAMPERED]      dec-id-2  (hash mismatch)
+# [INVALID_SIG]   dec-id-3  (signature invalid)
+# Exit 0 = all valid, 1 = any failure
+```
+
+### Decision Hash
+
+Every `Decision` carries a **SHA-256 content hash** over seven fields:
+`allowed`, `explanation`, `intent_dump`, `state_dump`, `status`, `violated_invariants`,
+and `policy` (derived from `decision.metadata["policy"]`, not a direct field).
+
+The `decision_id` is intentionally **excluded** — the hash is content-addressable,
+meaning the same policy applied to the same input always produces the same hash.
+This enables deduplication and cross-system correlation without secret sharing.
+
+### Compliance Reports
+
+`ComplianceReporter` (Pillar 4 — ships with Pramanix v0.8.0). Documentation will be
+added to this section once Pillar 4 is merged. See `src/pramanix/helpers/compliance.py`.

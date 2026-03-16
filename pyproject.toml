@@ -49,7 +49,8 @@ langchain-core = {version = ">=0.1", optional = true}
 llama-index-core = {version = ">=0.10", optional = true}
 pyautogen = {version = ">=0.2", optional = true}
 redis = {version = ">=5.0", optional = true}
-orjson = "^3.11.7"
+orjson = ">=3.9"
+cryptography = {version = ">=41.0", optional = true}
 
 [tool.poetry.extras]
 translator = ["httpx", "openai", "anthropic", "tenacity"]
@@ -62,7 +63,8 @@ integrations = ["fastapi", "starlette", "httpx", "langchain-core", "llama-index-
 identity = ["redis"]
 audit = []
 circuit-breaker = []
-all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis"]
+crypto = ["cryptography"]
+all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -112,6 +114,8 @@ module = [
     "pramanix.identity.*",
     "pramanix.circuit_breaker",
     "pramanix.cli",
+    "pramanix.crypto",
+    "pramanix.helpers.compliance",
 ]
 ignore_missing_imports = true
 
@@ -218,6 +222,11 @@ source = ["src/pramanix"]
 branch = true
 omit = [
     "src/pramanix/translator/openai_compat.py",
+    # Optional-extra integration modules — require packages not installed in the
+    # base dev environment (langchain, fastapi, autogen, llama-index, pyautogen).
+    # Covered by integration tests when extras are installed; excluded from the
+    # base coverage gate to avoid false failures in CI without the extras.
+    "src/pramanix/integrations/*.py",
 ]
 
 [tool.coverage.report]
