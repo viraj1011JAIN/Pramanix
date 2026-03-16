@@ -925,9 +925,13 @@ class Guard:
 
             return await self.verify_async(intent=intent_dict, state=state)
 
+        except ExtractionMismatchError as exc:
+            # Deliberate, expected outcome: the two LLMs disagreed on intent.
+            # Use consensus_failure(), not error() — these are operationally
+            # distinct signals (adversarial/ambiguous input vs. internal fault).
+            return Decision.consensus_failure(reason=str(exc))
         except (
             ExtractionFailureError,
-            ExtractionMismatchError,
             LLMTimeoutError,
             InjectionBlockedError,
             SemanticPolicyViolation,

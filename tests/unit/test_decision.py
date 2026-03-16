@@ -35,10 +35,10 @@ except ImportError:
 
 
 class TestSolverStatus:
-    """SolverStatus must be a str-subclass enum with eight well-defined members."""
+    """SolverStatus must be a str-subclass enum with nine well-defined members."""
 
     def test_member_count(self) -> None:
-        assert len(SolverStatus) == 8
+        assert len(SolverStatus) == 9
 
     @pytest.mark.parametrize(
         ("member", "expected_value"),
@@ -73,7 +73,7 @@ class TestSolverStatus:
         assert SolverStatus("unsafe") is SolverStatus.UNSAFE
 
     def test_all_members_accessible(self) -> None:
-        """Access by name should work for all eight members."""
+        """Access by name should work for all nine members."""
         names = {
             "SAFE",
             "UNSAFE",
@@ -82,6 +82,7 @@ class TestSolverStatus:
             "STALE_STATE",
             "VALIDATION_FAILURE",
             "RATE_LIMITED",
+            "CONSENSUS_FAILURE",
             "CACHE_HIT",
         }
         assert {m.name for m in SolverStatus} == names

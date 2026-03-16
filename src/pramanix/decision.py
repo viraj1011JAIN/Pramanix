@@ -104,6 +104,9 @@ class SolverStatus(str, enum.Enum):
     RATE_LIMITED = "rate_limited"
     """Request shed by adaptive load limiter (fail-safe: always blocks)."""
 
+    CONSENSUS_FAILURE = "consensus_failure"
+    """Dual-LLM models disagreed on intent extraction — action blocked (expected outcome)."""
+
     CACHE_HIT = "cache_hit"
     """Observability tag: intent extracted from LRU/Redis cache; Z3 still ran."""
 
@@ -118,6 +121,7 @@ _BLOCKED_STATUSES: frozenset[SolverStatus] = frozenset(
         SolverStatus.STALE_STATE,
         SolverStatus.VALIDATION_FAILURE,
         SolverStatus.RATE_LIMITED,
+        SolverStatus.CONSENSUS_FAILURE,
     }
 )
 
@@ -360,6 +364,37 @@ class Decision:
         return cls(
             allowed=False,
             status=SolverStatus.RATE_LIMITED,
+            explanation=reason,
+            metadata=dict(metadata) if metadata is not None else {},
+        )
+
+    # ── Factory: CONSENSUS_FAILURE ────────────────────────────────────────────
+
+    @classmethod
+    def consensus_failure(
+        cls,
+        *,
+        reason: str = "Dual-LLM models disagreed on intent extraction — action blocked.",
+        metadata: dict[str, Any] | None = None,
+    ) -> Decision:
+        """Construct a *blocked* decision for a dual-LLM consensus disagreement.
+
+        Unlike :meth:`error`, this is a deliberate, expected policy outcome —
+        not an internal fault.  The two LLMs returned different structured
+        intents; without agreement, the action cannot proceed.
+
+        Operationally: a spike in ``CONSENSUS_FAILURE`` decisions signals
+        ambiguous or adversarially crafted user inputs, not a system fault.
+        A spike in ``ERROR`` decisions signals an internal failure.  Never
+        conflate them in dashboards or alerts.
+
+        Args:
+            reason:   Human-readable explanation (safe to log).
+            metadata: Optional caller-supplied tracing data.
+        """
+        return cls(
+            allowed=False,
+            status=SolverStatus.CONSENSUS_FAILURE,
             explanation=reason,
             metadata=dict(metadata) if metadata is not None else {},
         )
