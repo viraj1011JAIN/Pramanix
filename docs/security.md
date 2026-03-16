@@ -837,5 +837,24 @@ This enables deduplication and cross-system correlation without secret sharing.
 
 ### Compliance Reports
 
-`ComplianceReporter` (Pillar 4 — ships with Pramanix v0.8.0). Documentation will be
-added to this section once Pillar 4 is merged. See `src/pramanix/helpers/compliance.py`.
+```python
+from pramanix.helpers.compliance import ComplianceReporter
+
+reporter = ComplianceReporter()
+report = reporter.generate(decision)
+print(report.to_json())         # audit-ready JSON
+pdf_bytes = report.to_pdf()     # UTF-8 structured text (real PDF: Phase 12)
+```
+
+`generate()` accepts an optional `policy_meta={"name": "...", "version": "..."}` dict;
+falls back to `decision.metadata` when omitted.
+
+Severity levels (set on `report.severity`):
+- `CRITICAL_PREVENTION` — amount ≥ 100,000 units, or sanctions/PHI/anti-structuring rule
+- `HIGH` — regulated domain violation (banking, healthcare, trading)
+- `MEDIUM` — infrastructure/SRE violation (blast radius, circuit breaker)
+
+Register custom rule citations:
+```python
+reporter.register_rule("my_rule", ["Company Policy §7.3.2"])
+```

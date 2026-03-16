@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Audit CLI subcommand** (`pramanix audit verify`) — verifies JSONL audit logs line by line.
   Status labels: `[VALID]`, `[TAMPERED]`, `[INVALID_SIG]`, `[MISSING_SIG]`, `[ERROR]`.
   Exit codes: 0 = all valid, 1 = any failure, 2 = usage error. Supports `--json`, `--fail-fast`.
+- **`ComplianceReporter` / `ComplianceReport`** (`src/pramanix/helpers/compliance.py`) —
+  maps Z3 unsat-core labels to structured compliance reports with 30+ regulatory citations
+  (BSA/AML, OFAC/SDN, IRC §1091, HIPAA, Basel III, SOX, SRE SLAs). Severity classification:
+  `CRITICAL_PREVENTION` / `HIGH` / `MEDIUM`. `to_json()` produces audit-ready JSON;
+  `to_pdf()` returns UTF-8 structured text (real PDF output planned for Phase 12).
 
 ### Changed
 

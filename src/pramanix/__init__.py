@@ -13,6 +13,7 @@ __version__ = "0.8.0"
 
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor
 from pramanix.crypto import PramanixSigner, PramanixVerifier
+from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
@@ -95,4 +96,7 @@ __all__ = [
     # Phase 11 — Pillar 2: Ed25519 cryptographic signing
     "PramanixSigner",
     "PramanixVerifier",
+    # Phase 11 — Pillar 4: Compliance reporter
+    "ComplianceReporter",
+    "ComplianceReport",
 ]
