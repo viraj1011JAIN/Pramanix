@@ -57,6 +57,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Upgrade pip first — pip 25.3 has CVE-2026-1703 (fixed in 26.0).
+      # This must run before pip-audit so the scanner sees a clean pip.
+      - name: Upgrade pip
+        run: pip install --upgrade pip
+
       # Install audit tools in isolation to avoid dependency conflicts.
       # semgrep is NOT installed via pip — it uses the official action below.
       - name: Install pip-audit
