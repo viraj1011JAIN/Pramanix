@@ -7,6 +7,7 @@
 [![Version](https://img.shields.io/badge/version-0.7.0-orange.svg)](src/pramanix/__init__.py)
 [![Tests](https://img.shields.io/badge/tests-1601%20passed-brightgreen.svg)](#test-results)
 [![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen.svg)](#test-results)
+[![RSS](https://img.shields.io/badge/RSS-13--46%20MB-brightgreen.svg)](#memory-stability--measured-over-2-hours-continuous-operation)
 [![SLSA Level 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
 
 ---
@@ -81,17 +82,11 @@ Pramanix Pipeline:
 
 ## Why Pramanix Exists
 
-### The Stakes Are High
+- **AI agents execute real actions** — bank transfers, database writes, cloud deploys, permission changes. A hallucination isn't just wrong text; it's a wire transfer.
+- **LLM judges hallucinate** — asking a model "is this safe?" gives you a probabilistic guess from something that can be jailbroken. Regex rules are bypassed with rephrasing.
+- **You need mathematical proof, not probability** — the Z3 solver does not guess. It either proves all invariants hold or produces a concrete counterexample. No PhD required.
 
-When an AI agent makes a mistake in a financial system, the damage can be permanent. When an AI agent misconfigures cloud infrastructure, it can cause a major outage. When an AI agent sends an unauthorized message, there can be legal and compliance consequences.
-
-### Formal Verification Is the Answer
-
-Pramanix applies **formal verification** — the same technique used to verify aerospace software, cryptographic protocols, and CPU designs — to AI agent safety. The Z3 solver does not guess. It does not approximate. It either **proves** that all invariants hold, or it finds a **concrete counterexample** showing exactly how they are violated.
-
-### Why Python?
-
-Safety guarantees should be accessible to the engineers building AI systems, not just researchers. Pramanix exposes a clean Python DSL that any developer can use to express safety rules in plain, readable code — no PhD required.
+Pramanix applies the same formal verification technique used for aerospace software, cryptographic protocols, and CPU designs — exposed as a clean Python DSL any engineer can read and write.
 
 ---
 
@@ -977,6 +972,17 @@ await guard.shutdown()
 ---
 
 ## Test Results & Coverage
+
+```
+┌─────────────────────────────────────────────────┐
+│              Production Benchmarks              │
+│  RSS:      13–46 MB steady-state (1M decisions) │
+│  P99:       6.40 ms  (Windows 11 / Python 3.11) │
+│  P95:       6.01 ms                             │
+│  P50:       5.38 ms                             │
+│  Tests:    1601 passed · 98% coverage           │
+└─────────────────────────────────────────────────┘
+```
 
 ### Full Test Suite Results
 
