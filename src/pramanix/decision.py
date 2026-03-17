@@ -70,23 +70,33 @@ def _make_json_safe(d: dict) -> dict:
 
     Decimal → str (exact representation, no float drift)
     datetime → ISO 8601 UTC string
+    dict     → recursively converted (deterministic key ordering)
+    list/tuple → each element converted via _json_safe_value()
     All other types → str fallback
     """
     result = {}
     for k, v in sorted(d.items()):  # Sorted for determinism
-        if isinstance(v, Decimal):
-            result[str(k)] = str(v)
-        elif isinstance(v, bool):
-            result[str(k)] = v
-        elif isinstance(v, (int, float)):
-            result[str(k)] = v
-        elif isinstance(v, str):
-            result[str(k)] = v
-        elif hasattr(v, "isoformat"):  # datetime
-            result[str(k)] = v.isoformat()
-        else:
-            result[str(k)] = str(v)
+        result[str(k)] = _json_safe_value(v)
     return result
+
+
+def _json_safe_value(v: Any) -> Any:
+    """Convert a single value to a JSON-safe type (recursive helper)."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, Decimal):
+        return str(v)
+    if isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        return _make_json_safe(v)
+    if isinstance(v, (list, tuple)):
+        return [_json_safe_value(i) for i in v]
+    if hasattr(v, "isoformat"):  # datetime
+        return v.isoformat()
+    return str(v)
 
 # ---------------------------------------------------------------------------
 # Compatibility shim: FrozenInstanceError was added in Python 3.11.
@@ -245,6 +255,8 @@ class Decision:
             "intent_dump": _make_json_safe(self.intent_dump),
             "state_dump": _make_json_safe(self.state_dump),
             "decision_hash": self.decision_hash,
+            "signature": self.signature,
+            "public_key_id": self.public_key_id,
         }
 
     # ── Factory: SAFE ─────────────────────────────────────────────────────────

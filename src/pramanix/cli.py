@@ -362,7 +362,9 @@ def _recompute_hash(record: dict) -> str:
         canonical = {
             "allowed": bool(record.get("allowed", False)),
             "explanation": str(record.get("explanation", "")),
+            "intent_dump": _make_json_safe(record.get("intent_dump", {})),
             "policy": str(record.get("policy", "")),
+            "state_dump": _make_json_safe(record.get("state_dump", {})),
             "status": str(record.get("status", "")),
             "violated_invariants": sorted(
                 str(v) for v in record.get("violated_invariants", [])

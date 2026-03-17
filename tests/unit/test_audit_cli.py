@@ -309,3 +309,34 @@ class TestAuditCLIEdgeCases:
         assert parsed["tampered"] == 1
         assert parsed["all_valid"] is False
         assert code == 1
+
+    def test_fail_fast_stops_after_first_failure(self, tmp_path):
+        """--fail-fast must stop at the first failure, not process remaining records."""
+        signer = PramanixSigner.generate()
+
+        # 10 records: first is tampered, rest are valid
+        d_tampered = Decision.safe(
+            intent_dump={"amount": "100"},
+            state_dump={"state_version": "v1"},
+        )
+        tampered_record = _make_audit_record(d_tampered, signer)
+        tampered_record["intent_dump"]["amount"] = "TAMPERED"  # break hash
+
+        valid_records = []
+        for i in range(9):
+            d = Decision.safe(
+                intent_dump={"amount": str(i + 200)},
+                state_dump={"state_version": "v1"},
+            )
+            valid_records.append(_make_audit_record(d, signer))
+
+        log_path = tmp_path / "audit.jsonl"
+        key_path = tmp_path / "key.pem"
+        _write_jsonl([tampered_record] + valid_records, log_path)
+        _write_public_key(signer, key_path)
+
+        code, output = _run_audit_cli(log_path, key_path, ["--fail-fast"])
+        assert code == 1
+        assert "[TAMPERED]" in output
+        # With fail-fast, only 1 line processed — none of the 9 valid records should appear
+        assert output.count("[VALID]") == 0

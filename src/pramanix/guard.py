@@ -843,9 +843,16 @@ class Guard:
             # asyncio.to_thread() offloads the blocking submit_solve call.
             # We are NOT nesting asyncio.to_thread() inside another — this is
             # the first and only thread dispatch.
-            return await asyncio.to_thread(
+            decision = await asyncio.to_thread(
                 pool.submit_solve, self._policy, values, self._config.solver_timeout_ms
             )
+            if self._config.signer is not None:
+                decision = dataclasses.replace(
+                    decision,
+                    signature=self._config.signer.sign(decision),
+                    public_key_id=self._config.signer.key_id(),
+                )
+            return decision
 
         if mode == "async-process":
             from pramanix.worker import (
@@ -868,7 +875,7 @@ class Guard:
                     _RESULT_SEAL_KEY.bytes,
                 )
                 result_dict_p: dict[str, Any] = _unseal_decision(sealed)
-                return pool._dict_to_decision(result_dict_p)
+                decision = pool._dict_to_decision(result_dict_p)
             except (ValueError, KeyError):
                 return Decision.error(
                     reason="Worker result integrity check failed — HMAC mismatch."
@@ -877,6 +884,13 @@ class Guard:
                 return Decision.error(reason=str(exc))
             except Exception as exc:
                 return Decision.error(reason=f"Process worker error ({type(exc).__name__}): {exc}")
+            if self._config.signer is not None:
+                decision = dataclasses.replace(
+                    decision,
+                    signature=self._config.signer.sign(decision),
+                    public_key_id=self._config.signer.key_id(),
+                )
+            return decision
 
         return Decision.error(reason=f"Unknown execution_mode: {mode!r}")
 

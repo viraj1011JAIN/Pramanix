@@ -444,6 +444,8 @@ _EXPECTED_KEYS = frozenset(
         "intent_dump",
         "state_dump",
         "decision_hash",
+        "signature",
+        "public_key_id",
     }
 )
 
