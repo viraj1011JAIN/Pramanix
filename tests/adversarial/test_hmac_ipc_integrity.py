@@ -284,3 +284,29 @@ class TestEphemeralKey:
         """The module-level _RESULT_SEAL_KEY's repr is always redacted."""
         assert "redacted" in repr(_RESULT_SEAL_KEY).lower()
         assert _RESULT_SEAL_KEY.bytes  # bytes accessible for HMAC ops
+
+
+# ── None-key failure mode ─────────────────────────────────────────────────────
+
+
+class TestNullKeySealFailure:
+    """_worker_solve_sealed called with key=None must raise, not silently accept.
+
+    The seal_key parameter is typed as ``bytes`` and required.  Passing None
+    means no HMAC protection whatsoever — this must be an explicit failure,
+    not a silent degradation to an unsigned envelope.
+
+    This test documents the expected failure mode so future callers know that
+    None is never a valid sentinel for "no signing" — they must either provide
+    a real key or not call the sealed variant at all.
+    """
+
+    def test_none_key_raises_type_error(self) -> None:
+        """_worker_solve_sealed(key=None) → TypeError — None is not a valid HMAC key."""
+        with pytest.raises(TypeError):
+            _worker_solve_sealed(
+                _SealTestPolicy,
+                _SAFE_VALUES,
+                _TIMEOUT_MS,
+                None,  # type: ignore[arg-type]
+            )

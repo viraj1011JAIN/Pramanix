@@ -15,6 +15,7 @@ library and for standalone test runners.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -175,7 +176,7 @@ def injection_confidence_score(
     extracted_intent: str,
     warnings: list[str],
     currency: str = "USD",
-    penny_thresholds: "dict[str, Decimal] | None" = None,
+    penny_thresholds: dict[str, Decimal] | None = None,
 ) -> float:
     """Return a [0.0, 1.0] injection confidence score.
 
@@ -301,10 +302,8 @@ def _normalise_for_comparison(intent: dict) -> str:
     for k in sorted(intent.keys()):
         v = intent[k]
         if k == "amount":
-            try:
+            with contextlib.suppress(InvalidOperation, ValueError):
                 v = str(Decimal(str(v)).normalize())
-            except (InvalidOperation, ValueError):
-                pass   # leave raw value — scorer will catch it later
         normalised[k] = v
     return json.dumps(normalised, sort_keys=True, separators=(",", ":"))
 

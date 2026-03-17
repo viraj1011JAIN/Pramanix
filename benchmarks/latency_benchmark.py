@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from pramanix import E, Field, Guard, GuardConfig, Policy
 
-
 _amount  = Field("amount",    Decimal, "Real")
 _balance = Field("balance",   Decimal, "Real")
 _frozen  = Field("is_frozen", bool,    "Bool")
@@ -50,7 +49,7 @@ class BenchmarkPolicy(Policy):
         return [
             ((E(_balance) - E(_amount)) >= Decimal("0"))
                 .named("sufficient_balance").explain("Insufficient balance"),
-            (E(_frozen) == False)
+            (E(_frozen) == False)  # noqa: E712
                 .named("account_not_frozen").explain("Account frozen"),
             (E(_amount) <= E(_limit))
                 .named("within_daily_limit").explain("Exceeds daily limit"),
@@ -79,7 +78,7 @@ def run_benchmark(n: int = 1000) -> dict:
     latencies_ms = []
     for _ in range(n):
         t0 = time.perf_counter()
-        d = guard.verify(intent=intent, state=state)
+        guard.verify(intent=intent, state=state)
         elapsed_ms = (time.perf_counter() - t0) * 1000
         latencies_ms.append(elapsed_ms)
 

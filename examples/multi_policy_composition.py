@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pramanix import E, Field, Guard, GuardConfig, Policy
+from pramanix import Field, Guard, GuardConfig, Policy
 from pramanix.primitives.finance import NonNegativeBalance, UnderDailyLimit
 from pramanix.primitives.rbac import RoleMustBeIn
 

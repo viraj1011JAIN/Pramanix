@@ -37,13 +37,17 @@ Usage
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = [
     "INJECTION_SPIKE_THRESHOLD",
@@ -115,7 +119,7 @@ class _RedFlagCounter:
         self._events.record()
         self._attempts.record()
 
-    def snapshot(self) -> "RedFlagMetric":
+    def snapshot(self) -> RedFlagMetric:
         events   = self._events.window_count
         attempts = self._attempts.window_count
         rate     = events / attempts if attempts > 0 else 0.0
@@ -257,10 +261,8 @@ class PramaniXTelemetry:
         with self._lock:
             listeners = list(self._listeners)
         for fn in listeners:
-            try:
+            with contextlib.suppress(Exception):
                 fn(event_type, payload)
-            except Exception:
-                pass  # telemetry must never affect the hot path
 
 
 def _metric_to_dict(m: RedFlagMetric) -> dict[str, Any]:

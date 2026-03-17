@@ -15,7 +15,7 @@ Run::
 """
 from __future__ import annotations
 
-from pramanix import E, Field, Guard, GuardConfig, Policy
+from pramanix import Field, Guard, GuardConfig, Policy
 from pramanix.primitives.rbac import ConsentRequired, RoleMustBeIn
 
 # Role encoding:  1=doctor, 2=nurse, 3=admin, 99=external

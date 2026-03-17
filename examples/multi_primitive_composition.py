@@ -29,7 +29,7 @@ The payment must simultaneously satisfy:
     ⑧ BlastRadiusCheck         — batch job doesn't affect too many accounts
 
 This 8-primitive composite policy is evaluated in a single Z3 solve() call
-taking ~ 1–3 ms — faster than a single LLM token.
+taking ~ 1-3 ms — faster than a single LLM token.
 
 Run::
 
@@ -263,7 +263,7 @@ def scenario_five_simultaneous_failures() -> Decision:
 if __name__ == "__main__":
     print("=" * 70)
     print("PRAMANIX — Cross-Domain 8-Primitive Composite Policy")
-    print("FinTech × HIPAA × SRE — Single Z3 SMT solve() call")
+    print("FinTech x HIPAA x SRE — Single Z3 SMT solve() call")
     print("=" * 70)
 
     _print("ALL 8 PASS (payment approved)", scenario_all_8_pass())

@@ -209,6 +209,59 @@ class TestStage2StateValidation:
         assert decision.status is SolverStatus.VALIDATION_FAILURE
 
 
+# ── Stage 3: Serialization failure (safe_dump / model_dump) ──────────────────
+
+
+class TestStage3SerializationFailure:
+    """Inject failures at the model_dump() / safe_dump() serialization stage.
+
+    This stage runs *after* Pydantic validation succeeds but *before* values
+    reach the Z3 solver.  A RuntimeError here (e.g. circular reference,
+    custom __get__ raising, or safe_dump internal error) must still produce
+    Decision(allowed=False) — never a raw exception to the caller.
+
+    The patch target is ``pramanix.guard.safe_dump`` — the function called by
+    _verify_core() to convert a validated Pydantic model to a plain dict.
+    """
+
+    def test_safe_dump_raises_on_intent_returns_error(self) -> None:
+        """RuntimeError in safe_dump() during intent serialization → ERROR (fail-safe)."""
+        guard = _make_guard()
+        with patch(
+            "pramanix.guard.safe_dump",
+            side_effect=RuntimeError("model_dump() failed — circular reference"),
+        ):
+            # Pass Pydantic model objects so safe_dump() is actually invoked.
+            intent_model = _TestIntent(amount=Decimal("100.00"))
+            state_model = _TestState(balance=Decimal("1000.00"), state_version="1.0")
+            decision = guard.verify(intent=intent_model, state=state_model)
+        _assert_fail_safe(decision, "safe_dump RuntimeError on intent model")
+        assert decision.status is SolverStatus.ERROR
+
+    def test_safe_dump_raises_on_state_returns_error(self) -> None:
+        """RuntimeError in safe_dump() on the second call (state model) → ERROR (fail-safe).
+
+        Patches safe_dump to succeed on the first call (intent) and raise on
+        the second call (state), isolating the state-serialization path.
+        """
+        guard = _make_guard()
+        _call_count = {"n": 0}
+
+        def _side_effect(obj):
+            _call_count["n"] += 1
+            if _call_count["n"] == 2:
+                raise RuntimeError("model_dump() failed on state — unexpected attribute")
+            from pramanix.helpers.serialization import safe_dump as _real
+            return _real(obj)
+
+        with patch("pramanix.guard.safe_dump", side_effect=_side_effect):
+            intent_model = _TestIntent(amount=Decimal("100.00"))
+            state_model = _TestState(balance=Decimal("1000.00"), state_version="1.0")
+            decision = guard.verify(intent=intent_model, state=state_model)
+        _assert_fail_safe(decision, "safe_dump RuntimeError on state model")
+        assert decision.status is SolverStatus.ERROR
+
+
 # ── Stage 4: Version check / conflicting keys ─────────────────────────────────
 
 

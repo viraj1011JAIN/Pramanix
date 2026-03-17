@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
-# transpiler_spike.py lives in the repo root, not inside src/
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# transpiler_spike.py lives in spikes/, not inside src/
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "spikes"))
 
 import z3  # noqa: E402
 from transpiler_spike import (  # noqa: E402

@@ -72,6 +72,31 @@ class TestInjectionScorerFlagsIDs:
             score >= 0.3
         ), f"Expected injection-score ≥ 0.3 for path-injection recipient_id, got {score:.2f}"
 
+    def test_K_uuid_format_recipient_id_scorer_below_threshold(self) -> None:
+        """UUID-format fabricated IDs do NOT trigger the recipient_id heuristic.
+
+        The non-alnum signal checks for chars outside [a-zA-Z0-9_-].
+        Hyphens are explicitly allowed — a standard UUID contains only hex
+        digits and hyphens, so it scores 0 from that signal alone.
+
+        Primary defence against UUID fabrication: consensus disagreement
+        (test_models_disagree_on_recipient_raises_mismatch in
+        TestConsensusRejectsAmbiguousID).  The scorer alone is not the gate.
+
+        This test documents the scorer's behaviour explicitly so it is not
+        mistaken for a gap: the design is intentional.
+        """
+        uuid_recipient = "550e8400-e29b-41d4-a716-446655440000"
+        extracted = {"amount": Decimal("50"), "recipient_id": uuid_recipient}
+        user_input = "send 50 to my account"
+        score = injection_confidence_score(user_input, extracted, [])
+        # UUID contains only [a-fA-F0-9-] — hyphens are whitelisted in the
+        # recipient_id pattern, so the +0.3 non-alnum signal is NOT triggered.
+        assert score < 0.5, (
+            f"UUID recipient_id scored {score:.2f} ≥ 0.5 — unexpected.  "
+            "If this fires, verify the scorer's allowed-char set has not changed."
+        )
+
     @pytest.mark.asyncio
     async def test_K_injection_pattern_in_prompt_blocks_pipeline(self) -> None:
         """Classic override phrase in user input → sanitiser detects injection

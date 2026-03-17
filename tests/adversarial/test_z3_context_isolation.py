@@ -33,9 +33,12 @@ Test design follows the CTO's "sledgehammer" brief:
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
+
+import pytest
 
 from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.decision import SolverStatus
@@ -253,3 +256,78 @@ class TestZ3ContextIsolation:
             f"  Run 2: {all_outcomes[2]}\n"
             "This indicates a data race in the Z3 context layer."
         )
+
+
+# ── async-thread mode isolation ────────────────────────────────────────────────
+
+_ASYNC_GUARD = Guard(_BankingPolicy, GuardConfig(execution_mode="async-thread"))
+
+
+class TestZ3ContextIsolationAsyncThread:
+    """Same T4 isolation proof for execution_mode="async-thread".
+
+    In async-thread mode Guard dispatches each solve() call via
+    asyncio.to_thread(pool.submit_solve, ...) into a ThreadPoolExecutor.
+    The underlying solver still creates a private z3.Context() per call,
+    but the dispatch path is different from the sync mode tested above.
+    asyncio.gather() is used here to maximise concurrent dispatch — all
+    10 verify_async() coroutines are scheduled simultaneously before any
+    one completes, reproducing the barrier effect of threading.Barrier.
+    """
+
+    @pytest.mark.asyncio
+    async def test_all_async_thread_decisions_are_correct(self) -> None:
+        """10 concurrent verify_async() calls in async-thread mode must each
+        return the decision for their own inputs — no cross-contamination."""
+        async def _run_one(
+            balance: Decimal, amount: Decimal, expected: bool
+        ) -> dict[str, Any]:
+            decision = await _ASYNC_GUARD.verify_async(
+                intent={"amount": amount},
+                state={"balance": balance, "state_version": "1.0"},
+            )
+            return {
+                "allowed": decision.allowed,
+                "status": decision.status,
+                "balance": balance,
+                "amount": amount,
+                "expected": expected,
+            }
+
+        tasks = [
+            _run_one(bal, amt, exp)
+            for _, bal, amt, exp in _SCENARIOS
+        ]
+        results = await asyncio.gather(*tasks)
+
+        failures = []
+        for r in results:
+            if r["allowed"] != r["expected"]:
+                failures.append(
+                    f"balance={r['balance']} amount={r['amount']}: "
+                    f"expected allowed={r['expected']}, got {r['allowed']} "
+                    f"(status={r['status']}). "
+                    "Possible Z3 context contamination via async-thread pool."
+                )
+        assert not failures, "\n".join(failures)
+
+    @pytest.mark.asyncio
+    async def test_unsafe_async_thread_decisions_never_return_safe(self) -> None:
+        """T4 worst-case for async-thread: UNSAFE scenario must never return SAFE."""
+        async def _run_one(balance: Decimal, amount: Decimal) -> dict[str, Any]:
+            decision = await _ASYNC_GUARD.verify_async(
+                intent={"amount": amount},
+                state={"balance": balance, "state_version": "1.0"},
+            )
+            return {"allowed": decision.allowed, "balance": balance, "amount": amount}
+
+        unsafe_scenarios = [(bal, amt) for _, bal, amt, exp in _SCENARIOS if not exp]
+        results = await asyncio.gather(*[_run_one(b, a) for b, a in unsafe_scenarios])
+
+        for r in results:
+            assert r["allowed"] is False, (
+                f"UNSAFE async-thread scenario (balance={r['balance']}, "
+                f"amount={r['amount']}) returned allowed=True. "
+                "This is the T4 exploit — a SAFE thread's context bled into "
+                "an UNSAFE thread via the async-thread pool."
+            )

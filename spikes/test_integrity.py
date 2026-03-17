@@ -118,7 +118,7 @@ if __name__ == "__main__":
     check("Normal transaction \u2192 passes",      sem_check({"amount": "100.00"}))
 
     # -----------------------------------------------------------------------
-    # Layers 3–5 — Z3 policy + subprocess isolation + HMAC seal
+    # Layers 3-5 — Z3 policy + subprocess isolation + HMAC seal
     # -----------------------------------------------------------------------
 
     print("\nLayers 3\u20135 \u2014 Z3 policy + subprocess isolation")

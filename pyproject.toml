@@ -198,7 +198,21 @@ ignore = [
 "tests/integration/test_fastapi_middleware.py" = ["T20"]
 "tests/integration/test_langchain_tool.py" = ["T20"]
 "tests/integration/test_integration_matrix.py" = ["T20"]
-"examples/*.py" = ["T20", "TCH"]
+"examples/*.py" = ["T20", "TCH", "E402"]
+# Benchmark and spike scripts use print() for output and have sys.path setup
+# before imports — both T20 and E402 are intentional patterns here.
+"benchmarks/*.py" = ["T20", "E402"]
+"spikes/*.py" = ["T20", "E402"]
+# Top-level script files: print() is their intended output mechanism.
+# SemanticPolicyViolation in pramanix_hardened.py mirrors the API-stable name
+# in src/pramanix/exceptions.py — N818 suppressed for same reason.
+"pramanix_hardened.py" = ["T20", "E402", "N818"]
+"pramanix_llm_hardened.py" = ["T20", "E402"]
+"pramanix_telemetry.py" = ["T20", "E402"]
+"test_integrity.py" = ["T20", "E402"]
+"test_llm_hardening.py" = ["T20", "E402"]
+"radar_test.py" = ["T20", "E402"]
+"_fix_solve.py" = ["T20", "E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pramanix"]

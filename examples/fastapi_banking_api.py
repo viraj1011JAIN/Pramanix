@@ -32,7 +32,6 @@ from pydantic import BaseModel
 from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.integrations.fastapi import PramanixMiddleware, pramanix_route
 
-
 # ── Policy ────────────────────────────────────────────────────────────────────
 
 _amount  = Field("amount",      Decimal, "Real")

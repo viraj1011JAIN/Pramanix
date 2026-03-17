@@ -159,7 +159,16 @@ class TestCombinedBoundaryAndExtraFields:
 
     @pytest.mark.asyncio
     async def test_X_extra_injected_field_is_silently_ignored(self) -> None:
-        """LLM injects an unexpected field ('evil': true) — Pydantic ignores it."""
+        """LLM injects an unexpected field ('evil': true) — Pydantic ignores it.
+
+        Note — SQL/command injection in recipient string:
+        A recipient value like "alice'; DROP TABLE accounts; --" is 44 chars,
+        well within max_length=64, and Pydantic accepts any string that meets
+        the length constraints.  Pramanix is not a SQL sanitiser — downstream
+        callers are responsible for parameterised queries.  This is the correct
+        separation of concerns: Pramanix enforces policy invariants; the host
+        enforces data-layer safety.
+        """
         a, b = _pair_extra("50", "alice", evil=True, admin_override="yes")
         result = await extract_with_consensus("send 50 to alice", TransferIntent, (a, b))
         # Only the declared fields should be present

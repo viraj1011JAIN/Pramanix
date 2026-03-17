@@ -24,8 +24,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.integrations.langchain import PramanixGuardedTool, wrap_tools
-
+from pramanix.integrations.langchain import PramanixGuardedTool
 
 # ── Transfer policy ──────────────────────────────────────────────────────────
 

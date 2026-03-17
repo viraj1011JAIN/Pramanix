@@ -218,6 +218,12 @@ class TestDualModelConsensus:
 
         The attack: very long text causes LLM to pick different parts of the
         text as the amount.  Consensus rejects the ambiguity.
+
+        NOTE — unit test limitation: the two models here are manually coded to
+        return different values, not driven by actual long-input behaviour.
+        Real resource-exhaustion testing (where an actual LLM misreads a noisy
+        prompt) requires an integration test against a live model endpoint.
+        This unit test verifies the consensus-rejection path only.
         """
         from pramanix.exceptions import ExtractionMismatchError
 

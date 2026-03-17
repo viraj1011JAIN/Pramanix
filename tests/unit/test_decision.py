@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from pramanix.decision import Decision, SolverStatus, _BLOCKED_STATUSES
+from pramanix.decision import _BLOCKED_STATUSES, Decision, SolverStatus
 
 # ── Compatibility: FrozenInstanceError added in Python 3.11 ──────────────────
 try:
@@ -74,7 +74,7 @@ class TestSolverStatus:
 
     def test_blocked_statuses_are_a_subset(self) -> None:
         """Every entry in _BLOCKED_STATUSES must be a valid SolverStatus member."""
-        assert _BLOCKED_STATUSES <= frozenset(SolverStatus)
+        assert frozenset(SolverStatus) >= _BLOCKED_STATUSES
 
     def test_safe_is_the_only_non_blocked_non_observability_status(self) -> None:
         """Architectural invariant: SAFE is the only status that permits action.

@@ -15,9 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-import z3
-from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.transpiler import compile_policy, collect_fields, transpile, InvariantMeta
+from pramanix import E, Field, Policy
+from pramanix.transpiler import collect_fields, compile_policy
 
 # ── Minimal banking policy ─────────────────────────────────────────────────────
 
@@ -45,7 +44,7 @@ class BankingPolicy(Policy):
             ((E(_balance) - E(_amount)) >= Decimal("0"))
                 .named("sufficient_balance")
                 .explain("Balance insufficient"),
-            (E(_frozen) == False)
+            (E(_frozen) == False)  # noqa: E712
                 .named("account_not_frozen")
                 .explain("Account is frozen"),
             (E(_amount) <= E(_limit))
@@ -73,7 +72,7 @@ for m in meta_list:
 
 def check_equivalence():
     """Verify compiled metadata matches full tree-walk for each invariant."""
-    for i, (inv, meta) in enumerate(zip(invariants, meta_list)):
+    for _i, (inv, meta) in enumerate(zip(invariants, meta_list, strict=False)):
         # Check label matches
         if inv.label != meta.label:
             return False, f"Label mismatch: {inv.label} != {meta.label}"

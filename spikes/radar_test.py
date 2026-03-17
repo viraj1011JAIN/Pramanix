@@ -19,9 +19,16 @@ All assertions are fail-fast; any Red Flag missed exits with code 1.
 """
 from __future__ import annotations
 
-import json
 import io
-import sys
+import json
+
+from pramanix_hardened import (
+    HumanApprovalUnavailable,
+    SemanticPolicyViolation,
+    evaluate_transaction,
+    semantic_post_consensus_check,
+)
+from pramanix_llm_hardened import injection_confidence_score, sanitise_user_input
 
 # ── Telemetry singleton must be imported FIRST so the listener is registered
 # before any pipeline call fires events through it.
@@ -30,13 +37,6 @@ from pramanix_telemetry import (
     StructuredLogEmitter,
     emit_snapshot,
     get_telemetry,
-)
-from pramanix_llm_hardened import injection_confidence_score, sanitise_user_input
-from pramanix_hardened import (
-    HumanApprovalUnavailable,
-    SemanticPolicyViolation,
-    evaluate_transaction,
-    semantic_post_consensus_check,
 )
 
 # ---------------------------------------------------------------------------

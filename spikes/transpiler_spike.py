@@ -303,4 +303,4 @@ if __name__ == "__main__":
     for desc, vals in cases:
         r = verify(REFERENCE_INVARIANTS, vals)
         out = "SAT [OK]" if r.sat else f"UNSAT core={r.unsat_core_labels}"
-        print(f"{desc:<44} -> {out}")  # noqa: T201
+        print(f"{desc:<44} -> {out}")

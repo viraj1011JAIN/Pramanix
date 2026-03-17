@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
 """
-Pramanix — Hardening Patches (Patches 1–5)
+Pramanix — Hardening Patches (Patches 1-5)
 ===========================================
 Standalone integration of the five hardening patches.  Designed to be
 imported by ``test_integrity.py`` and used as a reference implementation
@@ -18,6 +18,7 @@ Layer 5  — Unified Decision pipeline (evaluate_transaction).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -126,7 +127,7 @@ class _FailClosedApprovalGateway:
 
     def __init__(
         self,
-        backend: "HumanApprovalBackend | None" = None,
+        backend: HumanApprovalBackend | None = None,
         timeout_s: float = 30.0,
     ) -> None:
         self._backend   = backend
@@ -241,13 +242,13 @@ class TransactionIntent(BaseModel):
         return cleaned
 
     @model_validator(mode="after")
-    def cross_field_check(self) -> "TransactionIntent":
+    def cross_field_check(self) -> TransactionIntent:
         if not self.amount.is_finite():
             raise ValueError("Amount must be a finite number")
         return self
 
 
-def safe_validate_intent(raw_json: dict) -> "TransactionIntent | None":
+def safe_validate_intent(raw_json: dict) -> TransactionIntent | None:
     """Return a validated TransactionIntent, or None on any validation failure."""
     try:
         return TransactionIntent(**raw_json)
@@ -306,7 +307,7 @@ def _worker_evaluate(
     daily_remaining_str: str,
     minimum_reserve_str: str,
     seal_key: bytes,
-    result_queue: "multiprocessing.Queue[dict]",
+    result_queue: multiprocessing.Queue[dict],
 ) -> None:
     """Worker body executed inside the spawned subprocess.
 
@@ -372,10 +373,8 @@ def spawn_evaluate(
         proc.kill()
         proc.join()
         if _TELEMETRY is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _TELEMETRY.record_z3_evaluation(timed_out=True)
-            except Exception:
-                pass
         return False
 
     if proc.exitcode != 0:
@@ -393,10 +392,8 @@ def spawn_evaluate(
         result = json.loads(payload)
         allowed = result.get("allowed", False) is True
         if _TELEMETRY is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _TELEMETRY.record_z3_evaluation(timed_out=False)
-            except Exception:
-                pass
         return allowed
     except Exception:
         return False
@@ -441,10 +438,8 @@ def evaluate_transaction(
     # Layer 1 — Dual-model consensus
     _consensus_matched = raw_intent_gpt4o == raw_intent_claude
     if _TELEMETRY is not None:
-        try:
+        with contextlib.suppress(Exception):
             _TELEMETRY.record_consensus_attempt(_consensus_matched)
-        except Exception:
-            pass
     if not _consensus_matched:
         return Decision(allowed=False, reason="extraction_mismatch", layer_blocked=1)
 
