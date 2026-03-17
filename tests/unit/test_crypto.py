@@ -157,10 +157,29 @@ class TestPramanixVerifier:
         )
 
     def test_verify_decision_full_pipeline(self):
+        """verify_decision() round-trip via actual Guard.verify() production path."""
+        from pramanix import E, Field, Guard, GuardConfig, Policy
+
+        _amount = Field("amount", Decimal, "Real")
+
+        class _P(Policy):
+            class Meta:
+                version = "1.0"
+
+            @classmethod
+            def fields(cls):
+                return {"amount": _amount}
+
+            @classmethod
+            def invariants(cls):
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("Positive")]
+
         signer = PramanixSigner.generate()
-        d = _make_decision()
-        sig = signer.sign(d)
-        object.__setattr__(d, "signature", sig)
+        guard = Guard(_P, GuardConfig(execution_mode="sync", signer=signer))
+        d = guard.verify(
+            intent={"amount": Decimal("500")},
+            state={"state_version": "1.0"},
+        )
         verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
         assert verifier.verify_decision(d)
 
@@ -311,3 +330,85 @@ class TestGuardSigningIntegration:
             decision_hash=d.decision_hash,
             signature=d.signature,
         )
+
+    def test_to_dict_includes_signature_and_public_key_id(self):
+        """to_dict() must include signature and public_key_id when Guard signs."""
+        from pramanix import E, Field, Guard, GuardConfig, Policy
+
+        _amount = Field("amount", Decimal, "Real")
+
+        class _P(Policy):
+            class Meta:
+                version = "1.0"
+
+            @classmethod
+            def fields(cls):
+                return {"amount": _amount}
+
+            @classmethod
+            def invariants(cls):
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("ok")]
+
+        signer = PramanixSigner.generate()
+        guard = Guard(_P, GuardConfig(execution_mode="sync", signer=signer))
+        d = guard.verify(
+            intent={"amount": Decimal("100")},
+            state={"state_version": "1.0"},
+        )
+        record = d.to_dict()
+        assert record["signature"] == d.signature
+        assert record["public_key_id"] == signer.key_id()
+        assert record["signature"] is not None
+
+    @pytest.mark.asyncio
+    async def test_guard_signs_in_async_thread_mode(self):
+        """Signing must work in async-thread execution mode."""
+        from pramanix import E, Field, Guard, GuardConfig, Policy
+
+        _amount = Field("amount", Decimal, "Real")
+
+        class _P(Policy):
+            class Meta:
+                version = "1.0"
+
+            @classmethod
+            def fields(cls):
+                return {"amount": _amount}
+
+            @classmethod
+            def invariants(cls):
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("ok")]
+
+        signer = PramanixSigner.generate()
+        guard = Guard(_P, GuardConfig(execution_mode="async-thread", signer=signer))
+        try:
+            d = await guard.verify_async(
+                intent={"amount": Decimal("100")},
+                state={"state_version": "1.0"},
+            )
+        finally:
+            await guard.shutdown()
+
+        assert d.signature is not None
+        assert len(d.signature) > 0
+        assert d.public_key_id == signer.key_id()
+        verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
+        assert verifier.verify_decision(d)
+
+    def test_verify_decision_never_raises_on_malformed_input(self):
+        """verify_decision() must return False, not raise, for any bad input."""
+        signer = PramanixSigner.generate()
+        verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
+
+        # Construct a decision with a non-None signature but no hash
+        d = _make_decision()
+        # Manually corrupt by passing a broken metadata type that _compute_hash
+        # would struggle with — use a decision with signature set via factory
+        broken = Decision.safe(
+            metadata={"policy": object()},  # type: ignore[arg-type]
+            intent_dump={"x": "1"},
+            state_dump={},
+        )
+        # verify_decision must not raise even if _compute_hash would normally fail
+        result = verifier.verify_decision(broken)
+        assert isinstance(result, bool)

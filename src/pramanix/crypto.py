@@ -273,17 +273,20 @@ class PramanixVerifier:
         - decision.decision_hash matches recomputed hash (tamper check)
         - Ed25519 signature is valid against decision_hash
         """
-        if not decision.signature:
-            return False
-        if not decision.decision_hash:
-            return False
+        try:
+            if not decision.signature:
+                return False
+            if not decision.decision_hash:
+                return False
 
-        # Tamper check: recompute hash from fields
-        recomputed = decision._compute_hash()
-        if recomputed != decision.decision_hash:
-            return False  # Fields were modified after signing
+            # Tamper check: recompute hash from fields
+            recomputed = decision._compute_hash()
+            if recomputed != decision.decision_hash:
+                return False  # Fields were modified after signing
 
-        return self.verify(
-            decision_hash=decision.decision_hash,
-            signature=decision.signature,
-        )
+            return self.verify(
+                decision_hash=decision.decision_hash,
+                signature=decision.signature,
+            )
+        except Exception:
+            return False

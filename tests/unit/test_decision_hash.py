@@ -87,7 +87,9 @@ class TestDecisionHashDeterminism:
         assert hash1 == hash2
 
     def test_decimal_precision_preserved_in_hash(self):
-        """Decimal(100.00) and Decimal(100) must produce same hash."""
+        """Decimal("100.00") and Decimal("100") have different string representations
+        so they must produce DIFFERENT hashes — precision is preserved, not collapsed.
+        """
         d1 = Decision.safe(
             intent_dump={"amount": str(Decimal("100.00"))},
             state_dump={"balance": str(Decimal("5000")), "state_version": "v1"},
@@ -96,11 +98,8 @@ class TestDecisionHashDeterminism:
             intent_dump={"amount": str(Decimal("100"))},
             state_dump={"balance": str(Decimal("5000")), "state_version": "v1"},
         )
-        # NOTE: 100.00 and 100 have different string representations
-        # This is CORRECT — they ARE different values in decimal arithmetic
-        # The test documents the behavior
-        assert isinstance(d1.decision_hash, str)
-        assert isinstance(d2.decision_hash, str)
+        # "100.00" != "100" → different hashes (decimal precision is not collapsed)
+        assert d1.decision_hash != d2.decision_hash
 
     @given(
         amount=st.decimals(
