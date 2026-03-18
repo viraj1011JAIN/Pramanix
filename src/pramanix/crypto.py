@@ -75,13 +75,27 @@ class PramanixSigner:
         assert verifier.verify(decision)
     """
 
-    def __init__(self, private_key_pem: bytes | str | None = None) -> None:
+    def __init__(
+        self,
+        private_key_pem: bytes | str | None = None,
+        *,
+        force_ephemeral: bool = False,
+    ) -> None:
         """Initialize with an Ed25519 private key.
 
         Priority:
-        1. private_key_pem parameter (bytes or str)
-        2. PRAMANIX_SIGNING_KEY_PEM environment variable
-        3. Ephemeral key (logs WARNING — not for production)
+        1. ``private_key_pem`` parameter (bytes or str)
+        2. ``PRAMANIX_SIGNING_KEY_PEM`` environment variable
+        3. Ephemeral key — ONLY when ``force_ephemeral=True`` is explicitly set
+
+        Raises:
+            RuntimeError: If no key is provided and ``force_ephemeral=False``.
+                          This prevents the distributed ephemeral-key trap: in a
+                          multi-pod deployment each instance would generate a
+                          different key, making the entire audit trail
+                          unverifiable.  The error is raised at startup so the
+                          misconfiguration is caught immediately, not when an
+                          auditor discovers months of unsigned decisions.
         """
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -113,13 +127,25 @@ class PramanixSigner:
                 self._private_key = load_pem_private_key(
                     env_pem.encode(), password=None
                 )
-            else:
-                # Ephemeral key — warn loudly
+            elif force_ephemeral:
+                # Ephemeral key — development only, warn loudly
                 self._private_key = Ed25519PrivateKey.generate()
                 log.warning(
-                    "PRAMANIX_SIGNING_KEY_PEM not set. "
+                    "PRAMANIX_SIGNING_KEY_PEM not set and force_ephemeral=True. "
                     "Using ephemeral Ed25519 key — signatures will NOT verify "
-                    "across restarts. Set PRAMANIX_SIGNING_KEY_PEM for production."
+                    "across restarts or across pods. "
+                    "Set PRAMANIX_SIGNING_KEY_PEM for production."
+                )
+            else:
+                raise RuntimeError(
+                    "No Ed25519 signing key configured. "
+                    "PramanixSigner requires one of:\n"
+                    "  1. private_key_pem argument\n"
+                    "  2. PRAMANIX_SIGNING_KEY_PEM environment variable\n"
+                    "  3. force_ephemeral=True (development/testing only)\n"
+                    "In a multi-pod deployment, omitting a persistent key causes each "
+                    "instance to generate a different ephemeral key, making the entire "
+                    "audit trail unverifiable."
                 )
 
         self._public_key = self._private_key.public_key()

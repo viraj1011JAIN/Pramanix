@@ -371,6 +371,7 @@ class TestVerifyAsyncEdgeModes:
         mock_cfg = MagicMock()
         mock_cfg.execution_mode = "turbo-quantum"
         mock_cfg.solver_timeout_ms = 5000
+        mock_cfg.min_response_ms = 0.0
         g._config = mock_cfg  # type: ignore[assignment]
         g._pool = MagicMock()  # type: ignore[assignment]
 

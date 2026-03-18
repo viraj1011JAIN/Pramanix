@@ -209,26 +209,148 @@ _RESULT_SEAL_KEY = _EphemeralKey(_secrets_mod.token_bytes(32))
 # ── Module-level free functions (must be picklable for ProcessPoolExecutor) ────
 
 
-def _warmup_worker() -> None:
-    """Submit one trivial Z3 solve to prime the JIT and load libz3.
+def _ppid_watchdog() -> None:
+    """Daemon thread: self-terminate if the parent process exits.
 
-    This function runs *inside* the worker (thread or process).  It is a
-    module-level free function so that ``ProcessPoolExecutor`` can pickle it
-    as an import reference rather than a closure.
+    In async-process mode a SIGKILL to the main process leaves Z3 worker
+    processes as orphans.  This watchdog polls ``os.getppid()`` every two
+    seconds; when re-parented (PPID changes) it calls ``sys.exit(0)`` so the
+    OS can reclaim resources.
 
-    A private ``z3.Context()`` is created for this call so that concurrent
-    warmup submissions to a ``ThreadPoolExecutor`` never share Z3's global
-    context (which is not thread-safe).
+    On Windows ``os.getppid()`` is not available — we fall back to probing
+    the parent PID with ``os.kill(..., 0)`` (send-no-signal test).
     """
+    import os
+    import sys
+    import time as _t
+
+    if not hasattr(os, "getpid"):
+        return  # should never happen, but guard against exotic runtimes
+
+    use_getppid = hasattr(os, "getppid")
+    if use_getppid:
+        initial_ppid = os.getppid()
+    else:
+        # Windows: remember the parent PID by reading /proc or using ctypes
+        initial_ppid = None
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            initial_ppid = int(
+                ctypes.c_ulong(kernel32.GetCurrentProcessId()).value
+            )
+        except Exception:
+            return  # cannot determine PPID on this platform — skip watchdog
+
+    while True:
+        _t.sleep(2.0)
+        try:
+            if use_getppid:
+                if os.getppid() != initial_ppid:
+                    sys.exit(0)
+            else:
+                # Windows: try zero-signal to test if parent is still alive
+                try:
+                    os.kill(initial_ppid, 0)  # type: ignore[arg-type]
+                except OSError:
+                    sys.exit(0)
+        except SystemExit:
+            raise
+        except Exception:
+            pass  # don't let watchdog errors kill the worker
+
+
+def _warmup_worker() -> None:
+    """Pattern-exhaustive Z3 warmup suite.
+
+    Runs eight diverse Z3 patterns to fully prime the internal expression
+    caches and JIT before the first real user request.  One trivial solve
+    is insufficient — Z3's internal theory solvers for integers, strings, and
+    mixed-sort problems each have their own caches that benefit from priming.
+
+    Also starts the PPID watchdog daemon thread (process mode only).
+    """
+    import threading
+
     import z3  # — intentional local import inside worker
+
+    # Start PPID watchdog so orphaned worker processes self-terminate.
+    # Only meaningful in process mode; harmless in thread mode.
+    _wdog = threading.Thread(target=_ppid_watchdog, daemon=True, name="ppid-watchdog")
+    _wdog.start()
 
     ctx = z3.Context()
     try:
+        # ── Pattern 1: Real ≥ 0  (most common financial constraint) ──────────
         s = z3.Solver(ctx=ctx)
-        s.set("timeout", 1_000)
-        s.add(z3.Real("__warmup_x", ctx) >= z3.RealVal(0, ctx))
+        s.set("timeout", 2_000)
+        s.add(z3.Real("__wp_x", ctx) >= z3.RealVal(0, ctx))
         s.check()
         del s
+
+        # ── Pattern 2: Real < 0  (negative-value boundary) ───────────────────
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        x = z3.Real("__wp_neg", ctx)
+        s.add(x < z3.RealVal(0, ctx))
+        s.check()
+        del s
+
+        # ── Pattern 3: Integer arithmetic (non-Real sort) ─────────────────────
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        n = z3.Int("__wp_n", ctx)
+        s.add(n + z3.IntVal(1, ctx) > z3.IntVal(0, ctx))
+        s.check()
+        del s
+
+        # ── Pattern 4: Two-variable inequality (most common invariant form) ───
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        a = z3.Real("__wp_a", ctx)
+        b = z3.Real("__wp_b", ctx)
+        s.add(a - b >= z3.RealVal(0, ctx))
+        s.check()
+        del s
+
+        # ── Pattern 5: Boolean conjunction ────────────────────────────────────
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        p = z3.Bool("__wp_p", ctx)
+        q = z3.Bool("__wp_q", ctx)
+        s.add(z3.And(p, q))
+        s.check()
+        del s
+
+        # ── Pattern 6: String sort (Seq) ──────────────────────────────────────
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        sv = z3.String("__wp_s", ctx)
+        s.add(sv == z3.StringVal("ok", ctx))
+        s.check()
+        del s
+
+        # ── Pattern 7: Large rational (Decimal-scale) ─────────────────────────
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        r = z3.Real("__wp_r", ctx)
+        s.add(r <= z3.RealVal("999999999999999999999.999999", ctx))
+        s.check()
+        del s
+
+        # ── Pattern 8: Unsat path (primes the attribution solver too) ─────────
+        s = z3.Solver(ctx=ctx)
+        s.set("timeout", 2_000)
+        u = z3.Real("__wp_u", ctx)
+        s.add(u > z3.RealVal(10, ctx))
+        s.add(u < z3.RealVal(0, ctx))
+        res = s.check()
+        assert res == z3.unsat
+        del s
+
+    except Exception:
+        pass  # warmup failures must never prevent the worker from starting
     finally:
         del ctx
 
@@ -237,6 +359,7 @@ def _worker_solve(
     policy_cls: type[Policy],
     values: dict[str, Any],
     timeout_ms: int,
+    rlimit: int = 0,
 ) -> dict[str, Any]:
     """Run ``solve()`` inside a worker and return a plain ``Decision`` dict.
 
@@ -260,7 +383,7 @@ def _worker_solve(
 
     try:
         invariants = policy_cls.invariants()
-        result = solve(invariants, values, timeout_ms)
+        result = solve(invariants, values, timeout_ms, rlimit)
         if result.sat:
             return Decision.safe(solver_time_ms=result.solver_time_ms).to_dict()
         filtered = [inv for inv in result.violated if inv.label]
@@ -285,6 +408,7 @@ def _worker_solve_sealed(
     values: dict[str, Any],
     timeout_ms: int,
     seal_key: bytes,
+    rlimit: int = 0,
 ) -> dict[str, Any]:
     """Run :func:`_worker_solve` and return an HMAC-SHA256-signed envelope.
 
@@ -311,7 +435,7 @@ def _worker_solve_sealed(
         A sealed envelope dict.  The caller must use :func:`_unseal_decision`
         to verify and unwrap before constructing a :class:`Decision`.
     """
-    result = _worker_solve(policy_cls, values, timeout_ms)
+    result = _worker_solve(policy_cls, values, timeout_ms, rlimit)
     payload = _json_mod.dumps(result, sort_keys=True, separators=(",", ":")).encode()
     tag = _hmac_mod.new(seal_key, payload, hashlib.sha256).hexdigest()
     return {"_p": payload.decode(), "_t": tag}
@@ -482,6 +606,7 @@ class WorkerPool:
         policy_cls: type[Policy],
         values: dict[str, Any],
         timeout_ms: int,
+        rlimit: int = 0,
     ) -> Decision:
         """Submit one verification to the pool and block until complete.
 
@@ -492,6 +617,7 @@ class WorkerPool:
             policy_cls: The Policy *class* (not instance) — picklable.
             values:     Merged plain-dict of all field values.
             timeout_ms: Z3 per-solver timeout.
+            rlimit:     Z3 resource limit (elementary operations).  0 = off.
 
         Returns:
             A :class:`~pramanix.decision.Decision`.  Never raises.
@@ -517,6 +643,7 @@ class WorkerPool:
                     values,
                     timeout_ms,
                     _RESULT_SEAL_KEY.bytes,
+                    rlimit,
                 )
                 sealed = future.result()
                 try:
@@ -530,7 +657,9 @@ class WorkerPool:
                     decision = self._dict_to_decision(result_dict)
             else:
                 # Thread mode: shared memory — no IPC, no seal needed.
-                future = self._executor.submit(_worker_solve, policy_cls, values, timeout_ms)
+                future = self._executor.submit(
+                    _worker_solve, policy_cls, values, timeout_ms, rlimit
+                )
                 result_dict = future.result()
                 decision = self._dict_to_decision(result_dict)
         except WorkerError:

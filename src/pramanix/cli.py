@@ -283,13 +283,6 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
                 continue
 
             valid += 1
-            result = {
-                "line": line_num,
-                "status": "VALID",
-                "decision_id": decision_id,
-                "allowed": record.get("allowed"),
-            }
-            results.append(result)
             if not getattr(args, "as_json", False):
                 verdict = "ALLOW" if record.get("allowed") else "BLOCK"
                 print(f"[VALID]       decision_id={decision_id} ({verdict})")
@@ -332,47 +325,26 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 def _recompute_hash(record: dict) -> str:
     """Recompute decision_hash from a JSONL audit record.
 
-    Must stay in sync with Decision._compute_hash().
+    Delegates to pramanix.decision._canonical_bytes() — same function used by
+    Decision._compute_hash() — guaranteeing byte-for-byte determinism with no
+    dual serialisation path.
     """
     import hashlib
 
-    from pramanix.decision import _make_json_safe
+    from pramanix.decision import _canonical_bytes, _make_json_safe
 
-    try:
-        import orjson
-
-        canonical = {
-            "allowed": bool(record.get("allowed", False)),
-            "explanation": str(record.get("explanation", "")),
-            "intent_dump": _make_json_safe(record.get("intent_dump", {})),
-            "policy": str(record.get("policy", "")),
-            "state_dump": _make_json_safe(record.get("state_dump", {})),
-            "status": str(record.get("status", "")),
-            "violated_invariants": sorted(
-                str(v) for v in record.get("violated_invariants", [])
-            ),
-        }
-        serialized = orjson.dumps(
-            canonical,
-            option=orjson.OPT_SORT_KEYS | orjson.OPT_NON_STR_KEYS,
-        )
-    except Exception:
-        import json as _json
-
-        canonical = {
-            "allowed": bool(record.get("allowed", False)),
-            "explanation": str(record.get("explanation", "")),
-            "intent_dump": _make_json_safe(record.get("intent_dump", {})),
-            "policy": str(record.get("policy", "")),
-            "state_dump": _make_json_safe(record.get("state_dump", {})),
-            "status": str(record.get("status", "")),
-            "violated_invariants": sorted(
-                str(v) for v in record.get("violated_invariants", [])
-            ),
-        }
-        serialized = _json.dumps(canonical, sort_keys=True, default=str).encode()
-
-    return hashlib.sha256(serialized).hexdigest()
+    canonical = {
+        "allowed": bool(record.get("allowed", False)),
+        "explanation": str(record.get("explanation", "")),
+        "intent_dump": _make_json_safe(record.get("intent_dump") or {}),
+        "policy": str(record.get("policy", "")),
+        "state_dump": _make_json_safe(record.get("state_dump") or {}),
+        "status": str(record.get("status", "")),
+        "violated_invariants": sorted(
+            str(v) for v in (record.get("violated_invariants") or [])
+        ),
+    }
+    return hashlib.sha256(_canonical_bytes(canonical)).hexdigest()
 
 
 if __name__ == "__main__":

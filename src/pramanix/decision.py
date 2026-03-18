@@ -208,6 +208,11 @@ class Decision:
     decision_hash: str = field(default="")
     signature: str | None = None
     public_key_id: str | None = None
+    policy_hash: str | None = None
+    """SHA-256 fingerprint of the policy that produced this decision.
+    Set by Guard._sign_decision().  Not included in decision_hash (treated
+    as metadata, like signature and public_key_id).
+    """
 
     # ── Cross-invariant validation ────────────────────────────────────────────
 
@@ -277,6 +282,7 @@ class Decision:
             "decision_hash": self.decision_hash,
             "signature": self.signature,
             "public_key_id": self.public_key_id,
+            "policy_hash": self.policy_hash,
         }
 
     # ── Factory: SAFE ─────────────────────────────────────────────────────────

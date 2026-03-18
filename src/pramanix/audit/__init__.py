@@ -2,10 +2,10 @@
 # Copyright (C) 2026 Viraj Jain
 """Cryptographic audit trail for Pramanix decisions.
 
-Exports: DecisionSigner, DecisionVerifier, MerkleAnchor
+Exports: DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor
 """
-from pramanix.audit.merkle import MerkleAnchor
+from pramanix.audit.merkle import MerkleAnchor, PersistentMerkleAnchor
 from pramanix.audit.signer import DecisionSigner
 from pramanix.audit.verifier import DecisionVerifier
 
-__all__ = ["DecisionSigner", "DecisionVerifier", "MerkleAnchor"]
+__all__ = ["DecisionSigner", "DecisionVerifier", "MerkleAnchor", "PersistentMerkleAnchor"]

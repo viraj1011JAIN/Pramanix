@@ -103,6 +103,19 @@ class TestPramanixSigner:
         s2 = PramanixSigner.generate()
         assert s1.key_id() != s2.key_id()
 
+    def test_no_key_raises_runtime_error(self, monkeypatch):
+        """PramanixSigner() with no key and no env var must raise RuntimeError."""
+        monkeypatch.delenv("PRAMANIX_SIGNING_KEY_PEM", raising=False)
+        with pytest.raises(RuntimeError, match="No Ed25519 signing key configured"):
+            PramanixSigner()
+
+    def test_force_ephemeral_true_generates_key(self, monkeypatch):
+        """force_ephemeral=True must succeed even without env var."""
+        monkeypatch.delenv("PRAMANIX_SIGNING_KEY_PEM", raising=False)
+        signer = PramanixSigner(force_ephemeral=True)
+        assert signer.key_id()
+        assert len(signer.key_id()) == 16
+
 
 # ── PramanixVerifier ──────────────────────────────────────────────────────────
 
@@ -412,3 +425,39 @@ class TestGuardSigningIntegration:
         # verify_decision must not raise even if _compute_hash would normally fail
         result = verifier.verify_decision(broken)
         assert isinstance(result, bool)
+
+    def test_signing_failure_returns_error_decision(self, monkeypatch):
+        """Guard._sign_decision() must return Decision.error() if sign() returns empty string.
+
+        This is the fail-closed property: a signing failure must block the decision
+        from being returned unsigned rather than silently returning an unsigned record.
+        """
+        from pramanix import E, Field, Guard, GuardConfig, Policy
+        from pramanix.decision import SolverStatus
+
+        _amount = Field("amount", Decimal, "Real")
+
+        class _P(Policy):
+            class Meta:
+                version = "1.0"
+
+            @classmethod
+            def fields(cls):
+                return {"amount": _amount}
+
+            @classmethod
+            def invariants(cls):
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("ok")]
+
+        signer = PramanixSigner.generate()
+        # Force sign() to return "" simulating a key failure
+        monkeypatch.setattr(signer, "sign", lambda d: "")
+
+        guard = Guard(_P, GuardConfig(execution_mode="sync", signer=signer))
+        d = guard.verify(
+            intent={"amount": Decimal("100")},
+            state={"state_version": "1.0"},
+        )
+        # Must be an error decision, not an unsigned safe decision
+        assert d.status == SolverStatus.ERROR
+        assert d.signature is None

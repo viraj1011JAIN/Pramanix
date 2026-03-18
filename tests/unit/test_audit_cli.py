@@ -340,3 +340,40 @@ class TestAuditCLIEdgeCases:
         assert "[TAMPERED]" in output
         # With fail-fast, only 1 line processed — none of the 9 valid records should appear
         assert output.count("[VALID]") == 0
+
+
+# ── Hash determinism ──────────────────────────────────────────────────────────
+
+
+class TestHashDeterminism:
+    def test_recompute_hash_matches_decision_compute_hash(self):
+        """_recompute_hash() must produce the same value as Decision._compute_hash().
+
+        This is the critical property that prevents false-TAMPERED reports when
+        orjson is or isn't installed — both must use _canonical_bytes().
+        """
+        from pramanix.cli import _recompute_hash
+
+        signer = PramanixSigner.generate()
+        d = Decision.safe(
+            intent_dump={"amount": "500", "currency": "USD"},
+            state_dump={"balance": "10000", "state_version": "v1"},
+        )
+        record = _make_audit_record(d, signer)
+
+        # The CLI must recompute the same hash as Decision._compute_hash()
+        assert _recompute_hash(record) == d.decision_hash
+
+    def test_recompute_hash_matches_unsafe_decision(self):
+        """_recompute_hash() must match for BLOCK decisions too."""
+        from pramanix.cli import _recompute_hash
+
+        signer = PramanixSigner.generate()
+        d = Decision.unsafe(
+            violated_invariants=("overdraft", "daily_limit"),
+            explanation="Insufficient balance",
+            intent_dump={"amount": "9999"},
+            state_dump={"balance": "100", "state_version": "v2"},
+        )
+        record = _make_audit_record(d, signer)
+        assert _recompute_hash(record) == d.decision_hash

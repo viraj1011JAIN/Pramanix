@@ -11,10 +11,10 @@ __version__ = "0.8.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
-from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor
+from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor
+from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.crypto import PramanixSigner, PramanixVerifier
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
-from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
 from pramanix.exceptions import (
@@ -37,6 +37,12 @@ from pramanix.exceptions import (
     TranspileError,
     ValidationError,
     WorkerError,
+)
+from pramanix.execution_token import (
+    ExecutionToken,
+    ExecutionTokenSigner,
+    ExecutionTokenVerifier,
+    RedisExecutionTokenVerifier,
 )
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
@@ -99,4 +105,12 @@ __all__ = [
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
     "ComplianceReport",
+    # Phase 12 — Hardening: persistent Merkle anchoring
+    "PersistentMerkleAnchor",
+    # Phase 12 — Hardening: sealed execution token (TOCTOU gap)
+    "ExecutionToken",
+    "ExecutionTokenSigner",
+    "ExecutionTokenVerifier",
+    # Phase 13 — Enterprise: distributed Redis token store
+    "RedisExecutionTokenVerifier",
 ]

@@ -24,6 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+pytest.importorskip("httpx", reason="httpx not installed — skipping Ollama translator tests")
+
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.ollama import OllamaTranslator
 

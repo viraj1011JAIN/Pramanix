@@ -451,6 +451,7 @@ _EXPECTED_KEYS = frozenset(
         "decision_hash",
         "signature",
         "public_key_id",
+        "policy_hash",
     }
 )
 

@@ -140,6 +140,7 @@ def _fast_check(
     bindings: list[tuple[z3.ExprRef, z3.ExprRef]],
     timeout_ms: int,
     ctx: z3.Context | None = None,
+    rlimit: int = 0,
 ) -> z3.CheckSatResult:
     """Run all invariants in a single solver; return the raw Z3 result.
 
@@ -147,7 +148,11 @@ def _fast_check(
     The result is used only to decide whether to proceed to the attribution path.
 
     Args:
-        ctx: Optional Z3 context for thread-safety.
+        ctx:      Optional Z3 context for thread-safety.
+        rlimit:   Z3 resource limit (elementary operations).  ``0`` = disabled.
+                  When exceeded, Z3 returns ``unknown`` which is treated as
+                  a timeout and converted to ``Decision.timeout()`` (BLOCK).
+                  Prevents logic-bomb and non-linear expression DoS.
 
     Raises:
         SolverTimeoutError: If Z3 returns ``unknown`` (timeout or resource
@@ -155,6 +160,8 @@ def _fast_check(
     """
     s = z3.Solver(ctx=ctx)
     s.set("timeout", timeout_ms)
+    if rlimit > 0:
+        s.set("rlimit", rlimit)
     for z3v, z3val in bindings:
         s.add(_z3_eq(z3v, z3val))
     for inv in invariants:
@@ -175,6 +182,7 @@ def _attribute_violations(
     bindings: list[tuple[z3.ExprRef, z3.ExprRef]],
     timeout_ms: int,
     ctx: z3.Context | None = None,
+    rlimit: int = 0,
 ) -> list[ConstraintExpr]:
     """Determine exactly which invariants are violated.
 
@@ -183,7 +191,8 @@ def _attribute_violations(
     with certainty — no minimal-core ambiguity.
 
     Args:
-        ctx: Optional Z3 context for thread-safety.
+        ctx:    Optional Z3 context for thread-safety.
+        rlimit: Z3 resource limit per-invariant solver.  ``0`` = disabled.
 
     Raises:
         InvariantLabelError: If an invariant reached this path without a label
@@ -200,6 +209,8 @@ def _attribute_violations(
             )
         s = z3.Solver(ctx=ctx)
         s.set("timeout", timeout_ms)
+        if rlimit > 0:
+            s.set("rlimit", rlimit)
         for z3v, z3val in bindings:
             s.add(_z3_eq(z3v, z3val))
         s.assert_and_track(transpile(inv.node, ctx), z3.Bool(label, ctx))
@@ -220,6 +231,7 @@ def solve(
     invariants: list[ConstraintExpr],
     values: dict[str, Any],
     timeout_ms: int,
+    rlimit: int = 0,
 ) -> _SolveResult:
     """Verify that *values* satisfy all *invariants*.
 
@@ -229,6 +241,10 @@ def solve(
             carry a ``.named()`` label.
         values:     Concrete input fact — ``{field_name: python_value}``.
         timeout_ms: Per-solver Z3 timeout in milliseconds.
+        rlimit:     Z3 resource limit (elementary operations).  ``0`` = disabled.
+                    Prevents logic-bomb / non-linear-explosion DoS regardless of
+                    wall-clock time.  Both ``timeout_ms`` and ``rlimit`` apply
+                    simultaneously — whichever is hit first triggers a BLOCK.
 
     Returns:
         A :class:`_SolveResult` with ``sat=True`` and an empty ``violated``
@@ -236,7 +252,8 @@ def solve(
         violated invariants if any fail.
 
     Raises:
-        SolverTimeoutError:  If any solver instance exceeds ``timeout_ms``.
+        SolverTimeoutError:  If any solver instance exceeds ``timeout_ms`` or
+                             ``rlimit``.
         FieldTypeError:      If a value cannot be coerced to its field's sort.
         InvariantLabelError: If an invariant is missing its label.
         TranspileError:      If a DSL expression cannot be lowered to Z3.
@@ -254,8 +271,8 @@ def solve(
             all_fields.update(collect_fields(inv.node))
         bindings = _build_bindings(all_fields, values, ctx)
 
-        # ── Phase 1: fast path ────────────────────────────────────────────────────
-        fast_result = _fast_check(invariants, bindings, timeout_ms, ctx)
+        # ── Phase 1: fast path ────────────────────────────────────────────────
+        fast_result = _fast_check(invariants, bindings, timeout_ms, ctx, rlimit)
 
         if fast_result == z3.sat:
             return _SolveResult(
@@ -264,8 +281,8 @@ def solve(
                 solver_time_ms=(time.perf_counter() - start) * 1000.0,
             )
 
-        # ── Phase 2: attribution path (only reached on unsat) ─────────────────────
-        violated = _attribute_violations(invariants, bindings, timeout_ms, ctx)
+        # ── Phase 2: attribution path (only reached on unsat) ─────────────────
+        violated = _attribute_violations(invariants, bindings, timeout_ms, ctx, rlimit)
 
         return _SolveResult(
             sat=False,

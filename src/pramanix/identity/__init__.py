@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Zero-Trust JWT Identity Layer for Pramanix.
+"""JWT Authenticated Decision Context for Pramanix.
 
 Exports: JWTIdentityLinker, RedisStateLoader,
          IdentityClaims, StateLoadError,

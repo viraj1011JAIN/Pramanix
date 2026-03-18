@@ -275,7 +275,39 @@ class GuardConfig:
         default_factory=lambda: float(_env_str("SHED_LATENCY_THRESHOLD_MS", "200"))
     )
     shed_worker_pct: float = field(default_factory=lambda: float(_env_str("SHED_WORKER_PCT", "90")))
-    signer: "PramanixSigner | None" = field(default=None)
+    signer: PramanixSigner | None = field(default=None)
+    # ── Phase 12 hardening fields ──────────────────────────────────────────────
+    solver_rlimit: int = field(
+        default_factory=lambda: _env_int("SOLVER_RLIMIT", 10_000_000)
+    )
+    """Z3 resource limit (elementary operations per solver call).
+    Prevents logic-bomb and non-linear-expression DoS regardless of wall time.
+    0 = disabled.  Default: 10 million operations.
+    """
+    max_input_bytes: int = field(
+        default_factory=lambda: _env_int("MAX_INPUT_BYTES", 65_536)
+    )
+    """Maximum serialised byte-size of the combined intent + state payload.
+    Requests exceeding this limit are rejected before reaching the Z3 solver,
+    preventing Big-Data DoS.  0 = disabled.  Default: 64 KiB.
+    """
+    min_response_ms: float = field(default=0.0)
+    """Minimum wall-clock time (ms) before verify() returns its result.
+    Pads short decisions to a fixed floor, making timing side-channels
+    statistically infeasible.  0.0 = disabled (default).
+    """
+    redact_violations: bool = field(default=False)
+    """When True, BLOCK decisions returned to callers have their
+    ``explanation`` and ``violated_invariants`` replaced with a generic
+    "Policy Violation: Action Blocked" message.  The signed ``decision_hash``
+    is computed over the real fields *before* redaction, so the full audit
+    log remains verifiable server-side.  Default: False (backwards-compatible).
+    """
+    expected_policy_hash: str | None = field(default=None)
+    """SHA-256 fingerprint of the compiled policy.  When set, Guard.__init__
+    raises ConfigurationError if the running policy does not match this hash,
+    preventing silent policy drift in distributed deployments.
+    """
 
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
@@ -285,13 +317,25 @@ class GuardConfig:
             )
         if self.max_workers <= 0:
             raise ConfigurationError(
-                f"GuardConfig.max_workers must be a positive integer, " f"got {self.max_workers}."
+                f"GuardConfig.max_workers must be a positive integer, got {self.max_workers}."
             )
         valid_modes = {"sync", "async-thread", "async-process"}
         if self.execution_mode not in valid_modes:
             raise ConfigurationError(
                 f"GuardConfig.execution_mode must be one of {valid_modes!r}, "
                 f"got '{self.execution_mode}'."
+            )
+        if self.solver_rlimit < 0:
+            raise ConfigurationError(
+                f"GuardConfig.solver_rlimit must be >= 0, got {self.solver_rlimit}."
+            )
+        if self.max_input_bytes < 0:
+            raise ConfigurationError(
+                f"GuardConfig.max_input_bytes must be >= 0, got {self.max_input_bytes}."
+            )
+        if self.min_response_ms < 0.0:
+            raise ConfigurationError(
+                f"GuardConfig.min_response_ms must be >= 0.0, got {self.min_response_ms}."
             )
 
 
@@ -376,6 +420,41 @@ def _semantic_post_consensus_check(
             pass  # Let Z3 handle non-numeric daily fields
 
 
+def _compute_policy_fingerprint(policy: type[Policy]) -> str:
+    """Compute a stable SHA-256 fingerprint of a compiled policy.
+
+    Covers: class name, version, sorted invariant labels + explanations, and
+    the name + Z3 type of every field referenced by those invariants.
+    Stable across restarts; invariant to code comments and whitespace.
+    """
+    import hashlib
+    import json
+
+    from pramanix.transpiler import collect_fields
+
+    invariants = policy.invariants()
+    version = policy.meta_version() or ""
+    all_fields: dict[str, Any] = {}
+    for inv in invariants:
+        all_fields.update(collect_fields(inv.node))
+
+    payload = {
+        "name": policy.__name__,
+        "version": version,
+        "invariants": sorted(
+            ({"label": inv.label or "", "explanation": inv.explanation or ""}
+             for inv in invariants),
+            key=lambda x: x["label"],
+        ),
+        "fields": sorted(
+            ({"name": n, "type": f.z3_type} for n, f in all_fields.items()),
+            key=lambda x: x["name"],
+        ),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def _fmt(inv: ConstraintExpr, values: dict[str, Any]) -> str:
     """Format an invariant's explanation template with concrete *values*.
 
@@ -431,6 +510,17 @@ class Guard:
         self._state_model: type[BaseModel] | None = policy.meta_state_model()  # type: ignore[assignment,unused-ignore]
         self._policy_version: str | None = policy.meta_version()
 
+        # ── Phase 12: Policy fingerprinting ───────────────────────────────────
+        self._policy_hash: str = _compute_policy_fingerprint(policy)
+        if self._config.expected_policy_hash is not None and self._policy_hash != self._config.expected_policy_hash:
+                raise ConfigurationError(
+                    f"Policy fingerprint mismatch — possible policy drift. "
+                    f"Expected: {self._config.expected_policy_hash!r}, "
+                    f"Got: {self._policy_hash!r}. "
+                    "Update expected_policy_hash in GuardConfig or investigate "
+                    "whether a different policy version is running on this node."
+                )
+
         # Spawn WorkerPool for async modes.
         mode = self._config.execution_mode
         if mode in ("async-thread", "async-process"):
@@ -479,6 +569,54 @@ class Guard:
 
     # ── verify ────────────────────────────────────────────────────────────────
 
+    def _sign_decision(self, decision: Decision) -> Decision:
+        """Apply Ed25519 signature + policy_hash; redact violations if configured.
+
+        Fail-closed: if sign() returns an empty string (signing failure),
+        returns Decision.error() rather than returning an unsigned decision.
+        This prevents the audit trail from silently containing unsigned records.
+
+        Redaction (``redact_violations=True``): replaces ``explanation`` and
+        ``violated_invariants`` on BLOCK decisions with a generic message before
+        returning to the caller.  The ``decision_hash`` and ``signature`` are
+        computed over the *real* fields, so the server-side audit log remains
+        fully verifiable.
+        """
+        # Attach policy fingerprint (outside canonical hash — like signature).
+        decision = dataclasses.replace(decision, policy_hash=self._policy_hash)
+
+        if self._config.signer is None:
+            # Redact even without signing (oracle protection applies regardless).
+            if self._config.redact_violations and not decision.allowed:
+                decision = dataclasses.replace(
+                    decision,
+                    explanation="Policy Violation: Action Blocked",
+                    violated_invariants=(),
+                )
+            return decision
+
+        sig = self._config.signer.sign(decision)
+        if not sig:
+            return Decision.error(
+                reason=(
+                    "Signing failed — audit trail integrity compromised. "
+                    "Check signer configuration and key availability."
+                )
+            )
+        decision = dataclasses.replace(
+            decision,
+            signature=sig,
+            public_key_id=self._config.signer.key_id(),
+        )
+        # Apply oracle-attack redaction AFTER signing (hash covers real fields).
+        if self._config.redact_violations and not decision.allowed:
+            decision = dataclasses.replace(
+                decision,
+                explanation="Policy Violation: Action Blocked",
+                violated_invariants=(),
+            )
+        return decision
+
     def verify(
         self,
         intent: dict[str, Any] | BaseModel,
@@ -487,15 +625,17 @@ class Guard:
         """Verify *intent* and *state* against the policy invariants, then sign.
 
         Delegates to _verify_core() and attaches an Ed25519 signature when
-        a signer is configured in GuardConfig.
+        a signer is configured in GuardConfig.  Applies min_response_ms timing
+        padding to defeat side-channel timing analysis.
         """
-        decision = self._verify_core(intent, state)
-        if self._config.signer is not None:
-            decision = dataclasses.replace(
-                decision,
-                signature=self._config.signer.sign(decision),
-                public_key_id=self._config.signer.key_id(),
-            )
+        _t0 = time.perf_counter()
+        decision = self._sign_decision(self._verify_core(intent, state))
+        # ── Timing jitter buffer (side-channel mitigation) ─────────────────────
+        if self._config.min_response_ms > 0.0:
+            _elapsed_ms = (time.perf_counter() - _t0) * 1000.0
+            _remaining_ms = self._config.min_response_ms - _elapsed_ms
+            if _remaining_ms > 0.0:
+                time.sleep(_remaining_ms / 1000.0)
         return decision
 
     def _verify_core(
@@ -540,6 +680,33 @@ class Guard:
             * ``Decision.stale_state()``       — state version mismatch
             * ``Decision.validation_failure()``— Pydantic validation failed
         """
+        # ── Phase 12: input size cap (pre-solver Big-Data DoS protection) ───────
+        if self._config.max_input_bytes > 0:
+            try:
+                import json as _json_size
+
+                _raw_intent = (
+                    dict(intent) if isinstance(intent, dict) else {}
+                )
+                _raw_state = (
+                    dict(state) if isinstance(state, dict) else {}
+                )
+                _payload_size = len(
+                    _json_size.dumps(
+                        {"i": _raw_intent, "s": _raw_state}, default=str
+                    ).encode()
+                )
+                if _payload_size > self._config.max_input_bytes:
+                    return Decision.error(
+                        reason=(
+                            f"Input payload size ({_payload_size} bytes) exceeds "
+                            f"max_input_bytes limit ({self._config.max_input_bytes}). "
+                            "Request rejected before reaching the solver."
+                        )
+                    )
+            except Exception:
+                pass  # size check is best-effort; never block on serialisation error
+
         decision_id = str(uuid.uuid4())
         _t0 = time.perf_counter()
         _metric_status = "error"  # overwritten before every return
@@ -633,6 +800,7 @@ class Guard:
                     self._policy.invariants(),
                     values,
                     self._config.solver_timeout_ms,
+                    self._config.solver_rlimit,
                 )
 
                 # ── Step 6: Build Decision ────────────────────────────────────────
@@ -782,6 +950,16 @@ class Guard:
             A :class:`Decision`.
         """
         mode = self._config.execution_mode
+        _t0_async = time.perf_counter()
+
+        async def _timed(d: Decision) -> Decision:
+            """Apply min_response_ms timing pad and return decision."""
+            if self._config.min_response_ms > 0.0:
+                _elapsed_ms = (time.perf_counter() - _t0_async) * 1000.0
+                _remaining_ms = self._config.min_response_ms - _elapsed_ms
+                if _remaining_ms > 0.0:
+                    await asyncio.sleep(_remaining_ms / 1000.0)
+            return d
 
         # Sync mode: delegate entirely to sync verify() in a thread.
         if mode == "sync":
@@ -804,17 +982,25 @@ class Guard:
             if self._policy_version is not None:
                 actual_version = state_values.get("state_version")
                 if actual_version is None:
-                    return Decision.validation_failure(
-                        reason=(
-                            "state_version is missing from state data. "
-                            f"Policy '{self._policy.__name__}' requires "
-                            f"version='{self._policy_version}'."
+                    return await _timed(
+                        self._sign_decision(
+                            Decision.validation_failure(
+                                reason=(
+                                    "state_version is missing from state data. "
+                                    f"Policy '{self._policy.__name__}' requires "
+                                    f"version='{self._policy_version}'."
+                                )
+                            )
                         )
                     )
                 if str(actual_version) != self._policy_version:
-                    return Decision.stale_state(
-                        expected=self._policy_version,
-                        actual=str(actual_version),
+                    return await _timed(
+                        self._sign_decision(
+                            Decision.stale_state(
+                                expected=self._policy_version,
+                                actual=str(actual_version),
+                            )
+                        )
                     )
 
             conflicting = intent_values.keys() & state_values.keys()
@@ -826,33 +1012,43 @@ class Guard:
             values: dict[str, Any] = {**intent_values, **state_values}
 
         except (ValidationError, StateValidationError) as exc:
-            return Decision.validation_failure(reason=str(exc))
+            return await _timed(
+                self._sign_decision(Decision.validation_failure(reason=str(exc)))
+            )
         except PramanixError as exc:
-            return Decision.error(reason=str(exc))
+            return await _timed(
+                self._sign_decision(Decision.error(reason=str(exc)))
+            )
         except Exception as exc:
-            return Decision.error(
-                reason=f"Unexpected error during validation ({type(exc).__name__}): {exc}"
+            return await _timed(
+                self._sign_decision(
+                    Decision.error(
+                        reason=f"Unexpected error during validation ({type(exc).__name__}): {exc}"
+                    )
+                )
             )
 
         # Steps 5-6: dispatch to worker pool.
         pool = self._pool
         if pool is None:
-            return Decision.error(reason="WorkerPool not initialised for async mode.")
+            return await _timed(
+                self._sign_decision(
+                    Decision.error(reason="WorkerPool not initialised for async mode.")
+                )
+            )
 
         if mode == "async-thread":
             # asyncio.to_thread() offloads the blocking submit_solve call.
             # We are NOT nesting asyncio.to_thread() inside another — this is
             # the first and only thread dispatch.
             decision = await asyncio.to_thread(
-                pool.submit_solve, self._policy, values, self._config.solver_timeout_ms
+                pool.submit_solve,
+                self._policy,
+                values,
+                self._config.solver_timeout_ms,
+                self._config.solver_rlimit,
             )
-            if self._config.signer is not None:
-                decision = dataclasses.replace(
-                    decision,
-                    signature=self._config.signer.sign(decision),
-                    public_key_id=self._config.signer.key_id(),
-                )
-            return decision
+            return await _timed(self._sign_decision(decision))
 
         if mode == "async-process":
             from pramanix.worker import (
@@ -873,26 +1069,37 @@ class Guard:
                     values,
                     self._config.solver_timeout_ms,
                     _RESULT_SEAL_KEY.bytes,
+                    self._config.solver_rlimit,
                 )
                 result_dict_p: dict[str, Any] = _unseal_decision(sealed)
                 decision = pool._dict_to_decision(result_dict_p)
             except (ValueError, KeyError):
-                return Decision.error(
-                    reason="Worker result integrity check failed — HMAC mismatch."
+                return await _timed(
+                    self._sign_decision(
+                        Decision.error(
+                            reason="Worker result integrity check failed — HMAC mismatch."
+                        )
+                    )
                 )
             except WorkerError as exc:
-                return Decision.error(reason=str(exc))
-            except Exception as exc:
-                return Decision.error(reason=f"Process worker error ({type(exc).__name__}): {exc}")
-            if self._config.signer is not None:
-                decision = dataclasses.replace(
-                    decision,
-                    signature=self._config.signer.sign(decision),
-                    public_key_id=self._config.signer.key_id(),
+                return await _timed(
+                    self._sign_decision(Decision.error(reason=str(exc)))
                 )
-            return decision
+            except Exception as exc:
+                return await _timed(
+                    self._sign_decision(
+                        Decision.error(
+                            reason=f"Process worker error ({type(exc).__name__}): {exc}"
+                        )
+                    )
+                )
+            return await _timed(self._sign_decision(decision))
 
-        return Decision.error(reason=f"Unknown execution_mode: {mode!r}")
+        return await _timed(
+            self._sign_decision(
+                Decision.error(reason=f"Unknown execution_mode: {mode!r}")
+            )
+        )
 
     # ── parse_and_verify ────────────────────────────────────────────────────────
 
