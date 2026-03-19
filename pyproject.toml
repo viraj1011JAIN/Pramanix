@@ -33,7 +33,7 @@ pramanix = "pramanix.cli:main"
 python = ">=3.13,<3.14"
 pydantic = "^2.5"
 z3-solver = "^4.12"
-structlog = "^23.2"
+structlog = "^25.5"
 prometheus-client = "^0.19"
 httpx = {version = "^0.27", optional = true}
 openai = {version = "^1.10", optional = true}
