@@ -106,6 +106,18 @@ async def extract_with_consensus(
     """
     from pramanix.exceptions import InjectionBlockedError
     from pramanix.translator._sanitise import injection_confidence_score, sanitise_user_input
+    from pramanix.translator.injection_filter import InjectionFilter
+
+    # ── Step 0: System 1 fast-path injection filter ───────────────────────────
+    # Runs before any LLM call.  Sub-millisecond regex scan; kills obviously
+    # malicious prompts without wasting API budget or incurring GPU latency.
+    _filter = InjectionFilter()
+    _blocked, _reason = _filter.is_injection(text)
+    if _blocked:
+        raise InjectionBlockedError(
+            f"System 1 injection filter blocked input before LLM call. "
+            f"{_reason}"
+        )
 
     # ── Step 1: Sanitise input ────────────────────────────────────────────────
     sanitised_text, sanitise_warnings = sanitise_user_input(text)

@@ -14,7 +14,6 @@ __version__ = "0.8.0"
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor
 from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 from pramanix.crypto import PramanixSigner, PramanixVerifier
-from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
 from pramanix.exceptions import (
@@ -46,6 +45,7 @@ from pramanix.execution_token import (
 )
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
+from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.identity import JWTIdentityLinker
 from pramanix.policy import Policy
 from pramanix.resolvers import ResolverRegistry

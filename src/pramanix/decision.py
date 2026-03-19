@@ -62,7 +62,7 @@ except ImportError:  # pragma: no cover
         return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
-__all__ = ["Decision", "SolverStatus", "_make_json_safe"]
+__all__ = ["Decision", "SolverStatus", "_make_json_safe", "_build_decision_canonical"]
 
 
 def _make_json_safe(d: dict) -> dict:
@@ -97,6 +97,48 @@ def _json_safe_value(v: Any) -> Any:
     if hasattr(v, "isoformat"):  # datetime
         return v.isoformat()
     return str(v)
+
+def _build_decision_canonical(
+    *,
+    allowed: bool,
+    explanation: str,
+    intent_dump: dict,
+    policy: str,
+    state_dump: dict,
+    status: str,
+    violated_invariants: Any,
+) -> dict[str, Any]:
+    """Build the canonical dict used for :meth:`Decision._compute_hash`.
+
+    Extracted as a module-level function so the CLI audit verifier can
+    import it directly — single source of truth for the canonical-field
+    set and their serialisation rules.  Any change here is automatically
+    reflected in both the library and the CLI with no risk of silent drift.
+
+    Args:
+        allowed:             ``Decision.allowed`` as a plain ``bool``.
+        explanation:         Human-readable explanation string.
+        intent_dump:         Serialised intent dict (``Decision.intent_dump``).
+        policy:              Policy name extracted from ``Decision.metadata``.
+        state_dump:          Serialised state dict (``Decision.state_dump``).
+        status:              ``SolverStatus`` value string.
+        violated_invariants: Iterable of invariant label strings.
+
+    Returns:
+        Canonical ``dict`` ready for :func:`_canonical_bytes`.
+    """
+    return {
+        "allowed": bool(allowed),
+        "explanation": str(explanation or ""),
+        "intent_dump": _make_json_safe(dict(intent_dump) if intent_dump else {}),
+        "policy": str(policy or ""),
+        "state_dump": _make_json_safe(dict(state_dump) if state_dump else {}),
+        "status": str(status or ""),
+        "violated_invariants": sorted(
+            str(v) for v in (violated_invariants or ())
+        ),
+    }
+
 
 # ---------------------------------------------------------------------------
 # Compatibility shim: FrozenInstanceError was added in Python 3.11.
@@ -237,24 +279,34 @@ class Decision:
     def _compute_hash(self) -> str:
         """Compute a deterministic SHA-256 hash of this Decision.
 
-        Canonical representation includes intent_dump, state_dump, policy,
-        status, allowed, violated_invariants, and explanation.
-        signature and public_key_id are intentionally excluded (not circular).
+        Delegates to the module-level :func:`_build_decision_canonical` so
+        that the CLI audit verifier shares the exact same canonical-dict
+        construction logic — single source of truth, no drift risk.
         """
-        canonical = {
-            "allowed": bool(self.allowed),
-            "explanation": str(self.explanation or ""),
-            "intent_dump": _make_json_safe(self.intent_dump),
-            "policy": str(self.metadata.get("policy", "") if self.metadata else ""),
-            "state_dump": _make_json_safe(self.state_dump),
-            "status": str(self.status.value if hasattr(self.status, "value") else self.status),
-            "violated_invariants": sorted(str(v) for v in (self.violated_invariants or ())),
-        }
+        policy = str(
+            self.metadata.get("policy", "") if self.metadata else ""
+        )
+        status = str(
+            self.status.value
+            if hasattr(self.status, "value")
+            else self.status
+        )
+        canonical = _build_decision_canonical(
+            allowed=self.allowed,
+            explanation=self.explanation,
+            intent_dump=self.intent_dump,
+            policy=policy,
+            state_dump=self.state_dump,
+            status=status,
+            violated_invariants=self.violated_invariants,
+        )
         try:
             serialized = _canonical_bytes(canonical)
         except Exception:
             import json
-            serialized = json.dumps(canonical, sort_keys=True, default=str).encode()
+            serialized = json.dumps(
+                canonical, sort_keys=True, default=str
+            ).encode()
         return hashlib.sha256(serialized).hexdigest()
 
     # ── Serialisation ─────────────────────────────────────────────────────────
@@ -295,7 +347,7 @@ class Decision:
         metadata: dict[str, Any] | None = None,
         intent_dump: dict | None = None,
         state_dump: dict | None = None,
-    ) -> "Decision":
+    ) -> Decision:
         """Construct an *allowed* decision (all invariants satisfied).
 
         Args:
@@ -325,7 +377,7 @@ class Decision:
         metadata: dict[str, Any] | None = None,
         intent_dump: dict | None = None,
         state_dump: dict | None = None,
-    ) -> "Decision":
+    ) -> Decision:
         """Construct a *blocked* decision (one or more invariants violated).
 
         Args:

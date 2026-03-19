@@ -163,7 +163,7 @@ class PramanixSigner:
         self._key_id = hashlib.sha256(self._public_pem).hexdigest()[:16]
 
     @classmethod
-    def generate(cls) -> "PramanixSigner":
+    def generate(cls) -> PramanixSigner:
         """Generate a new Ed25519 keypair.
 
         Use for key generation scripts only. Never call in application code.
@@ -186,7 +186,7 @@ class PramanixSigner:
         )
         return cls(private_key_pem=pem)
 
-    def sign(self, decision: "Decision") -> str:
+    def sign(self, decision: Decision) -> str:
         """Sign decision.decision_hash with Ed25519.
 
         Returns base64url-encoded signature (86 chars, 64 raw bytes).
@@ -288,7 +288,7 @@ class PramanixVerifier:
         except Exception:
             return False
 
-    def verify_decision(self, decision: "Decision") -> bool:
+    def verify_decision(self, decision: Decision) -> bool:
         """Verify a Decision object's signature against its hash.
 
         Recomputes decision_hash from decision fields and verifies

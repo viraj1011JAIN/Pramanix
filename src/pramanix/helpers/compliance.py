@@ -220,7 +220,7 @@ class ComplianceReporter:
 
     def generate(
         self,
-        decision: "Decision",
+        decision: Decision,
         policy_meta: dict[str, Any] | None = None,
     ) -> ComplianceReport:
         """Generate a ComplianceReport from a Decision.

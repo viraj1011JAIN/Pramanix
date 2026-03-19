@@ -21,6 +21,7 @@ always importable without the extra.
 """
 
 from pramanix.translator.base import Translator, TranslatorContext
+from pramanix.translator.injection_filter import InjectionFilter
 from pramanix.translator.redundant import (
     RedundantTranslator,
     create_translator,
@@ -36,6 +37,7 @@ __all__ = [
     "RedundantTranslator",
     "extract_with_consensus",
     "create_translator",
+    "InjectionFilter",
 ]
 
 

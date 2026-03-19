@@ -171,7 +171,7 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 
     log_path = args.log_file
     try:
-        log_file = open(log_path, "r", encoding="utf-8")
+        log_file = open(log_path, encoding="utf-8")
     except FileNotFoundError:
         print(f"ERROR: Log file not found: {log_path}", file=sys.stderr)
         return 2
@@ -325,25 +325,24 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 def _recompute_hash(record: dict) -> str:
     """Recompute decision_hash from a JSONL audit record.
 
-    Delegates to pramanix.decision._canonical_bytes() — same function used by
-    Decision._compute_hash() — guaranteeing byte-for-byte determinism with no
-    dual serialisation path.
+    Delegates to :func:`pramanix.decision._build_decision_canonical` and
+    :func:`pramanix.decision._canonical_bytes` — the same functions used by
+    :meth:`Decision._compute_hash` — guaranteeing byte-for-byte determinism
+    with a single canonical-field definition shared by library and CLI.
     """
     import hashlib
 
-    from pramanix.decision import _canonical_bytes, _make_json_safe
+    from pramanix.decision import _build_decision_canonical, _canonical_bytes
 
-    canonical = {
-        "allowed": bool(record.get("allowed", False)),
-        "explanation": str(record.get("explanation", "")),
-        "intent_dump": _make_json_safe(record.get("intent_dump") or {}),
-        "policy": str(record.get("policy", "")),
-        "state_dump": _make_json_safe(record.get("state_dump") or {}),
-        "status": str(record.get("status", "")),
-        "violated_invariants": sorted(
-            str(v) for v in (record.get("violated_invariants") or [])
-        ),
-    }
+    canonical = _build_decision_canonical(
+        allowed=bool(record.get("allowed", False)),
+        explanation=str(record.get("explanation", "")),
+        intent_dump=record.get("intent_dump") or {},
+        policy=str(record.get("policy", "")),
+        state_dump=record.get("state_dump") or {},
+        status=str(record.get("status", "")),
+        violated_invariants=record.get("violated_invariants") or [],
+    )
     return hashlib.sha256(_canonical_bytes(canonical)).hexdigest()
 
 

@@ -31,7 +31,7 @@ metadata:
   namespace: pramanix
   labels:
     app.kubernetes.io/name: pramanix
-    app.kubernetes.io/version: "0.5.0"
+    app.kubernetes.io/version: "0.8.0"
     app.kubernetes.io/component: guardrail-engine
     app.kubernetes.io/managed-by: kubectl
   annotations:
@@ -61,7 +61,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: pramanix
-        app.kubernetes.io/version: "0.5.0"
+        app.kubernetes.io/version: "0.8.0"
       annotations:
         # Force pod restart on ConfigMap change when using Kustomize/Helm rollout
         checksum/config: "placeholder-replaced-by-helm-or-kustomize"
@@ -100,7 +100,7 @@ spec:
       # This prevents the readiness probe from succeeding before the pool is warm.
       initContainers:
         - name: warmup
-          image: pramanix:0.5.0
+          image: pramanix:0.8.0
           imagePullPolicy: IfNotPresent
           command:
             - python
@@ -130,7 +130,7 @@ spec:
 
       containers:
         - name: pramanix
-          image: pramanix:0.5.0
+          image: pramanix:0.8.0
           imagePullPolicy: IfNotPresent
 
           # ── Container-level security context ────────────────────────────────

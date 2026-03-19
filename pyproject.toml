@@ -20,8 +20,6 @@ classifiers = [
     "Topic :: Security",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "License :: OSI Approved :: GNU Affero General Public License v3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
     "Operating System :: OS Independent",
@@ -32,7 +30,7 @@ packages = [{include = "pramanix", from = "src"}]
 pramanix = "pramanix.cli:main"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.14"
+python = ">=3.13,<3.14"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"
@@ -80,7 +78,7 @@ openai = "^1.10"
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+python_version = "3.13"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -148,7 +146,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py313"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

@@ -17,8 +17,8 @@
 #   Runs latency_benchmark.py at 02:00 UTC; enforces P99 < 15ms gate.
 #
 # CRITICAL: Alpine base images are BANNED — Z3 requires glibc (Blueprint §48).
-# CRITICAL: Python 3.10 dropped — EOL December 2026.
-# Matrix: ubuntu-latest × Python 3.11, 3.12
+# CRITICAL: Python 3.12 and below dropped — minimum is Python 3.13.
+# Matrix: ubuntu-latest × Python 3.13
 
 name: Pramanix CI
 
@@ -55,7 +55,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       # Upgrade pip first — pip 25.3 has CVE-2026-1703 (fixed in 26.0).
       # This must run before pip-audit so the scanner sees a clean pip.
@@ -201,7 +201,7 @@ jobs:
             echo ""
             echo "Alpine uses musl libc which breaks z3-solver native extensions."
             echo "Symptoms: segfaults, 3-10x slowdowns, non-deterministic BLOCK decisions."
-            echo "Fix: Use python:3.11-slim-bookworm (Debian/glibc) instead."
+            echo "Fix: Use python:3.13-slim-bookworm (Debian/glibc) instead."
             exit 1
           fi
           # Gate: exit 0 = no alpine found = safe
@@ -258,7 +258,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
@@ -278,7 +278,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   # JOB 4 — Test Gauntlet
   # Ordered: unit → integration → property → adversarial → perf (main only)
-  # Matrix: Python 3.11 × 3.12
+  # Matrix: Python 3.13
   # ──────────────────────────────────────────────────────────────────────────
   test:
     name: "Tests (Python ${{ matrix.python-version }})"
@@ -287,7 +287,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -327,8 +327,8 @@ jobs:
         run: pytest tests/perf/ -m "not slow" --tb=short
         continue-on-error: true
 
-      - name: Generate coverage report (Python 3.11 only)
-        if: matrix.python-version == '3.11'
+      - name: Generate coverage report (Python 3.13 only)
+        if: matrix.python-version == '3.13'
         run: |
           pytest \
             --cov=src/pramanix \
@@ -338,8 +338,8 @@ jobs:
             --cov-fail-under=95 \
             tests/unit/ tests/integration/ tests/property/ tests/adversarial/
 
-      - name: Upload coverage artifact (Python 3.11 only)
-        if: matrix.python-version == '3.11'
+      - name: Upload coverage artifact (Python 3.13 only)
+        if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -360,7 +360,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install coverage
         run: pip install coverage[toml]
@@ -430,7 +430,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install runtime dependencies + license tool
         run: |
@@ -530,7 +530,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
