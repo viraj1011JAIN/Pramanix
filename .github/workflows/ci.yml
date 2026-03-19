@@ -51,7 +51,7 @@ jobs:
     name: "SAST (pip-audit · bandit · semgrep)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: sast
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Scan Dockerfiles for Alpine / musl
         run: |
@@ -254,7 +254,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: alpine-ban
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -290,7 +290,7 @@ jobs:
         python-version: ["3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -356,7 +356,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -394,7 +394,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: coverage
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build production image for scanning
         run: docker build -f Dockerfile.production -t pramanix:ci-scan .
@@ -426,7 +426,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: trivy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -526,7 +526,7 @@ jobs:
     if: github.event_name == 'schedule'
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
