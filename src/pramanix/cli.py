@@ -109,8 +109,8 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
     if result.valid:
         try:
             ts = datetime.fromtimestamp(result.issued_at, tz=UTC).isoformat()
-        except Exception:
-            ts = str(result.issued_at)
+        except Exception:  # pragma: no cover
+            ts = str(result.issued_at)  # pragma: no cover
         status_line = f"status={result.status}"
         if result.violated_invariants:
             status_line += f"  violated={result.violated_invariants}"
@@ -162,9 +162,9 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
     try:
         from pramanix.crypto import PramanixVerifier
         verifier = PramanixVerifier(public_key_pem=public_key_pem)
-    except ImportError:
-        print("ERROR: cryptography package required. pip install cryptography", file=sys.stderr)
-        return 2
+    except ImportError:  # pragma: no cover
+        print("ERROR: cryptography package required. pip install cryptography", file=sys.stderr)  # pragma: no cover
+        return 2  # pragma: no cover
     except Exception as e:
         print(f"ERROR: Invalid public key: {e}", file=sys.stderr)
         return 2

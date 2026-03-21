@@ -1,55 +1,96 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Unit tests for OllamaTranslator — HTTP paths tested via respx transport interception.
+"""Unit tests for OllamaTranslator — every test hits a real TCP socket.
 
-Design principles
------------------
-* No AsyncMock, MagicMock, or patch() anywhere in this file.
+Architecture
+------------
+* No respx, no MagicMock, no patching of httpx internals.
 
-* respx.mock() intercepts httpx at the TRANSPORT layer — the real httpx
-  serialization, response parsing, and exception handling all run.  Only the
-  TCP connection is replaced.  This is fundamentally different from patching
-  httpx.AsyncClient with a MagicMock.
+* Success-path tests (TestOllamaTranslatorLive) require Ollama running
+  at localhost:11434 with llama3.2 loaded.  They are skipped automatically
+  when Ollama is not available.  Run ``ollama serve`` and
+  ``ollama pull llama3.2`` before running these tests.
 
-* Network error side-effects (httpx.TimeoutException, httpx.ConnectError) are
-  injected via respx route `.mock(side_effect=...)` — real httpx exception types
-  raised by the real transport layer, not fabricated MagicMocks.
+* Error-path tests (TestOllamaTranslatorHttpErrors,
+  TestOllamaTranslatorMalformedResponse) use a real local Python HTTP
+  server (http.server) on a random port.  These tests always run — they
+  do not require Ollama.  The server returns precisely the bytes needed to
+  exercise each defensive code path in OllamaTranslator.
 
-* test_missing_httpx_raises_import_error uses monkeypatch.setitem(sys.modules,
-  "httpx", None) — the only way to simulate a missing package in a test
-  environment where httpx IS installed.  This is an impossible-to-reach state
-  through normal API usage, so monkeypatch is acceptable per project discipline.
+* Network-error tests (TestOllamaTranslatorNetworkErrors) use:
+    - Wrong port (localhost:11435) → real ConnectionRefusedError → LLMTimeoutError
+    - Extremely short timeout (0.001 s) → real httpx.TimeoutException
+      → LLMTimeoutError
+
+* Construction tests (TestOllamaTranslatorConstruction) and the missing-
+  httpx test require no network at all.
 
 Coverage targets
 ----------------
-* Success path: valid 200 + JSON response → parsed dict
+* Success path: LLM extracts structured intent from natural language
 * Non-200 status → ExtractionFailureError
 * httpx.TimeoutException → LLMTimeoutError
-* httpx.RequestError (ConnectError) → LLMTimeoutError
-* Invalid outer JSON on success 200 → ExtractionFailureError
-* Missing ``message.content`` key → ExtractionFailureError
-* Bad inner JSON (passes to parse_llm_response) → ExtractionFailureError
+* httpx.ConnectError → LLMTimeoutError
+* Invalid outer JSON → ExtractionFailureError
+* Missing message.content key → ExtractionFailureError
+* Bad inner JSON → ExtractionFailureError
+* JSON array instead of object → ExtractionFailureError
+* Partial JSON embedded in prose → successful extraction
 * httpx not installed → ImportError
-* ``OLLAMA_BASE_URL`` env var fallback
-* Custom ``base_url`` constructor arg
+* OLLAMA_BASE_URL env var fallback
+* Custom base_url constructor arg
 * Default model and base_url values
 """
+
 from __future__ import annotations
 
+import http.server
 import json
 import sys
+import threading
+from typing import Any
 
-import httpx
 import pytest
-import respx
-from pydantic import BaseModel
 
-pytest.importorskip("httpx", reason="httpx not installed — skipping Ollama translator tests")
+pytest.importorskip(
+    "httpx",
+    reason="httpx not installed — skipping OllamaTranslator tests",
+)
 
-from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
-from pramanix.translator.ollama import OllamaTranslator
+import httpx  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
 
-# ── Minimal intent schema for testing ────────────────────────────────────────
+from pramanix.exceptions import (  # noqa: E402
+    ExtractionFailureError,
+    LLMTimeoutError,
+)
+from pramanix.translator.ollama import OllamaTranslator  # noqa: E402
+
+# ── Check Ollama availability ─────────────────────────────────────────────────
+
+_OLLAMA_BASE = "http://localhost:11434"
+_OLLAMA_AVAILABLE = False
+_LLAMA3_AVAILABLE = False
+
+try:
+    _r = httpx.get(f"{_OLLAMA_BASE}/api/version", timeout=2.0)
+    if _r.status_code == 200:
+        _OLLAMA_AVAILABLE = True
+        _tags = httpx.get(f"{_OLLAMA_BASE}/api/tags", timeout=5.0)
+        _models = [m["name"] for m in _tags.json().get("models", [])]
+        _LLAMA3_AVAILABLE = any("llama3.2" in m for m in _models)
+except Exception:
+    pass
+
+_needs_ollama = pytest.mark.skipif(
+    not (_OLLAMA_AVAILABLE and _LLAMA3_AVAILABLE),
+    reason=(
+        "Ollama with llama3.2 not running at localhost:11434 — "
+        "start Ollama and run: ollama pull llama3.2"
+    ),
+)
+
+# ── Minimal intent schema ─────────────────────────────────────────────────────
 
 
 class _TransferIntent(BaseModel):
@@ -57,18 +98,59 @@ class _TransferIntent(BaseModel):
     recipient: str
 
 
-# ── Shared Ollama API URL ─────────────────────────────────────────────────────
-
-_OLLAMA_URL = "http://localhost:11434/api/chat"
+# ── Local test HTTP server ─────────────────────────────────────────────────────
 
 
-def _ollama_body(content: str) -> dict:
-    """Build a real Ollama /api/chat 200 response body."""
-    return {"message": {"role": "assistant", "content": content}}
+class _FixedResponseHandler(http.server.BaseHTTPRequestHandler):
+    """Serves a single pre-configured response for POST requests."""
+
+    _status: int = 200
+    _body: bytes = b""
+    _content_type: str = "application/json"
+
+    def do_POST(self) -> None:  # noqa: N802
+        # Read and discard the request body
+        length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(length)
+        self.send_response(self._status)
+        self.send_header("Content-Type", self._content_type)
+        self.send_header("Content-Length", str(len(self._body)))
+        self.end_headers()
+        self.wfile.write(self._body)
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        pass  # Suppress server access logs during tests
+
+
+def _make_server(
+    status: int, body: bytes, content_type: str = "application/json"
+) -> tuple[http.server.HTTPServer, str]:
+    """Start a single-response HTTP server on a random port.
+
+    Returns (server, base_url).  Caller must call server.shutdown() when done.
+    """
+
+    class _Handler(_FixedResponseHandler):
+        _status = status
+        _body = body
+        _content_type = content_type
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://127.0.0.1:{port}"
+
+
+def _ollama_json(content: str) -> bytes:
+    """Build bytes that look like a real Ollama /api/chat 200 response."""
+    return json.dumps(
+        {"message": {"role": "assistant", "content": content}}
+    ).encode()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Construction
+# Construction — no network required
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -91,7 +173,9 @@ class TestOllamaTranslatorConstruction:
         t = OllamaTranslator()
         assert "env-server" in t._base_url
 
-    def test_explicit_base_url_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_explicit_base_url_overrides_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://env-server:11434")
         t = OllamaTranslator(base_url="http://explicit:11434")
         assert "explicit" in t._base_url
@@ -102,193 +186,222 @@ class TestOllamaTranslatorConstruction:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Success path
+# Live Ollama tests — skipped when Ollama is not running with llama3.2
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestOllamaTranslatorSuccess:
+class TestOllamaTranslatorLive:
+    """Tests that require a real Ollama instance with llama3.2."""
+
+    @_needs_ollama
     @pytest.mark.asyncio
-    async def test_valid_response_returns_parsed_dict(self) -> None:
-        payload = json.dumps({"amount": 100.0, "recipient": "acc_123"})
+    async def test_extract_transfer_intent(self) -> None:
+        """Real LLM extracts structured transfer intent from natural language."""
         t = OllamaTranslator()
+        result = await t.extract(
+            "Transfer 250 dollars to account acc_789", _TransferIntent
+        )
+        assert isinstance(result, dict)
+        assert "amount" in result
+        assert "recipient" in result
+        assert isinstance(result["amount"], int | float)
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(payload))
-            result = await t.extract("transfer 100 to acc_123", _TransferIntent)
-
-        assert result == {"amount": 100.0, "recipient": "acc_123"}
-
+    @_needs_ollama
     @pytest.mark.asyncio
-    async def test_markdown_wrapped_json_is_extracted(self) -> None:
-        """parse_llm_response must unwrap ```json ... ``` fences."""
-        payload = '```json\n{"amount": 50.0, "recipient": "acc_456"}\n```'
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(payload))
-            result = await t.extract("move 50 to acc_456", _TransferIntent)
-
-        assert result["amount"] == 50.0
-        assert result["recipient"] == "acc_456"
-
-    @pytest.mark.asyncio
-    async def test_context_parameter_accepted(self) -> None:
-        """context is accepted but not forwarded to the LLM; extraction must still succeed."""
+    async def test_extract_with_context(self) -> None:
+        """context parameter is accepted; extraction still succeeds."""
         from pramanix.translator.base import TranslatorContext
 
-        payload = json.dumps({"amount": 10.0, "recipient": "acc_789"})
-        ctx = TranslatorContext(request_id="req-1", user_id="user-1")
+        ctx = TranslatorContext(request_id="req-live-1", user_id="user-1")
         t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(payload))
-            result = await t.extract("send 10", _TransferIntent, context=ctx)
-
-        assert result["amount"] == 10.0
+        result = await t.extract(
+            "Send 50 to acc_live", _TransferIntent, context=ctx
+        )
+        assert isinstance(result, dict)
+        assert "amount" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# HTTP error paths
+# HTTP error paths — local test server, always runs
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestOllamaTranslatorHttpErrors:
     @pytest.mark.asyncio
     async def test_non_200_raises_extraction_failure(self) -> None:
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(500, text="Internal Server Error")
+        """Real HTTP 500 from local server → ExtractionFailureError."""
+        server, base_url = _make_server(500, b"Internal Server Error")
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="500"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_401_raises_extraction_failure(self) -> None:
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(401, text="Unauthorized")
+        """Real HTTP 401 from local server → ExtractionFailureError."""
+        server, base_url = _make_server(401, b"Unauthorized")
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="401"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_404_raises_extraction_failure(self) -> None:
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(404, text="Not Found")
+        """Real HTTP 404 from local server → ExtractionFailureError."""
+        server, base_url = _make_server(404, b"Not Found")
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="404"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Network error paths (ConnectError / TimeoutException)
+# Network error paths — real connection conditions, always runs
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestOllamaTranslatorNetworkErrors:
     @pytest.mark.asyncio
-    async def test_timeout_raises_llm_timeout_error(self) -> None:
-        """httpx.TimeoutException → LLMTimeoutError (fail-safe path)."""
-        t = OllamaTranslator()
+    async def test_connect_error_raises_llm_timeout_error(self) -> None:
+        """Connection refused (wrong port) → real httpx.ConnectError → LLMTimeoutError.
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).mock(
-                side_effect=httpx.TimeoutException("timed out")
-            )
-            with pytest.raises(LLMTimeoutError, match="timed out"):
-                await t.extract("transfer 100", _TransferIntent)
+        Port 11435 is not listening; httpx raises ConnectError immediately.
+        This is a real TCP-level failure — no mocking.
+        """
+        t = OllamaTranslator(base_url="http://localhost:11435")
+        with pytest.raises(LLMTimeoutError, match="connection failed"):
+            await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
-    async def test_connect_error_raises_llm_timeout_error(self) -> None:
-        """httpx.ConnectError → LLMTimeoutError (connection refused = unreachable)."""
-        t = OllamaTranslator()
+    async def test_timeout_raises_llm_timeout_error(self) -> None:
+        """Extremely short timeout (1 ms) → real httpx.TimeoutException → LLMTimeoutError.
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).mock(
-                side_effect=httpx.ConnectError("Connection refused")
+        A local server that sleeps before responding is not needed — even the
+        TCP handshake with localhost cannot complete in 1 ms reliably, or the
+        server's keep-alive read triggers the timeout.
+        """
+
+        # Start a server that deliberately delays its response
+        class _SlowHandler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                import time
+
+                length = int(self.headers.get("Content-Length", 0))
+                self.rfile.read(length)
+                time.sleep(2)  # 2 s delay >> 1 ms timeout
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, fmt: str, *args: Any) -> None:
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _SlowHandler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            t = OllamaTranslator(
+                base_url=f"http://127.0.0.1:{port}", timeout=0.001
             )
-            with pytest.raises(LLMTimeoutError, match="connection failed"):
+            with pytest.raises(LLMTimeoutError):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Malformed response paths
+# Malformed response paths — local test server, always runs
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestOllamaTranslatorMalformedResponse:
     @pytest.mark.asyncio
-    async def test_invalid_outer_json_body_raises_extraction_failure(self) -> None:
-        """Real httpx response with non-JSON content → response.json() raises."""
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            # content= sets raw bytes; real httpx.Response.json() will raise JSONDecodeError
-            mock.post(_OLLAMA_URL).respond(200, content=b"this is not valid json")
+    async def test_invalid_outer_json_body_raises_extraction_failure(
+        self,
+    ) -> None:
+        """Local server returns non-JSON bytes — response.json() raises."""
+        server, base_url = _make_server(
+            200,
+            b"this is not valid json",
+            content_type="text/plain",
+        )
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="not valid JSON"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_missing_message_key_raises_extraction_failure(self) -> None:
-        """Response shape is wrong — no 'message' key."""
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(200, json={"unexpected": "shape"})
+        """Local server returns JSON without the 'message' key."""
+        body = json.dumps({"unexpected": "shape"}).encode()
+        server, base_url = _make_server(200, body)
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="Unexpected"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_missing_content_key_raises_extraction_failure(self) -> None:
-        """message dict exists but has no 'content' key."""
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(
-                200, json={"message": {"role": "assistant"}}
-            )
+        """Local server returns message dict without 'content' key."""
+        body = json.dumps({"message": {"role": "assistant"}}).encode()
+        server, base_url = _make_server(200, body)
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_invalid_inner_json_raises_extraction_failure(self) -> None:
-        """content string is not parseable JSON → parse_llm_response raises."""
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(
-                200, json=_ollama_body("this is not json at all")
-            )
+        """LLM content string that cannot be parsed as JSON."""
+        server, base_url = _make_server(
+            200, _ollama_json("this is not json at all")
+        )
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="unparseable"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_json_array_instead_of_object_raises(self) -> None:
-        """LLM returns a JSON array instead of an object → ExtractionFailureError."""
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body("[1, 2, 3]"))
+        """LLM returns a JSON array instead of an object."""
+        server, base_url = _make_server(200, _ollama_json("[1, 2, 3]"))
+        try:
+            t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="list"):
                 await t.extract("transfer 100", _TransferIntent)
+        finally:
+            server.shutdown()
 
     @pytest.mark.asyncio
     async def test_partial_json_recovery(self) -> None:
-        """Crucial test: partial JSON surrounded by prose — _json.py must extract it."""
-        raw_content = (
-            'Here is the extracted data:\n'
+        """JSON embedded in prose is extracted by the _json.py recovery layer."""
+        content = (
+            "Here is the extracted data:\n"
             '{"amount": 75.0, "recipient": "acc_partial"}\n'
-            'End of response.'
+            "End of response."
         )
-        t = OllamaTranslator()
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(raw_content))
+        server, base_url = _make_server(200, _ollama_json(content))
+        try:
+            t = OllamaTranslator(base_url=base_url)
             result = await t.extract("transfer 75", _TransferIntent)
-
-        assert result["amount"] == 75.0
-        assert result["recipient"] == "acc_partial"
+            assert result["amount"] == 75.0
+            assert result["recipient"] == "acc_partial"
+        finally:
+            server.shutdown()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

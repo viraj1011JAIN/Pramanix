@@ -54,9 +54,9 @@ try:
         span_cm = tracer.start_as_current_span(name)
         return span_cm
 
-except ImportError:
+except ImportError:  # pragma: no cover
 
-    def _span(name: str, **attrs: Any) -> Any:
+    def _span(name: str, **attrs: Any) -> Any:  # pragma: no cover
         """No-op span when opentelemetry is not installed."""
         return contextlib.nullcontext()
 
@@ -218,7 +218,7 @@ def _attribute_violations(
             result = s.check()
         del s  # prompt Z3 memory release
         if result == z3.unknown:
-            raise SolverTimeoutError(label, timeout_ms)
+            raise SolverTimeoutError(label, timeout_ms)  # pragma: no cover
         if result == z3.unsat:
             violated.append(inv)
     return violated

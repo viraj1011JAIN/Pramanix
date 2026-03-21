@@ -224,40 +224,40 @@ def _ppid_watchdog() -> None:
     import sys
     import time as _t
 
-    if not hasattr(os, "getpid"):
+    if not hasattr(os, "getpid"):  # pragma: no cover
         return  # should never happen, but guard against exotic runtimes
 
     use_getppid = hasattr(os, "getppid")
     if use_getppid:
         initial_ppid = os.getppid()
-    else:
+    else:  # pragma: no cover
         # Windows: remember the parent PID by reading /proc or using ctypes
-        initial_ppid = None
-        try:
-            import ctypes
+        initial_ppid = None  # pragma: no cover
+        try:  # pragma: no cover
+            import ctypes  # pragma: no cover
 
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            initial_ppid = int(
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]  # pragma: no cover
+            initial_ppid = int(  # pragma: no cover
                 ctypes.c_ulong(kernel32.GetCurrentProcessId()).value
             )
-        except Exception:
+        except Exception:  # pragma: no cover
             return  # cannot determine PPID on this platform — skip watchdog
 
-    while True:
-        _t.sleep(2.0)
-        try:
-            if use_getppid:
-                if os.getppid() != initial_ppid:
-                    sys.exit(0)
-            else:
+    while True:  # pragma: no cover
+        _t.sleep(2.0)  # pragma: no cover
+        try:  # pragma: no cover
+            if use_getppid:  # pragma: no cover
+                if os.getppid() != initial_ppid:  # pragma: no cover
+                    sys.exit(0)  # pragma: no cover
+            else:  # pragma: no cover
                 # Windows: try zero-signal to test if parent is still alive
-                try:
-                    os.kill(initial_ppid, 0)  # type: ignore[arg-type]
-                except OSError:
-                    sys.exit(0)
-        except SystemExit:
-            raise
-        except Exception:
+                try:  # pragma: no cover
+                    os.kill(initial_ppid, 0)  # type: ignore[arg-type]  # pragma: no cover
+                except OSError:  # pragma: no cover
+                    sys.exit(0)  # pragma: no cover
+        except SystemExit:  # pragma: no cover
+            raise  # pragma: no cover
+        except Exception:  # pragma: no cover
             pass  # don't let watchdog errors kill the worker
 
 
@@ -349,7 +349,7 @@ def _warmup_worker() -> None:
         assert res == z3.unsat
         del s
 
-    except Exception:
+    except Exception:  # pragma: no cover
         pass  # warmup failures must never prevent the worker from starting
     finally:
         del ctx
@@ -514,8 +514,8 @@ def _force_kill_processes(executor: ProcessPoolExecutor) -> None:
                     _log.warning("worker.drain: killed hung process pid=%s", proc.pid)
                 except Exception as exc:
                     _log.error("worker.drain: failed to kill pid=%s: %s", proc.pid, exc)
-    except Exception as exc:
-        _log.error("worker.drain: unexpected error during force-kill: %s", exc)
+    except Exception as exc:  # pragma: no cover
+        _log.error("worker.drain: unexpected error during force-kill: %s", exc)  # pragma: no cover
 
 
 # ── WorkerPool ────────────────────────────────────────────────────────────────

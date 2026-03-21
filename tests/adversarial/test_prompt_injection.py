@@ -265,8 +265,8 @@ class TestDualModelConsensus:
         because balance < amount → ``Decision.unsafe()``.
 
         Tests the Z3 verification layer directly: even when consensus is
-        reached on a structurally valid intent (amount=500, recipient="thief"),
-        the formal solver rejects it because ``balance(100) - amount(500) < 0``.
+        reached on a structurally valid intent (amount=500), the formal solver
+        rejects it because ``balance(100) - amount(500) < 0``.
         Uses ``verify_async`` directly — no patching of LLM infrastructure
         needed to test the Z3 enforcement guarantee.
         """

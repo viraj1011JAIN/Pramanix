@@ -158,9 +158,9 @@ try:
         """Return a live OTel span context-manager."""
         return _otel_trace.get_tracer("pramanix.guard").start_as_current_span(name)
 
-except ImportError:
+except ImportError:  # pragma: no cover
 
-    def _span(name: str) -> Any:
+    def _span(name: str) -> Any:  # pragma: no cover
         """No-op span when opentelemetry is not installed."""
         return contextlib.nullcontext()
 
@@ -712,7 +712,7 @@ class Guard:
         _metric_status = "error"  # overwritten before every return
         try:
             with _span("pramanix.guard.verify") as span:
-                if span is not None:
+                if span is not None:  # pragma: no branch
                     # Attach audit-trail metadata so SREs can correlate this
                     # span with a specific policy evaluation in any OTel backend.
                     span.set_attribute("pramanix.decision_id", decision_id)

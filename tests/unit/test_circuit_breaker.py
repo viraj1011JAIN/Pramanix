@@ -292,7 +292,8 @@ class TestCircuitBreakerIsolation:
         breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD, config=config)
 
         await _inject_pressure(breaker, count=2, solve_ms=55.0)
-        # Force to ISOLATED (state machine reached via open_episodes >= threshold)
+        # Directly assign ISOLATED to test that reset() returns to CLOSED,
+        # without relying on multiple open episodes to reach isolation.
         breaker._state = CircuitState.ISOLATED
 
         breaker.reset()

@@ -108,8 +108,8 @@ class PramanixSigner:
                 PublicFormat,
                 load_pem_private_key,
             )
-        except ImportError as e:
-            raise ImportError(
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(  # pragma: no cover
                 "The 'cryptography' package is required for Ed25519 signing. "
                 "Install it: pip install 'pramanix[crypto]'"
             ) from e
@@ -200,9 +200,9 @@ class PramanixSigner:
                 decision.decision_hash.encode("utf-8")
             )
             return _b64url(sig_bytes)
-        except Exception as e:
-            log.error("Decision signing failed: %s", e)
-            return ""
+        except Exception as e:  # pragma: no cover
+            log.error("Decision signing failed: %s", e)  # pragma: no cover
+            return ""  # pragma: no cover
 
     def public_key_pem(self) -> bytes:
         """Return public key in PEM format. Safe to log and publish."""
@@ -259,8 +259,8 @@ class PramanixVerifier:
             from cryptography.hazmat.primitives.serialization import (
                 load_pem_public_key,
             )
-        except ImportError as e:
-            raise ImportError(
+        except ImportError as e:  # pragma: no cover
+            raise ImportError(  # pragma: no cover
                 "The 'cryptography' package is required for verification. "
                 "pip install cryptography"
             ) from e

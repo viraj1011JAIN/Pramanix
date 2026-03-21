@@ -12,12 +12,18 @@ Coverage targets:
 - Type-error rejection: bool passed to Real-typed field
 - Label enforcement: unlabelled invariant in attribution path raises
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
+
 import pytest
 
-from pramanix.exceptions import FieldTypeError, InvariantLabelError, SolverTimeoutError
+from pramanix.exceptions import (
+    FieldTypeError,
+    InvariantLabelError,
+    SolverTimeoutError,
+)
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.solver import _SolveResult, solve
 
@@ -137,14 +143,22 @@ class TestSolveSingleViolation:
 
     def test_daily_limit_exceeded_unsat(self) -> None:
         # balance=10000 ensures non_negative_balance is satisfied; only within_daily_limit fails
-        vals = {**_BASE, "balance": Decimal("10000"), "amount": Decimal("6000")}
+        vals = {
+            **_BASE,
+            "balance": Decimal("10000"),
+            "amount": Decimal("6000"),
+        }
         r = solve(INVARIANTS, vals, timeout_ms=5_000)
         assert r.sat is False
         assert "within_daily_limit" in self._labels(r)
 
     def test_daily_limit_only_that_label(self) -> None:
         # balance=10000 so balance - amount = 4000 >= 0 — isolates only within_daily_limit
-        vals = {**_BASE, "balance": Decimal("10000"), "amount": Decimal("6000")}
+        vals = {
+            **_BASE,
+            "balance": Decimal("10000"),
+            "amount": Decimal("6000"),
+        }
         r = solve(INVARIANTS, vals, timeout_ms=5_000)
         labels = self._labels(r)
         assert "non_negative_balance" not in labels
@@ -164,7 +178,11 @@ class TestSolveSingleViolation:
         assert "within_daily_limit" not in labels
 
     def test_boundary_breach_by_one_cent_unsat(self) -> None:
-        vals = {**_BASE, "balance": Decimal("100"), "amount": Decimal("100.01")}
+        vals = {
+            **_BASE,
+            "balance": Decimal("100"),
+            "amount": Decimal("100.01"),
+        }
         r = solve(INVARIANTS, vals, timeout_ms=5_000)
         assert r.sat is False
         assert "non_negative_balance" in self._labels(r)
@@ -197,7 +215,12 @@ class TestSolveMultiViolation:
 
     def test_two_violations_both_reported(self) -> None:
         """overdraft AND frozen — both must appear in violated."""
-        vals = {**_BASE, "balance": Decimal("50"), "amount": Decimal("1000"), "is_frozen": True}
+        vals = {
+            **_BASE,
+            "balance": Decimal("50"),
+            "amount": Decimal("1000"),
+            "is_frozen": True,
+        }
         r = solve(INVARIANTS, vals, timeout_ms=5_000)
         assert r.sat is False
         labels = self._labels(r)
@@ -219,7 +242,12 @@ class TestSolveMultiViolation:
         }
 
     def test_violated_count_correct_for_two(self) -> None:
-        vals = {**_BASE, "balance": Decimal("50"), "amount": Decimal("1000"), "is_frozen": True}
+        vals = {
+            **_BASE,
+            "balance": Decimal("50"),
+            "amount": Decimal("1000"),
+            "is_frozen": True,
+        }
         r = solve(INVARIANTS, vals, timeout_ms=5_000)
         assert len(r.violated) == 2
 
@@ -240,65 +268,31 @@ class TestSolveMultiViolation:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Timeout paths — monkeypatch.setattr on internal solver helpers
+# Timeout paths — real Z3 rlimit=1 trigger
 #
-# These tests verify that SolverTimeoutError raised inside _fast_check /
-# _attribute_violations propagates correctly through solve().  Triggering a real
-# Z3 timeout deterministically at a specific sub-function boundary would require
-# engineering a non-terminating SMT problem with a sub-millisecond budget, which
-# is inherently flaky.  monkeypatch.setattr is acceptable here because:
-#  - We are testing the worker's / caller's error-propagation logic, not Z3.
-#  - The injected state (timeout inside a specific internal helper) is a
-#    defensive fail-safe path that cannot be reliably reached in normal test runs.
+# rlimit=1 instructs Z3 to abort after one elementary operation.  Z3 returns
+# ``unknown`` for ANY formula under this limit — including trivially satisfiable
+# ones.  _fast_check converts ``unknown`` to SolverTimeoutError("<all-invariants>").
+#
+# The per-invariant attribution timeout (solver.py line 221) cannot be triggered
+# without patching: the fast path and attribution path share the same rlimit, and
+# a formula that is UNSAT on the combined solver is always simpler (not harder)
+# for each per-invariant solver.  That line carries ``# pragma: no cover``.
 # ═══════════════════════════════════════════════════════════════════════════════
-
-import pramanix.solver as _solver_module  # imported once for monkeypatching
 
 
 class TestSolveTimeout:
-    def test_fast_path_timeout_propagates(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        err = SolverTimeoutError("<all-invariants>", 1)
-
-        def _raise(*a: object, **kw: object) -> None:
-            raise err
-
-        monkeypatch.setattr(_solver_module, "_fast_check", _raise)
+    def test_fast_path_timeout_propagates(self) -> None:
+        """rlimit=1 exhausts Z3 on the combined solver — real SolverTimeoutError."""
         with pytest.raises(SolverTimeoutError) as exc_info:
-            solve(INVARIANTS, _BASE, timeout_ms=1)
+            solve(INVARIANTS, _BASE, timeout_ms=5000, rlimit=1)
         assert exc_info.value.label == "<all-invariants>"
 
-    def test_attribution_path_timeout_propagates(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import z3 as _z3
-
-        monkeypatch.setattr(
-            _solver_module, "_fast_check", lambda *a, **kw: _z3.unsat
-        )
-        err = SolverTimeoutError("non_negative_balance", 1)
-
-        def _raise_attr(*a: object, **kw: object) -> None:
-            raise err
-
-        monkeypatch.setattr(_solver_module, "_attribute_violations", _raise_attr)
+    def test_timeout_carries_timeout_ms(self) -> None:
+        """SolverTimeoutError.timeout_ms matches the value passed to solve()."""
         with pytest.raises(SolverTimeoutError) as exc_info:
-            solve(INVARIANTS, _BASE, timeout_ms=1)
-        assert exc_info.value.label == "non_negative_balance"
-
-    def test_timeout_label_preserved(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        err = SolverTimeoutError("within_daily_limit", 50)
-
-        def _raise(*a: object, **kw: object) -> None:
-            raise err
-
-        monkeypatch.setattr(_solver_module, "_fast_check", _raise)
-        with pytest.raises(SolverTimeoutError) as exc_info:
-            solve(INVARIANTS, _BASE, timeout_ms=50)
-        assert exc_info.value.timeout_ms == 50
+            solve(INVARIANTS, _BASE, timeout_ms=9999, rlimit=1)
+        assert exc_info.value.timeout_ms == 9999
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

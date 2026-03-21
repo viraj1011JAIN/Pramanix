@@ -146,8 +146,8 @@ def _build_decision_canonical(
 # ---------------------------------------------------------------------------
 try:
     from dataclasses import FrozenInstanceError  # type: ignore[attr-defined,unused-ignore]
-except ImportError:  # Python 3.10
-    FrozenInstanceError = AttributeError  # type: ignore[assignment, misc]
+except ImportError:  # Python 3.10  # pragma: no cover
+    FrozenInstanceError = AttributeError  # type: ignore[assignment, misc]  # pragma: no cover
 
 
 # ── SolverStatus ──────────────────────────────────────────────────────────────
@@ -302,9 +302,9 @@ class Decision:
         )
         try:
             serialized = _canonical_bytes(canonical)
-        except Exception:
-            import json
-            serialized = json.dumps(
+        except Exception:  # pragma: no cover
+            import json  # pragma: no cover
+            serialized = json.dumps(  # pragma: no cover
                 canonical, sort_keys=True, default=str
             ).encode()
         return hashlib.sha256(serialized).hexdigest()

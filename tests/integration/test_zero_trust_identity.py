@@ -12,6 +12,7 @@ fake state in the request body, the state is loaded from Redis
 using ONLY the verified JWT sub claim. The caller's fake state
 is IGNORED. If this test fails, the system is not zero-trust.
 """
+
 from __future__ import annotations
 
 import base64
@@ -51,22 +52,33 @@ def _make_jwt(
     """Create a real HMAC-SHA256 JWT for testing."""
     header = (
         base64.urlsafe_b64encode(
-            json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode()
+            json.dumps(
+                {"alg": "HS256", "typ": "JWT"}, separators=(",", ":")
+            ).encode()
         )
         .rstrip(b"=")
         .decode()
     )
 
     now = int(time.time())
-    payload_dict = {"sub": sub, "roles": roles, "iat": now, "exp": now + exp_offset}
+    payload_dict = {
+        "sub": sub,
+        "roles": roles,
+        "iat": now,
+        "exp": now + exp_offset,
+    }
     payload = (
-        base64.urlsafe_b64encode(json.dumps(payload_dict, separators=(",", ":")).encode())
+        base64.urlsafe_b64encode(
+            json.dumps(payload_dict, separators=(",", ":")).encode()
+        )
         .rstrip(b"=")
         .decode()
     )
 
     signing_input = f"{header}.{payload}"
-    sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    sig = hmac.new(
+        secret.encode(), signing_input.encode(), hashlib.sha256
+    ).digest()
     return f"{signing_input}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
 
 
@@ -145,12 +157,15 @@ class TestZeroTrustBoundary:
 
         token = _make_jwt("alice", ["user"], SECRET)
 
-        class _FakeRequest:
+        class _Request:
             headers: ClassVar[dict] = {"Authorization": f"Bearer {token}"}
             # Caller tries to inject high balance in body — this must be IGNORED
-            body_data: ClassVar[dict] = {"amount": "99999", "balance": "999999"}
+            body_data: ClassVar[dict] = {
+                "amount": "99999",
+                "balance": "999999",
+            }
 
-        claims, state = await linker.extract_and_load(_FakeRequest())
+        claims, state = await linker.extract_and_load(_Request())
 
         # State must come from Redis, NOT from request body
         assert str(state["balance"]) == "100", (
@@ -177,13 +192,18 @@ class TestZeroTrustBoundary:
 
         claims, state = await linker.extract_and_load(_Req())
         decision = await guard.verify_async(
-            intent={"amount": Decimal("100"), "balance": Decimal(state["balance"])},
+            intent={
+                "amount": Decimal("100"),
+                "balance": Decimal(state["balance"]),
+            },
             state=state,
         )
         assert decision.allowed
 
     @pytest.mark.asyncio
-    async def test_full_pipeline_block_insufficient_balance(self, redis_client):
+    async def test_full_pipeline_block_insufficient_balance(
+        self, redis_client
+    ):
         """End-to-end: JWT → Redis → Guard → BLOCK."""
         await redis_client.set(
             "pramanix:state:carol",
@@ -200,7 +220,10 @@ class TestZeroTrustBoundary:
 
         claims, state = await linker.extract_and_load(_Req())
         decision = await guard.verify_async(
-            intent={"amount": Decimal("1000"), "balance": Decimal(state["balance"])},
+            intent={
+                "amount": Decimal("1000"),
+                "balance": Decimal(state["balance"]),
+            },
             state=state,
         )
         assert not decision.allowed
@@ -213,7 +236,9 @@ class TestZeroTrustBoundary:
         linker = JWTIdentityLinker(state_loader=loader, jwt_secret=SECRET)
 
         class _Req:
-            headers: ClassVar[dict] = {"Authorization": f"Bearer {expired_token}"}
+            headers: ClassVar[dict] = {
+                "Authorization": f"Bearer {expired_token}"
+            }
 
         with pytest.raises(JWTExpiredError):
             await linker.extract_and_load(_Req())
