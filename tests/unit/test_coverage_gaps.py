@@ -12,7 +12,9 @@ Files targeted:
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import patch
+import pramanix.guard as _guard_mod
+import pramanix.transpiler as _transpiler_mod
+import pramanix.worker as _worker_mod
 
 import pytest
 
@@ -629,12 +631,11 @@ class TestSemanticPostConsensusCheck:
 class TestGuardInitCompilePolicyFailure:
     """Lines 474-475: compile_policy exception propagates from Guard.__init__."""
 
-    def test_compile_policy_failure_propagates(self):
+    def test_compile_policy_failure_propagates(self, monkeypatch: pytest.MonkeyPatch):
         """Lines 474-475: if compile_policy raises, Guard.__init__ re-raises."""
-        with (
-            patch("pramanix.transpiler.compile_policy", side_effect=RuntimeError("boom")),
-            pytest.raises(RuntimeError, match="boom"),
-        ):
+        def _boom(*a, **kw): raise RuntimeError("boom")
+        monkeypatch.setattr(_transpiler_mod, "compile_policy", _boom)
+        with pytest.raises(RuntimeError, match="boom"):
             Guard(SimplePolicy, GuardConfig(execution_mode="sync"))
 
 
@@ -778,7 +779,7 @@ class TestVerifyAsyncEdgeCases:
         finally:
             await guard.shutdown()
 
-    async def test_verify_async_thread_pramanix_error_in_validation(self):
+    async def test_verify_async_thread_pramanix_error_in_validation(self, monkeypatch: pytest.MonkeyPatch):
         """Line 801: PramanixError (not ValidationError) during validation → Decision.error().
 
         Uses a policy with an intent_model so validate_intent is actually called,
@@ -812,21 +813,20 @@ class TestVerifyAsyncEdgeCases:
             _PolicyWithModel, GuardConfig(execution_mode="async-thread", max_workers=1)
         )
         try:
-            # Patch at the module level where guard.py imports it
-            with patch(
-                "pramanix.guard.validate_intent",
-                side_effect=ConfigurationError("cfg error"),
-            ):
-                d = await guard.verify_async(
-                    intent={"amount": Decimal("100")},
-                    state={"balance": Decimal("500"), "state_version": "1.0"},
-                )
+            def _raise_cfg(*a, **kw): raise ConfigurationError("cfg error")
+            monkeypatch.setattr(_guard_mod, "validate_intent", _raise_cfg)
+            d = await guard.verify_async(
+                intent={"amount": Decimal("100")},
+                state={"balance": Decimal("500"), "state_version": "1.0"},
+            )
             assert d.allowed is False
             assert d.status.value == "error"
         finally:
             await guard.shutdown()
 
-    async def test_verify_async_process_hmac_mismatch_returns_error(self):
+    async def test_verify_async_process_hmac_mismatch_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Lines 842-845: async-process HMAC mismatch → Decision.error().
 
         _unseal_decision is imported locally inside verify_async so we patch
@@ -834,50 +834,48 @@ class TestVerifyAsyncEdgeCases:
         """
         guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1))
         try:
-            with patch(
-                "pramanix.worker._unseal_decision",
-                side_effect=ValueError("HMAC mismatch"),
-            ):
-                d = await guard.verify_async(
-                    intent={"amount": Decimal("100")},
-                    state={"balance": Decimal("500")},
-                )
+            def _raise_hmac(*a, **kw): raise ValueError("HMAC mismatch")
+            monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_hmac)
+            d = await guard.verify_async(
+                intent={"amount": Decimal("100")},
+                state={"balance": Decimal("500")},
+            )
             assert d.allowed is False
             assert d.status.value == "error"
         finally:
             await guard.shutdown()
 
-    async def test_verify_async_process_worker_error_returns_error(self):
+    async def test_verify_async_process_worker_error_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Lines 846-847: async-process WorkerError → Decision.error()."""
         from pramanix.exceptions import WorkerError
 
         guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1))
         try:
-            with patch(
-                "pramanix.worker._unseal_decision",
-                side_effect=WorkerError("worker died"),
-            ):
-                d = await guard.verify_async(
-                    intent={"amount": Decimal("100")},
-                    state={"balance": Decimal("500")},
-                )
+            def _raise_worker(*a, **kw): raise WorkerError("worker died")
+            monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_worker)
+            d = await guard.verify_async(
+                intent={"amount": Decimal("100")},
+                state={"balance": Decimal("500")},
+            )
             assert d.allowed is False
             assert d.status.value == "error"
         finally:
             await guard.shutdown()
 
-    async def test_verify_async_process_unexpected_exception_returns_error(self):
+    async def test_verify_async_process_unexpected_exception_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Lines 848-849: async-process unexpected exception → Decision.error()."""
         guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1))
         try:
-            with patch(
-                "pramanix.worker._unseal_decision",
-                side_effect=RuntimeError("something unexpected"),
-            ):
-                d = await guard.verify_async(
-                    intent={"amount": Decimal("100")},
-                    state={"balance": Decimal("500")},
-                )
+            def _raise_rt(*a, **kw): raise RuntimeError("something unexpected")
+            monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_rt)
+            d = await guard.verify_async(
+                intent={"amount": Decimal("100")},
+                state={"balance": Decimal("500")},
+            )
             assert d.allowed is False
             assert d.status.value == "error"
         finally:

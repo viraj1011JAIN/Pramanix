@@ -11,8 +11,6 @@ from __future__ import annotations
 import secrets
 import threading
 import time
-from unittest.mock import MagicMock
-
 import fakeredis
 import pytest
 
@@ -21,42 +19,34 @@ from pramanix import (
     ExecutionTokenSigner,
     RedisExecutionTokenVerifier,
 )
+from pramanix.decision import Decision
 from pramanix.execution_token import ExecutionTokenVerifier
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _make_decision(allowed: bool = True, **kwargs):
-    """Return a minimal Decision-like stub."""
-
-    class _FakeDecision:
-        decision_id: str = "test-decision-id-0001"
-        intent_dump: dict = {"action": "send_email", "amount": 42}  # noqa: RUF012
-        policy_hash: None = None
-
-    d = _FakeDecision()
-    if not allowed:
-        # Make allowed a property so mint() rejects it
-        d.__class__ = type(
-            "_Blocked",
-            (_FakeDecision,),
-            {"allowed": property(lambda s: False)},
-        )
-    else:
-        d.__class__ = type(
-            "_Allowed",
-            (_FakeDecision,),
-            {"allowed": property(lambda s: True)},
-        )
-    for k, v in kwargs.items():
-        setattr(d, k, v)
-    return d
+def _make_decision(allowed: bool = True) -> Decision:
+    """Return a real Decision using the production factory methods."""
+    if allowed:
+        return Decision.safe(intent_dump={"action": "send_email", "amount": 42})
+    return Decision.unsafe(explanation="Blocked by test policy")
 
 
 def _fresh_redis() -> fakeredis.FakeRedis:
     """Return a fresh isolated fakeredis instance (own server)."""
     server = fakeredis.FakeServer()
     return fakeredis.FakeRedis(server=server, decode_responses=True)
+
+
+class _SetOnlyRedis:
+    """Real Redis-protocol stub with only `.set` — no `.scan`.
+
+    Used to verify RedisExecutionTokenVerifier rejects incomplete clients.
+    Not a mock: real class, real (no-op) behaviour, deterministic outcome.
+    """
+
+    def set(self, name: str, value: object, **kwargs: object) -> None:
+        pass
 
 
 def _signer_verifier(ttl: float = 30.0):
@@ -88,7 +78,7 @@ class TestRedisVerifierConstruction:
 
     def test_missing_scan_raises(self):
         """Client with .set but no .scan should be rejected."""
-        bad = MagicMock(spec=["set"])
+        bad = _SetOnlyRedis()
         with pytest.raises(TypeError, match="redis.Redis-compatible"):
             RedisExecutionTokenVerifier(
                 secret_key=secrets.token_bytes(32),

@@ -15,8 +15,6 @@ Coverage targets:
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import patch
-
 import pytest
 
 from pramanix.exceptions import FieldTypeError, InvariantLabelError, SolverTimeoutError
@@ -242,37 +240,65 @@ class TestSolveMultiViolation:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Timeout paths (mocked)
+# Timeout paths — monkeypatch.setattr on internal solver helpers
+#
+# These tests verify that SolverTimeoutError raised inside _fast_check /
+# _attribute_violations propagates correctly through solve().  Triggering a real
+# Z3 timeout deterministically at a specific sub-function boundary would require
+# engineering a non-terminating SMT problem with a sub-millisecond budget, which
+# is inherently flaky.  monkeypatch.setattr is acceptable here because:
+#  - We are testing the worker's / caller's error-propagation logic, not Z3.
+#  - The injected state (timeout inside a specific internal helper) is a
+#    defensive fail-safe path that cannot be reliably reached in normal test runs.
 # ═══════════════════════════════════════════════════════════════════════════════
+
+import pramanix.solver as _solver_module  # imported once for monkeypatching
 
 
 class TestSolveTimeout:
-    def test_fast_path_timeout_propagates(self) -> None:
-        with patch("pramanix.solver._fast_check") as mock_fast:
-            mock_fast.side_effect = SolverTimeoutError("<all-invariants>", 1)
-            with pytest.raises(SolverTimeoutError) as exc_info:
-                solve(INVARIANTS, _BASE, timeout_ms=1)
-            assert exc_info.value.label == "<all-invariants>"
+    def test_fast_path_timeout_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        err = SolverTimeoutError("<all-invariants>", 1)
 
-    def test_attribution_path_timeout_propagates(self) -> None:
+        def _raise(*a: object, **kw: object) -> None:
+            raise err
+
+        monkeypatch.setattr(_solver_module, "_fast_check", _raise)
+        with pytest.raises(SolverTimeoutError) as exc_info:
+            solve(INVARIANTS, _BASE, timeout_ms=1)
+        assert exc_info.value.label == "<all-invariants>"
+
+    def test_attribution_path_timeout_propagates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import z3 as _z3
 
-        with (
-            patch("pramanix.solver._fast_check") as mock_fast,
-            patch("pramanix.solver._attribute_violations") as mock_attr,
-        ):
-            mock_fast.return_value = _z3.unsat
-            mock_attr.side_effect = SolverTimeoutError("non_negative_balance", 1)
-            with pytest.raises(SolverTimeoutError) as exc_info:
-                solve(INVARIANTS, _BASE, timeout_ms=1)
-            assert exc_info.value.label == "non_negative_balance"
+        monkeypatch.setattr(
+            _solver_module, "_fast_check", lambda *a, **kw: _z3.unsat
+        )
+        err = SolverTimeoutError("non_negative_balance", 1)
 
-    def test_timeout_label_preserved(self) -> None:
-        with patch("pramanix.solver._fast_check") as mock_fast:
-            mock_fast.side_effect = SolverTimeoutError("within_daily_limit", 50)
-            with pytest.raises(SolverTimeoutError) as exc_info:
-                solve(INVARIANTS, _BASE, timeout_ms=50)
-            assert exc_info.value.timeout_ms == 50
+        def _raise_attr(*a: object, **kw: object) -> None:
+            raise err
+
+        monkeypatch.setattr(_solver_module, "_attribute_violations", _raise_attr)
+        with pytest.raises(SolverTimeoutError) as exc_info:
+            solve(INVARIANTS, _BASE, timeout_ms=1)
+        assert exc_info.value.label == "non_negative_balance"
+
+    def test_timeout_label_preserved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        err = SolverTimeoutError("within_daily_limit", 50)
+
+        def _raise(*a: object, **kw: object) -> None:
+            raise err
+
+        monkeypatch.setattr(_solver_module, "_fast_check", _raise)
+        with pytest.raises(SolverTimeoutError) as exc_info:
+            solve(INVARIANTS, _BASE, timeout_ms=50)
+        assert exc_info.value.timeout_ms == 50
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -300,17 +326,17 @@ class TestSolveTypeErrors:
 
 class TestSolveLabelEnforcement:
     def test_unlabelled_invariant_in_attribution_raises(self) -> None:
-        """If an unlabelled invariant reaches the attribution path, raise early."""
+        """Unlabelled invariant violated by real values → InvariantLabelError.
+
+        balance=-1 makes (balance >= 0) UNSAT via real Z3 arithmetic.
+        No monkeypatching needed — the solver reaches attribution naturally.
+        """
         unlabelled = E(_balance) >= 0  # no .named()
         vals = {
-            "balance": Decimal("-1"),
+            "balance": Decimal("-1"),  # Naturally makes the constraint UNSAT
             "amount": Decimal("0"),
             "daily_limit": Decimal("5000"),
             "is_frozen": False,
         }
-        import z3 as _z3
-
-        with patch("pramanix.solver._fast_check") as mock_fast:
-            mock_fast.return_value = _z3.unsat
-            with pytest.raises(InvariantLabelError):
-                solve([unlabelled, *INVARIANTS[1:]], vals, timeout_ms=5_000)
+        with pytest.raises(InvariantLabelError):
+            solve([unlabelled, *INVARIANTS[1:]], vals, timeout_ms=5_000)

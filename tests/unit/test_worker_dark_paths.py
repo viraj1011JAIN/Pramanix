@@ -1,29 +1,41 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Unit tests for worker.py dark / uncovered paths.
+"""Unit tests for worker.py dark / uncovered paths — production-level, zero mocks.
 
-Coverage targets
-----------------
-* _worker_solve — SolverTimeoutError, PramanixError paths
-* _drain_executor — grace-period timeout, force-kill path
-* _force_kill_processes — alive process killed, exception swallowed
-* WorkerPool.spawn — executor creation failure
-* WorkerPool.shutdown — executor shutdown exception swallowed
-* WorkerPool.submit_solve — pool not alive, exception in executor
-* WorkerPool._make_executor — async-process mode
-* WorkerPool._run_warmup — slot failure swallowed
-* WorkerPool._recycle — early return (already recycled), executor failure
-* WorkerPool.executor property
+Design principles
+-----------------
+* No MagicMock, patch, or AsyncMock anywhere in this file.
+
+* Solver error paths (_worker_solve): monkeypatch.setattr on pramanix.solver.solve
+  is acceptable here — these paths test the WORKER's error handling in response
+  to impossible-to-trigger-deterministically solver failures (SolverTimeoutError
+  requires Z3 to hit a 1 ms wall-clock budget; PramanixError is rarely raised
+  directly by solve()).  The invariant under test is the worker dict shape, not
+  the solver's own logic.
+
+* Hanging executors: real ThreadPoolExecutor / ProcessPoolExecutor subclasses
+  whose shutdown() blocks on a threading.Event.  Allows testing _drain_executor's
+  grace-period timeout path without any fake objects.
+
+* Process kill: _FakeProcess is a real class (not a mock) with real is_alive(),
+  pid, and kill() methods; state is tracked in plain instance attributes.
+
+* Log capture: _LogCapture is a real logging-like object that records calls.
+  monkeypatch.setattr replaces pramanix.worker._log for the duration of the test.
+
+* Executor failures: _BrokenSubmitExecutor and _FailingSubmitExecutor are real
+  ThreadPoolExecutor subclasses that override submit() with deterministic
+  failure behaviour.
 """
 from __future__ import annotations
 
 import threading
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
 
 import pytest
 
+import pramanix.solver as _solver_mod
 from pramanix import E, Field, Policy
 from pramanix.exceptions import SolverTimeoutError, WorkerError
 from pramanix.worker import WorkerPool, _drain_executor, _force_kill_processes
@@ -46,42 +58,185 @@ class _P(Policy):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Real helper classes — not mocks
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class _HangingThreadExecutor(ThreadPoolExecutor):
+    """Real ThreadPoolExecutor whose shutdown() blocks until .release() is called.
+
+    Used to test _drain_executor's grace-period timeout path without any mock.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(max_workers=1)
+        self._barrier = threading.Event()
+
+    def shutdown(self, wait: bool = True, **kwargs: object) -> None:  # type: ignore[override]
+        self._barrier.wait(timeout=30)
+
+    def release(self) -> None:
+        self._barrier.set()
+
+
+class _HangingProcessExecutor(ProcessPoolExecutor):
+    """Real ProcessPoolExecutor whose shutdown() blocks until .release() is called.
+
+    isinstance(executor, ProcessPoolExecutor) → True, so _drain_executor will
+    call _force_kill_processes on grace-period expiry — exactly what we test.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(max_workers=1)
+        self._barrier = threading.Event()
+
+    def shutdown(self, wait: bool = True, **kwargs: object) -> None:  # type: ignore[override]
+        self._barrier.wait(timeout=30)
+
+    def release(self) -> None:
+        self._barrier.set()
+
+
+class _FakeProcess:
+    """Real process-like object for testing _force_kill_processes.
+
+    Tracks kill() calls via a plain boolean — no mock instrumentation.
+    """
+
+    def __init__(
+        self,
+        *,
+        alive: bool,
+        pid: int,
+        kill_raises: Exception | None = None,
+    ) -> None:
+        self._alive = alive
+        self.pid = pid
+        self._kill_raises = kill_raises
+        self.kill_called: bool = False
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def kill(self) -> None:
+        self.kill_called = True
+        if self._kill_raises is not None:
+            raise self._kill_raises
+
+
+class _FakeProcessContainer:
+    """Real object carrying a _processes dict.
+
+    _force_kill_processes only reads executor._processes — it does NOT require
+    a true ProcessPoolExecutor instance.  This minimal class is sufficient.
+    """
+
+    def __init__(self, processes: dict) -> None:
+        self._processes = processes
+
+
+class _EmptyProcessContainer:
+    """Real object without a _processes attribute — tests the safe getattr path."""
+
+
+class _BrokenSubmitExecutor(ThreadPoolExecutor):
+    """Real ThreadPoolExecutor whose submit() always raises RuntimeError."""
+
+    def submit(self, fn, *args, **kwargs):  # type: ignore[override]
+        raise RuntimeError("executor dead")
+
+
+class _FailingSubmitExecutor(ThreadPoolExecutor):
+    """Real ThreadPoolExecutor whose submit() returns an already-failed Future.
+
+    Used to drive the warmup slot-failure warning path without mocking submit().
+    """
+
+    def submit(self, fn, *args, **kwargs):  # type: ignore[override]
+        f: Future = Future()
+        f.set_exception(RuntimeError("warmup failed"))
+        return f
+
+
+class _LogCapture:
+    """Real logging-like object that records .warning() and .error() calls.
+
+    Replaces pramanix.worker._log via monkeypatch for tests that need to verify
+    that a warning or error was emitted — without using MagicMock.
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+        self.errors: list[str] = []
+
+    def warning(self, msg: str, *args: object, **kw: object) -> None:
+        self.warnings.append(msg % args if args else msg)
+
+    def error(self, msg: str, *args: object, **kw: object) -> None:
+        self.errors.append(msg % args if args else msg)
+
+    def info(self, msg: str, *args: object, **kw: object) -> None:
+        pass
+
+    def debug(self, msg: str, *args: object, **kw: object) -> None:
+        pass
+
+    @property
+    def warning_called(self) -> bool:
+        return bool(self.warnings)
+
+    @property
+    def error_called(self) -> bool:
+        return bool(self.errors)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # _worker_solve error paths
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestWorkerSolveErrorPaths:
-    def test_solver_timeout_error_returns_timeout_dict(self) -> None:
+    def test_solver_timeout_error_returns_timeout_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from pramanix.worker import _worker_solve
 
         err = SolverTimeoutError("ok", 100)
-        with patch("pramanix.solver.solve", side_effect=err):
-            result = _worker_solve(_P, {"amount": Decimal("50")}, 100)
+
+        def _raise(*a: object, **kw: object) -> None:
+            raise err
+
+        monkeypatch.setattr(_solver_mod, "solve", _raise)
+        result = _worker_solve(_P, {"amount": Decimal("50")}, 100)
 
         assert result["status"] == "timeout"
         assert not result["allowed"]
 
-    def test_pramanix_error_returns_error_dict(self) -> None:
+    def test_pramanix_error_returns_error_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from pramanix.exceptions import PramanixError
         from pramanix.worker import _worker_solve
 
-        with patch(
-            "pramanix.solver.solve",
-            side_effect=PramanixError("boom"),
-        ):
-            result = _worker_solve(_P, {"amount": Decimal("50")}, 100)
+        def _raise(*a: object, **kw: object) -> None:
+            raise PramanixError("boom")
+
+        monkeypatch.setattr(_solver_mod, "solve", _raise)
+        result = _worker_solve(_P, {"amount": Decimal("50")}, 100)
 
         assert result["status"] == "error"
         assert not result["allowed"]
 
-    def test_generic_exception_returns_error_dict(self) -> None:
+    def test_generic_exception_returns_error_dict(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from pramanix.worker import _worker_solve
 
-        with patch(
-            "pramanix.solver.solve",
-            side_effect=ValueError("oops"),
-        ):
-            result = _worker_solve(_P, {"amount": Decimal("50")}, 100)
+        def _raise(*a: object, **kw: object) -> None:
+            raise ValueError("oops")
+
+        monkeypatch.setattr(_solver_mod, "solve", _raise)
+        result = _worker_solve(_P, {"amount": Decimal("50")}, 100)
 
         assert result["status"] == "error"
         assert "ValueError" in result["explanation"]
@@ -98,43 +253,40 @@ class TestDrainExecutor:
         # No pending work — shutdown is instantaneous.
         _drain_executor(executor, grace_s=5.0)
 
-    def test_drain_logs_warning_when_grace_period_exceeded(self) -> None:
-        """Simulate a hung executor by never calling shutdown_event.set()."""
-        mock_executor = MagicMock(spec=ThreadPoolExecutor)
+    def test_drain_logs_warning_when_grace_period_exceeded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hanging ThreadPoolExecutor triggers grace-period warning."""
+        executor = _HangingThreadExecutor()
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
 
-        # Make shutdown() block indefinitely
-        barrier = threading.Event()
+        try:
+            _drain_executor(executor, grace_s=0.05)
+        finally:
+            executor.release()  # Unblock background shutdown thread
 
-        def _hang(*_a: object, **_kw: object) -> None:
-            barrier.wait(timeout=30)
+        assert log_cap.warning_called
 
-        mock_executor.shutdown = _hang
+    def test_drain_calls_force_kill_for_process_executor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hanging ProcessPoolExecutor → _force_kill_processes is called."""
+        executor = _HangingProcessExecutor()
+        kill_calls: list[object] = []
 
-        with patch("pramanix.worker._log") as mock_log:
-            _drain_executor(mock_executor, grace_s=0.05)
+        def _capture_kill(ex: object) -> None:
+            kill_calls.append(ex)
 
-        # Warning must have been logged about the grace period
-        assert mock_log.warning.called
-        # Unblock the hanging thread
-        barrier.set()
+        monkeypatch.setattr("pramanix.worker._force_kill_processes", _capture_kill)
 
-    def test_drain_calls_force_kill_for_process_executor(self) -> None:
-        """When grace period expires and executor is a ProcessPoolExecutor,
-        _force_kill_processes is invoked."""
-        mock_pexec = MagicMock(spec=ProcessPoolExecutor)
+        try:
+            _drain_executor(executor, grace_s=0.05)
+        finally:
+            executor.release()
 
-        barrier = threading.Event()
-
-        def _hang(*_a: object, **_kw: object) -> None:
-            barrier.wait(timeout=30)
-
-        mock_pexec.shutdown = _hang
-
-        with patch("pramanix.worker._force_kill_processes") as mock_fkp:
-            _drain_executor(mock_pexec, grace_s=0.05)
-
-        mock_fkp.assert_called_once_with(mock_pexec)
-        barrier.set()
+        assert len(kill_calls) == 1
+        assert kill_calls[0] is executor
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -144,48 +296,39 @@ class TestDrainExecutor:
 
 class TestForceKillProcesses:
     def test_alive_process_is_killed(self) -> None:
-        mock_proc = MagicMock()
-        mock_proc.is_alive.return_value = True
-        mock_proc.pid = 99999
+        proc = _FakeProcess(alive=True, pid=99999)
+        container = _FakeProcessContainer({99999: proc})
 
-        mock_executor = MagicMock(spec=ProcessPoolExecutor)
-        mock_executor._processes = {99999: mock_proc}
+        _force_kill_processes(container)  # type: ignore[arg-type]
 
-        _force_kill_processes(mock_executor)
-
-        mock_proc.kill.assert_called_once()
+        assert proc.kill_called
 
     def test_dead_process_is_not_killed(self) -> None:
-        mock_proc = MagicMock()
-        mock_proc.is_alive.return_value = False
+        proc = _FakeProcess(alive=False, pid=1)
+        container = _FakeProcessContainer({1: proc})
 
-        mock_executor = MagicMock(spec=ProcessPoolExecutor)
-        mock_executor._processes = {1: mock_proc}
+        _force_kill_processes(container)  # type: ignore[arg-type]
 
-        _force_kill_processes(mock_executor)
+        assert not proc.kill_called
 
-        mock_proc.kill.assert_not_called()
+    def test_kill_exception_is_logged_not_raised(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        proc = _FakeProcess(
+            alive=True, pid=42, kill_raises=OSError("Permission denied")
+        )
+        container = _FakeProcessContainer({42: proc})
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
 
-    def test_kill_exception_is_logged_not_raised(self) -> None:
-        mock_proc = MagicMock()
-        mock_proc.is_alive.return_value = True
-        mock_proc.pid = 42
-        mock_proc.kill.side_effect = OSError("Permission denied")
+        _force_kill_processes(container)  # type: ignore[arg-type]
 
-        mock_executor = MagicMock(spec=ProcessPoolExecutor)
-        mock_executor._processes = {42: mock_proc}
-
-        with patch("pramanix.worker._log") as mock_log:
-            _force_kill_processes(mock_executor)
-
-        assert mock_log.error.called
+        assert log_cap.error_called
 
     def test_no_processes_attribute_is_safe(self) -> None:
         """Executor without _processes → getattr returns {} → no kill."""
-        mock_executor = MagicMock(spec=ProcessPoolExecutor)
-        del mock_executor._processes
-
-        _force_kill_processes(mock_executor)  # must not raise
+        container = _EmptyProcessContainer()
+        _force_kill_processes(container)  # type: ignore[arg-type]  # must not raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -194,19 +337,26 @@ class TestForceKillProcesses:
 
 
 class TestWorkerPoolLifecycle:
-    def test_spawn_raises_worker_error_on_make_executor_failure(self) -> None:
+    def test_spawn_raises_worker_error_on_make_executor_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pool = WorkerPool(
             mode="async-thread",
             max_workers=1,
             max_decisions_per_worker=1000,
             warmup=False,
         )
-        with patch.object(pool, "_make_executor", side_effect=OSError("disk full")), pytest.raises(
-            WorkerError, match="disk full"
-        ):
+
+        def _raise() -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(pool, "_make_executor", _raise)
+        with pytest.raises(WorkerError, match="disk full"):
             pool.spawn()
 
-    def test_spawn_is_idempotent_when_alive(self) -> None:
+    def test_spawn_is_idempotent_when_alive(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pool = WorkerPool(
             mode="async-thread",
             max_workers=1,
@@ -214,13 +364,22 @@ class TestWorkerPoolLifecycle:
             warmup=False,
         )
         pool.spawn()
-        # Second spawn should be a no-op — _make_executor called once only
-        with patch.object(pool, "_make_executor") as mock_make:
-            pool.spawn()
-        mock_make.assert_not_called()
+
+        make_calls: list[int] = []
+
+        def _counting_make() -> None:
+            make_calls.append(1)
+            raise AssertionError("_make_executor must not be called on second spawn")
+
+        monkeypatch.setattr(pool, "_make_executor", _counting_make)
+        pool.spawn()  # No-op — already alive
+
+        assert len(make_calls) == 0
         pool.shutdown()
 
-    def test_shutdown_swallows_executor_error(self) -> None:
+    def test_shutdown_swallows_executor_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pool = WorkerPool(
             mode="async-thread",
             max_workers=1,
@@ -228,10 +387,16 @@ class TestWorkerPoolLifecycle:
             warmup=False,
         )
         pool.spawn()
-        pool._executor.shutdown = MagicMock(side_effect=RuntimeError("shutdown error"))
-        with patch("pramanix.worker._log") as mock_log:
-            pool.shutdown()
-        assert mock_log.error.called
+
+        def _raise_shutdown(*a: object, **kw: object) -> None:
+            raise RuntimeError("shutdown error")
+
+        monkeypatch.setattr(pool._executor, "shutdown", _raise_shutdown)
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
+        pool.shutdown()
+
+        assert log_cap.error_called
 
     def test_shutdown_noop_when_not_alive(self) -> None:
         pool = WorkerPool(
@@ -262,7 +427,9 @@ class TestWorkerPoolSubmitSolve:
         assert not result.allowed
         assert "not running" in result.explanation.lower()
 
-    def test_submit_executor_exception_returns_error_decision(self) -> None:
+    def test_submit_executor_exception_returns_error_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pool = WorkerPool(
             mode="async-thread",
             max_workers=1,
@@ -270,11 +437,12 @@ class TestWorkerPoolSubmitSolve:
             warmup=False,
         )
         pool.spawn()
-        pool._executor = MagicMock()
-        pool._executor.submit.side_effect = RuntimeError("executor dead")
+        # Replace the live executor with one whose submit() always raises
+        pool._executor = _BrokenSubmitExecutor(max_workers=1)
 
-        with patch("pramanix.worker._log"):
-            result = pool.submit_solve(_P, {"amount": Decimal("50")}, 5000)
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
+        result = pool.submit_solve(_P, {"amount": Decimal("50")}, 5000)
 
         assert not result.allowed
         assert result.explanation is not None
@@ -329,23 +497,23 @@ class TestWorkerPoolMakeExecutor:
 
 
 class TestWorkerPoolRunWarmup:
-    def test_warmup_slot_failure_is_logged_not_raised(self) -> None:
+    def test_warmup_slot_failure_is_logged_not_raised(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pool = WorkerPool(
             mode="async-thread",
             max_workers=1,
             max_decisions_per_worker=1000,
             warmup=True,
         )
-        pool._executor = ThreadPoolExecutor(max_workers=1)
+        # Install a real executor whose submit() returns an already-failed Future
+        pool._executor = _FailingSubmitExecutor(max_workers=1)
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
 
-        mock_future = MagicMock()
-        mock_future.result.side_effect = RuntimeError("warmup failed")
-        pool._executor.submit = MagicMock(return_value=mock_future)
+        pool._run_warmup()
 
-        with patch("pramanix.worker._log") as mock_log:
-            pool._run_warmup()
-
-        assert mock_log.warning.called
+        assert log_cap.warning_called
         pool._executor.shutdown(wait=False)
 
 
@@ -355,8 +523,10 @@ class TestWorkerPoolRunWarmup:
 
 
 class TestWorkerPoolRecycle:
-    def test_recycle_early_return_when_counter_reset(self) -> None:
-        """Another thread already recycled — counter reset → return early."""
+    def test_recycle_early_return_when_counter_reset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Counter already reset before lock acquired → _make_executor not called."""
         pool = WorkerPool(
             mode="async-thread",
             max_workers=1,
@@ -364,25 +534,23 @@ class TestWorkerPoolRecycle:
             warmup=False,
         )
         pool.spawn()
-        # Set counter high enough to trigger recycle check, then manually
-        # reset it to simulate a race where another thread already recycled.
-        pool._counter = 10  # matches max_decisions_per_worker
 
-        with patch.object(pool, "_make_executor") as mock_make:
-            # Simulate: counter already reset inside the lock (race condition)
-            def _reset_counter() -> None:
-                pool._counter = 0
-                raise RuntimeError("should not create executor")
+        make_calls: list[int] = []
 
-            mock_make.side_effect = RuntimeError("should not be called")
-            # Manually reset counter before calling _recycle
-            pool._counter = 0
-            pool._recycle()  # counter < max → early return
+        def _fail_if_called() -> None:
+            make_calls.append(1)
+            raise AssertionError("_make_executor should not be called")
 
-        mock_make.assert_not_called()
+        monkeypatch.setattr(pool, "_make_executor", _fail_if_called)
+        pool._counter = 0  # Already reset — simulates race where another thread recycled
+        pool._recycle()
+
+        assert len(make_calls) == 0
         pool.shutdown()
 
-    def test_recycle_swallows_executor_creation_failure(self) -> None:
+    def test_recycle_swallows_executor_creation_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """New executor creation fails → old executor restored, no raise."""
         pool = WorkerPool(
             mode="async-thread",
@@ -394,16 +562,17 @@ class TestWorkerPoolRecycle:
         original_executor = pool._executor
         pool._counter = 1  # trigger recycle on next check
 
-        with patch("pramanix.worker._log") as mock_log, patch.object(
-            pool,
-            "_make_executor",
-            side_effect=OSError("can't create"),
-        ):
-            pool._recycle()
+        def _raise() -> None:
+            raise OSError("can't create")
+
+        monkeypatch.setattr(pool, "_make_executor", _raise)
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
+        pool._recycle()
 
         # Old executor should be restored
         assert pool._executor is original_executor
-        assert mock_log.error.called
+        assert log_cap.error_called
         pool.shutdown()
 
 

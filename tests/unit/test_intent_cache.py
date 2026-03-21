@@ -305,44 +305,95 @@ class TestInProcessLRUCacheEdgeCases:
         backend.invalidate("does_not_exist")  # Must not raise
 
 
-# ── _RedisCache unit tests (mock redis client) ────────────────────────────────
+# ── _RedisCache unit tests (real fakeredis) ────────────────────────────────────
+
+
+# ── Error-injection subclasses — real fakeredis with one overridden method ─────
+
+import fakeredis as _fakeredis_module
+
+
+class _ErrorOnGet(_fakeredis_module.FakeRedis):
+    """fakeredis that raises ConnectionError on get() — tests silent degradation."""
+
+    def get(self, name, **kwargs):
+        raise ConnectionError("Redis down")
+
+
+class _ErrorOnSetex(_fakeredis_module.FakeRedis):
+    """fakeredis that raises ConnectionError on setex() — tests silent degradation."""
+
+    def setex(self, name, time, value, **kwargs):
+        raise ConnectionError("Redis down")
+
+
+class _ErrorOnDelete(_fakeredis_module.FakeRedis):
+    """fakeredis that raises ConnectionError on delete() — tests silent degradation."""
+
+    def delete(self, *names, **kwargs):
+        raise ConnectionError("Redis down")
+
+
+class _ErrorOnScan(_fakeredis_module.FakeRedis):
+    """fakeredis that raises ConnectionError on scan() — tests silent degradation."""
+
+    def scan(self, cursor=0, match=None, count=None, **kwargs):
+        raise ConnectionError("Redis down")
+
+
+class _PaginatedScanRedis:
+    """Minimal real Redis-protocol object that returns two scan pages.
+
+    Simulates a Redis server that requires two SCAN iterations to exhaust
+    the keyspace — tests that _RedisCache.clear() loops until cursor == 0.
+    Not a mock: state is real, all methods have deterministic real behaviour.
+    """
+
+    def __init__(self) -> None:
+        self._pages = iter([
+            (1, [b"pramanix:intent:key1"]),
+            (0, [b"pramanix:intent:key2"]),
+        ])
+        self.scan_call_count = 0
+        self.delete_call_count = 0
+
+    def scan(self, cursor=0, match=None, count=None, **kwargs):
+        self.scan_call_count += 1
+        return next(self._pages)
+
+    def delete(self, *names, **kwargs):
+        self.delete_call_count += 1
+
+    # Required for _RedisCache construction (other methods are no-ops here)
+    def get(self, name, **kwargs):
+        return None
+
+    def set(self, name, value, **kwargs):
+        pass
+
+    def setex(self, name, time, value, **kwargs):
+        pass
 
 
 class TestRedisCache:
-    """Tests for _RedisCache using a mock redis client.
-
-    These verify the Redis backend without requiring a real Redis server.
-    MagicMock is a proper dependency injection approach for an external service.
-    """
-
-    def _make_redis(self, get_return=None, get_error=None):
-        import json
-        from unittest.mock import MagicMock
-
-        r = MagicMock()
-        if get_error:
-            r.get.side_effect = get_error
-        elif get_return is not None:
-            r.get.return_value = json.dumps(get_return).encode()
-        else:
-            r.get.return_value = None
-        return r
+    """Tests for _RedisCache using real fakeredis — no MagicMock."""
 
     def test_init_stores_config(self):
-        from unittest.mock import MagicMock
-
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
+        r = _fakeredis_module.FakeRedis()
         cache = _RedisCache(redis_client=r, ttl_seconds=60, key_prefix="test:")
         assert cache._redis is r
         assert cache._ttl == 60
         assert cache._prefix == "test:"
 
     def test_get_returns_dict_on_hit(self):
+        import json
+
         from pramanix.translator._cache import _RedisCache
 
-        r = self._make_redis(get_return={"amount": "100"})
+        r = _fakeredis_module.FakeRedis()
+        r.set("pramanix:intent:anykey", json.dumps({"amount": "100"}).encode())
         cache = _RedisCache(redis_client=r)
         result = cache.get("anykey")
         assert result == {"amount": "100"}
@@ -350,7 +401,7 @@ class TestRedisCache:
     def test_get_returns_none_on_miss(self):
         from pramanix.translator._cache import _RedisCache
 
-        r = self._make_redis(get_return=None)
+        r = _fakeredis_module.FakeRedis()  # empty — no keys set
         cache = _RedisCache(redis_client=r)
         result = cache.get("anykey")
         assert result is None
@@ -358,101 +409,87 @@ class TestRedisCache:
     def test_get_returns_none_on_redis_error(self):
         from pramanix.translator._cache import _RedisCache
 
-        r = self._make_redis(get_error=ConnectionError("Redis down"))
+        r = _ErrorOnGet()
         cache = _RedisCache(redis_client=r)
         result = cache.get("anykey")
         assert result is None  # Silent degradation
 
-    def test_set_calls_setex_with_prefix(self):
-        from unittest.mock import MagicMock
+    def test_set_stores_value_with_prefix_and_ttl(self):
+        import json
 
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
+        r = _fakeredis_module.FakeRedis()
         cache = _RedisCache(redis_client=r, ttl_seconds=300, key_prefix="pfx:")
         cache.set("mykey", {"amount": "500"})
-        r.setex.assert_called_once()
-        call_args = r.setex.call_args[0]
-        assert call_args[0].startswith("pfx:")
-        assert call_args[1] == 300
+        stored_raw = r.get("pfx:mykey")
+        assert stored_raw is not None
+        assert json.loads(stored_raw) == {"amount": "500"}
+        ttl = r.ttl("pfx:mykey")
+        assert 0 < ttl <= 300
 
     def test_set_silent_on_redis_error(self):
-        from unittest.mock import MagicMock
-
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
-        r.setex.side_effect = ConnectionError("Redis down")
+        r = _ErrorOnSetex()
         cache = _RedisCache(redis_client=r)
         cache.set("mykey", {"amount": "500"})  # Must not raise
 
-    def test_invalidate_calls_delete(self):
-        from unittest.mock import MagicMock
-
+    def test_invalidate_removes_key(self):
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
+        r = _fakeredis_module.FakeRedis()
+        r.set("pfx:mykey", "some_value")
         cache = _RedisCache(redis_client=r, key_prefix="pfx:")
         cache.invalidate("mykey")
-        r.delete.assert_called_once()
+        assert r.get("pfx:mykey") is None
 
     def test_invalidate_silent_on_redis_error(self):
-        from unittest.mock import MagicMock
-
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
-        r.delete.side_effect = ConnectionError("Redis down")
+        r = _ErrorOnDelete()
         cache = _RedisCache(redis_client=r)
         cache.invalidate("mykey")  # Must not raise
 
-    def test_clear_scans_and_deletes(self):
-        from unittest.mock import MagicMock
-
+    def test_clear_deletes_only_matching_keys(self):
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
-        r.scan.return_value = (0, [b"pramanix:intent:key1", b"pramanix:intent:key2"])
+        r = _fakeredis_module.FakeRedis()
+        r.set("pramanix:intent:k1", "v1")
+        r.set("pramanix:intent:k2", "v2")
+        r.set("other:key", "v3")  # Different prefix — must NOT be deleted
         cache = _RedisCache(redis_client=r)
         cache.clear()
-        r.scan.assert_called_once()
-        r.delete.assert_called_once()
+        assert r.get("pramanix:intent:k1") is None
+        assert r.get("pramanix:intent:k2") is None
+        assert r.get("other:key") is not None  # Untouched
 
     def test_clear_handles_multiple_pages(self):
-        from unittest.mock import MagicMock
-
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
-        # First call returns cursor=1 (more pages), second returns cursor=0 (done)
-        r.scan.side_effect = [
-            (1, [b"pramanix:intent:key1"]),
-            (0, [b"pramanix:intent:key2"]),
-        ]
+        r = _PaginatedScanRedis()
         cache = _RedisCache(redis_client=r)
         cache.clear()
-        assert r.scan.call_count == 2
-        assert r.delete.call_count == 2
+        # Two scan pages → scan called twice, delete called twice
+        assert r.scan_call_count == 2
+        assert r.delete_call_count == 2
 
     def test_clear_silent_on_redis_error(self):
-        from unittest.mock import MagicMock
-
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
-        r.scan.side_effect = ConnectionError("Redis down")
+        r = _ErrorOnScan()
         cache = _RedisCache(redis_client=r)
         cache.clear()  # Must not raise
 
     def test_intent_cache_with_redis_backend_hit(self):
-        """IntentCache works end-to-end with a Redis backend mock."""
+        """IntentCache end-to-end: real fakeredis hit returns cached dict."""
         import json
-        from unittest.mock import MagicMock
 
-        from pramanix.translator._cache import _RedisCache
+        from pramanix.translator._cache import _RedisCache, _normalize_key
 
-        r = MagicMock()
-        r.get.return_value = json.dumps({"amount": "500"}).encode()
+        r = _fakeredis_module.FakeRedis()
+        hashed = _normalize_key("transfer 500")
+        r.set(f"pramanix:intent:{hashed}", json.dumps({"amount": "500"}).encode())
         backend = _RedisCache(redis_client=r)
         cache = IntentCache(enabled=True, backend=backend)
         result = cache.get("transfer 500")
@@ -460,13 +497,10 @@ class TestRedisCache:
         assert cache.stats["hits"] == 1
 
     def test_intent_cache_with_redis_backend_miss(self):
-        """IntentCache.get() returns None on Redis miss."""
-        from unittest.mock import MagicMock
-
+        """IntentCache.get() returns None when key is absent in fakeredis."""
         from pramanix.translator._cache import _RedisCache
 
-        r = MagicMock()
-        r.get.return_value = None
+        r = _fakeredis_module.FakeRedis()  # empty
         backend = _RedisCache(redis_client=r)
         cache = IntentCache(enabled=True, backend=backend)
         result = cache.get("no such key")
@@ -477,22 +511,35 @@ class TestRedisCache:
 # ── IntentCache exception path coverage ───────────────────────────────────────
 
 
+class _BrokenCacheBackend:
+    """Real cache backend that always raises — tests IntentCache's resilience.
+
+    Not a mock: every method has real, deterministic behaviour (raises).
+    Used to cover the outer try/except branches in IntentCache.
+    """
+
+    def get(self, key: str) -> dict:
+        raise RuntimeError("backend failed")
+
+    def set(self, key: str, value: dict) -> None:
+        raise RuntimeError("backend failed")
+
+    def invalidate(self, key: str) -> None:
+        raise RuntimeError("backend failed")
+
+    def clear(self) -> None:
+        raise RuntimeError("backend failed")
+
+
 class TestIntentCacheExceptionPaths:
     """Cover the outer try/except branches in IntentCache methods.
 
-    These paths fire when the backend itself raises (e.g., backend replaced
-    with a broken MagicMock).
+    These paths fire when the backend itself raises.  Uses _BrokenCacheBackend —
+    a real class that always raises — instead of a MagicMock.
     """
 
-    def _make_broken_backend(self):
-        from unittest.mock import MagicMock
-
-        backend = MagicMock()
-        backend.get.side_effect = RuntimeError("backend failed")
-        backend.set.side_effect = RuntimeError("backend failed")
-        backend.invalidate.side_effect = RuntimeError("backend failed")
-        backend.clear.side_effect = RuntimeError("backend failed")
-        return backend
+    def _make_broken_backend(self) -> _BrokenCacheBackend:
+        return _BrokenCacheBackend()
 
     def test_get_exception_returns_none(self):
         cache = IntentCache(enabled=True, backend=self._make_broken_backend())

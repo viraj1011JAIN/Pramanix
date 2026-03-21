@@ -75,6 +75,9 @@ httpx = "^0.27"
 anthropic = "^0.25"
 tenacity = "^8.2"
 openai = "^1.10"
+fakeredis = {version = ">=2.21", extras = ["lua"]}
+opentelemetry-sdk = "^1.20"
+respx = "^0.21"
 
 [tool.mypy]
 strict = true
@@ -102,20 +105,6 @@ module = [
 ]
 ignore_missing_imports = true
 
-# Optional translator extras — not installed in type-check CI env.
-# Each import is guarded by a try/except ImportError at runtime.
-[[tool.mypy.overrides]]
-module = [
-    "pramanix.audit",
-    "pramanix.audit.*",
-    "pramanix.identity",
-    "pramanix.identity.*",
-    "pramanix.circuit_breaker",
-    "pramanix.cli",
-    "pramanix.crypto",
-    "pramanix.helpers.compliance",
-]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [

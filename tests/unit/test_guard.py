@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
@@ -30,6 +29,7 @@ from pramanix.exceptions import (
     SolverTimeoutError,
     TranspileError,
 )
+import pramanix.guard as _guard_mod
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
@@ -477,32 +477,43 @@ class TestGuardFailSafe:
     def setup_method(self) -> None:
         self.guard = Guard(_TradePolicy)
 
-    def _patch_solve(self, side_effect: Exception) -> Decision:
-        with patch("pramanix.guard.solve", side_effect=side_effect):
-            return self.guard.verify(_GOOD_INTENT, _GOOD_STATE)
+    def _patch_solve(self, monkeypatch: pytest.MonkeyPatch, side_effect: Exception) -> Decision:
+        def _raise(*a, **kw): raise side_effect
+        monkeypatch.setattr(_guard_mod, "solve", _raise)
+        return self.guard.verify(_GOOD_INTENT, _GOOD_STATE)
 
-    def test_solver_timeout_returns_timeout_decision(self) -> None:
-        d = self._patch_solve(SolverTimeoutError("non_negative_balance", 5_000))
+    def test_solver_timeout_returns_timeout_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        d = self._patch_solve(monkeypatch, SolverTimeoutError("non_negative_balance", 5_000))
         assert d.allowed is False
         assert d.status is SolverStatus.TIMEOUT
         assert "non_negative_balance" in d.violated_invariants
 
-    def test_transpile_error_returns_error_decision(self) -> None:
-        d = self._patch_solve(TranspileError("bad node"))
+    def test_transpile_error_returns_error_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        d = self._patch_solve(monkeypatch, TranspileError("bad node"))
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
 
-    def test_runtime_error_returns_error_decision(self) -> None:
-        d = self._patch_solve(RuntimeError("z3 segfault simulation"))
+    def test_runtime_error_returns_error_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        d = self._patch_solve(monkeypatch, RuntimeError("z3 segfault simulation"))
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
 
-    def test_unexpected_exception_explanation_contains_type(self) -> None:
-        d = self._patch_solve(ValueError("surprise"))
+    def test_unexpected_exception_explanation_contains_type(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        d = self._patch_solve(monkeypatch, ValueError("surprise"))
         assert "ValueError" in d.explanation
 
-    def test_memory_error_returns_error_decision(self) -> None:
-        d = self._patch_solve(MemoryError("OOM"))
+    def test_memory_error_returns_error_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        d = self._patch_solve(monkeypatch, MemoryError("OOM"))
         assert d.allowed is False
 
     @pytest.mark.parametrize(
@@ -516,11 +527,15 @@ class TestGuardFailSafe:
             ZeroDivisionError("div by zero"),
         ],
     )
-    def test_all_exception_types_return_allowed_false(self, exc: Exception) -> None:
-        d = self._patch_solve(exc)
+    def test_all_exception_types_return_allowed_false(
+        self, monkeypatch: pytest.MonkeyPatch, exc: Exception
+    ) -> None:
+        d = self._patch_solve(monkeypatch, exc)
         assert d.allowed is False, f"{type(exc).__name__} produced allowed=True"
 
-    def test_invariants_raising_returns_error_decision(self) -> None:
+    def test_invariants_raising_returns_error_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         class _ExplodingPolicy(Policy):
             x = Field("x", Decimal, "Real")
 
@@ -529,8 +544,9 @@ class TestGuardFailSafe:
                 return [(E(cls.x) >= 0).named("pos")]
 
         g = Guard(_ExplodingPolicy)
-        with patch.object(_ExplodingPolicy, "invariants", side_effect=RuntimeError("boom")):
-            d = g.verify({"x": Decimal("1")}, {})
+        def _boom(*a, **kw): raise RuntimeError("boom")
+        monkeypatch.setattr(_ExplodingPolicy, "invariants", classmethod(_boom))
+        d = g.verify({"x": Decimal("1")}, {})
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
 

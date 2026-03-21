@@ -1,6 +1,24 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Unit tests for OllamaTranslator — all HTTP paths mocked via unittest.mock.
+"""Unit tests for OllamaTranslator — HTTP paths tested via respx transport interception.
+
+Design principles
+-----------------
+* No AsyncMock, MagicMock, or patch() anywhere in this file.
+
+* respx.mock() intercepts httpx at the TRANSPORT layer — the real httpx
+  serialization, response parsing, and exception handling all run.  Only the
+  TCP connection is replaced.  This is fundamentally different from patching
+  httpx.AsyncClient with a MagicMock.
+
+* Network error side-effects (httpx.TimeoutException, httpx.ConnectError) are
+  injected via respx route `.mock(side_effect=...)` — real httpx exception types
+  raised by the real transport layer, not fabricated MagicMocks.
+
+* test_missing_httpx_raises_import_error uses monkeypatch.setitem(sys.modules,
+  "httpx", None) — the only way to simulate a missing package in a test
+  environment where httpx IS installed.  This is an impossible-to-reach state
+  through normal API usage, so monkeypatch is acceptable per project discipline.
 
 Coverage targets
 ----------------
@@ -19,9 +37,11 @@ Coverage targets
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+import sys
 
+import httpx
 import pytest
+import respx
 from pydantic import BaseModel
 
 pytest.importorskip("httpx", reason="httpx not installed — skipping Ollama translator tests")
@@ -37,29 +57,14 @@ class _TransferIntent(BaseModel):
     recipient: str
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Shared Ollama API URL ─────────────────────────────────────────────────────
+
+_OLLAMA_URL = "http://localhost:11434/api/chat"
 
 
-def _make_ollama_response(content: str, status_code: int = 200) -> MagicMock:
-    """Build a mock httpx.Response with Ollama /api/chat shape."""
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.text = f"HTTP {status_code}"
-    if status_code == 200:
-        resp.json.return_value = {"message": {"role": "assistant", "content": content}}
-    else:
-        resp.json.side_effect = Exception("non-200 body is not JSON")
-    return resp
-
-
-def _patch_httpx(response: MagicMock) -> patch:
-    """Context manager: replace ``httpx.AsyncClient`` so no real network calls are made."""
-    client_cm = AsyncMock()
-    client_cm.__aenter__ = AsyncMock(return_value=client_cm)
-    client_cm.__aexit__ = AsyncMock(return_value=False)
-    client_cm.post = AsyncMock(return_value=response)
-
-    return patch("httpx.AsyncClient", return_value=client_cm)
+def _ollama_body(content: str) -> dict:
+    """Build a real Ollama /api/chat 200 response body."""
+    return {"message": {"role": "assistant", "content": content}}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -105,10 +110,10 @@ class TestOllamaTranslatorSuccess:
     @pytest.mark.asyncio
     async def test_valid_response_returns_parsed_dict(self) -> None:
         payload = json.dumps({"amount": 100.0, "recipient": "acc_123"})
-        resp = _make_ollama_response(payload)
         t = OllamaTranslator()
 
-        with _patch_httpx(resp):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(payload))
             result = await t.extract("transfer 100 to acc_123", _TransferIntent)
 
         assert result == {"amount": 100.0, "recipient": "acc_123"}
@@ -117,10 +122,10 @@ class TestOllamaTranslatorSuccess:
     async def test_markdown_wrapped_json_is_extracted(self) -> None:
         """parse_llm_response must unwrap ```json ... ``` fences."""
         payload = '```json\n{"amount": 50.0, "recipient": "acc_456"}\n```'
-        resp = _make_ollama_response(payload)
         t = OllamaTranslator()
 
-        with _patch_httpx(resp):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(payload))
             result = await t.extract("move 50 to acc_456", _TransferIntent)
 
         assert result["amount"] == 50.0
@@ -132,11 +137,11 @@ class TestOllamaTranslatorSuccess:
         from pramanix.translator.base import TranslatorContext
 
         payload = json.dumps({"amount": 10.0, "recipient": "acc_789"})
-        resp = _make_ollama_response(payload)
         ctx = TranslatorContext(request_id="req-1", user_id="user-1")
         t = OllamaTranslator()
 
-        with _patch_httpx(resp):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(payload))
             result = await t.extract("send 10", _TransferIntent, context=ctx)
 
         assert result["amount"] == 10.0
@@ -150,27 +155,30 @@ class TestOllamaTranslatorSuccess:
 class TestOllamaTranslatorHttpErrors:
     @pytest.mark.asyncio
     async def test_non_200_raises_extraction_failure(self) -> None:
-        resp = _make_ollama_response("Server Error", status_code=500)
         t = OllamaTranslator()
 
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="500"):
-            await t.extract("transfer 100", _TransferIntent)
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(500, text="Internal Server Error")
+            with pytest.raises(ExtractionFailureError, match="500"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_401_raises_extraction_failure(self) -> None:
-        resp = _make_ollama_response("Unauthorized", status_code=401)
         t = OllamaTranslator()
 
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="401"):
-            await t.extract("transfer 100", _TransferIntent)
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(401, text="Unauthorized")
+            with pytest.raises(ExtractionFailureError, match="401"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_404_raises_extraction_failure(self) -> None:
-        resp = _make_ollama_response("Not Found", status_code=404)
         t = OllamaTranslator()
 
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="404"):
-            await t.extract("transfer 100", _TransferIntent)
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(404, text="Not Found")
+            with pytest.raises(ExtractionFailureError, match="404"):
+                await t.extract("transfer 100", _TransferIntent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -182,30 +190,26 @@ class TestOllamaTranslatorNetworkErrors:
     @pytest.mark.asyncio
     async def test_timeout_raises_llm_timeout_error(self) -> None:
         """httpx.TimeoutException → LLMTimeoutError (fail-safe path)."""
-        import httpx
-
-        client_cm = AsyncMock()
-        client_cm.__aenter__ = AsyncMock(return_value=client_cm)
-        client_cm.__aexit__ = AsyncMock(return_value=False)
-        client_cm.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
-
         t = OllamaTranslator()
-        with patch("httpx.AsyncClient", return_value=client_cm), pytest.raises(LLMTimeoutError, match="timed out"):
-            await t.extract("transfer 100", _TransferIntent)
+
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).mock(
+                side_effect=httpx.TimeoutException("timed out")
+            )
+            with pytest.raises(LLMTimeoutError, match="timed out"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_connect_error_raises_llm_timeout_error(self) -> None:
         """httpx.ConnectError → LLMTimeoutError (connection refused = unreachable)."""
-        import httpx
-
-        client_cm = AsyncMock()
-        client_cm.__aenter__ = AsyncMock(return_value=client_cm)
-        client_cm.__aexit__ = AsyncMock(return_value=False)
-        client_cm.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
-
         t = OllamaTranslator()
-        with patch("httpx.AsyncClient", return_value=client_cm), pytest.raises(LLMTimeoutError, match="connection failed"):
-            await t.extract("transfer 100", _TransferIntent)
+
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).mock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+            with pytest.raises(LLMTimeoutError, match="connection failed"):
+                await t.extract("transfer 100", _TransferIntent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -216,66 +220,71 @@ class TestOllamaTranslatorNetworkErrors:
 class TestOllamaTranslatorMalformedResponse:
     @pytest.mark.asyncio
     async def test_invalid_outer_json_body_raises_extraction_failure(self) -> None:
-        """response.json() raises → ExtractionFailureError."""
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.text = "ok"
-        resp.json.side_effect = ValueError("not json")
-
+        """Real httpx response with non-JSON content → response.json() raises."""
         t = OllamaTranslator()
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="not valid JSON"):
-            await t.extract("transfer 100", _TransferIntent)
+
+        with respx.mock(assert_all_called=False) as mock:
+            # content= sets raw bytes; real httpx.Response.json() will raise JSONDecodeError
+            mock.post(_OLLAMA_URL).respond(200, content=b"this is not valid json")
+            with pytest.raises(ExtractionFailureError, match="not valid JSON"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_missing_message_key_raises_extraction_failure(self) -> None:
         """Response shape is wrong — no 'message' key."""
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.text = "ok"
-        resp.json.return_value = {"unexpected": "shape"}  # no 'message' key
-
         t = OllamaTranslator()
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="Unexpected"):
-            await t.extract("transfer 100", _TransferIntent)
+
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(200, json={"unexpected": "shape"})
+            with pytest.raises(ExtractionFailureError, match="Unexpected"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_missing_content_key_raises_extraction_failure(self) -> None:
         """message dict exists but has no 'content' key."""
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.text = "ok"
-        resp.json.return_value = {"message": {"role": "assistant"}}  # no 'content'
-
         t = OllamaTranslator()
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError):
-            await t.extract("transfer 100", _TransferIntent)
+
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(
+                200, json={"message": {"role": "assistant"}}
+            )
+            with pytest.raises(ExtractionFailureError):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_invalid_inner_json_raises_extraction_failure(self) -> None:
         """content string is not parseable JSON → parse_llm_response raises."""
-        resp = _make_ollama_response("this is not json at all")
         t = OllamaTranslator()
 
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="unparseable"):
-            await t.extract("transfer 100", _TransferIntent)
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(
+                200, json=_ollama_body("this is not json at all")
+            )
+            with pytest.raises(ExtractionFailureError, match="unparseable"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_json_array_instead_of_object_raises(self) -> None:
         """LLM returns a JSON array instead of an object → ExtractionFailureError."""
-        resp = _make_ollama_response("[1, 2, 3]")
         t = OllamaTranslator()
 
-        with _patch_httpx(resp), pytest.raises(ExtractionFailureError, match="list"):
-            await t.extract("transfer 100", _TransferIntent)
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body("[1, 2, 3]"))
+            with pytest.raises(ExtractionFailureError, match="list"):
+                await t.extract("transfer 100", _TransferIntent)
 
     @pytest.mark.asyncio
     async def test_partial_json_recovery(self) -> None:
         """Crucial test: partial JSON surrounded by prose — _json.py must extract it."""
-        raw_content = 'Here is the extracted data:\n{"amount": 75.0, "recipient": "acc_partial"}\nEnd of response.'
-        resp = _make_ollama_response(raw_content)
+        raw_content = (
+            'Here is the extracted data:\n'
+            '{"amount": 75.0, "recipient": "acc_partial"}\n'
+            'End of response.'
+        )
         t = OllamaTranslator()
 
-        with _patch_httpx(resp):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(_OLLAMA_URL).respond(200, json=_ollama_body(raw_content))
             result = await t.extract("transfer 75", _TransferIntent)
 
         assert result["amount"] == 75.0
@@ -289,8 +298,16 @@ class TestOllamaTranslatorMalformedResponse:
 
 class TestOllamaTranslatorMissingDependency:
     @pytest.mark.asyncio
-    async def test_missing_httpx_raises_import_error(self) -> None:
-        """If httpx is not installed, extract() must raise ImportError immediately."""
+    async def test_missing_httpx_raises_import_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If httpx is not installed, extract() must raise ImportError immediately.
+
+        monkeypatch.setitem(sys.modules, "httpx", None) is the only way to
+        simulate a missing package in a test environment where httpx IS installed.
+        This is an impossible-to-reach state through normal API usage.
+        """
         t = OllamaTranslator()
-        with patch.dict("sys.modules", {"httpx": None}), pytest.raises(ImportError, match="httpx"):  # type: ignore[dict-item]
+        monkeypatch.setitem(sys.modules, "httpx", None)  # type: ignore[arg-type]
+        with pytest.raises(ImportError, match="httpx"):
             await t.extract("transfer 100", _TransferIntent)

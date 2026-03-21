@@ -1,28 +1,57 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Unit tests for guard.py dark / uncovered paths.
+"""Unit tests for guard.py dark / uncovered paths — production-level.
+
+Design principles
+-----------------
+* **Prometheus**: ``prometheus_client`` is a hard dependency of Pramanix
+  (``prometheus-client = "^0.19"`` in pyproject.toml), so
+  ``_PROM_AVAILABLE`` is always ``True`` in the test environment.
+  No patching needed.  Metric increments are verified by reading the
+  actual counter value from the live registry before and after the call.
+
+* **OpenTelemetry**: ``opentelemetry-sdk`` is added to dev deps.  The
+  test configures a real ``TracerProvider`` with an ``InMemorySpanExporter``,
+  replaces the module-level ``_span`` function with a real OTel span factory,
+  then asserts on the exported span attributes.  No patch of internal
+  state; the exporter captures real spans.
+
+* **RuntimeError injection** (``test_generic_exception_in_validate_returns_error``
+  and ``TestParseAndVerifyGenericException``): The only honest way to reach
+  the ``except Exception`` fail-safe handlers is to inject a RuntimeError
+  into a normally-stable call site.  Both tests use ``monkeypatch`` — the
+  minimal standard-library patching tool — for exactly this purpose.
+  No MagicMock, no AsyncMock; just a one-line side-effect replacement.
+
+* **Unknown execution_mode** (``test_unknown_mode_returns_error``): GuardConfig
+  validates the mode in ``__post_init__``, making the ``else`` branch in
+  ``verify_async`` unreachable through normal API usage.  The test uses
+  direct attribute replacement on the frozen dataclass (via
+  ``object.__setattr__``) to reach this defensive branch without any
+  mock framework.
 
 Coverage targets
 ----------------
-* _env_int  - valid env var, invalid env var (ValueError)
-* _env_bool - non-None env var branch
-* _fmt      - empty template, KeyError/ValueError format failure
-* _semantic_post_consensus_check - all branches
-* Guard.verify_async - async-thread mode (validation, version, errors)
-* Guard.verify_async - pool=None, unknown mode
-* Guard.shutdown     - with pool (non-None)
-* Guard.parse_and_verify - generic Exception branch
-* OTel span set_attribute path (mocked)
-* Prometheus metrics path (mocked)
+* _env_int  — valid env var, invalid env var (ValueError)
+* _env_bool — non-None env var branch
+* _fmt      — empty template, KeyError/ValueError format failure
+* _semantic_post_consensus_check — all branches
+* Guard.verify_async — async-thread mode (validation, version, errors)
+* Guard.verify_async — pool=None, unknown mode
+* Guard.shutdown     — with pool (non-None)
+* Guard.parse_and_verify — generic Exception branch
+* OTel span set_attribute path (real in-memory exporter)
+* Prometheus metrics path (real counter reads)
 """
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
+import pramanix.guard as _guard_mod
 from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.exceptions import SemanticPolicyViolation
 
@@ -44,7 +73,9 @@ class _MinimalPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) >= 0).named("non_negative").explain("amount {amount} must be >= 0"),
+            (E(_amount_field) >= 0)
+            .named("non_negative")
+            .explain("amount {amount} must be >= 0"),
         ]
 
 
@@ -70,7 +101,9 @@ class _ModelledPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) >= 0).named("non_negative").explain("amount {amount} must be >= 0"),
+            (E(_amount_field) >= 0)
+            .named("non_negative")
+            .explain("amount {amount} must be >= 0"),
         ]
 
 
@@ -242,8 +275,6 @@ class TestSemanticPostConsensusCheck:
 @pytest.fixture
 def async_thread_guard():
     """Guard in async-thread mode; shut down after use."""
-    import asyncio
-
     cfg = GuardConfig(
         execution_mode="async-thread",
         max_workers=1,
@@ -256,7 +287,9 @@ def async_thread_guard():
 
 class TestVerifyAsyncThreadMode:
     @pytest.mark.asyncio
-    async def test_allow_with_decimal_intent_and_state(self, async_thread_guard: Guard) -> None:
+    async def test_allow_with_decimal_intent_and_state(
+        self, async_thread_guard: Guard
+    ) -> None:
         """dict->validate_intent + validate_state + version check (ALLOW)."""
         result = await async_thread_guard.verify_async(
             intent={"amount": Decimal("50")},
@@ -271,7 +304,7 @@ class TestVerifyAsyncThreadMode:
     async def test_state_version_none_returns_validation_failure(
         self, async_thread_guard: Guard
     ) -> None:
-        """state_version missing -> validation_failure (line 738)."""
+        """state_version missing -> validation_failure."""
         from pramanix import SolverStatus
 
         result = await async_thread_guard.verify_async(
@@ -282,8 +315,10 @@ class TestVerifyAsyncThreadMode:
         assert result.status == SolverStatus.VALIDATION_FAILURE
 
     @pytest.mark.asyncio
-    async def test_stale_state_version_returns_stale(self, async_thread_guard: Guard) -> None:
-        """Wrong state_version -> stale_state (line 746)."""
+    async def test_stale_state_version_returns_stale(
+        self, async_thread_guard: Guard
+    ) -> None:
+        """Wrong state_version -> stale_state."""
         from pramanix import SolverStatus
 
         result = await async_thread_guard.verify_async(
@@ -315,22 +350,29 @@ class TestVerifyAsyncThreadMode:
 
     @pytest.mark.asyncio
     async def test_generic_exception_in_validate_returns_error(
-        self, async_thread_guard: Guard
+        self, async_thread_guard: Guard, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Generic exception during validation -> error Decision."""
-        from pramanix import SolverStatus
+        """Guard fail-safe: RuntimeError inside validate_intent → Decision.error.
 
-        with patch(
-            "pramanix.guard.validate_intent",
-            side_effect=RuntimeError("unexpected"),
-        ):
-            result = await async_thread_guard.verify_async(
-                intent={"amount": Decimal("50")},
-                state={
-                    "state_version": "1.0",
-                    "balance": Decimal("1000"),
-                },
-            )
+        The ``except Exception`` catch-all in _verify_core is defensive code
+        that can only be reached by injecting an unexpected exception into
+        a normally-stable code path.  ``monkeypatch`` is the minimal
+        mechanism for this — no MagicMock, no AsyncMock.
+        """
+        from pramanix import SolverStatus
+        from pramanix import guard as _gmod
+
+        monkeypatch.setattr(
+            _gmod, "validate_intent", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("unexpected"))
+        )
+
+        result = await async_thread_guard.verify_async(
+            intent={"amount": Decimal("50")},
+            state={
+                "state_version": "1.0",
+                "balance": Decimal("1000"),
+            },
+        )
         assert not result.allowed
         assert result.status == SolverStatus.ERROR
 
@@ -343,7 +385,7 @@ class TestVerifyAsyncThreadMode:
 class TestVerifyAsyncEdgeModes:
     @pytest.mark.asyncio
     async def test_pool_none_returns_error(self) -> None:
-        """pool is None -> Decision.error (line 771)."""
+        """pool is None → Decision.error (WorkerPool not initialised)."""
         from pramanix import SolverStatus
 
         cfg = GuardConfig(
@@ -364,16 +406,24 @@ class TestVerifyAsyncEdgeModes:
 
     @pytest.mark.asyncio
     async def test_unknown_mode_returns_error(self) -> None:
-        """Unknown execution_mode -> Decision.error (line 814)."""
+        """Unknown execution_mode → Decision.error.
+
+        GuardConfig.__post_init__ rejects invalid modes, so this defensive
+        branch is unreachable through the normal API.  We reach it by
+        directly replacing the frozen dataclass on the Guard instance via
+        ``object.__setattr__`` — no mock framework involved.
+        """
+        import dataclasses
+
         from pramanix import SolverStatus
 
         g = Guard(policy=_MinimalPolicy, config=GuardConfig())
-        mock_cfg = MagicMock()
-        mock_cfg.execution_mode = "turbo-quantum"
-        mock_cfg.solver_timeout_ms = 5000
-        mock_cfg.min_response_ms = 0.0
-        g._config = mock_cfg  # type: ignore[assignment]
-        g._pool = MagicMock()  # type: ignore[assignment]
+
+        # Bypass GuardConfig.__post_init__ validation by creating a plain
+        # dataclass copy with the invalid mode field injected directly.
+        bad_config = dataclasses.replace(g._config)
+        object.__setattr__(bad_config, "execution_mode", "turbo-quantum")
+        g._config = bad_config  # type: ignore[assignment]
 
         result = await g.verify_async(
             intent={"amount": Decimal("50")},
@@ -409,58 +459,144 @@ class TestGuardShutdown:
 
 
 # ===============================================================
-# OTel span set_attribute path
+# OTel span set_attribute path — real in-memory exporter
 # ===============================================================
 
 
 class TestOtelSpanAttributes:
-    def test_verify_emits_span_attributes_when_span_not_none(self) -> None:
-        """Patch _span so it yields a non-None mock; verify set_attribute called."""
-        mock_span = MagicMock()
-        mock_span.__enter__ = MagicMock(return_value=mock_span)
-        mock_span.__exit__ = MagicMock(return_value=False)
+    def test_verify_emits_span_attributes_when_otel_configured(self) -> None:
+        """Guard emits OTel spans with decision_id when a real TracerProvider
+        is installed.
 
-        g = Guard(policy=_MinimalPolicy, config=GuardConfig())
+        Uses ``InMemorySpanExporter`` from opentelemetry-sdk (a dev dependency).
+        The module-level ``_span`` function is temporarily replaced with a real
+        OTel span factory that routes to the test provider — no MagicMock.
+        The original is restored in the finally block.
+        """
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
 
-        with patch("pramanix.guard._span", return_value=mock_span):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+        # Build a real span factory that uses our test provider
+        def _real_span(name: str):  # type: ignore[no-untyped-def]
+            return provider.get_tracer("pramanix.guard").start_as_current_span(name)
+
+        original_span = _guard_mod._span  # type: ignore[attr-defined]
+        _guard_mod._span = _real_span  # type: ignore[attr-defined]
+
+        try:
+            g = Guard(policy=_MinimalPolicy, config=GuardConfig())
             g.verify(
                 intent={"amount": Decimal("100")},
                 state={"state_version": "1.0"},
             )
+        finally:
+            _guard_mod._span = original_span  # type: ignore[attr-defined]
 
-        calls = [str(c) for c in mock_span.set_attribute.call_args_list]
-        assert any("decision_id" in c for c in calls)
+        finished = exporter.get_finished_spans()
+        assert len(finished) > 0, "No spans were exported"
+
+        verify_span = next(
+            (s for s in finished if s.name == "pramanix.guard.verify"),
+            None,
+        )
+        assert verify_span is not None, (
+            "Expected a span named 'pramanix.guard.verify'"
+        )
+        assert "pramanix.decision_id" in verify_span.attributes
+        assert "pramanix.policy.name" in verify_span.attributes
 
 
 # ===============================================================
-# Prometheus metrics path
+# Prometheus metrics path — real counter reads, no patching
 # ===============================================================
 
 
 class TestPrometheusMetrics:
-    def test_verify_increments_metrics_when_enabled(self) -> None:
-        """metrics_enabled=True + _PROM_AVAILABLE=True -> counters called."""
-        import pramanix.guard as _guard_mod
+    def test_prom_available_is_true(self) -> None:
+        """prometheus_client is a hard dependency — _PROM_AVAILABLE must be True."""
+        assert _guard_mod._PROM_AVAILABLE is True, (
+            "_PROM_AVAILABLE is False — prometheus_client may not be installed"
+        )
 
-        mock_counter = MagicMock()
-        mock_histogram = MagicMock()
+    def test_verify_increments_decisions_total_counter(self) -> None:
+        """metrics_enabled=True → pramanix_decisions_total counter increments.
 
-        with (
-            patch.object(_guard_mod, "_PROM_AVAILABLE", True),
-            patch.object(_guard_mod, "_decisions_total", mock_counter),
-            patch.object(_guard_mod, "_decision_latency", mock_histogram),
-            patch.object(_guard_mod, "_solver_timeouts_total", MagicMock()),
-            patch.object(_guard_mod, "_validation_failures_total", MagicMock()),
-        ):
-            cfg = GuardConfig(metrics_enabled=True)
-            g = Guard(policy=_MinimalPolicy, config=cfg)
-            g.verify(
-                intent={"amount": Decimal("50")},
-                state={"state_version": "1.0"},
-            )
+        Reads actual counter values from the live prometheus registry
+        before and after Guard.verify().  No patching of any counter or
+        availability flag.
+        """
+        policy_name = _MinimalPolicy.__name__
 
-        mock_counter.labels.assert_called()
-        mock_histogram.labels.assert_called()
+        def _read_counter(status: str) -> float:
+            try:
+                return (
+                    _guard_mod._decisions_total  # type: ignore[attr-defined]
+                    .labels(policy=policy_name, status=status)
+                    ._value.get()
+                )
+            except Exception:
+                return 0.0
+
+        before = _read_counter("safe")
+
+        cfg = GuardConfig(metrics_enabled=True)
+        g = Guard(policy=_MinimalPolicy, config=cfg)
+        g.verify(
+            intent={"amount": Decimal("50")},
+            state={"state_version": "1.0"},
+        )
+
+        after = _read_counter("safe")
+        assert after > before, (
+            f"pramanix_decisions_total{{status='safe'}} did not increment "
+            f"(before={before}, after={after})"
+        )
+
+    def test_verify_increments_decision_latency_histogram(self) -> None:
+        """Decision latency histogram is populated on each verify() call."""
+        policy_name = _MinimalPolicy.__name__
+
+        def _read_histogram_count() -> float:
+            try:
+                return (
+                    _guard_mod._decision_latency  # type: ignore[attr-defined]
+                    .labels(policy=policy_name)
+                    ._sum.get()
+                )
+            except Exception:
+                return 0.0
+
+        before = _read_histogram_count()
+
+        cfg = GuardConfig(metrics_enabled=True)
+        g = Guard(policy=_MinimalPolicy, config=cfg)
+        g.verify(
+            intent={"amount": Decimal("50")},
+            state={"state_version": "1.0"},
+        )
+
+        after = _read_histogram_count()
+        assert after > before, (
+            "pramanix_decision_latency_seconds histogram did not record "
+            f"a new observation (before={before}, after={after})"
+        )
+
+    def test_metrics_disabled_does_not_raise(self) -> None:
+        """metrics_enabled=False must not raise even if prometheus is available."""
+        cfg = GuardConfig(metrics_enabled=False)
+        g = Guard(policy=_MinimalPolicy, config=cfg)
+        result = g.verify(
+            intent={"amount": Decimal("50")},
+            state={"state_version": "1.0"},
+        )
+        assert result.allowed
 
 
 # ===============================================================
@@ -470,23 +606,31 @@ class TestPrometheusMetrics:
 
 class TestParseAndVerifyGenericException:
     @pytest.mark.asyncio
-    async def test_generic_exception_branch_via_mock_create_translator(
+    async def test_generic_exception_branch_via_monkeypatch(
         self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """RuntimeError inside parse_and_verify -> Decision.error (899-900)."""
+        """RuntimeError inside parse_and_verify → Decision.error.
+
+        The ``except Exception`` fail-safe in parse_and_verify can only be
+        reached by injecting an unexpected error into ``create_translator``.
+        ``monkeypatch`` replaces the function for this call only — no
+        MagicMock or AsyncMock involved.
+        """
         from pramanix import SolverStatus
+        from pramanix.translator import redundant as _redundant
+
+        def _raise(*_a, **_kw):  # type: ignore[no-untyped-def]
+            raise RuntimeError("injected error")
+
+        monkeypatch.setattr(_redundant, "create_translator", _raise)
 
         g = Guard(policy=_MinimalPolicy, config=GuardConfig())
-
-        with patch(
-            "pramanix.translator.redundant.create_translator",
-            side_effect=RuntimeError("injected error"),
-        ):
-            result = await g.parse_and_verify(
-                prompt="transfer 100",
-                intent_schema=_Intent,
-                state={"state_version": "1.0", "balance": Decimal("1000")},
-            )
+        result = await g.parse_and_verify(
+            prompt="transfer 100",
+            intent_schema=_Intent,
+            state={"state_version": "1.0", "balance": Decimal("1000")},
+        )
 
         assert not result.allowed
         assert result.status == SolverStatus.ERROR
@@ -546,7 +690,7 @@ class TestLoggingIsolation:
         guard.verify(intent=intent, state=state)
         return buf.getvalue()
 
-    def test_financial_amounts_not_logged_on_allow(self):
+    def test_financial_amounts_not_logged_on_allow(self) -> None:
         """Allowed decision must not log the actual amount or balance."""
         sentinel_amount = "98765432100"
         sentinel_balance = "11122233344"
@@ -561,9 +705,8 @@ class TestLoggingIsolation:
             f"balance {sentinel_balance!r} appeared in log output"
         )
 
-    def test_financial_amounts_not_logged_on_block(self):
+    def test_financial_amounts_not_logged_on_block(self) -> None:
         """Blocked decision must not log the actual amount or balance."""
-        # Long distinctive values — cannot be substrings of UUIDs, solver_time_ms, etc.
         sentinel_amount = "55544433322111"
         sentinel_balance = "77766655544433"
         output = self._capture_log_output(
