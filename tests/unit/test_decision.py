@@ -20,7 +20,12 @@ import uuid
 
 import pytest
 
-from pramanix.decision import _BLOCKED_STATUSES, Decision, SolverStatus
+from pramanix.decision import (
+    _BLOCKED_STATUSES,
+    Decision,
+    SolverStatus,
+    _make_json_safe,
+)
 
 # ── Compatibility: FrozenInstanceError added in Python 3.11 ──────────────────
 try:
@@ -553,3 +558,54 @@ class TestDecisionId:
     def test_100_ids_are_unique(self) -> None:
         ids = {Decision.safe().decision_id for _ in range(100)}
         assert len(ids) == 100
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# _json_safe_value — dict / list / datetime / fallback paths (lines 93-99)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestJsonSafeValue:
+    """Exercises _json_safe_value via _make_json_safe (lines 93-99)."""
+
+    def test_dict_value_is_recursed(self) -> None:
+        """Nested dict is recursed through _make_json_safe."""
+        from decimal import Decimal
+
+        result = _make_json_safe(
+            {"nested": {"amount": Decimal("50"), "flag": True}}
+        )
+        assert result["nested"]["amount"] == "50"
+        assert result["nested"]["flag"] is True
+
+    def test_list_value_is_recursed(self) -> None:
+        """list value is element-wise converted."""
+        from decimal import Decimal
+
+        result = _make_json_safe({"items": [Decimal("1"), Decimal("2")]})
+        assert result["items"] == ["1", "2"]
+
+    def test_tuple_value_is_recursed(self) -> None:
+        """tuple is treated the same as list."""
+        from decimal import Decimal
+
+        result = _make_json_safe({"pair": (Decimal("3"), Decimal("4"))})
+        assert result["pair"] == ["3", "4"]
+
+    def test_datetime_value_uses_isoformat(self) -> None:
+        """datetime is serialized via .isoformat()."""
+        import datetime
+
+        dt = datetime.datetime(2026, 3, 21, 12, 0, 0)
+        result = _make_json_safe({"ts": dt})
+        assert result["ts"] == "2026-03-21T12:00:00"
+
+    def test_unknown_type_falls_back_to_str(self) -> None:
+        """Arbitrary object with no special handling is str()-converted."""
+
+        class _Blob:
+            def __str__(self) -> str:
+                return "blob-repr"
+
+        result = _make_json_safe({"x": _Blob()})
+        assert result["x"] == "blob-repr"

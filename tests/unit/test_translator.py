@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 from typing import Any
+
 import httpx
 import pytest
 import respx
@@ -33,7 +34,11 @@ from pramanix.exceptions import (
     LLMTimeoutError,
     PramanixError,
 )
-from pramanix.translator._json import _clean_json, parse_llm_response
+from pramanix.translator._json import (
+    _clean_json,
+    _extract_first_json,
+    parse_llm_response,
+)
 from pramanix.translator._prompt import build_system_prompt
 from pramanix.translator.base import Translator, TranslatorContext
 from pramanix.translator.redundant import (
@@ -138,6 +143,45 @@ class TestCleanJson:
     def test_case_insensitive_json_fence(self) -> None:
         raw = '```JSON\n{"key": "val"}\n```'
         assert json.loads(_clean_json(raw)) == {"key": "val"}
+
+
+# ── _extract_first_json — escape-sequence paths (lines 34-35, 37-38)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestExtractFirstJson:
+    def test_escaped_quote_in_string_value(self) -> None:
+        """Escaped quote inside a string must not close the string early.
+
+        Exercises lines 37-38 (escape_next = True / continue) and
+        34-35 (escape_next = False / continue) of _extract_first_json.
+        Without these branches, the closing } after the escaped quote
+        would be mis-parsed as a depth decrement inside a string.
+        """
+        raw = r'{"key": "val\"ue"}'
+        result = _extract_first_json(raw)
+        assert result == raw
+        assert json.loads(result) == {"key": 'val"ue'}
+
+    def test_backslash_followed_by_non_quote(self) -> None:
+        """Backslash before a non-quote char (e.g. \\n) still sets escape_next."""
+        raw = r'{"msg": "line1\nline2"}'
+        result = _extract_first_json(raw)
+        assert result == raw
+
+    def test_nested_object_with_escaped_quotes(self) -> None:
+        """Nested object whose string values contain escaped quotes."""
+        raw = r'{"a": {"b": "x\"y"}}'
+        result = _extract_first_json(raw)
+        assert result == raw
+        assert json.loads(result) == {"a": {"b": 'x"y'}}
+
+    def test_no_json_returns_none(self) -> None:
+        assert _extract_first_json("no json here") is None
+
+    def test_array_is_extracted(self) -> None:
+        raw = '[1, 2, 3]'
+        assert _extract_first_json(raw) == raw
 
 
 # ── parse_llm_response ────────────────────────────────────────────────────────
@@ -797,6 +841,7 @@ class TestOpenAICompatTranslator:
         """APITimeoutError → retried → LLMTimeoutError after exhaustion."""
         pytest.importorskip("openai")
         from tenacity import wait_none
+
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
         monkeypatch.setattr("tenacity.wait_exponential", lambda **kw: wait_none())
@@ -927,6 +972,7 @@ class TestAnthropicTranslator:
     ) -> None:
         pytest.importorskip("anthropic")
         from tenacity import wait_none
+
         from pramanix.translator.anthropic import AnthropicTranslator
 
         monkeypatch.setattr("tenacity.wait_exponential", lambda **kw: wait_none())

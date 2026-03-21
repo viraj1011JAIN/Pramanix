@@ -135,6 +135,7 @@ class _LogCapture:
     def __init__(self) -> None:
         self.warnings: list[str] = []
         self.errors: list[str] = []
+        self.debugs: list[str] = []
 
     def warning(self, msg: str, *args: object, **kw: object) -> None:
         self.warnings.append(msg % args if args else msg)
@@ -146,7 +147,7 @@ class _LogCapture:
         pass
 
     def debug(self, msg: str, *args: object, **kw: object) -> None:
-        pass
+        self.debugs.append(msg % args if args else msg)
 
     @property
     def warning_called(self) -> bool:
@@ -155,6 +156,10 @@ class _LogCapture:
     @property
     def error_called(self) -> bool:
         return bool(self.errors)
+
+    @property
+    def debug_called(self) -> bool:
+        return bool(self.debugs)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -265,15 +270,22 @@ class TestDrainExecutor:
         executor = ThreadPoolExecutor(max_workers=1)
         _drain_executor(executor, grace_s=5.0)
 
-    def test_drain_swallows_shutdown_exception(self) -> None:
-        """executor.shutdown() raising is swallowed by _do_shutdown's except clause.
+    def test_drain_swallows_shutdown_exception(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """executor.shutdown() raising is swallowed; exception is debug-logged.
 
         _RaisingShutdownExecutor.shutdown() raises RuntimeError immediately.
-        _drain_executor must complete without propagating the exception.
-        Covers lines 485-486 (_do_shutdown except Exception: pass).
+        _drain_executor must complete without propagating the exception and
+        must emit a debug log message naming the exception.
         """
         executor = _RaisingShutdownExecutor(max_workers=1)
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
         _drain_executor(executor, grace_s=5.0)  # Must not raise
+        assert log_cap.debug_called, (
+            "executor.shutdown exception must be debug-logged"
+        )
 
     def test_drain_logs_warning_when_grace_period_exceeded(
         self, monkeypatch: pytest.MonkeyPatch

@@ -21,6 +21,7 @@ from decimal import Decimal
 import pytest
 from pydantic import BaseModel
 
+import pramanix.guard as _guard_mod
 from pramanix.decision import Decision, SolverStatus
 from pramanix.exceptions import (
     ConfigurationError,
@@ -29,7 +30,6 @@ from pramanix.exceptions import (
     SolverTimeoutError,
     TranspileError,
 )
-import pramanix.guard as _guard_mod
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
@@ -165,6 +165,24 @@ class TestGuardConfig:
 
     def test_default_max_decisions_per_worker(self) -> None:
         assert GuardConfig().max_decisions_per_worker == 10_000
+
+    def test_negative_solver_rlimit_raises(self) -> None:
+        from pramanix.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="solver_rlimit"):
+            GuardConfig(solver_rlimit=-1)
+
+    def test_negative_max_input_bytes_raises(self) -> None:
+        from pramanix.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="max_input_bytes"):
+            GuardConfig(max_input_bytes=-1)
+
+    def test_negative_min_response_ms_raises(self) -> None:
+        from pramanix.exceptions import ConfigurationError
+
+        with pytest.raises(ConfigurationError, match="min_response_ms"):
+            GuardConfig(min_response_ms=-0.1)
 
     def test_frozen_instance_cannot_be_mutated(self) -> None:
         cfg = GuardConfig()

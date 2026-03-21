@@ -482,8 +482,11 @@ def _drain_executor(executor: Executor, grace_s: float) -> None:
     def _do_shutdown() -> None:
         try:
             executor.shutdown(wait=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug(
+                "worker._drain_executor: executor.shutdown raised: %s",
+                exc,
+            )
         finally:
             shutdown_event.set()
 
