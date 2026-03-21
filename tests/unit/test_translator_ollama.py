@@ -18,7 +18,8 @@ Architecture
   exercise each defensive code path in OllamaTranslator.
 
 * Network-error tests (TestOllamaTranslatorNetworkErrors) use:
-    - Wrong port (localhost:11435) → real ConnectionRefusedError → LLMTimeoutError
+    - Wrong port (localhost:11435) → real ConnectionRefusedError
+      → LLMTimeoutError
     - Extremely short timeout (0.001 s) → real httpx.TimeoutException
       → LLMTimeoutError
 
@@ -66,7 +67,7 @@ from pramanix.exceptions import (  # noqa: E402
 )
 from pramanix.translator.ollama import OllamaTranslator  # noqa: E402
 
-# ── Check Ollama availability ─────────────────────────────────────────────────
+# ── Check Ollama availability ────────────────────────────────────────────────
 
 _OLLAMA_BASE = "http://localhost:11434"
 _OLLAMA_AVAILABLE = False
@@ -90,7 +91,7 @@ _needs_ollama = pytest.mark.skipif(
     ),
 )
 
-# ── Minimal intent schema ─────────────────────────────────────────────────────
+# ── Minimal intent schema ────────────────────────────────────────────────────
 
 
 class _TransferIntent(BaseModel):
@@ -98,7 +99,7 @@ class _TransferIntent(BaseModel):
     recipient: str
 
 
-# ── Local test HTTP server ─────────────────────────────────────────────────────
+# ── Local test HTTP server ───────────────────────────────────────────────────
 
 
 class _FixedResponseHandler(http.server.BaseHTTPRequestHandler):
@@ -196,7 +197,7 @@ class TestOllamaTranslatorLive:
     @_needs_ollama
     @pytest.mark.asyncio
     async def test_extract_transfer_intent(self) -> None:
-        """Real LLM extracts structured transfer intent from natural language."""
+        """Real LLM extracts structured transfer intent from text."""
         t = OllamaTranslator()
         result = await t.extract(
             "Transfer 250 dollars to account acc_789", _TransferIntent
@@ -269,7 +270,7 @@ class TestOllamaTranslatorHttpErrors:
 class TestOllamaTranslatorNetworkErrors:
     @pytest.mark.asyncio
     async def test_connect_error_raises_llm_timeout_error(self) -> None:
-        """Connection refused (wrong port) → real httpx.ConnectError → LLMTimeoutError.
+        """Connection refused → real ConnectError → LLMTimeoutError.
 
         Port 11435 is not listening; httpx raises ConnectError immediately.
         This is a real TCP-level failure — no mocking.
@@ -280,11 +281,11 @@ class TestOllamaTranslatorNetworkErrors:
 
     @pytest.mark.asyncio
     async def test_timeout_raises_llm_timeout_error(self) -> None:
-        """Extremely short timeout (1 ms) → real httpx.TimeoutException → LLMTimeoutError.
+        """Short timeout (1 ms) → real TimeoutException → LLMTimeoutError.
 
-        A local server that sleeps before responding is not needed — even the
-        TCP handshake with localhost cannot complete in 1 ms reliably, or the
-        server's keep-alive read triggers the timeout.
+        A local server that sleeps before responding is not needed — even
+        the TCP handshake with localhost cannot complete in 1 ms reliably,
+        or the server's keep-alive read triggers the timeout.
         """
 
         # Start a server that deliberately delays its response
@@ -388,7 +389,7 @@ class TestOllamaTranslatorMalformedResponse:
 
     @pytest.mark.asyncio
     async def test_partial_json_recovery(self) -> None:
-        """JSON embedded in prose is extracted by the _json.py recovery layer."""
+        """JSON in prose is extracted by the _json.py recovery layer."""
         content = (
             "Here is the extracted data:\n"
             '{"amount": 75.0, "recipient": "acc_partial"}\n'
@@ -414,13 +415,15 @@ class TestOllamaTranslatorMissingDependency:
     async def test_missing_httpx_raises_import_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If httpx is not installed, extract() must raise ImportError immediately.
+        """If httpx is not installed, extract() raises ImportError.
 
-        monkeypatch.setitem(sys.modules, "httpx", None) is the only way to
-        simulate a missing package in a test environment where httpx IS installed.
-        This is an impossible-to-reach state through normal API usage.
+        monkeypatch.setitem(sys.modules, "httpx", None) simulates a missing
+        package in a test environment where httpx IS installed.
+        Unreachable through normal API usage.
         """
         t = OllamaTranslator()
-        monkeypatch.setitem(sys.modules, "httpx", None)  # type: ignore[arg-type]
+        monkeypatch.setitem(  # type: ignore[arg-type]
+            sys.modules, "httpx", None
+        )
         with pytest.raises(ImportError, match="httpx"):
             await t.extract("transfer 100", _TransferIntent)

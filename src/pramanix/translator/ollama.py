@@ -17,6 +17,7 @@ Example::
     # Or pair with a cloud model for consensus:
     redundant = RedundantTranslator(t, OpenAICompatTranslator("gpt-4o"))
 """
+
 from __future__ import annotations
 
 import os
@@ -37,18 +38,21 @@ _DEFAULT_BASE_URL = "http://localhost:11434"
 
 
 class OllamaTranslator:
-    """Translator that calls a local Ollama server via the ``/api/chat`` endpoint.
+    """Translator that calls a local Ollama server via ``/api/chat``.
 
     Communicates with Ollama using ``httpx.AsyncClient``.  Passes
     ``"format": "json"`` so the model constrains its output to valid JSON.
 
     Args:
         model:    Ollama model tag (e.g. ``"llama3.2"``, ``"mistral"``).
-                  Defaults to ``"llama3.2"``.
-        base_url: Ollama server base URL.  Falls back to ``OLLAMA_BASE_URL``
-                  env var, then ``http://localhost:11434``.
-        timeout:  Per-request HTTP timeout in seconds (default 60 s — local
-                  models can be slow on first-token generation).
+                  Defaults to ``"llama3.2"`` — the 3 B parameter variant.
+        base_url: Ollama server base URL.  Falls back to
+                  ``OLLAMA_BASE_URL`` env var, then
+                  ``http://localhost:11434``.
+        timeout:     Per-request HTTP timeout in seconds (default 60 s —
+                     local models can be slow on first-token generation).
+        temperature: Sampling temperature (default 0.0 — deterministic
+                     output is required for reliable schema extraction).
 
     Raises:
         ImportError: If ``httpx`` is not installed
@@ -61,11 +65,15 @@ class OllamaTranslator:
         *,
         base_url: str | None = None,
         timeout: float = 60.0,
+        temperature: float = 0.0,
     ) -> None:
         self.model = model
-        resolved_url = base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
+        resolved_url = (
+            base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
+        )
         self._base_url = resolved_url.rstrip("/")
         self._timeout = timeout
+        self._temperature = temperature
 
     async def extract(
         self,
@@ -73,21 +81,24 @@ class OllamaTranslator:
         intent_schema: type[BaseModel],
         context: TranslatorContext | None = None,
     ) -> dict[str, Any]:
-        """Extract structured intent from *text* using the configured Ollama model.
+        """Extract structured intent from *text* via the Ollama model.
 
         Args:
             text:          Raw user input (treated as untrusted).
-            intent_schema: Pydantic model class defining the expected output.
-            context:       Optional host-provided grounding context (unused by
-                           the LLM; preserved for protocol compatibility).
+            intent_schema: Pydantic model class defining the expected
+                           output.
+            context:       Optional host-provided grounding context
+                           (unused by the LLM; preserved for protocol
+                           compatibility).
 
         Returns:
-            Raw dict from the model; caller should validate against *intent_schema*.
+            Raw dict from the model; caller should validate against
+            *intent_schema*.
 
         Raises:
-            ExtractionFailureError: Model returned bad/unparseable JSON or the
-                server returned a non-2xx response.
-            LLMTimeoutError:        Request timed out.
+            ExtractionFailureError: Model returned bad/unparseable JSON
+                or the server returned a non-2xx response.
+            LLMTimeoutError: Request timed out.
         """
         try:
             import httpx
@@ -107,6 +118,7 @@ class OllamaTranslator:
             ],
             "stream": False,
             "format": "json",
+            "options": {"temperature": self._temperature},
         }
 
         try:
@@ -114,7 +126,8 @@ class OllamaTranslator:
                 response = await client.post(url, json=payload)
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(
-                f"Ollama model '{self.model}' timed out after {self._timeout}s: {exc}",
+                f"Ollama model '{self.model}' timed out after "
+                f"{self._timeout}s: {exc}",
                 model=self.model,
                 attempts=1,
             ) from exc
@@ -127,18 +140,19 @@ class OllamaTranslator:
 
         if response.status_code != 200:
             raise ExtractionFailureError(
-                f"[{self.model}] Ollama server returned HTTP {response.status_code}: "
-                f"{response.text[:200]}"
+                f"[{self.model}] Ollama server returned HTTP "
+                f"{response.status_code}: {response.text[:200]}"
             )
 
         try:
             data = response.json()
         except Exception as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] Ollama response was not valid JSON: {exc}"
+                f"[{self.model}] Ollama response was not valid JSON: "
+                f"{exc}"
             ) from exc
 
-        # Ollama /api/chat response: {"message": {"role": "assistant", "content": "..."}}
+        # Ollama /api/chat: {"message": {"role": "assistant", "content": "..."}}
         try:
             raw_content: str = data["message"]["content"]
         except (KeyError, TypeError) as exc:
