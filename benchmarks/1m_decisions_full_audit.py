@@ -134,8 +134,12 @@ def _pct(data: list[float], p: float) -> float:
 
 
 def _gc_counts() -> tuple[int, int, int]:
-    stats = gc.get_count()
-    return stats[0], stats[1], stats[2]
+    stats = gc.get_stats()
+    return (
+        stats[0]["collections"],
+        stats[1]["collections"],
+        stats[2]["collections"],
+    )
 
 
 def _fmt_mib(v: float) -> str:
@@ -379,6 +383,9 @@ def main() -> None:
     parser.add_argument("--spike", type=float, default=SPIKE_THRESHOLD_MiB)
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args()
+
+    if args.n <= 0:
+        parser.error("--n must be a positive integer")
 
     global _USE_COLOR
     if args.no_color:
