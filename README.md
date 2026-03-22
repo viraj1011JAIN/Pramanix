@@ -436,7 +436,7 @@ decision = await guard.parse_and_verify(
     prompt="transfer 500 dollars to alice",
     intent_schema=TransferIntent,          # Pydantic model
     state=account_state,
-    models=("gpt-4o", "claude-opus-4-5"),  # both must agree
+    models=("gpt-4o", "claude-opus-4-6"),  # both must agree
 )
 ```
 
@@ -1121,12 +1121,7 @@ with zero memory leaks under sustained, single-core torture.
 > The long tail (P99.9+) is Windows OS scheduler jitter across a 3.4-hour
 > single-threaded run — not Z3 pathology. P99 stays firmly under 100 ms.
 
-> ¹ **Cumulative P99 across all 1,000,000 decisions.** The final 100K sliding
-> window P99 was 110.205 ms, reflecting end-of-run GC pressure on a sustained
-> 3.4-hour single-threaded workload. Both figures are reported in the
-> checkpoint log (`benchmarks/results/1m_audit_checkpoints.json`). The
-> cumulative figure is the statistically correct aggregate; the window figure
-> shows the worst sustained segment of the run.
+> ¹ See footnote above.
 
 ### 📈 Visualisations
 
