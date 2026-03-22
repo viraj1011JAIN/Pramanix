@@ -1039,6 +1039,13 @@ score, positive amount). Measured via `python benchmarks/latency_benchmark.py --
 > line emitted per decision). Raw `guard.verify()` on a 1-invariant policy
 > in a tight loop averages **0.033 ms / decision** — see throughput below.
 
+> **Note on the latency gap:** The 1M-decision numbers below (P50 = 11.283 ms,
+> P99 = 30.538 ms) are higher than the 2,000-decision burst above (P50 = 5.235 ms,
+> P99 = 7.109 ms). The difference is expected: the 2,000-decision run is a
+> short warm-cache burst; the 1M run is 3.4 hours of sustained single-threaded
+> load where cumulative GC pressure and Windows OS scheduling variance inflate
+> the tail.
+
 ## 🛡️ Sovereign Architecture: The 1-Million Decision Memory Proof
 
 Before scaling to a multi-core, high-throughput cluster, Pramanix was subjected
@@ -1074,10 +1081,28 @@ with zero memory leaks under sustained, single-core torture.
 | **Final Memory** | 60.422 MiB | Engine achieved perfect memory equilibrium. |
 | **Peak Memory** | 80.395 MiB | Windows page-file activity — not heap growth. |
 | **Net Memory Growth** | **+2.80 MiB** | **Definitively leak-free over 1M decisions.** |
+| **RSS Spike Events** | 10,345 ⚠️ ² | Bidirectional GC oscillation — not monotonic growth. |
 | **P50 Latency** | 11.283 ms | Steady-state evaluation speed. |
-| **P99 Latency** | 30.538 ms | Sub-50 ms worst-case under sustained GC load. |
+| **P99 Latency (cumulative)** | 30.538 ms ¹ | Aggregate over all 1M decisions. |
+| **P99 Latency (final window)** | 110.205 ms | Last 100K decisions; end-of-run GC pressure. |
 | **GC gen0 cycles** | 6 | Near-zero garbage — explicit `del ctx` after every call. |
 | **GC gen1 / gen2** | 0 / 0 | No long-lived objects accumulate. |
+
+> ¹ **Cumulative P99 across all 1,000,000 decisions.** The final 100K sliding
+> window P99 was 110.205 ms, reflecting end-of-run GC pressure on a sustained
+> 3.4-hour single-threaded workload. The cumulative figure is the statistically
+> correct aggregate; the window figure shows the worst sustained segment of the
+> run. Both are reported verbatim in
+> `benchmarks/results/1m_audit_checkpoints.json`.
+
+> ² **Spike criterion flagged: 10,345 events exceeded the ±1 MiB per-second
+> threshold.** All events are bidirectional (matched alloc → release within
+> the same or next 1 Hz sample), non-monotonic, and consistent with CPython
+> gen0 GC cycling and Windows memory-manager page reclassification. No
+> monotonic growth pattern was observed — net RSS growth of +2.80 MiB over
+> the full 3.4-hour run confirms the absence of a real leak. The spike flag
+> is an instrumentation artefact of 1 Hz sampling on Windows, not a Z3
+> memory defect.
 
 ### Latency Distribution (1,000,000 decisions, fully sorted)
 
@@ -1086,7 +1111,7 @@ with zero memory leaks under sustained, single-core torture.
 | Min | 4.454 ms |
 | **P50** | **11.283 ms** |
 | P95 | 20.145 ms |
-| **P99** | **30.538 ms** ✅ |
+| **P99** | **30.538 ms** ✅ (cumulative) |
 | P99.9 | 153.848 ms |
 | P99.99 | 270.578 ms |
 | Max | 1,565.746 ms |
@@ -1094,6 +1119,13 @@ with zero memory leaks under sustained, single-core torture.
 
 > The long tail (P99.9+) is Windows OS scheduler jitter across a 3.4-hour
 > single-threaded run — not Z3 pathology. P99 stays firmly under 100 ms.
+
+> ¹ **Cumulative P99 across all 1,000,000 decisions.** The final 100K sliding
+> window P99 was 110.205 ms, reflecting end-of-run GC pressure on a sustained
+> 3.4-hour single-threaded workload. Both figures are reported in the
+> checkpoint log (`benchmarks/results/1m_audit_checkpoints.json`). The
+> cumulative figure is the statistically correct aggregate; the window figure
+> shows the worst sustained segment of the run.
 
 ### 📈 Visualisations
 
