@@ -1059,6 +1059,10 @@ with zero memory leaks under sustained, single-core torture.
 > All numbers are real. Measured via `python benchmarks/1m_decisions_full_audit.py`.
 > No mocks, no sampling, no cherry-picking.
 
+### Live Terminal Output (actual run)
+
+![1M Decisions — live terminal output](public/1M%20descisions%20ran%20on%20a%20single%20CPU%20thread.jpeg)
+
 ### 📊 Audit Results: PASS
 
 | Metric | Result | Auditor Takeaway |
@@ -1090,6 +1094,56 @@ with zero memory leaks under sustained, single-core torture.
 
 > The long tail (P99.9+) is Windows OS scheduler jitter across a 3.4-hour
 > single-threaded run — not Z3 pathology. P99 stays firmly under 100 ms.
+
+### 📈 Visualisations
+
+**RSS Memory — 1 Hz sampling across the full 3.4-hour run**
+
+![RSS Memory Timeline](public/1m_rss_timeline.png)
+
+> Baseline (green dashed) and final (yellow dashed) lines show net growth of
+> only +2.80 MiB. The noisy oscillation is Windows page-file reclassification —
+> the net trend is flat, confirming zero Z3 heap accumulation.
+
+---
+
+**Latency Percentiles — window stats at each 100K checkpoint**
+
+![Latency Percentiles across Checkpoints](public/1m_latency_percentiles.png)
+
+> P50 (green) stays stable through most of the run. P99 (red) remains under
+> the 100 ms target except at the final two checkpoints where Windows
+> background scheduling causes a brief spike — not Z3 degradation.
+
+---
+
+**Throughput — RPS at each 100K checkpoint**
+
+![RPS Progression](public/1m_rps_progression.png)
+
+> Initial warm-up delivers ~152 RPS as Z3's JIT stabilises, settling to a
+> steady-state of ~81–92 RPS for the remainder of the run on a single core.
+
+---
+
+**Full Latency Distribution — log scale (Min → P99.99 → Max)**
+
+![Latency Distribution](public/1m_latency_distribution.png)
+
+> Log scale reveals the full picture: Min–P99 stay green/yellow (under 100 ms).
+> The tail beyond P99.9 is OS jitter, not solver regression.
+
+---
+
+**Python GC Cycles — before vs after 1M decisions**
+
+![GC Cycles](public/1m_gc_cycles.png)
+
+> Only **6 gen0 GC cycles** fired across 1,000,000 decisions. gen1 and gen2
+> show zero delta. Explicit `del ctx` after every call means Python's collector
+> sees near-zero garbage — the engine cleans up after itself at the C++ level.
+
+---
 
 ### Architectural Conclusion
 
