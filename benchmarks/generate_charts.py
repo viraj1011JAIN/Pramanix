@@ -101,8 +101,10 @@ ax.legend(facecolor=GRID, labelcolor=TEXT, fontsize=8, loc="upper right")
 ax.xaxis.set_major_formatter(ticker.FormatStrFormatter("%.1fh"))
 _style(fig, ax,
        "RSS Memory Timeline — 1,000,000 Decisions (1 sample/min shown)")
+# Truncate to 2 d.p. (not round) to match the terminal output value of 2.80
+growth_display = int(summary["memory"]["growth_mib"] * 100) / 100
 note = (
-    f"Net growth: +{summary['memory']['growth_mib']:.2f} MiB  |  "
+    f"Net growth: +{growth_display:.2f} MiB  |  "
     f"Platform: Windows 11 / Python 3.13.7 / z3-solver 4.16.0 / "
     f"single thread, single CPU core"
 )
@@ -207,7 +209,10 @@ ax.set_ylim(0, max(final_gc) * 1.5 + 5)
 ax.legend(facecolor=GRID, labelcolor=TEXT, fontsize=9)
 _style(fig, ax,
        "Python GC Collection Cycles — Before vs After 1M Decisions")
-note2 = "Only 6 gen0 cycles in 1M decisions. del ctx after each call = near-zero garbage."
+note2 = (
+    "Only 6 gen0 cycles in 1M decisions. "
+    "del ctx after each call = near-zero garbage."
+)
 fig.text(0.5, -0.04, note2, ha="center", fontsize=8, color=TEXT, alpha=0.7)
 _save(fig, "1m_gc_cycles.png")
 

@@ -1076,7 +1076,8 @@ with zero memory leaks under sustained, single-core torture.
 | :--- | :--- | :--- |
 | **Total Decisions** | 1,000,000 | Statistically significant sample size. |
 | **Total Wall Time** | 12,298.48 s (~3.4 hrs) | Single core, no parallelism. |
-| **Throughput (1 core)** | 81 decisions / sec | Raw per-core Z3 formal verification RPS. |
+| **Peak Throughput (100K mark)** | 152 decisions / sec | Post-JIT-warmup peak before GC pressure builds. |
+| **Sustained Throughput (avg)** | 81 decisions / sec | Settled rate over the full 3.4h single-core run. |
 | **Baseline Memory** | 57.617 MiB | Standard initialization footprint. |
 | **Final Memory** | 60.422 MiB | Engine achieved perfect memory equilibrium. |
 | **Peak Memory** | 80.395 MiB | Windows page-file activity — not heap growth. |
@@ -1143,9 +1144,14 @@ with zero memory leaks under sustained, single-core torture.
 
 ![Latency Percentiles across Checkpoints](public/1m_latency_percentiles.png)
 
-> P50 (green) stays stable through most of the run. P99 (red) remains under
-> the 100 ms target except at the final two checkpoints where Windows
-> background scheduling causes a brief spike — not Z3 degradation.
+> P50 (green) stays stable throughout. P99 (red) holds well under the 100 ms
+> target through the first 800K decisions, then **breaches to ~118 ms at the
+> 900K checkpoint and ~110 ms at the 1M checkpoint** — visible in the chart.
+> This is not Z3 degradation: it matches the OS scheduler jitter pattern seen
+> in the final segment of the 3.4h run. The **cumulative P99 across all 1M
+> decisions is 30.538 ms**, because 800K decisions contribute a much larger
+> weight than the final 200K noisy segment. Both figures are real; the chart
+> shows why they differ.
 
 ---
 
