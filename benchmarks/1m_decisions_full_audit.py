@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
 """1 000 000 decisions -- full audit benchmark.
-
+++
 Tracks:
   * RSS every second  (background thread, 1 Hz)
   * RSS spikes        (any second-over-second delta > SPIKE_THRESHOLD_MiB)
