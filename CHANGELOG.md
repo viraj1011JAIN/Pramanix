@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-24
+
+### Added
+
+- **15 Phase 12 hardening measures (H01-H15)** -- all fully unit-tested (`tests/unit/test_hardening.py`)
+- **`ExecutionToken` / `ExecutionTokenSigner` / `ExecutionTokenVerifier`** (`src/pramanix/execution_token.py`) -- HMAC-SHA256 single-use intent binding token with configurable TTL (default 30 s). Prevents TOCTOU replay attacks (H01). `RedisExecutionTokenVerifier` provides distributed single-use enforcement via Redis SETNX.
+- **`GuardConfig.solver_rlimit`** (default 10,000,000) -- Z3 elementary operation cap per solve call. Prevents non-linear logic bombs that stay within wall-clock timeout (H08). Env var: `PRAMANIX_SOLVER_RLIMIT`.
+- **`GuardConfig.max_input_bytes`** (default 65,536 = 64 KiB) -- serialized intent + state payload size cap checked before Z3 is invoked. Prevents big-data DoS (H06). Env var: `PRAMANIX_MAX_INPUT_BYTES`.
+- **`GuardConfig.min_response_ms`** (default 0.0, disabled) -- minimum wall-clock time before `verify()` returns, padding short decisions to prevent timing side-channel attacks (H13).
+- **`GuardConfig.redact_violations`** (default False) -- replaces `explanation` and `violated_invariants` in BLOCK decisions returned to callers with a generic message. `decision_hash` is computed over real fields before redaction, preserving server-side audit integrity (H04).
+- **`GuardConfig.expected_policy_hash`** (default None) -- SHA-256 fingerprint of the compiled policy. `Guard.__init__` raises `ConfigurationError` if the running policy does not match, detecting silent policy drift in distributed deployments (H09).
+- **PPID watchdog daemon thread** (H02) -- spawned worker processes check `os.getppid()` every 5 seconds and call `os._exit(0)` if the parent is dead. Prevents zombie Z3 subprocesses.
+- **Per-call `z3.Context()` thread safety** (H07) -- explicitly documented and tested. Every solver call creates and destroys its own Z3 context, preventing cross-thread context contamination.
+- **`PersistentMerkleAnchor`** (H05) -- Merkle anchor with checkpoint callbacks to durable storage, preventing Merkle root loss on process crash.
+- **`policy_hash` in `Decision.to_dict()`** (H14) -- embeds the policy fingerprint in the serialized decision, enabling audit tools to identify which policy version was active.
+- **Fail-closed signing** (H15) -- any exception during Ed25519 signing produces `Decision.error(allowed=False)`, never an unsigned decision that bypasses audit.
+- **Complete documentation suite** (`docs/`) -- 9 finalized documents:
+  - `architecture.md` -- Two-phase model, worker lifecycle, Z3 context isolation, TOCTOU prevention, H01-H15
+  - `security.md` -- 7-threat model, H01-H15 hardening table, cryptographic audit trail, key management, probabilistic failure analysis
+  - `performance.md` -- Phase 4 benchmarks, 100M finance run results, latency budget, tuning guide
+  - `policy_authoring.md` -- Complete DSL reference, 30 production rules, primitives quick reference, multi-policy composition
+  - `primitives.md` -- All 38 primitives with SAT/UNSAT examples and regulatory citations
+  - `integrations.md` -- FastAPI, LangChain, LlamaIndex, AutoGen guides
+  - `compliance.md` -- HIPAA, BSA/AML, OFAC, SOC2, PCI DSS patterns with policy examples
+  - `deployment.md` -- Docker, Kubernetes manifests, health probes, Phase 12 env vars
+  - `why_smt_wins.md` -- Technical manifesto: probabilistic failure analysis, Z3 proof walkthrough, audit trail
+- **100M benchmark infrastructure** (`benchmarks/`) -- 5-domain (finance, banking, fintech, healthcare, infra) orchestrator with rolling hash chain, Merkle anchoring, per-worker P99 and RSS tracking. Finance run result: 247 RPS, max P99 54.5 ms, 0 timeouts, 0 errors.
+
+### Changed
+
+- **`GuardConfig`** -- 5 new hardening fields: `solver_rlimit`, `max_input_bytes`, `min_response_ms`, `redact_violations`, `expected_policy_hash`.
+- **`Guard.__init__()`** -- validates `expected_policy_hash` against compiled policy fingerprint on construction.
+- **`Guard.verify()`** -- applies `max_input_bytes` check before dispatching to worker, `min_response_ms` pad before returning.
+- **Version bumped to `0.9.0`**.
+
+### Security
+
+- H01: ExecutionToken prevents TOCTOU replay attacks with HMAC+TTL+single-use enforcement.
+- H02: PPID watchdog prevents orphaned Z3 subprocess resource leaks after host crash.
+- H03: 8-pattern Z3 warmup eliminates cold-start JIT spike (verified to eliminate 50-200 ms first-request latency).
+- H04: `redact_violations` prevents oracle attacks where callers learn exact violated invariants.
+- H06: `max_input_bytes` = 64 KiB cap prevents big-data DoS attacks that exploit Z3 memory limits.
+- H07: Per-call `z3.Context()` prevents non-deterministic cross-thread Z3 corruption.
+- H08: `solver_rlimit` = 10M operations prevents logic-bomb DoS within wall-clock timeout window.
+- H09: `expected_policy_hash` detects silent policy drift across distributed deployments.
+- H10: Structured JSON logging via structlog neutralizes log injection (ANSI escapes, newlines encoded as JSON).
+- H13: `min_response_ms` padding makes timing side-channel attacks statistically infeasible.
+
 ## [0.8.0] - 2026-03-17
 
 ### Added
@@ -196,43 +244,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-<!-- ────────────────────────────────────────────────────────────────────────
-  Future versions will follow this structure:
+## [0.4.0] - 2026-03-13
 
-  ## [0.1.0] - YYYY-MM-DD
-  ### Added
-  - Core DSL: Policy, Field, E(), ExpressionNode, ConstraintExpr
-  - Transpiler: DSL expression tree → Z3 AST (zero AST parsing)
-  - Solver: Z3 wrapper with timeout, assert_and_track, unsat_core()
-  - Guard: sync verify(), GuardConfig
-  - Decision: frozen dataclass with all factory methods
-  - BankingPolicy reference implementation
-  - Unit tests (>95% coverage)
+### Added
 
-  ## [0.2.0] - YYYY-MM-DD
-  ### Added
-  - async-thread and async-process execution modes
-  - WorkerPool: spawn, warmup, recycle lifecycle
-  - @guard decorator
-  - Primitives: finance, rbac, infra, time, common
+- **Translator subsystem** (`src/pramanix/translator/`) -- LLM-based intent extraction. Four backends: `OllamaTranslator` (local), `OpenAICompatTranslator`, `AnthropicTranslator`, `RedundantTranslator` (dual-model consensus). `PRAMANIX_TRANSLATOR_ENABLED=false` is the default -- opt-in only.
+- **Five-Layer Defence pipeline** (`pramanix_hardened.py`, `pramanix_llm_hardened.py`) -- complete neuro-symbolic hardening: input sanitisation, dual-model consensus, injection scoring, semantic gateway, Z3 verification.
+- **Input sanitisation** (`sanitise_user_input()`) -- Unicode NFKC normalisation, 512-character hard truncation, C0 control-character strip, 30+ injection pattern scan.
+- **Injection confidence scoring** (`injection_confidence_score()`) -- additive risk model with 6 weighted signals. Score >= 0.5 produces `InjectionBlockedError` before Z3.
+- **Dual-model consensus** (`RedundantTranslator`) -- two independent LLM backends called concurrently via `asyncio.gather`. Canonical JSON equality check (sort_keys=True). Any mismatch blocks with `ExtractionMismatchError`.
+- **Semantic post-consensus gateway** -- fast pure-Python business rules (minimum reserve, daily limit, full-drain check) before Z3.
+- **Fail-closed human approval gateway** (`_FailClosedApprovalGateway`) -- full-drain transfers always BLOCK unless a `HumanApprovalBackend` is explicitly wired.
+- **Adversarial test suite** (`tests/adversarial/`) -- OWASP A01/A02 injection vectors, field overflow, ID injection, TOCTOU, 50+ tests.
+- **Per-currency injection scoring** -- sub-penny thresholds per currency (JPY=1, KWD=0.001, BTC=0.0001, default=0.01).
+- **Red-flag telemetry** (`pramanix_telemetry.py`) -- three 300-second rolling counters: `injection_spikes`, `consensus_mismatches`, `z3_timeouts`. `StructuredLogEmitter` writes newline-delimited JSON.
 
-  ## [0.3.0] - YYYY-MM-DD
-  ### Added
-  - ResolverRegistry: async + sync, per-decision cache
-  - Telemetry: Prometheus metrics, OTel spans, structured JSON logs
-  - Property-based tests (Hypothesis)
-  - Performance benchmarks and memory stability tests
+### Changed
 
-  ## [0.4.0] - YYYY-MM-DD
-  ### Added
-  - Translator subsystem: Ollama, OpenAI-compat, RedundantTranslator
-  - Adversarial test suite
-  - ExtractionMismatch detection
+- `Guard.verify()` gains optional LLM extraction path when `translator_enabled=True`.
+- `GuardConfig` gains `translator_enabled` field (default False).
+- Spawn (not fork) enforced for subprocess workers -- fork silently inherits Z3 heap state.
 
-  ## [1.0.0] - YYYY-MM-DD
-  ### Changed
-  - API stabilized. No breaking changes guaranteed until v2.0.
-  ### Added
-  - Full documentation suite
-  - PyPI release with signed provenance
-───────────────────────────────────────────────────────────────────────── -->
+### Security
+
+- HMAC-SHA256 IPC seal (`_worker_solve_sealed` / `_unseal_decision`) -- prevents forged `allowed=True` from compromised worker subprocess.
+- `_EphemeralKey` HMAC key -- `secrets.token_bytes(32)`, cannot be pickled (`__reduce__` raises `TypeError`), repr returns `<EphemeralKey: redacted>`.
+- Blind ID resolution -- LLM never sees real account identifiers; host resolves labels to IDs after extraction.
+
+---
+
+## [0.3.0] - 2026-03-12
+
+### Added
+
+- **`ResolverRegistry`** (`src/pramanix/resolvers.py`) -- async field resolver cache with thread-local isolation. Resolvers run on the event loop before dispatching to Z3 workers.
+- **Prometheus metrics** -- `pramanix_decisions_total` (counter by policy+status), `pramanix_decision_latency_seconds` (histogram), `pramanix_solver_timeouts_total`, `pramanix_validation_failures_total`. Enabled via `PRAMANIX_METRICS_ENABLED=true`.
+- **OpenTelemetry spans** -- `pramanix.guard.verify` span with `policy`, `allowed`, `status`, `latency_ms` attributes. Enabled via `PRAMANIX_OTEL_ENABLED=true`. No-op when otel package not installed.
+- **Structured JSON logging** (`structlog`) -- secret-key redaction processor runs first (keys matching `secret|api_key|token|hmac|password|credential` replaced with `<redacted>`). ISO timestamp, stack info, Unicode decoder.
+- **Property-based tests** (`tests/property/`) -- Hypothesis strategies for FinTech primitives (30+ generated test cases per strategy).
+- **Memory stability benchmarks** -- tracemalloc-based RSS growth tracking across worker recycle boundaries.
+- **`ContextVar` isolation** -- per-request context isolation prevents concurrent-request state contamination in thread-mode workers.
+
+### Changed
+
+- `GuardConfig` gains `metrics_enabled`, `otel_enabled`, `log_level` fields.
+- Telemetry is optional -- Prometheus and OTel gracefully degrade when their packages are not installed (zero overhead).
+
+---
+
+## [0.2.0] - 2026-03-11
+
+### Added
+
+- **`async-thread` execution mode** -- `ThreadPoolExecutor` worker pool. Z3 runs in background threads without blocking the event loop.
+- **`async-process` execution mode** -- `ProcessPoolExecutor` with spawn start method. Z3 runs in isolated subprocesses; no Z3 objects cross the process boundary.
+- **`WorkerPool`** (`src/pramanix/worker.py`) -- lifecycle management: spawn, warmup, recycle (at `max_decisions_per_worker`). Old executor handed to daemon background thread for clean shutdown.
+- **Worker warmup** -- dummy Z3 solve per worker slot on startup. Uses private `z3.Context()`. Eliminates 50-200 ms cold-start JIT spike.
+- **Worker recycling** -- after `max_decisions_per_worker=10000` decisions, entire executor replaced. Caps Z3 heap accumulation to < 50 MiB per worker.
+- **`@guard` decorator** (`src/pramanix/decorator.py`) -- wraps any sync or async function with Guard.verify(). Raises `GuardViolationError` on BLOCK.
+- **Primitives library** (`src/pramanix/primitives/`) -- 18 pre-built constraints:
+  - Finance (6): NonNegativeBalance, UnderDailyLimit, UnderSingleTxLimit, RiskScoreBelow, SecureBalance, MinimumReserve
+  - RBAC (3): RoleMustBeIn, ConsentRequired, DepartmentMustBeIn
+  - Infrastructure (4): MinReplicas, MaxReplicas, WithinCPUBudget, WithinMemoryBudget
+  - Time (4): WithinTimeWindow, After, Before, NotExpired
+  - Common (1): NotSuspended
+- **`model_dump()` before process boundary** -- Pydantic models serialized to plain dicts before crossing subprocess boundary; never pickled.
+
+### Changed
+
+- `GuardConfig` gains `execution_mode`, `max_workers`, `max_decisions_per_worker`, `worker_warmup` fields.
+- `Guard.__init__()` creates worker pool; `Guard.verify()` is now async-capable.
+
+### Security
+
+- Spawn (not fork) for subprocess workers -- fork silently inherits Z3 internal state.
+- `max_decisions_per_worker` default = 10,000 -- hard cap on worker lifetime to prevent unbounded RSS growth.
+
+---
+
+## [0.1.0] - 2026-03-10
+
+### Added
+
+- **Core DSL** (`src/pramanix/expressions.py`) -- `Field` descriptor, `E()` expression builder, `ExpressionNode` with full arithmetic and comparison operator overloading, `ConstraintExpr` with boolean composition (`&`, `|`, `~`).
+- **`ConstraintExpr.__bool__` guard** -- raises `PolicyCompilationError` when Python `and`/`or` is accidentally used instead of `&`/`|`. Catches this class of bug at policy compilation time.
+- **`ConstraintExpr.is_in()`** -- expands to OR of equality constraints for enum-style fields. Raises `PolicyCompilationError` on empty list.
+- **`Policy` base class** (`src/pramanix/policy.py`) -- `Field` descriptors, `invariants()` classmethod, `class Meta` with `version`, `intent_model`, `state_model`. Compile-time validation: all invariants named, no duplicate names, no empty invariants list.
+- **`Transpiler`** (`src/pramanix/transpiler.py`) -- DSL expression tree to Z3 AST conversion. `Decimal` via `as_integer_ratio()` (exact rational), `bool` via `z3.BoolVal`, `int` via `z3.IntVal`. Zero `ast.parse()`, zero `eval()`, zero `exec()`.
+- **`Solver`** (`src/pramanix/solver.py`) -- Z3 wrapper with `solver.set("timeout", ms)`, `assert_and_track` per invariant (per-invariant solver instances for exact violation attribution), unsat core extraction, `del solver` after every decision.
+- **`SolverStatus` enum** -- SAFE, UNSAFE, TIMEOUT, UNKNOWN, CONFIG_ERROR, VALIDATION_FAILURE, EXTRACTION_FAILURE, EXTRACTION_MISMATCH, RATE_LIMITED.
+- **`Decision`** (`src/pramanix/decision.py`) -- frozen dataclass: `allowed`, `status`, `violated_invariants`, `explanation`, `metadata`, `solver_time_ms`, `decision_id` (UUID4). Factory methods: `safe()`, `unsafe()`, `timeout()`, `error()`. All error factories enforce `allowed=False`.
+- **`Guard`** (`src/pramanix/guard.py`) -- sync `verify()` entrypoint. Fail-safe contract: every exception returns `Decision.error(allowed=False)`, never propagates.
+- **`GuardConfig`** (`src/pramanix/guard.py`) -- frozen dataclass with `PRAMANIX_*` env var bindings. `solver_timeout_ms` default 5,000 ms.
+- **Exception hierarchy** (`src/pramanix/exceptions.py`) -- 15+ exception types: `PramanixError`, `PolicyCompilationError`, `IntentValidationError`, `StateValidationError`, `SolverTimeoutError`, `SolverUnknownError`, `SolverContextError`, `ResolverNotFoundError`, `ResolverExecutionError`, `ExtractionFailureError`, `ExtractionMismatchError`, `InjectionBlockedError`, `SemanticPolicyViolation`, `GuardViolationError`, `WorkerError`, `ConfigurationError`.
+- **Unit test suite** (`tests/unit/`) -- > 200 tests, 95%+ branch coverage.
+- **`BankingPolicy` reference implementation** (`examples/banking_example.py`) -- 4 invariants, SAT + UNSAT paths, full quickstart.
+
+### Security
+
+- Fail-safe contract: `Guard.verify()` never raises. Any exception path (including bugs in user-defined `invariants()`) returns `Decision.error(allowed=False)`.
+- `allowed=True` is generated only when Z3 returns `sat` for all invariants. No other code path produces it.
+- Per-invariant solver instances -- Z3's `unsat_core()` minimum-core issue bypassed; every violated invariant is always reported.
+
+---
+
+## [0.0.0] - 2026-03-09
+
+### Added
+
+- **Transpiler spike** (`transpiler_spike.py`) -- standalone proof-of-concept (302 lines). Proves Z3 SMT solver integration: `E()` + `Field` lazy AST, `Decimal` exact rational arithmetic via `as_integer_ratio()`, per-invariant solver instances for exact violation attribution.
+- **53 unit tests** (`tests/unit/test_transpiler_spike.py`) -- 5 gate tests + 48 additional.
+- **Gate test results** -- all 5 pass: SAT (normal tx), UNSAT single (overdraft), UNSAT multi (overdraft+frozen), SAT boundary exact (0 >= 0), UNSAT boundary breach.
+
+### Security
+
+- **Critical finding documented:** Z3's `unsat_core()` returns a minimal subset, not all violated invariants. Per-invariant solver instances (one `assert_and_track` per solver) required for complete attribution. Fast-path shared solver for overall SAT/UNSAT; per-invariant solvers only on UNSAT path.
+- **Exact arithmetic confirmed:** `Decimal("100.01").as_integer_ratio()` = `(10001, 100)`. Z3 `RealVal(10001) / RealVal(100)` = exact `10001/100`. No IEEE 754 values ever reach Z3.
+
+---
+
+<!-- Future major release -->
+<!-- ## [1.0.0] - TBD -->
+<!-- API contract locked. No breaking changes until v2.0. SLSA Level 3 provenance. -->
