@@ -35,91 +35,24 @@ This approach trades the flexibility of an LLM classifier for the determinism of
 
 ---
 
-## How It Works
-
-Pramanix runs in two phases:
-
-**Phase 1 (Optional): Intent Extraction**
-- Accepts free-form text from the AI agent
-- Two independent LLMs extract structured fields in parallel
-- Both must agree on every field value (consensus check)
-- Six-layer injection defense: NFKC normalization, parallel extraction, partial-failure gate, Pydantic strict validation, consensus check, injection confidence score
-- If the models disagree or the confidence score exceeds the threshold, the request is blocked before reaching Phase 2
-
-**Phase 2 (Always runs): Z3 Formal Verification**
-- Receives a typed dict of field values
-- Checks those values against every constraint in your policy
-- Returns ALLOW if all constraints are satisfied (with proof), or BLOCK with the list of violated constraints and their counterexamples
-- This phase cannot be bypassed by anything in the input text, because the policy is compiled to Z3 AST at startup before any request arrives
-
-The policy is a Python class. No separate configuration language is required.
-
----
-
-## Architecture
-
-```
-AI Agent
-    │
-    │  intent (structured dict OR free-form text)
-    ▼
-┌───────────────────────────────────────────────────────────────┐
-│  Phase 1: Intent Extraction (optional)                        │
-│                                                               │
-│  Raw text ──► NFKC normalize ──► LLM-A  ──► Pydantic         │
-│                                  LLM-B  ──► Pydantic         │
-│                                    │                          │
-│                              Consensus check                  │
-│                              Injection score                  │
-│                                    │                          │
-│                   FAIL ◄──────────┤──────────► PASS          │
-│               BLOCK (consensus     │            │             │
-│                 / injection)       ▼            ▼             │
-└──────────────────────────  typed intent dict ───┤────────────-┘
-                                                  │
-┌─────────────────────────────────────────────────▼─────────────┐
-│  Phase 2: Z3 Formal Verification (always runs)                │
-│                                                               │
-│  policy.invariants() ──► Transpiler ──► Z3 AST               │
-│  (compiled once at Guard.__init__)                            │
-│                                                               │
-│  intent dict + state ──► Solver (per-call Z3 Context)        │
-│                                │                              │
-│                    SAT?        │        UNSAT?                 │
-│                    ▼           │           ▼                  │
-│              ALLOW + proof     │     BLOCK + counterexample   │
-│                                │     + violated invariants    │
-└────────────────────────────────│───────────────────────────────┘
-                                 │
-                          Decision object
-                         (immutable, signed)
-```
-
-**Key design properties:**
-- Phase 2 always runs regardless of Phase 1 outcome
-- Policy compilation happens once at startup, not per-request
-- Each Z3 solve uses an isolated `z3.Context()`, deleted after the call
-- Fail-safe: any exception in any path returns `Decision(allowed=False)`
-- `allowed=True` is unreachable from any error path
-
----
-
 ## Install
 
 ```bash
-# Core SDK only
-pip install pramanix
+# Not yet on PyPI. Install from source:
+git clone https://github.com/virajjain1011/Pramanix.git
+cd Pramanix
+pip install -e .
 
 # With specific extras
-pip install 'pramanix[fastapi]'      # FastAPI/Starlette middleware and route decorator
-pip install 'pramanix[langchain]'    # LangChain tool wrapping
-pip install 'pramanix[llamaindex]'   # LlamaIndex query engine guard
-pip install 'pramanix[autogen]'      # AutoGen agent wrapping
-pip install 'pramanix[translator]'   # LLM extraction (Ollama, OpenAI, Anthropic)
-pip install 'pramanix[audit]'        # Ed25519 signing and Merkle audit chain
-pip install 'pramanix[identity]'     # JWT + Redis zero-trust identity
-pip install 'pramanix[otel]'         # OpenTelemetry tracing
-pip install 'pramanix[all]'          # All of the above
+pip install -e '.[fastapi]'      # FastAPI/Starlette middleware and route decorator
+pip install -e '.[langchain]'    # LangChain tool wrapping
+pip install -e '.[llamaindex]'   # LlamaIndex query engine guard
+pip install -e '.[autogen]'      # AutoGen agent wrapping
+pip install -e '.[translator]'   # LLM extraction (Ollama, OpenAI, Anthropic)
+pip install -e '.[audit]'        # Ed25519 signing and Merkle audit chain
+pip install -e '.[identity]'     # JWT + Redis zero-trust identity
+pip install -e '.[otel]'         # OpenTelemetry tracing
+pip install -e '.[all]'          # All of the above
 
 # Requirements
 # Python 3.13+
@@ -198,6 +131,100 @@ print(decision.violated_invariants)  # ("sufficient_funds",)
 print(decision.explanation)          # "Insufficient balance: post-transfer balance would be
                                      #  1000 - 1500 = -500, minimum is 0.01"
 ```
+
+---
+
+## Known Limitations
+
+**TOCTOU (Time-of-Check vs Time-of-Use):**
+Pramanix verifies state at the moment `verify()` is called, not at execution time. In concurrent systems, two requests can both pass verification and then both execute against the same shared resource. Mitigate this with optimistic locking or transactional commit at the execution layer. The `ExecutionToken` (one-time-use HMAC token) reduces the window but does not eliminate the TOCTOU gap if execution is not atomic.
+
+**Z3 encoding scope:**
+Z3 verifies that the submitted values satisfy your declared constraints. It does not verify that state was accurately fetched from your database, that the intent dict matches what the executor will actually do, or that your invariants fully capture your safety requirements. Invariants should be reviewed by domain experts before deployment in regulated environments.
+
+**Z3 native crashes in sync and async-thread modes:**
+Python's `except Exception` cannot catch a Z3 C++ segfault (SIGABRT/SIGSEGV). In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK and the host process is unaffected. Use `async-process` in production.
+
+**Z3 string theory performance:**
+The `String` sort uses Z3 sequence theory, which is decidable but slower than arithmetic sorts. For string-heavy policies, prefer integer-encoded enumerations and `.is_in()` membership checks. Tune `solver_timeout_ms` accordingly if string constraints are necessary.
+
+**Merkle anchor persistence:**
+`MerkleAnchor` is process-scoped. Export `root_hash` to an append-only store at every checkpoint for cross-restart durability. Individual Ed25519-signed decision records remain independently verifiable without the chain.
+
+**Phase 1 injection threshold:**
+When `parse_and_verify()` is used, the injection confidence threshold (score >= 0.5 triggers `InjectionBlockedError`) is currently hardcoded. Phase 2 (Z3) is the binding safety guarantee regardless of Phase 1 outcome.
+
+**Small LLM models:**
+`llama3.2:1b` (1 billion parameters) cannot reliably perform structured intent extraction -- it echoes the schema instead of filling it in. Use `llama3.2` (3B) or larger.
+
+---
+
+## How It Works
+
+Pramanix runs in two phases:
+
+**Phase 1 (Optional): Intent Extraction**
+- Accepts free-form text from the AI agent
+- Two independent LLMs extract structured fields in parallel
+- Both must agree on every field value (consensus check)
+- Six-layer injection defense: NFKC normalization, parallel extraction, partial-failure gate, Pydantic strict validation, consensus check, injection confidence score
+- If the models disagree or the confidence score exceeds the threshold, the request is blocked before reaching Phase 2
+
+**Phase 2 (Always runs): Z3 Formal Verification**
+- Receives a typed dict of field values
+- Checks those values against every constraint in your policy
+- Returns ALLOW if all constraints are satisfied (with proof), or BLOCK with the list of violated constraints and their counterexamples
+- This phase cannot be bypassed by anything in the input text, because the policy is compiled to Z3 AST at startup before any request arrives
+
+The policy is a Python class. No separate configuration language is required.
+
+---
+
+## Architecture
+
+```
+AI Agent
+    │
+    │  intent (structured dict OR free-form text)
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│  Phase 1: Intent Extraction (optional)                        │
+│                                                               │
+│  Raw text ──► NFKC normalize ──► LLM-A  ──► Pydantic         │
+│                                  LLM-B  ──► Pydantic         │
+│                                    │                          │
+│                              Consensus check                  │
+│                              Injection score                  │
+│                                    │                          │
+│                   FAIL ◄──────────┤──────────► PASS          │
+│               BLOCK (consensus     │            │             │
+│                 / injection)       ▼            ▼             │
+└──────────────────────────  typed intent dict ───┤────────────-┘
+                                                  │
+┌─────────────────────────────────────────────────▼─────────────┐
+│  Phase 2: Z3 Formal Verification (always runs)                │
+│                                                               │
+│  policy.invariants() ──► Transpiler ──► Z3 AST               │
+│  (compiled once at Guard.__init__)                            │
+│                                                               │
+│  intent dict + state ──► Solver (per-call Z3 Context)        │
+│                                │                              │
+│                    SAT?        │        UNSAT?                 │
+│                    ▼           │           ▼                  │
+│              ALLOW + proof     │     BLOCK + counterexample   │
+│                                │     + violated invariants    │
+└────────────────────────────────│───────────────────────────────┘
+                                 │
+                          Decision object
+                         (immutable, signed)
+```
+
+**Key design properties:**
+- Phase 2 always runs regardless of Phase 1 outcome
+- Policy compilation happens once at startup, not per-request
+- Each Z3 solve uses an isolated `z3.Context()`, deleted after the call
+- Fail-safe: any exception in any path returns `Decision(allowed=False)`
+- `allowed=True` is unreachable from any error path
 
 ---
 
@@ -1134,14 +1161,9 @@ solve(invariants, values, timeout_ms=5000, rlimit=1)
 
 Verified in `tests/unit/test_solver.py::TestSolveTimeout`. This is a real Z3 resource counter, not a monkeypatched timeout.
 
-### Scaling Projection (from single-core baseline)
+### Multi-Core Throughput
 
-RPS scales linearly with isolated worker processes:
-- 1 core: ~81 RPS (single-thread baseline)
-- 8 cores: ~648 RPS (projected)
-- 32 cores: ~2,592 RPS (projected)
-
-These are projections based on the single-core measurement. Actual multi-core throughput depends on OS scheduling and IPC overhead.
+The single-core baseline is 81 RPS average (1M-decision run). The 3-worker finance benchmark measured 247 RPS under a short sustained load. Multi-core throughput depends on OS scheduling and IPC overhead between the host and worker processes. Exact numbers for specific hardware configurations are available on request.
 
 ### Reproduce Locally
 
@@ -1165,7 +1187,7 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 **1,821 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
 
-Measured with `pytest --ignore=tests/perf`. The 1M-decision perf test runs separately (it takes ~15 minutes).
+Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the 1M-decision run takes ~15 minutes). The badge count of 1,821 excludes the perf suite.
 
 ### Distribution
 
@@ -1175,7 +1197,8 @@ Measured with `pytest --ignore=tests/perf`. The 1M-decision perf test runs separ
 | Integration | 173 | 10 | Full verify() pipeline, all 3 execution modes, JWT + Redis zero-trust |
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
 | Property | 11 | 2 | Hypothesis-based serialization round-trips, fintech invariant properties |
-| Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS |
+| Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS (run separately) |
+| **Total (badge)** | **1,821** | | **Excludes perf suite** |
 
 ### Coverage by Module
 
@@ -1230,31 +1253,6 @@ def test_alive_process_is_killed(self) -> None:
     for pid in alive_pids:
         _assert_pid_dead(pid)
 ```
-
----
-
-## Known Limitations
-
-**TOCTOU (Time-of-Check vs Time-of-Use):**
-Pramanix verifies state at the moment `verify()` is called, not at execution time. In concurrent systems, two requests can both pass verification and then both execute against the same shared resource. Mitigate this with optimistic locking or transactional commit at the execution layer. The `ExecutionToken` (one-time-use HMAC token) reduces the window but does not eliminate the TOCTOU gap if execution is not atomic.
-
-**Z3 encoding scope:**
-Z3 verifies that the submitted values satisfy your declared constraints. It does not verify that state was accurately fetched from your database, that the intent dict matches what the executor will actually do, or that your invariants fully capture your safety requirements. Invariants should be reviewed by domain experts before deployment in regulated environments.
-
-**Z3 native crashes in sync and async-thread modes:**
-Python's `except Exception` cannot catch a Z3 C++ segfault (SIGABRT/SIGSEGV). In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK and the host process is unaffected. Use `async-process` in production.
-
-**Z3 string theory performance:**
-The `String` sort uses Z3 sequence theory, which is decidable but slower than arithmetic sorts. For string-heavy policies, prefer integer-encoded enumerations and `.is_in()` membership checks. Tune `solver_timeout_ms` accordingly if string constraints are necessary.
-
-**Merkle anchor persistence:**
-`MerkleAnchor` is process-scoped. Export `root_hash` to an append-only store at every checkpoint for cross-restart durability. Individual Ed25519-signed decision records remain independently verifiable without the chain.
-
-**Phase 1 injection threshold:**
-When `parse_and_verify()` is used, the injection confidence threshold (score >= 0.5 triggers `InjectionBlockedError`) is currently hardcoded. Phase 2 (Z3) is the binding safety guarantee regardless of Phase 1 outcome.
-
-**Small LLM models:**
-`llama3.2:1b` (1 billion parameters) cannot reliably perform structured intent extraction -- it echoes the schema instead of filling it in. Use `llama3.2` (3B) or larger.
 
 ---
 
