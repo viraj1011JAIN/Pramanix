@@ -19,7 +19,9 @@ This document addresses three questions that arise in enterprise security review
 1. **What is the steady-state memory footprint?** 8–35 MB RSS per Guard instance.
 2. **Why do CI/CD test pipelines show 260–310 MB spikes?** Expected, bounded, and
    fully self-recovering — explained in §4.
-3. **What is the verified latency budget?** P99 < 10 ms steady-state,
+3. **What is the verified latency budget?** P99 < 10 ms for single-invariant
+   benchmark policies (measured, n=30). P99 is typically 15-30 ms for 3-5
+   invariant production policies under sustained load (see §2 for methodology).
    P99 < 200 ms worst-case post-recycle (guaranteed by integration gate).
 
 ---

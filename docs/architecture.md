@@ -368,3 +368,41 @@ Layer 5 -- Dual-model consensus
 ```
 
 Each layer is independent. Bypassing one does not bypass the others.
+
+**Note on consensus strictness:** The `json.dumps(sort_keys=True)` equality check is deliberately byte-level strict. If one model returns `{"amount": "500.0"}` and the other returns `{"amount": "500.00"}`, they will fail consensus despite being semantically equivalent. This is intentional: Pramanix cannot know whether two extracted values are semantically equivalent in your domain without domain knowledge you haven't encoded. The strictness trades away a small number of false CONSENSUS_FAILURE results (which are safe -- they result in BLOCK) in exchange for a guarantee that any discrepancy between models -- including subtle injection-driven differences -- is always caught.
+
+---
+
+## 12. What Pramanix Does Not Solve
+
+Understanding these boundaries is important for correct deployment in regulated environments.
+
+**TOCTOU (Time-of-Check vs Time-of-Use):**
+- Pramanix verifies state at the moment `verify()` is called, not at execution time.
+- In concurrent systems, two requests can both pass verification against the same shared state, and both execute.
+- Mitigation: use `ExecutionToken` (one-time-use HMAC token) to bind the ALLOW decision to a single execution attempt. This reduces the TOCTOU window but does not eliminate it if execution is not atomic at the application layer.
+
+**Z3 encoding scope:**
+- Z3 verifies that the submitted values satisfy your declared constraints.
+- It does not verify that state was accurately fetched from your database.
+- It does not verify that the intent dict matches what the executor will actually do.
+- It does not verify that your invariants fully capture your safety requirements.
+- Invariants should be reviewed by domain experts before deployment in regulated environments.
+
+**Liveness and temporal properties:**
+- Pramanix is a point-in-time safety check, not a temporal model checker.
+- It cannot verify properties like "this account has never exceeded the daily limit across its entire history."
+- It verifies: "the value of `cumulative_daily_amount` satisfies `<= daily_limit` right now."
+- The accuracy of `cumulative_daily_amount` depends on your state loading logic, not on Pramanix.
+
+**State accuracy:**
+- The security guarantee is only as strong as the state source.
+- If both intent and state arrive in the same untrusted request body, an attacker can inject matching values to pass Z3 checks.
+- For full protection, load state from a trusted source independent of the user request. The Zero-Trust Identity layer (`JWTIdentityLinker` + `RedisStateLoader`) provides this guarantee.
+
+**Z3 native crashes in sync and async-thread modes:**
+- Python's `except Exception` cannot catch a Z3 C++ segfault (SIGABRT/SIGSEGV).
+- In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK; the host process is unaffected.
+- Use `async-process` in production for full process-level isolation.
+
+**Cross-references:** [security.md](security.md) § Threat Model, [why_smt_wins.md](why_smt_wins.md) § Section 4.

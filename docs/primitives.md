@@ -104,7 +104,7 @@ class BankingPolicy(Policy):
 |----------|--------|--------|
 | SAT | balance=1000, amount=900, reserve=10 | ALLOW: 1000-900=100 >= 10 |
 | UNSAT (below reserve) | balance=1000, amount=995, reserve=10 | BLOCK: 1000-995=5 < 10 |
-| UNSAT (at reserve boundary) | balance=1000, amount=990, reserve=10 | ALLOW: 1000-990=10 >= 10 |
+| SAT (at reserve boundary) | balance=1000, amount=990, reserve=10 | ALLOW: 1000-990=10 >= 10 |
 
 ---
 
@@ -156,7 +156,7 @@ These primitives carry regulatory references embedded in their `.explain()` text
 **DSL:** `(E(cumulative_amount) < threshold)`
 **Label:** `anti_structuring`
 **Regulatory:** 31 CFR § 1020.320 (BSA Currency Transaction Report structuring rule)
-**Note:** `threshold` is a `Decimal` literal (typically `Decimal("10000")` for USD CTR). VIOLATION (UNSAT) signals a structuring pattern requiring SAR investigation.
+**Note:** `threshold` is a `Decimal` literal (typically `Decimal("10000")` for USD CTR). VIOLATION (UNSAT) indicates the cumulative amount has reached the CTR filing threshold. `AntiStructuring` is a policy gate, not a SAR filing system. Route violations to your SAR evaluation workflow separately and use the Pramanix violation log as the trigger signal.
 
 | Scenario | Values | Result |
 |----------|--------|--------|
@@ -218,10 +218,10 @@ These primitives carry regulatory references embedded in their `.explain()` text
 | Scenario | Values | Result |
 |----------|--------|--------|
 | SAT | counterparty_status="CLEAR" | ALLOW |
+| SAT | counterparty_status="REVIEW" | ALLOW -- "REVIEW" is not "SANCTIONED", so it passes |
 | UNSAT | counterparty_status="SANCTIONED" | BLOCK |
-| UNSAT | counterparty_status="REVIEW" | BLOCK (review != CLEAR is not explicitly blocked -- treat "REVIEW" as blocked by adding a separate invariant) |
 
-> **Note:** `SanctionsScreen` only blocks `"SANCTIONED"`. For strict mode, add `(E(cls.status).is_in(["CLEAR"])).named("sanctions_clear_only")` to also block `"REVIEW"`.
+> **Note:** `SanctionsScreen` only blocks `"SANCTIONED"`. A `"REVIEW"` status is **not** blocked by default -- it passes the `!= "SANCTIONED"` check. For strict mode (block both "SANCTIONED" and "REVIEW"), use a separate invariant: `(E(cls.status) == "CLEAR").named("sanctions_clear_only")`. See [compliance.md](compliance.md) for a full StrictSanctionsPolicy example.
 
 ---
 

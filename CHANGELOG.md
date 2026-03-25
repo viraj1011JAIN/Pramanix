@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-03-24
-
 ### Added
 
 - **15 Phase 12 hardening measures (H01-H15)** -- all fully unit-tested (`tests/unit/test_hardening.py`)
@@ -33,14 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `compliance.md` -- HIPAA, BSA/AML, OFAC, SOC2, PCI DSS patterns with policy examples
   - `deployment.md` -- Docker, Kubernetes manifests, health probes, Phase 12 env vars
   - `why_smt_wins.md` -- Technical manifesto: probabilistic failure analysis, Z3 proof walkthrough, audit trail
-- **100M benchmark infrastructure** (`benchmarks/`) -- 5-domain (finance, banking, fintech, healthcare, infra) orchestrator with rolling hash chain, Merkle anchoring, per-worker P99 and RSS tracking. Finance run result: 247 RPS, max P99 54.5 ms, 0 timeouts, 0 errors.
+- **Multi-worker benchmark infrastructure** (`benchmarks/`) -- 5-domain (finance, banking, fintech, healthcare, infra) orchestrator with rolling hash chain, Merkle anchoring, per-worker P99 and RSS tracking. Finance pilot run (1,002 decisions, 3 workers): 247 RPS, max P99 54.5 ms, 0 timeouts, 0 errors. Full-scale runs in progress.
 
 ### Changed
 
 - **`GuardConfig`** -- 5 new hardening fields: `solver_rlimit`, `max_input_bytes`, `min_response_ms`, `redact_violations`, `expected_policy_hash`.
 - **`Guard.__init__()`** -- validates `expected_policy_hash` against compiled policy fingerprint on construction.
 - **`Guard.verify()`** -- applies `max_input_bytes` check before dispatching to worker, `min_response_ms` pad before returning.
-- **Version bumped to `0.9.0`**.
+- **`performance.md`** updated: "100M Finance Domain Benchmark" section renamed to "Multi-Worker Finance Pilot Run" and projection table removed -- the 1,002-decision pilot run does not constitute a 100M benchmark.
 
 ### Security
 

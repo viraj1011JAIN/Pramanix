@@ -45,7 +45,7 @@ All variables are prefixed `PRAMANIX_`.
 ```bash
 # Standard web API (async-thread)
 PRAMANIX_EXECUTION_MODE=async-thread
-PRAMANIX_SOLVER_TIMEOUT_MS=5000
+PRAMANIX_SOLVER_TIMEOUT_MS=150   # never use 5000 in production; 5s cascades stalls
 PRAMANIX_MAX_WORKERS=8
 PRAMANIX_MAX_DECISIONS_PER_WORKER=10000
 PRAMANIX_WORKER_WARMUP=true
@@ -296,7 +296,7 @@ metadata:
   namespace: pramanix
 data:
   PRAMANIX_EXECUTION_MODE: "async-thread"
-  PRAMANIX_SOLVER_TIMEOUT_MS: "5000"
+  PRAMANIX_SOLVER_TIMEOUT_MS: "150"
   PRAMANIX_MAX_WORKERS: "8"
   PRAMANIX_MAX_DECISIONS_PER_WORKER: "10000"
   PRAMANIX_WORKER_WARMUP: "true"
@@ -347,7 +347,7 @@ Checks that Z3 is not experiencing sustained timeout failures.
 def live():
     snap = emit_snapshot()
     z3_rate = snap["z3_timeouts"]["window_rate"]
-    if z3_rate > 0.50:
+    if z3_rate > 0.05:   # 5% Z3 timeout rate -- alert before the system is already broken
         return JSONResponse(
             {"status": "unhealthy", "z3_timeout_rate": z3_rate},
             status_code=503

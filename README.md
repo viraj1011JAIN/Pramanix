@@ -113,7 +113,7 @@ decision = guard.verify(
 
 print(decision.allowed)              # True
 print(decision.status)               # SolverStatus.SAFE
-print(decision.proof_obligations)    # ["sufficient_funds", "daily_limit_check", "account_not_frozen"]
+print(decision.status.value)         # "safe"
 
 # BLOCK -- overdraft attempt
 decision = guard.verify(
@@ -289,9 +289,8 @@ E(cls.role).is_in([1, 2, 3])
 ```python
 decision.allowed               # bool -- True (ALLOW) or False (BLOCK)
 decision.status                # SolverStatus enum
-decision.violated_invariants   # tuple[str, ...] -- named labels of failed constraints
+decision.violated_invariants   # tuple[str, ...] -- named labels of failed constraints (BLOCK path)
 decision.explanation           # str -- human-readable reason, templates filled in
-decision.proof_obligations     # list[str] -- invariant labels that were checked (ALLOW path)
 decision.decision_id           # UUID4 -- unique per decision
 decision.policy_hash           # SHA-256 of the compiled policy
 decision.solver_time_ms        # float -- Z3 solve time in milliseconds

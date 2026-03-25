@@ -44,6 +44,11 @@ class PHIAccessPolicy(Policy):
     requestor_role        = Field("requestor_role",        int,  "Int")
     consent_status        = Field("consent_status",        str,  "String")
     consent_expiry_epoch  = Field("consent_expiry_epoch",  int,  "Int")
+    # current_epoch MUST be a field, not a literal -- it is evaluated at
+    # request time, not at policy compilation time. Passing int(time.time())
+    # as a constructor argument would bake in the startup timestamp and make
+    # every decision after startup check against a stale clock.
+    current_epoch         = Field("current_epoch",         int,  "Int")
     break_glass_flag      = Field("break_glass_flag",      bool, "Bool")
     auth_code_present     = Field("auth_code_present",     bool, "Bool")
 
@@ -52,7 +57,7 @@ class PHIAccessPolicy(Policy):
         return [
             PHILeastPrivilege(cls.requestor_role, [CLINICIAN, NURSE]),
             ConsentActive(cls.consent_status, cls.consent_expiry_epoch,
-                         current_epoch=int(time.time())),
+                         cls.current_epoch),
             BreakGlassAuth(cls.break_glass_flag, cls.auth_code_present),
         ]
 
@@ -64,6 +69,7 @@ decision = guard.verify(
     state={
         "consent_status": "ACTIVE",
         "consent_expiry_epoch": int(time.time()) + 86400,  # expires tomorrow
+        "current_epoch": int(time.time()),                 # evaluated at request time
         "break_glass_flag": False,
         "auth_code_present": False,
     }
@@ -76,6 +82,7 @@ decision = guard.verify(
     state={
         "consent_status": "ACTIVE",
         "consent_expiry_epoch": int(time.time()) + 86400,
+        "current_epoch": int(time.time()),
         "break_glass_flag": False,
         "auth_code_present": False,
     }
@@ -143,8 +150,9 @@ guard = Guard(BSAWirePolicy, GuardConfig())
 
 ### Structuring Pattern Detection
 
-- `AntiStructuring` uses a strict `<` comparison (not `<=`).
-- A cumulative amount of exactly $10,000 is blocked -- this is intentional per 31 CFR § 1020.320. The CTR filing threshold applies at exactly $10,000.
+- `AntiStructuring` uses a strict `<` comparison. The constraint is `cumulative_amount < threshold`, so it requires cumulative_amount to be strictly less than the threshold to ALLOW.
+- At exactly $10,000 (with `threshold=Decimal("10000")`): `10000 < 10000` is False, so the constraint is UNSAT and the transaction is BLOCKED. This is intentional -- the CTR filing threshold under 31 CFR § 1020.320 applies at $10,000 exactly.
+- If the comparison were `<=`, then `10000 <= 10000` would be True (ALLOW), which would incorrectly permit a transaction at the exact threshold. The `<` comparison is the correct choice.
 - Violation produces `violated_invariants = ("anti_structuring",)`.
 - The decision audit log shows the exact cumulative amount at the time of violation.
 - **Important:** `AntiStructuring` is a policy gate, not a SAR filing system. Integrate with your SAR workflow separately; use the Pramanix violation log as the trigger signal.

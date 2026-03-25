@@ -22,29 +22,22 @@ Policy under test: single-invariant (`balance - amount >= 0`). Measures Pramanix
 - **Recycle P99 guarantee:** Integration test suite enforces P99 < 200 ms at recycle boundary.
 - **Warmup impact:** On a machine with warm OS page cache, the difference is modest. Cold Docker containers show 50-150 ms first-call reduction with warmup.
 
-### 100M Finance Domain Benchmark
+### Multi-Worker Finance Pilot Run
 
-**Run:** `run_finance_20260322_045923` (2026-03-22)
-**Domain:** Finance (fund transfer policy)
-**Workers:** 3
-**Max decisions per worker:** 10,000
-**Solver timeout:** 150 ms per call
-**Checkpoint every:** 100 decisions
+**Run:** `run_finance_20260322_045923` (2026-03-22, 3 workers, 1,002 decisions)
+
+This was a short integration run to validate the multi-worker infrastructure (subprocess isolation, HMAC-sealed IPC, per-worker Merkle anchoring, RSS tracking). It is not a 100M-decision benchmark. Full-scale runs are in progress and results will be published when complete.
 
 | Metric | Value |
 |--------|-------|
-| Total decisions completed | 1,002 |
-| Elapsed wall time | 4.1 seconds |
-| Average throughput | 247 decisions/second |
-| ALLOW decisions | 704 (70.3%) |
-| BLOCK decisions | 298 (29.7%) |
+| Total decisions | 1,002 |
+| Elapsed wall time | 4.1 s |
+| Throughput | 247 decisions/second |
+| ALLOW / BLOCK | 704 / 298 |
 | Timeouts | 0 |
 | Errors | 0 |
-| Max P99 latency (across workers) | 54.467 ms |
-| Avg P99 latency (across workers) | 45.637 ms |
-| Host RSS at start | 52.38 MiB |
-| Host RSS at end | 59.45 MiB |
-| Host RSS growth | +7.07 MiB total |
+| Max P99 (across workers) | 54.467 ms |
+| Avg P99 (across workers) | 45.637 ms |
 | Max per-worker RSS growth | +1.37 MiB |
 | Verdict | PASS |
 
@@ -60,12 +53,6 @@ Policy under test: single-invariant (`balance - amount >= 0`). Measures Pramanix
 - Worker 0: `09d082c0...`
 - Worker 1: `026d6f93...`
 - Worker 2: `ea92a8cb...`
-
-**Upscale projections for 100M decisions per domain:**
-- Estimated wall time at 247 RPS with 18 workers: ~6.2 hours per domain
-- Expected max P99: ~55 ms (consistent with observed results at 150 ms timeout)
-- Expected RSS growth per worker: < 50 MiB (bounded by max_decisions_per_worker=10,000)
-- Expected Merkle checkpoints per worker: ~280 (100M / 10 workers / checkpoint_every=100)
 
 ---
 

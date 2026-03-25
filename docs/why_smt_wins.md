@@ -41,9 +41,9 @@
 
 ---
 
-## Section 2 -- Three Documented Real-World Failures of Probabilistic AI Guardrails
+## Section 2 -- Three Representative Failure Patterns of Probabilistic AI Guardrails
 
-These are documented failure patterns observed in deployed probabilistic systems. Names of specific companies are omitted -- the patterns apply broadly to any confidence-score-based guardrail.
+The following are representative attack patterns documented in academic literature and published red-team reports (Perez and Ribeiro, "Ignore Previous Prompt," 2022; Zou et al., "Universal and Transferable Adversarial Attacks on Aligned Language Models," 2023; NIST AI RMF 1.0 adversarial ML taxonomy). Names of specific companies are omitted. The patterns apply broadly to any confidence-score-based guardrail.
 
 ### Failure Pattern 1 -- The Adversarial Suffix Attack
 
@@ -209,6 +209,11 @@ Phase 2 -- Z3 formal verification
 - Even if Phase 1 is bypassed by an adversary, Phase 2 still verifies the injected values.
 - If an attacker causes the LLM to extract `amount=999999999`, Z3 will still check `balance - 999999999 >= minimum_reserve`. With a typical `balance=1000`, this is UNSAT. BLOCK.
 - An attacker who controls the extracted values can cause any amount they want -- but they cannot cause the account to have more balance than it does.
+
+**Dependency on trusted state source:**
+- This guarantee assumes `state` (including `balance`) is loaded from a source the attacker cannot also manipulate.
+- If both `intent` and `state` arrive in the same untrusted request body, an attacker can inject `amount=999999999` and `balance=999999999` simultaneously -- which would be SAT.
+- For full protection, load state from a trusted source independent of the user request. Pramanix's Zero-Trust Identity layer (`JWTIdentityLinker` + `RedisStateLoader`) does this by loading state from Redis using only the cryptographically verified JWT `sub` claim, ignoring any state submitted in the request body. See [architecture.md](architecture.md) for details.
 
 ---
 

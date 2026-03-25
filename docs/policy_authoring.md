@@ -388,7 +388,7 @@ These patterns come from adversarial review and real policy bugs found during Ph
 - **Semantic versioning:** `"major.minor"`
   - Increment **major** for any change that narrows invariants (more things blocked) or changes the schema.
   - Increment **minor** for documentation-only changes or new optional fields that do not affect existing invariants.
-- Never deploy a new version without running the full test suite (705+ tests).
+- Never deploy a new version without running the full test suite (1,821 tests).
 
 ```python
 class TransferPolicy(Policy):
@@ -667,4 +667,4 @@ Before merging any new or changed policy:
 - [ ] A test exists for each invariant individually violated (BLOCK path)
 - [ ] `Meta.version` has been incremented
 - [ ] At least one Hypothesis property-based test is present
-- [ ] Full test suite (705+ tests) passes with zero failures
+- [ ] Full test suite (1,821 tests) passes with zero failures
