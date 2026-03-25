@@ -1,142 +1,131 @@
 # Pramanix
 
-**Deterministic Neuro-Symbolic Guardrails for Autonomous AI Agents**
+![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)
+![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
+![Version 0.8.0](https://img.shields.io/badge/Version-0.8.0-orange)
+![Tests 1821 passed](https://img.shields.io/badge/Tests-1821%20passed-brightgreen)
+![Coverage 96.55%](https://img.shields.io/badge/Coverage-96.55%25-brightgreen)
+![Z3 4.16.0](https://img.shields.io/badge/Z3-4.16.0-purple)
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://python.org)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.8.0-orange.svg)](src/pramanix/__init__.py)
-[![Tests](https://img.shields.io/badge/tests-1821%20passed-brightgreen.svg)](#test-suite)
-[![Coverage](https://img.shields.io/badge/coverage-96.55%25-brightgreen.svg)](#test-suite)
-[![Z3](https://img.shields.io/badge/Z3-4.16.0-blue.svg)](https://github.com/Z3Prover/z3)
+**Safety guardrails for autonomous AI agents, backed by formal constraint verification.**
 
-Pramanix sits between an AI agent's intent and the real-world action it takes.
-Before any action executes, the Z3 SMT solver formally decides whether submitted
-values satisfy every declared constraint. Every ALLOW is proven satisfiable;
-every BLOCK names the violated invariant with a concrete counterexample — not a
-probabilistic guess, not a regex match, not an LLM opinion.
+Pramanix sits between an AI agent and the real world. Before any action executes (a bank transfer, a Kubernetes deployment, a database write), Pramanix checks whether that action is mathematically allowed by a policy you define. Every ALLOW comes with a proof. Every BLOCK comes with a counterexample showing exactly which constraint was violated.
 
-> **Scope:** Z3 is an SMT solver — it decides constraint satisfiability within
-> bounded first-order theories (arithmetic, boolean, string sequences). This is
-> *constraint satisfaction verification*, not full formal verification (Coq, TLA+).
-> Z3 cannot reason about liveness, temporal properties, or verify that your
-> encoding correctly captures your intent. What it guarantees: if Z3 returns SAT,
-> the submitted values satisfy every declared constraint, exhaustively.
+The name comes from Sanskrit: *Pramana* (प्रमाण) means "valid source of knowledge" or "proof."
 
 ---
 
-## Why Pramanix
+## The Problem This Solves
 
-AI agents now initiate bank transfers, delete database records, deploy
-infrastructure, and modify medical dosages. LLM-based guardrails can be
-jailbroken. Regex rules are bypassed with rephrasing. Human review does not scale.
+Most AI guardrail systems are classifiers. They output a confidence score and compare it to a threshold. At scale, this creates a predictable failure rate:
 
-Pramanix applies **constraint satisfaction verification**: Z3 evaluates the
-*mathematical structure* of your constraints against the actual submitted values.
-There is no natural language to manipulate. Either the values satisfy the
-constraints — ALLOW + satisfiability proof — or they do not — BLOCK + concrete
-counterexample.
+- A 99.9% accurate classifier allows 1 in every 1,000 requests through incorrectly
+- At 100 requests per second, that is 8,640 failures per day
+- The failures are mathematically guaranteed, not edge cases
+- An attacker can probe the threshold until they find inputs that score above it
 
-**The fail-safe contract:** `guard.verify()` never raises. Every failure — Z3
-timeout, validation error, unexpected exception, worker crash — returns
-`Decision(allowed=False)`. `allowed=True` is unreachable from any error path.
+Pramanix does not use confidence scores. It evaluates whether specific values satisfy specific constraints:
+
+- `balance - amount >= 0` either holds or it does not
+- Z3 returns SAT (the values satisfy all constraints) or UNSAT (they do not)
+- The same inputs always produce the same result
+- There is no threshold to probe and no probability involved
+
+This approach trades the flexibility of an LLM classifier for the determinism of arithmetic. It is the right trade when the rule is clear and the consequences of failure are real.
+
+---
+
+## How It Works
+
+Pramanix runs in two phases:
+
+**Phase 1 (Optional): Intent Extraction**
+- Accepts free-form text from the AI agent
+- Two independent LLMs extract structured fields in parallel
+- Both must agree on every field value (consensus check)
+- Six-layer injection defense: NFKC normalization, parallel extraction, partial-failure gate, Pydantic strict validation, consensus check, injection confidence score
+- If the models disagree or the confidence score exceeds the threshold, the request is blocked before reaching Phase 2
+
+**Phase 2 (Always runs): Z3 Formal Verification**
+- Receives a typed dict of field values
+- Checks those values against every constraint in your policy
+- Returns ALLOW if all constraints are satisfied (with proof), or BLOCK with the list of violated constraints and their counterexamples
+- This phase cannot be bypassed by anything in the input text, because the policy is compiled to Z3 AST at startup before any request arrives
+
+The policy is a Python class. No separate configuration language is required.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Pramanix Guard                              │
-│                                                                     │
-│  Untrusted text ──►  ┌─────────────────┐                           │
-│                       │  Phase 1 (opt.) │  Dual-LLM extraction     │
-│                       │  Translator     │  + 6-layer injection      │
-│                       │  subsystem      │  hardening + consensus    │
-│                       └────────┬────────┘                           │
-│                                │  structured dict                   │
-│  Structured dict ─────────────►│                                    │
-│                                ▼                                    │
-│                       ┌─────────────────┐                           │
-│                       │  Phase 2        │  Z3 SMT solver           │
-│                       │  (always runs)  │  per-call Context()      │
-│                       │                 │  two-phase fast/attrib.  │
-│                       │  Fast path  ──► SAT → Decision.safe()      │
-│                       │                 │                           │
-│                       │  UNSAT path ──► per-invariant attribution  │
-│                       │                 │  → Decision.unsafe()     │
-│                       │                 │    violated_invariants   │
-│                       │  Timeout    ──► Decision.timeout()         │
-│                       │  Any error  ──► Decision.error()           │
-│                       └─────────────────┘                           │
-└─────────────────────────────────────────────────────────────────────┘
+AI Agent
+    │
+    │  intent (structured dict OR free-form text)
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│  Phase 1: Intent Extraction (optional)                        │
+│                                                               │
+│  Raw text ──► NFKC normalize ──► LLM-A  ──► Pydantic         │
+│                                  LLM-B  ──► Pydantic         │
+│                                    │                          │
+│                              Consensus check                  │
+│                              Injection score                  │
+│                                    │                          │
+│                   FAIL ◄──────────┤──────────► PASS          │
+│               BLOCK (consensus     │            │             │
+│                 / injection)       ▼            ▼             │
+└──────────────────────────  typed intent dict ───┤────────────-┘
+                                                  │
+┌─────────────────────────────────────────────────▼─────────────┐
+│  Phase 2: Z3 Formal Verification (always runs)                │
+│                                                               │
+│  policy.invariants() ──► Transpiler ──► Z3 AST               │
+│  (compiled once at Guard.__init__)                            │
+│                                                               │
+│  intent dict + state ──► Solver (per-call Z3 Context)        │
+│                                │                              │
+│                    SAT?        │        UNSAT?                 │
+│                    ▼           │           ▼                  │
+│              ALLOW + proof     │     BLOCK + counterexample   │
+│                                │     + violated invariants    │
+└────────────────────────────────│───────────────────────────────┘
+                                 │
+                          Decision object
+                         (immutable, signed)
 ```
 
-### Two-Phase Solver Design
-
-```
-Phase A — Fast path (shared solver, all invariants):
-  z3.Solver.add(binding₁), add(binding₂) … add(invariant₁) … check()
-  → SAT  : return immediately, no attribution work
-  → UNSAT: proceed to Phase B
-  → unknown: SolverTimeoutError("<all-invariants>")
-
-Phase B — Attribution path (per-invariant solvers, only on UNSAT):
-  For each invariant:
-    s = z3.Solver()
-    s.assert_and_track(invariant, Bool(label))
-    s.check() → unsat → core = {label} → violated.append(invariant)
-  Returns complete list — not Z3's minimal unsat_core subset
-```
-
-**Why per-invariant solvers:** Z3's `unsat_core()` on a shared solver returns a
-*minimal* subset of tracked assertions — it can omit violated invariants that are
-logically implied by others. By giving each invariant its own solver with exactly
-one `assert_and_track` call, the unsat core is always exactly `{label}` when UNSAT.
-This guarantees **complete violation reporting**: all violated invariants appear in
-`decision.violated_invariants`, not just the minimal core.
-
-### Thread Safety
-
-Each `guard.verify()` call creates a private `z3.Context()` — Z3's global default
-context is not thread-safe. The context and all solver objects are deleted after
-each call. Memory does not accumulate: **+2.80 MiB RSS growth over 1,000,000 decisions**
-(measured via full audit, see [Benchmarks](#benchmarks)).
+**Key design properties:**
+- Phase 2 always runs regardless of Phase 1 outcome
+- Policy compilation happens once at startup, not per-request
+- Each Z3 solve uses an isolated `z3.Context()`, deleted after the call
+- Fail-safe: any exception in any path returns `Decision(allowed=False)`
+- `allowed=True` is unreachable from any error path
 
 ---
 
 ## Install
 
 ```bash
-# Core (Z3 verification only)
+# Core SDK only
 pip install pramanix
 
-# With LLM translators (Ollama, OpenAI, Anthropic)
-pip install 'pramanix[translator]'
+# With specific extras
+pip install 'pramanix[fastapi]'      # FastAPI/Starlette middleware and route decorator
+pip install 'pramanix[langchain]'    # LangChain tool wrapping
+pip install 'pramanix[llamaindex]'   # LlamaIndex query engine guard
+pip install 'pramanix[autogen]'      # AutoGen agent wrapping
+pip install 'pramanix[translator]'   # LLM extraction (Ollama, OpenAI, Anthropic)
+pip install 'pramanix[audit]'        # Ed25519 signing and Merkle audit chain
+pip install 'pramanix[identity]'     # JWT + Redis zero-trust identity
+pip install 'pramanix[otel]'         # OpenTelemetry tracing
+pip install 'pramanix[all]'          # All of the above
 
-# With FastAPI middleware
-pip install 'pramanix[fastapi]'
-
-# With LangChain / LlamaIndex / AutoGen
-pip install 'pramanix[integrations]'
-
-# With OpenTelemetry
-pip install 'pramanix[otel]'
-
-# With zero-trust identity (JWT + Redis state loader)
-pip install 'pramanix[identity]'
-
-# With cryptographic audit trail (Ed25519, HMAC-SHA256)
-pip install 'pramanix[audit]'
-
-# Everything
-pip install 'pramanix[translator,fastapi,integrations,otel,identity,audit]'
+# Requirements
+# Python 3.13+
+# Alpine Linux is not supported (z3-solver is compiled against glibc; musl causes
+# segfaults and 3-10x performance degradation). Use python:3.13-slim or ubuntu.
 ```
-
-**Core dependencies:** `z3-solver>=4.12`, `pydantic>=2`, `structlog>=23.2`,
-`prometheus-client>=0.19`, `orjson>=3.9`
-
-**Blocked base image:** Alpine Linux — z3-solver has musl compatibility issues.
-Use `python:3.13-slim` (Debian-based).
 
 ---
 
@@ -150,61 +139,65 @@ class BankingPolicy(Policy):
     class Meta:
         version = "1.0"
 
-    amount      = Field("amount",      Decimal, "Real")
-    balance     = Field("balance",     Decimal, "Real")
-    daily_limit = Field("daily_limit", Decimal, "Real")
-    is_frozen   = Field("is_frozen",   bool,    "Bool")
+    amount          = Field("amount",          Decimal, "Real")
+    balance         = Field("balance",         Decimal, "Real")
+    daily_limit     = Field("daily_limit",     Decimal, "Real")
+    minimum_reserve = Field("minimum_reserve", Decimal, "Real")
+    is_frozen       = Field("is_frozen",       bool,    "Bool")
 
     @classmethod
     def invariants(cls):
         return [
-            (E(cls.balance) - E(cls.amount) >= 0)
-                .named("sufficient_balance")
-                .explain("Insufficient balance: {balance} < {amount}"),
+            # Balance after transfer must be at or above the minimum reserve
+            (E(cls.balance) - E(cls.amount) >= E(cls.minimum_reserve))
+            .named("sufficient_funds")
+            .explain("Insufficient balance: post-transfer balance would be "
+                     "{balance} - {amount} = {post_balance}, minimum is {minimum_reserve}"),
 
+            # Transfer amount must not exceed the daily limit
             (E(cls.amount) <= E(cls.daily_limit))
-                .named("within_daily_limit")
-                .explain("Amount {amount} exceeds daily limit {daily_limit}"),
+            .named("daily_limit_check")
+            .explain("Amount {amount} exceeds daily limit {daily_limit}"),
 
-            (~E(cls.is_frozen))
-                .named("account_not_frozen")
-                .explain("Account is frozen"),
+            # Account must not be frozen
+            (E(cls.is_frozen) == False)
+            .named("account_not_frozen")
+            .explain("Account is frozen. Contact support to unfreeze."),
         ]
 
-guard = Guard(BankingPolicy, GuardConfig(execution_mode="sync"))
+guard = Guard(BankingPolicy, GuardConfig())
 
-# ALLOW path — all invariants satisfied
+# ALLOW -- all three constraints satisfied
 decision = guard.verify(
-    intent={"amount": Decimal("500.00")},
+    intent={"amount": Decimal("500")},
     state={
-        "balance":       Decimal("1000.00"),
-        "daily_limit":   Decimal("5000.00"),
-        "is_frozen":     False,
-        "state_version": "1.0",
-    },
+        "balance":         Decimal("1000"),
+        "daily_limit":     Decimal("2000"),
+        "minimum_reserve": Decimal("0.01"),
+        "is_frozen":       False,
+    }
 )
-assert decision.allowed
-assert decision.status.value == "safe"
-assert decision.solver_time_ms > 0     # real Z3 solve time
 
-# BLOCK path — overdraft attempt
+print(decision.allowed)              # True
+print(decision.status)               # SolverStatus.SAFE
+print(decision.proof_obligations)    # ["sufficient_funds", "daily_limit_check", "account_not_frozen"]
+
+# BLOCK -- overdraft attempt
 decision = guard.verify(
-    intent={"amount": Decimal("9999.00")},
+    intent={"amount": Decimal("1500")},
     state={
-        "balance":       Decimal("100.00"),
-        "daily_limit":   Decimal("5000.00"),
-        "is_frozen":     False,
-        "state_version": "1.0",
-    },
+        "balance":         Decimal("1000"),
+        "daily_limit":     Decimal("2000"),
+        "minimum_reserve": Decimal("0.01"),
+        "is_frozen":       False,
+    }
 )
-assert not decision.allowed
-assert "sufficient_balance" in decision.violated_invariants
-assert "within_daily_limit" in decision.violated_invariants  # both reported
+
+print(decision.allowed)              # False
+print(decision.violated_invariants)  # ("sufficient_funds",)
+print(decision.explanation)          # "Insufficient balance: post-transfer balance would be
+                                     #  1000 - 1500 = -500, minimum is 0.01"
 ```
-
-> **`~E(field)` vs `E(field) == False`:** Both compile correctly to Z3.
-> `~E(is_frozen)` is idiomatic. `E(is_frozen) == False` requires `# noqa: E712`
-> to suppress ruff. Prefer `~` in production policies.
 
 ---
 
@@ -213,600 +206,384 @@ assert "within_daily_limit" in decision.violated_invariants  # both reported
 ### Fields
 
 ```python
+from decimal import Decimal
 from pramanix import Field
 
-# Declare the bridge between your data model and Z3 sorts
-amount    = Field("amount",    Decimal, "Real")   # arbitrary-precision arithmetic
-count     = Field("count",     int,     "Int")    # integer arithmetic
-is_active = Field("is_active", bool,    "Bool")   # boolean logic
-status    = Field("status",    str,     "String") # sequence theory (Z3 str)
+# Field(name, python_type, z3_sort)
+# Z3 sorts: "Real" (exact rational), "Int", "Bool", "String" (Z3 sequence theory)
+
+amount    = Field("amount",    Decimal, "Real")   # Decimal values are converted to exact
+balance   = Field("balance",   Decimal, "Real")   # Z3 rationals via as_integer_ratio()
+role      = Field("role",      int,     "Int")    # No IEEE 754 floating-point ever reaches Z3
+active    = Field("active",    bool,    "Bool")
+status    = Field("status",    str,     "String")
 ```
-
-**Supported Z3 sorts:** `"Real"` | `"Int"` | `"Bool"` | `"String"`
-
-**Type safety:** Passing a `bool` to a `Real` field raises `FieldTypeError`
-immediately — `bool` is a subclass of `int` in Python and would silently coerce
-without this guard.
 
 ### Expressions
 
 ```python
 from pramanix import E
 
-# Arithmetic — compiles to Z3 ArithRef, not Python arithmetic
-E(balance) - E(amount) >= 0
-E(amount) <= E(daily_limit)
-E(amount) > 0
-E(balance) * Decimal("0.1") >= E(reserve)  # constant coefficients
+# E() wraps a Field for use in constraint expressions
 
-# Boolean — compiles to Z3 BoolRef
-~E(is_frozen)                               # NOT
-(E(amount) > 0) & (E(balance) > 0)        # AND
-(E(frozen)) | (E(admin_override))          # OR
+# Arithmetic (Real and Int sorts)
+E(cls.balance) - E(cls.amount) >= Decimal("0")
+E(cls.amount) * E(cls.quantity) <= E(cls.budget)
+E(cls.price) / E(cls.quantity) > Decimal("0.01")
 
-# String — uses Z3 sequence theory
-E(status).is_in(["pending", "active"])     # membership check
+# Comparison
+E(cls.risk_score) < Decimal("0.85")
+E(cls.role) == 2
+E(cls.amount) != Decimal("0")
+
+# Boolean
+E(cls.is_active) == True
+~E(cls.is_frozen)
+
+# Logical composition
+(E(cls.amount) > 0) & (E(cls.amount) <= E(cls.limit))
+(E(cls.role) == 1) | (E(cls.role) == 2)
+
+# Membership check (preferred for string/int enumerations)
+E(cls.status).is_in(["CLEAR", "VERIFIED"])
+E(cls.role).is_in([1, 2, 3])
 ```
 
-**No eval/exec/ast.parse:** The DSL compiles operator-overloaded Python
-expressions to a Z3 AST at policy-load time. There is no string interpolation,
-no code generation, and no dynamic evaluation of constraint logic.
-
-### Invariants
+### Invariant Modifiers
 
 ```python
-@classmethod
-def invariants(cls):
-    return [
-        (E(cls.balance) - E(cls.amount) >= 0)
-            .named("sufficient_balance")           # required — used in violation report
-            .explain("Balance {balance} < amount {amount}"),  # optional template
-
-        (E(cls.amount) <= E(cls.daily_limit))
-            .named("within_daily_limit"),
-
-        (~E(cls.is_frozen))
-            .named("account_not_frozen"),
-    ]
+(E(cls.balance) - E(cls.amount) >= 0)
+    .named("sufficient_funds")             # label used in violated_invariants
+    .explain("Balance {balance} insufficient for amount {amount}")  # template in decision
 ```
-
-Every invariant **must** carry `.named()`. Unlabelled invariants that reach the
-attribution path raise `InvariantLabelError` — this is a configuration error, not
-a runtime decision.
 
 ### Decision Object
 
 ```python
-decision.allowed              # bool — True iff all invariants satisfied
-decision.status               # SolverStatus enum (see below)
-decision.violated_invariants  # tuple[str, ...] — all violated labels
-decision.explanation          # human-readable message (from .explain() template)
-decision.decision_id          # UUID4 — unique per call, for distributed tracing
-decision.solver_time_ms       # float — Z3 wall-clock time in milliseconds
-decision.to_dict()            # JSON-serialisable dict
+decision.allowed               # bool -- True (ALLOW) or False (BLOCK)
+decision.status                # SolverStatus enum
+decision.violated_invariants   # tuple[str, ...] -- named labels of failed constraints
+decision.explanation           # str -- human-readable reason, templates filled in
+decision.proof_obligations     # list[str] -- invariant labels that were checked (ALLOW path)
+decision.decision_id           # UUID4 -- unique per decision
+decision.policy_hash           # SHA-256 of the compiled policy
+decision.solver_time_ms        # float -- Z3 solve time in milliseconds
+decision.signature             # bytes | None -- Ed25519 signature (if signer configured)
+decision.decision_hash         # str -- SHA-256 of canonical decision JSON
+
+# Factory classifiers (all return allowed=False)
+Decision.safe(...)             # allowed=True, status=SAFE
+Decision.unsafe(...)           # allowed=False, status=UNSAFE
+Decision.timeout(...)          # Z3 exceeded solver_timeout_ms or solver_rlimit
+Decision.rate_limited(...)     # Load shedder rejected the request
+Decision.consensus_failure()   # Phase 1 dual-model disagreement
 ```
 
-**SolverStatus values** — all except `SAFE` produce `allowed=False`:
+### SolverStatus Values
 
-| Status | Meaning |
-|--------|---------|
-| `SAFE` | All invariants satisfied — `allowed=True` |
-| `UNSAFE` | Z3 found a counterexample |
-| `CONSENSUS_FAILURE` | Dual-LLM extraction disagreed (Phase 1 only) |
-| `TIMEOUT` | Z3 exceeded `solver_timeout_ms` |
-| `ERROR` | Unexpected internal error |
-| `STALE_STATE` | `state_version` mismatch between intent and state |
-| `VALIDATION_FAILURE` | Pydantic validation rejected the input |
-| `RATE_LIMITED` | Adaptive load shedder dropped the request |
+| Status | `allowed` | Meaning |
+|--------|-----------|---------|
+| `SAFE` | `True` | All invariants satisfied. Z3 returned SAT. |
+| `UNSAFE` | `False` | One or more invariants violated. Z3 returned UNSAT. |
+| `TIMEOUT` | `False` | Z3 hit `solver_timeout_ms` or `solver_rlimit`. Request blocked. |
+| `VALIDATION_ERROR` | `False` | Input failed Pydantic validation before reaching Z3. |
+| `RATE_LIMITED` | `False` | Load shedder rejected the request (pool or latency limit exceeded). |
+| `CONSENSUS_FAILURE` | `False` | Phase 1: dual-model LLM disagreement on extracted values. |
+| `INJECTION_BLOCKED` | `False` | Phase 1: injection confidence score >= 0.5. |
+| `ERROR` | `False` | Unexpected internal exception. Fail-safe path. |
 
-### `@guard` Decorator
+### @guard Decorator
 
 ```python
-from pramanix import guard
+from pramanix.decorator import guard
 
-@guard(BankingPolicy, config=GuardConfig(execution_mode="sync"))
-def execute_transfer(
-    amount: Decimal,
-    balance: Decimal,
-    daily_limit: Decimal,
-    is_frozen: bool,
-) -> TransferResult:
-    # Body runs ONLY if all invariants are satisfied.
-    # Any violation raises PolicyViolationError before this line.
-    return transfer_funds(amount)
+@guard(
+    policy=BankingPolicy,
+    config=GuardConfig(execution_mode="sync"),
+    state_loader=lambda intent: fetch_account_state(intent["account_id"]),
+)
+def execute_transfer(intent: dict) -> dict:
+    # Only runs if Guard.verify() returned ALLOW
+    return transfer_service.execute(intent)
+
+# Raises GuardViolationError on BLOCK
+result = execute_transfer({"amount": Decimal("100"), "account_id": "acc-123"})
 ```
-
-- **Argument mapping:** All keyword arguments are passed as the combined
-  intent+state dict. Argument names must match `Field` names in the policy.
-- **On BLOCK:** raises `PolicyViolationError(decision)`. Access
-  `e.decision.explanation` and `e.decision.violated_invariants`.
-- **Introspection:** `execute_transfer.__guard__` exposes the underlying `Guard`.
 
 ---
 
-## Configuration
+## Guard Configuration
 
 ```python
+from pramanix import Guard, GuardConfig
+from pramanix.crypto import PramanixSigner
+
 guard = Guard(
     BankingPolicy,
     GuardConfig(
-        # Execution model
+        # Execution mode
         execution_mode           = "async-process",  # "sync" | "async-thread" | "async-process"
-        solver_timeout_ms        = 100,              # Z3 hard budget per call
-        solver_rlimit            = 500_000,          # Z3 resource limit (ops) — 0 = disabled
-
-        # Worker pool (async modes only)
         max_workers              = 8,
-        max_decisions_per_worker = 10_000,           # recycle to prevent Z3 memory drift
-        worker_warmup            = True,             # dummy solve on startup
+        max_decisions_per_worker = 10_000,           # workers recycle after this count
 
-        # Fast path (optional pre-Z3 shortcut)
-        fast_path_enabled        = True,
-        fast_path_rules          = (
-            SemanticFastPath.negative_amount("amount"),
-            SemanticFastPath.account_frozen("is_frozen"),
-            SemanticFastPath.zero_or_negative_balance("balance"),
-        ),
+        # Z3 solver limits
+        solver_timeout_ms        = 100,              # hard stall budget (ms)
+        solver_rlimit            = 10_000_000,       # Z3 elementary operation cap
 
-        # Load shedding
-        shed_worker_pct          = 90.0,             # shed when pool >90% utilised
-        shed_latency_threshold_ms= 200.0,            # shed when P99 > 200ms
+        # Phase 12 hardening
+        max_input_bytes          = 65_536,           # 64 KiB -- reject oversized payloads
+        min_response_ms          = 50.0,             # timing floor -- prevents timing analysis
+        redact_violations        = False,            # True for external APIs
+        expected_policy_hash     = fingerprint,      # detect policy drift in production
+
+        # Cryptographic audit signing
+        signer                   = PramanixSigner.from_pem(key_pem),
+
+        # Resilience
+        shed_worker_pct          = 90.0,             # shed when pool utilisation > 90%
+        shed_latency_threshold_ms= 200.0,            # shed when rolling P99 > 200ms
 
         # Observability
-        metrics_enabled          = True,             # Prometheus counters + histograms
+        metrics_enabled          = True,             # Prometheus counters and histograms
         otel_enabled             = True,             # OpenTelemetry spans
         log_level                = "INFO",
 
-        # Input safety
-        max_input_bytes          = 65_536,           # reject oversized payloads
-        min_response_ms          = 0.0,              # artificial floor for timing analysis
+        # Phase 1 (optional)
+        translator_enabled       = False,
     ),
 )
 ```
 
-> **`solver_timeout_ms` warning:** This is a hard stall budget. If Z3 hits the
-> timeout, the request blocks for exactly `solver_timeout_ms` milliseconds before
-> returning `Decision(allowed=False, status=TIMEOUT)`. The default is `5_000`
-> (5 seconds). **Never use the default in production.** For a P99 of 15ms, set
-> this to `100`–`150`. A 5-second timeout will cascade stalls through your load
-> shedder and trip the circuit breaker under adversarial non-linear inputs.
+**Configuration notes:**
 
-> **`solver_rlimit`:** Z3 resource limit (elementary operations). When exceeded,
-> Z3 returns `unknown` regardless of wall-clock time — `rlimit=1` exhausts the
-> budget on any formula. Use alongside `solver_timeout_ms` for dual-layer DoS
-> protection: whichever limit is hit first triggers a BLOCK.
-
-All `GuardConfig` fields are overridable via `PRAMANIX_<FIELD_NAME_UPPER>`
-environment variables (e.g., `PRAMANIX_SOLVER_TIMEOUT_MS=100`).
+- `solver_timeout_ms` default is 5,000 ms. Never use the default in production. A 5-second timeout cascades stalls through the load shedder and trips the circuit breaker under adversarial non-linear inputs. Set to 100-150 ms for a P99 target of 15 ms.
+- `solver_rlimit` caps Z3 elementary operations. When this limit is hit, Z3 returns `unknown` regardless of wall-clock time. Use both `solver_timeout_ms` and `solver_rlimit` together for defense against complex formula attacks.
+- `min_response_ms` pads BLOCK responses to a minimum wall-clock time. Prevents an attacker from using response timing to determine whether a request was blocked by fast-path evaluation or by Z3.
+- `expected_policy_hash` pins the compiled policy fingerprint. If the policy changes after deployment (code change, dependency update), Guard raises `PolicyDriftError` at startup.
+- `redact_violations` controls whether `violated_invariants` and `explanation` are included in the Decision. Set to `True` for external APIs to avoid leaking policy internals.
+- All fields are overridable via `PRAMANIX_<FIELD_NAME_UPPER>` environment variables.
 
 ---
 
 ## Execution Modes
 
-### `sync` — Synchronous, single-threaded
+### sync
 
 ```python
 GuardConfig(execution_mode="sync")
 ```
 
-Z3 runs in the calling thread. No worker pool. Best for scripts, tests, and
-simple WSGI applications. Not safe for concurrent async workloads — one slow
-Z3 call blocks all coroutines.
+- Z3 runs in the calling thread
+- No worker pool
+- Good for scripts, tests, and single-threaded WSGI applications
+- A slow Z3 call blocks the entire thread
+- A Z3 C++ fault (SIGABRT/SIGSEGV) crashes the process
 
-### `async-thread` — ThreadPoolExecutor
+### async-thread
 
 ```python
 GuardConfig(execution_mode="async-thread", max_workers=8)
 ```
 
-Z3 runs in a thread pool. The event loop is never blocked. Safe for concurrent
-async applications. Workers share memory; a Z3 C++ segfault (SIGABRT/SIGSEGV)
-crashes the entire process.
+- Z3 runs in a `ThreadPoolExecutor`
+- The event loop is never blocked
+- Safe for concurrent async applications (FastAPI, aiohttp)
+- Workers share memory; a Z3 C++ fault crashes the entire process
 
-### `async-process` — ProcessPoolExecutor + HMAC-sealed IPC
+### async-process (recommended for production)
 
 ```python
 GuardConfig(execution_mode="async-process", max_workers=8)
 ```
 
-Z3 runs in isolated subprocess workers. Worker death surfaces as a fail-safe
-BLOCK — the host process is never crashed by a Z3 C++ fault. Each result is
-HMAC-sealed before crossing the IPC boundary; the host verifies the seal before
-trusting the decision. **Recommended for production.**
+- Z3 runs in isolated subprocess workers (`ProcessPoolExecutor`)
+- Worker death surfaces as a fail-safe BLOCK; the host process is unaffected
+- Every result is HMAC-sealed before crossing the IPC boundary
+- The host verifies the seal before accepting any decision
+- Worker lifecycle:
 
-Worker lifecycle:
 ```
-spawn → warmup (dummy solve) → serve decisions → recycle at max_decisions_per_worker
-                                                        ↓
-                                              _drain_executor (grace period)
-                                                        ↓
-                                              _force_kill_processes (psutil)
+spawn (not fork) --> warmup (8-pattern Z3 solve) --> serve decisions
+                                                          |
+                                          max_decisions_per_worker reached
+                                                          |
+                                              drain with grace period
+                                                          |
+                                              force-kill remaining processes
+                                                          |
+                                              spawn fresh worker
 ```
+
+- The warmup solve runs 8 constraint patterns to eliminate Z3 cold-start JIT latency before the first real request arrives
+- Workers are spawned, never forked, to avoid inheriting parent process file descriptors and state
 
 ---
 
-## Neuro-Symbolic Mode
+## Neuro-Symbolic Mode (Phase 1 + Phase 2)
 
-Phase 1 is optional. When `parse_and_verify()` is used, free-form text passes
-through the translator subsystem before Phase 2.
+Phase 1 is optional. Use `parse_and_verify()` when the AI agent provides free-form text instead of a structured dict.
 
 ```python
-# Dual-model consensus (recommended for production)
+# Dual-model consensus (recommended)
 decision = await guard.parse_and_verify(
     prompt="transfer 500 dollars to alice",
-    intent_schema=TransferIntent,          # Pydantic model
+    intent_schema=TransferIntent,           # Pydantic model defining expected fields
     state=account_state,
-    models=("gpt-4o", "claude-opus-4-6"),  # both must agree
+    models=("gpt-4o", "claude-opus-4-6"),   # both must agree on every field value
 )
 ```
 
-### Injection Hardening Pipeline (6 layers)
+### Phase 1 Injection Defense Pipeline
 
 ```
 Untrusted text
-      │
-      ▼
-1. NFKC normalisation     — homoglyph / unicode confusable collapse
-      │
-      ▼
-2. Parallel LLM extraction — both models extract independently
-      │
-      ▼
-3. Partial-failure gate   — if either model fails, consensus_failure
-      │
-      ▼
-4. Pydantic strict validate — extra keys rejected, types enforced
-      │
-      ▼
-5. Consensus check        — field-by-field value agreement required
-      │
-      ▼
-6. Injection confidence   — signal-weighted score ∈ [0,1]
-                            score ≥ 0.5 → InjectionBlockedError
-      │
-      ▼
-Phase 2 (Z3) — always runs regardless of Phase 1 outcome
+      |
+      v
+1. NFKC normalization       -- collapses Unicode homoglyphs (Cyrillic "a" = Latin "a")
+      |
+      v
+2. Parallel LLM extraction  -- both models extract independently, no cross-contamination
+      |
+      v
+3. Partial-failure gate     -- if either model errors, result = CONSENSUS_FAILURE
+      |
+      v
+4. Pydantic strict validate -- extra fields rejected, types enforced, ranges checked
+      |
+      v
+5. Consensus check          -- field-by-field value agreement required across both models
+      |
+      v
+6. Injection confidence     -- signal-weighted additive score in [0, 1]
+                               score >= 0.5 --> InjectionBlockedError (BLOCK)
+      |
+      v
+Phase 2 (Z3) -- always runs regardless of Phase 1 outcome
 ```
 
-**Disagreement → `Decision.consensus_failure()`** — this is an expected policy
-outcome, not an error. Handle it the same as an UNSAFE decision.
+- If an attacker manipulates one LLM to extract `amount=999999999`, the other model will extract a different value. Consensus check fails. BLOCK.
+- If both models are manipulated to agree on `amount=999999999`, Phase 2 still runs. Z3 checks `balance - 999999999 >= minimum_reserve`. With `balance=1000`, this is UNSAT. BLOCK.
 
 ### Supported Translators
 
-| Translator | Extra | Backend |
-|-----------|-------|---------|
-| `OllamaTranslator` | `translator` | Local Ollama server via `/api/chat` |
-| `OpenAICompatTranslator` | `translator` | OpenAI or compatible API |
-| `AnthropicTranslator` | `translator` | Anthropic Messages API |
-| `RedundantTranslator` | `translator` | Dual-model consensus wrapper |
+| Translator | Backend |
+|-----------|---------|
+| `OllamaTranslator` | Local Ollama server (tested: llama3.2 3B at temperature=0.0) |
+| `OpenAICompatTranslator` | OpenAI API or any OpenAI-compatible endpoint |
+| `AnthropicTranslator` | Anthropic Messages API |
+| `RedundantTranslator` | Wraps any two translators for dual-model consensus |
 
 ```python
 from pramanix.translator.ollama import OllamaTranslator
-from pramanix.translator.redundant import RedundantTranslator
 from pramanix.translator.anthropic import AnthropicTranslator
+from pramanix.translator.redundant import RedundantTranslator
 
-# Local inference — default model: llama3.2 (3B, Q4_K_M, 1.9 GB)
-# temperature=0.0 by default — deterministic extraction
 local = OllamaTranslator("llama3.2", base_url="http://localhost:11434")
-
-# Cloud model
 cloud = AnthropicTranslator("claude-opus-4-6")
 
-# Consensus: both must agree or decision = CONSENSUS_FAILURE
-t = RedundantTranslator(local, cloud)
+# Both must agree or the result is CONSENSUS_FAILURE
+translator = RedundantTranslator(local, cloud)
 ```
 
-**Ollama is live and tested.** `llama3.2` (3B) is the verified default. The 1B
-variant can echo the schema instead of filling it in — use 3B or larger for
-reliable extraction.
+**Note on small models:** `llama3.2:1b` (1B parameters) cannot reliably perform structured intent extraction -- it echoes the schema instead of filling it in. Use `llama3.2` (3B, Q4_K_M) or a larger model. `temperature=0.0` is set by default for deterministic extraction.
 
 ### Intent Cache
 
 ```python
 GuardConfig(
-    translator_enabled = True,
+    translator_enabled=True,
     # PRAMANIX_INTENT_CACHE_REDIS_URL=redis://localhost:6379
     # PRAMANIX_INTENT_CACHE_TTL_SECONDS=3600
     # PRAMANIX_INTENT_CACHE_MAX_SIZE=1024
 )
 ```
 
-Repeated identical prompts hit the in-process LRU or Redis cache — skipping LLM
-inference entirely. Cache misses always fall through to full extraction + Z3.
-Cache failures degrade silently (cache is best-effort, never blocks verification).
-
----
-
-## Zero-Trust Identity
-
-```python
-from pramanix.identity.linker import JWTIdentityLinker
-from pramanix.identity.redis_loader import RedisStateLoader
-import redis.asyncio as aioredis
-
-# State is loaded from Redis using ONLY the verified JWT `sub` claim.
-# Any state submitted in the request body is IGNORED.
-client = aioredis.from_url("redis://localhost:6379")
-loader = RedisStateLoader(redis_client=client)
-linker = JWTIdentityLinker(
-    state_loader=loader,
-    jwt_secret="your-32-char-minimum-hmac-secret",  # HMAC-SHA256
-)
-
-class Request:
-    headers = {"Authorization": "Bearer <jwt>"}
-
-claims, state = await linker.extract_and_load(request)
-# claims.sub → verified subject identifier
-# state      → loaded from Redis["pramanix:state:{sub}"], NOT from request body
-
-decision = await guard.verify_async(
-    intent={"amount": Decimal(request.body["amount"])},
-    state=state,
-)
-```
-
-**The zero-trust guarantee:** The caller cannot inject their own state. Even if
-the request body contains `{"balance": 999999}`, the system loads `balance` from
-Redis using the cryptographically verified JWT subject. This is tested in
-`tests/integration/test_zero_trust_identity.py` against a real Redis instance
-(testcontainers).
-
-**JWT validation:**
-- Signature: HMAC-SHA256, minimum 32-character secret
-- Expiry: `exp` claim verified — expired tokens raise `JWTExpiredError`
-- Tampering: any payload modification raises `JWTVerificationError`
-- Missing Bearer prefix: raises `JWTVerificationError`
-
----
-
-## Execution Tokens
-
-One-time-use, HMAC-signed tokens that prove a specific decision was ALLOW.
-Prevents replaying an old ALLOW decision for a different operation.
-
-```python
-from pramanix.execution_token import ExecutionTokenSigner, ExecutionTokenVerifier
-
-signer   = ExecutionTokenSigner(secret_key=b"32-byte-minimum-hmac-key-here!!!!")
-verifier = ExecutionTokenVerifier(secret_key=b"32-byte-minimum-hmac-key-here!!!!")
-
-# After an ALLOW decision:
-token = signer.sign(decision, operation="transfer", amount="500")
-
-# Before executing the action:
-verified = verifier.verify_and_consume(token)
-# Second call with same token → raises TokenAlreadyUsedError (in-process)
-
-# For multi-server deployments:
-from pramanix.execution_token import RedisExecutionTokenVerifier
-verifier = RedisExecutionTokenVerifier(
-    secret_key=b"32-byte-minimum-hmac-key-here!!!!",
-    redis_client=redis_client,
-)
-# Token consumed atomically in Redis — replay safe across server restarts
-```
-
----
-
-## Audit System
-
-### Cryptographic Decision Signing
-
-```python
-from pramanix.audit.signer import DecisionSigner
-from pramanix.audit.verifier import DecisionVerifier
-
-signer   = DecisionSigner(key=your_32_byte_hmac_key)
-token    = signer.sign(decision)       # HMAC-SHA256 JWS — independently verifiable
-
-verifier = DecisionVerifier(key=your_32_byte_hmac_key)
-result   = verifier.verify(token)      # returns verified Decision or raises
-```
-
-### Merkle Audit Chain
-
-```python
-from pramanix.audit.merkle import MerkleAnchor
-
-anchor = MerkleAnchor()
-anchor.append(decision_1)
-anchor.append(decision_2)
-anchor.append(decision_3)
-
-root_hash = anchor.root()    # SHA-256 Merkle root — tampering any decision
-                             # invalidates all subsequent roots
-proof     = anchor.proof(1)  # inclusion proof for decision at index 1
-```
-
-> **Persistence note:** `MerkleAnchor` is process-scoped. Export `root_hash` to
-> an append-only store (Redis stream, write-once log, database) at checkpoints.
-> Individual HMAC tokens remain independently verifiable without the chain.
-
-### Compliance Reporter
-
-```python
-from pramanix.helpers.compliance import classify_compliance_event
-
-category = classify_compliance_event(
-    violated_invariants=decision.violated_invariants,
-    intent_dump=decision.intent_dump,
-)
-# Returns: "CRITICAL_PREVENTION" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL"
-```
-
-### Audit CLI
-
-```bash
-# Sign a decision token
-pramanix sign-decision <decision_json_file>
-
-# Verify a signed token
-pramanix verify-proof <token>          # exits 0 (VALID) or 1 (INVALID)
-pramanix verify-proof <token> --json  # JSON output for scripting
-```
-
----
-
-## Adaptive Circuit Breaker
-
-```python
-from pramanix import AdaptiveCircuitBreaker, CircuitBreakerConfig
-
-breaker = AdaptiveCircuitBreaker(CircuitBreakerConfig(
-    namespace           = "banking_guard",
-    failure_threshold   = 5,     # OPEN after 5 consecutive failures
-    recovery_timeout_s  = 30,    # attempt HALF_OPEN after 30 s
-    half_open_max_calls = 3,     # 3 probe calls before CLOSED
-))
-
-# State machine:
-# CLOSED ──(5 failures)──► OPEN ──(30s)──► HALF_OPEN ──(3 ok)──► CLOSED
-# OPEN/HALF_OPEN ──(3 consecutive cycles)──► ISOLATED (manual reset required)
-
-with breaker:
-    decision = guard.verify(intent, state)
-
-# Reset an ISOLATED breaker:
-breaker.reset()
-```
-
-Prometheus metrics exported when `metrics_enabled=True`:
-```
-pramanix_circuit_breaker_state{namespace, state}   gauge
-pramanix_circuit_breaker_pressure_total{namespace} counter
-```
-
----
-
-## Fast-Path Evaluator
-
-Pre-Z3 semantic rules that block obvious violations without invoking the SMT
-solver. Average fast-path decision: **< 0.1 ms** (no Z3 context creation).
-
-```python
-from pramanix.fast_path import SemanticFastPath
-
-GuardConfig(
-    fast_path_enabled = True,
-    fast_path_rules   = (
-        SemanticFastPath.negative_amount("amount"),          # amount < 0 → BLOCK
-        SemanticFastPath.account_frozen("is_frozen"),        # is_frozen = True → BLOCK
-        SemanticFastPath.zero_or_negative_balance("balance"),# balance ≤ 0 → BLOCK
-    ),
-)
-```
-
-Fast-path rules are evaluated **before** Z3. A fast-path BLOCK is still a
-`Decision(allowed=False)` — the fail-safe contract is unchanged. Fast-path
-results are not auditable proof — they are a performance optimisation only.
-When in doubt, disable fast_path and rely on Z3.
-
----
-
-## Load Shedding
-
-Adaptive load shedder drops requests when the worker pool is saturated or
-latency exceeds the threshold.
-
-```python
-GuardConfig(
-    shed_worker_pct           = 90.0,   # shed when pool utilisation > 90%
-    shed_latency_threshold_ms = 200.0,  # shed when rolling P99 > 200ms
-)
-```
-
-Shed decisions return `Decision.rate_limited(status=RATE_LIMITED)`. The
-fail-safe contract holds — shed decisions are `allowed=False`.
+- Repeated identical prompts hit the in-process LRU cache or Redis cache, skipping LLM inference
+- Cache failures degrade silently -- a miss always falls through to full extraction and Z3
+- Cache is best-effort and never blocks verification
 
 ---
 
 ## Primitives Library
 
-Reusable pre-built constraint factories. Import and compose directly into
-your policy's `invariants()` list.
+Pre-built constraint factories. Import and compose directly into a policy's `invariants()` list. All 38 primitives emit named labels that appear in `violated_invariants` on BLOCK.
 
 ### Finance (`pramanix.primitives.finance`)
 
-```python
-from pramanix.primitives.finance import (
-    NonNegativeBalance,   # balance - amount >= 0
-    UnderDailyLimit,      # amount <= daily_limit
-    UnderSingleTxLimit,   # amount <= single_tx_limit
-    RiskScoreBelow,       # risk_score < threshold
-    MinimumReserve,       # balance - amount >= min_reserve
-    SecureBalance,        # balance >= 0 at all times
-)
-```
+| Primitive | DSL constraint | Regulatory note |
+|-----------|---------------|-----------------|
+| `NonNegativeBalance(balance, amount)` | `balance - amount >= 0` | |
+| `MinimumReserve(balance, amount, reserve)` | `balance - amount >= reserve` | |
+| `UnderDailyLimit(amount, daily_limit)` | `amount <= daily_limit` | |
+| `UnderSingleTxLimit(amount, single_tx_limit)` | `amount <= single_tx_limit` | |
+| `RiskScoreBelow(risk_score, threshold)` | `risk_score < threshold` | |
+| `SecureBalance(balance)` | `balance >= 0` | |
 
 ### FinTech / AML (`pramanix.primitives.fintech`)
 
-```python
-from pramanix.primitives.fintech import (
-    SufficientBalance,    # balance >= amount
-    AntiStructuring,      # amount < structuring_threshold (FinCEN)
-    VelocityCheck,        # tx_count_24h <= max_velocity
-    KYCTierCheck,         # amount within KYC-tier limits
-    SanctionsScreen,      # status not in ["sanctioned", "blocked"]
-    MarginRequirement,    # collateral >= margin_requirement
-    CollateralHaircut,    # collateral * (1 - haircut) >= exposure
-    MaxDrawdown,          # drawdown <= max_drawdown_pct
-    WashSaleDetection,    # time_since_last_sale >= wash_sale_window
-    TradingWindowCheck,   # trade within allowed window
-    RiskScoreLimit,       # risk_score <= max_risk
-)
-```
+| Primitive | DSL constraint | Regulatory note |
+|-----------|---------------|-----------------|
+| `SufficientBalance(balance, amount)` | `balance >= amount` | |
+| `AntiStructuring(cumulative, threshold)` | `cumulative < threshold` | 31 CFR § 1020.320 CTR filing |
+| `VelocityCheck(tx_count_24h, max_velocity)` | `tx_count_24h <= max_velocity` | PSD2 velocity cap |
+| `KYCTierCheck(kyc_tier, required_tier)` | `kyc_tier >= required_tier` | FinCEN CDD rule |
+| `SanctionsScreen(counterparty_status)` | `status not in ["SANCTIONED", "BLOCKED"]` | OFAC SDN |
+| `MarginRequirement(collateral, requirement)` | `collateral >= requirement` | |
+| `CollateralHaircut(collateral, haircut, exposure)` | `collateral * (1 - haircut) >= exposure` | |
+| `MaxDrawdown(drawdown, max_pct)` | `drawdown <= max_pct` | |
+| `WashSaleDetection(time_since_last_sale, window)` | `time_since_last_sale >= window` | |
+| `TradingWindowCheck(timestamp, open, close)` | `open <= timestamp <= close` | |
 
 ### RBAC (`pramanix.primitives.rbac`)
 
-```python
-from pramanix.primitives.rbac import (
-    RoleMustBeIn,         # role in allowed_roles
-    DepartmentMustBeIn,   # department in allowed_departments
-    ConsentRequired,      # consent_given == True
-)
-```
+| Primitive | DSL constraint |
+|-----------|---------------|
+| `RoleMustBeIn(role, allowed_roles)` | `role in allowed_roles` |
+| `DepartmentMustBeIn(dept, allowed_depts)` | `dept in allowed_depts` |
+| `ConsentRequired(consent_given)` | `consent_given == True` |
 
 ### Infrastructure (`pramanix.primitives.infra`)
 
-```python
-from pramanix.primitives.infra import (
-    MinReplicas,          # replicas >= min_replicas
-    MaxReplicas,          # replicas <= max_replicas
-    ReplicaBudget,        # min_replicas <= replicas <= max_replicas
-    WithinCPUBudget,      # cpu_request <= cpu_limit
-    WithinMemoryBudget,   # memory_request <= memory_limit
-    CPUMemoryGuard,       # combined CPU+memory constraint
-    ProdDeployApproval,   # approval_count >= required_approvals
-    CircuitBreakerState,  # circuit_state != "open"
-    BlastRadiusCheck,     # affected_services <= max_blast_radius
-)
-```
+| Primitive | DSL constraint |
+|-----------|---------------|
+| `MinReplicas(replicas, min_replicas)` | `replicas >= min_replicas` |
+| `MaxReplicas(replicas, max_replicas)` | `replicas <= max_replicas` |
+| `ReplicaBudget(replicas, min, max)` | `min <= replicas <= max` |
+| `WithinCPUBudget(cpu_request, cpu_limit)` | `cpu_request <= cpu_limit` |
+| `WithinMemoryBudget(mem_request, mem_limit)` | `mem_request <= mem_limit` |
+| `CPUMemoryGuard(cpu_req, cpu_lim, mem_req, mem_lim)` | Combined CPU + memory |
+| `ProdDeployApproval(approval_count, required)` | `approval_count >= required` |
+| `CircuitBreakerState(circuit_state)` | `circuit_state != "open"` |
+| `BlastRadiusCheck(affected, max_blast)` | `affected <= max_blast` |
 
 ### Healthcare (`pramanix.primitives.healthcare`)
 
-```python
-from pramanix.primitives.healthcare import (
-    PediatricDoseBound,   # dose <= max_dose_mg_per_kg * weight_kg
-    DosageGradientCheck,  # |dose - previous_dose| <= max_step
-    ConsentActive,        # consent_status == "active"
-    PHILeastPrivilege,    # access_level in authorised_levels
-    BreakGlassAuth,       # break_glass_reason != "" (emergency override)
-)
-```
+| Primitive | DSL constraint | Regulatory note |
+|-----------|---------------|-----------------|
+| `PHILeastPrivilege(role, allowed_roles)` | `role in allowed_roles` | HIPAA 45 CFR § 164.502(b) |
+| `ConsentActive(status, expiry, current_epoch)` | `status == "ACTIVE" and now < expiry` | HIPAA § 164.508(b)(5) |
+| `BreakGlassAuth(flag, auth_code_present)` | `not flag or auth_code_present` | HIPAA § 164.312(a)(2)(ii) |
+| `PediatricDoseBound(dose, max_per_kg, weight)` | `dose <= max_per_kg * weight` | |
+| `DosageGradientCheck(dose, previous, max_step)` | `abs(dose - previous) <= max_step` | |
 
 ### Time (`pramanix.primitives.time`)
 
-```python
-from pramanix.primitives.time import (
-    Before,              # timestamp < deadline
-    After,               # timestamp > start
-    WithinTimeWindow,    # start <= timestamp <= end
-    NotExpired,          # now < expiry
-)
-```
+| Primitive | DSL constraint |
+|-----------|---------------|
+| `Before(timestamp, deadline)` | `timestamp < deadline` |
+| `After(timestamp, start)` | `timestamp > start` |
+| `WithinTimeWindow(timestamp, start, end)` | `start <= timestamp <= end` |
+| `NotExpired(now, expiry)` | `now < expiry` |
 
-### Composition Example
+### Common (`pramanix.primitives.common`)
+
+| Primitive | DSL constraint |
+|-----------|---------------|
+| `NonNegative(field)` | `field >= 0` |
+| `Positive(field)` | `field > 0` |
+| `InRange(field, low, high)` | `low <= field <= high` |
+
+### Composition example
 
 ```python
 from pramanix.primitives.finance import NonNegativeBalance, UnderDailyLimit
@@ -817,12 +594,12 @@ class TradingPolicy(Policy):
     class Meta:
         version = "2.1"
 
-    amount      = Field("amount",      Decimal, "Real")
-    balance     = Field("balance",     Decimal, "Real")
-    daily_limit = Field("daily_limit", Decimal, "Real")
-    role        = Field("role",        str,     "String")
-    token_expiry= Field("token_expiry",int,     "Int")
-    now         = Field("now",         int,     "Int")
+    amount      = Field("amount",       Decimal, "Real")
+    balance     = Field("balance",      Decimal, "Real")
+    daily_limit = Field("daily_limit",  Decimal, "Real")
+    role        = Field("role",         str,     "String")
+    token_expiry= Field("token_expiry", int,     "Int")
+    now         = Field("now",          int,     "Int")
 
     @classmethod
     def invariants(cls):
@@ -838,61 +615,307 @@ class TradingPolicy(Policy):
 
 ## Integration Adapters
 
-### FastAPI
+### FastAPI / Starlette
 
 ```python
 from fastapi import FastAPI
 from pramanix.integrations.fastapi import PramanixMiddleware, pramanix_route
+from pramanix.guard import GuardConfig
 
 app = FastAPI()
 
-# Middleware — all routes verified
+# Option 1: middleware -- applies to all routes under the registered path
+async def load_account_state(request):
+    account_id = request.headers["X-Account-Id"]
+    return await db.get_account(account_id)
+
 app.add_middleware(
     PramanixMiddleware,
     policy=BankingPolicy,
+    intent_model=TransferIntent,        # Pydantic model for request body validation
+    state_loader=load_account_state,
     config=GuardConfig(execution_mode="async-thread"),
+    max_body_bytes=65_536,              # body size cap before any parsing
+    timing_budget_ms=50.0,             # pad BLOCK responses to 50 ms
 )
 
-# Per-route decorator
+# Option 2: per-route decorator -- different policies per endpoint
 @app.post("/transfer")
-@pramanix_route(BankingPolicy, config=GuardConfig())
-async def transfer(request: TransferRequest):
-    ...
+@pramanix_route(
+    policy=BankingPolicy,
+    intent_model=TransferIntent,
+    state_loader=lambda req: fetch_account(req.headers["X-Account-Id"]),
+)
+async def transfer_handler(request: Request):
+    # Only runs if Guard.verify() returned ALLOW
+    return {"status": "ok"}
 ```
+
+Request pipeline for both options:
+1. Check `Content-Type: application/json` (415 if absent)
+2. Read body, reject if over `max_body_bytes` (413)
+3. Parse JSON (422 if invalid)
+4. Validate intent via `intent_model.model_validate(raw, strict=True)` (422 if invalid)
+5. Load state via `state_loader(request)` (500 if raises)
+6. Run `Guard.verify_async(intent, state)`
+7. BLOCK: pad to `timing_budget_ms`, return 403 with decision JSON
+8. ALLOW: forward to next ASGI handler
 
 ### LangChain
 
 ```python
-from pramanix.integrations.langchain import wrap_tools
+from pramanix.integrations.langchain import PramanixGuardedTool, wrap_tools
 
-safe_tools = wrap_tools(
-    agent_tools,
-    BankingPolicy,
-    config=GuardConfig(execution_mode="sync"),
+# Option 1: wrap a single tool function
+guarded_transfer = PramanixGuardedTool(
+    name="transfer_funds",
+    description="Transfer money between accounts",
+    policy=BankingPolicy,
+    state_loader=get_account_state,
+    tool_fn=execute_transfer,
 )
-# Each tool call is verified before execution.
-# Violation raises PolicyViolationError — the agent receives it as a tool error.
+
+# Option 2: wrap a list of existing LangChain tools
+safe_tools = wrap_tools(
+    [some_tool, another_tool],
+    policy=BankingPolicy,
+    state_loader=get_state,
+)
+
+# On BLOCK, the tool raises an exception -- LangChain routes it back to the agent as a tool error
 ```
 
 ### LlamaIndex
 
 ```python
-from pramanix.integrations.llamaindex import PramanixFunctionTool
+from pramanix.integrations.llamaindex import PramanixGuardedQueryEngine
 
-guarded_tool = PramanixFunctionTool(
-    fn=execute_transfer,
-    policy=BankingPolicy,
-    fn_schema=TransferSchema,
+guarded_engine = PramanixGuardedQueryEngine(
+    query_engine=base_engine,
+    policy=PHIAccessPolicy,
+    state_loader=lambda query: {
+        "requestor_role": get_current_user_role(),
+        "consent_active": check_consent(),
+    },
 )
+
+# Guard runs BEFORE retrieval -- PHI documents are never fetched for unauthorized users
+response = guarded_engine.query("What is the patient's diagnosis?")
 ```
 
 ### AutoGen
 
 ```python
-from pramanix.integrations.autogen import PramanixToolCallback
+from pramanix.integrations.autogen import PramanixGuardedAgent
 
-callback = PramanixToolCallback.wrap(BankingPolicy)
+guarded_agent = PramanixGuardedAgent(
+    agent=base_agent,
+    policy=InfraPolicy,
+    state_loader=lambda: get_cluster_state(),
+)
+
+# All tool calls made by this agent go through Guard.verify() before execution
+# In multi-agent setups: each agent has its own Guard instance
+# A compromised Agent A cannot make Agent B exceed its own policy limits
 ```
+
+---
+
+## Zero-Trust Identity
+
+```python
+from pramanix.identity.linker import JWTIdentityLinker
+from pramanix.identity.redis_loader import RedisStateLoader
+import redis.asyncio as aioredis
+
+client = aioredis.from_url("redis://localhost:6379")
+loader = RedisStateLoader(redis_client=client)
+linker = JWTIdentityLinker(
+    state_loader=loader,
+    jwt_secret="your-32-char-minimum-hmac-secret",
+)
+
+# State is loaded from Redis using only the verified JWT sub claim.
+# Any state submitted in the request body is ignored.
+claims, state = await linker.extract_and_load(request)
+
+decision = await guard.verify_async(
+    intent={"amount": Decimal(request.body["amount"])},
+    state=state,   # from Redis, not from request body
+)
+```
+
+- The caller cannot inject their own state. Even if the request body contains `{"balance": 999999}`, the system loads `balance` from Redis using the cryptographically verified JWT subject.
+- JWT validation checks: HMAC-SHA256 signature (minimum 32-character secret), `exp` claim expiry, and tamper detection on any payload modification.
+- Tested in `tests/integration/test_zero_trust_identity.py` against a real Redis instance via testcontainers.
+
+---
+
+## Execution Tokens
+
+One-time-use, HMAC-signed tokens that prove a specific ALLOW decision was issued and has not been used before. Prevents replaying an old ALLOW decision for a different operation.
+
+```python
+from pramanix.execution_token import ExecutionTokenSigner, ExecutionTokenVerifier
+
+signer   = ExecutionTokenSigner(secret_key=b"32-byte-minimum-hmac-key-here!!!!")
+verifier = ExecutionTokenVerifier(secret_key=b"32-byte-minimum-hmac-key-here!!!!")
+
+# After an ALLOW decision:
+token = signer.sign(decision, operation="transfer", amount="500")
+
+# Before executing the action:
+verified = verifier.verify_and_consume(token)
+# Second call with same token raises TokenAlreadyUsedError
+
+# For multi-server deployments (replay-safe across restarts):
+from pramanix.execution_token import RedisExecutionTokenVerifier
+verifier = RedisExecutionTokenVerifier(
+    secret_key=b"32-byte-minimum-hmac-key-here!!!!",
+    redis_client=redis_client,
+)
+```
+
+- The token includes: `decision_id`, `allowed`, `intent_dump`, `policy_hash`, `expires_at`, a 16-byte random nonce, and an HMAC-SHA256 signature.
+- In-process verifier uses a `threading.Lock`. Note: the in-memory consumed-set is not shared across processes. Use `RedisExecutionTokenVerifier` in multi-process or multi-server deployments.
+
+---
+
+## Audit System
+
+### Cryptographic Decision Signing
+
+```python
+from pramanix.crypto import PramanixSigner, PramanixVerifier
+
+# Generate a keypair (save private key to secrets manager)
+signer = PramanixSigner.generate()
+
+# Or load from PEM (from environment or secrets manager)
+signer = PramanixSigner.from_pem(os.environ["PRAMANIX_SIGNING_KEY_PEM"].encode())
+
+# Pass to GuardConfig to sign every decision
+config = GuardConfig(signer=signer)
+
+# Verify offline with only the public key
+verifier = PramanixVerifier.from_public_pem(public_pem)
+verifier.verify(decision)   # raises InvalidSignatureError if tampered
+```
+
+- Uses Ed25519 (64-byte signature per decision)
+- `decision_hash`: SHA-256 over canonical JSON of all decision fields (sorted keys, `orjson` serialization)
+- Any modification to any field produces a completely different hash
+- `key_id`: first 16 hex characters of SHA-256 of the public PEM, stored in each decision for key rotation tracking
+- Verification requires only the public key -- no Pramanix SDK, no network connection
+
+### Merkle Audit Chain
+
+```python
+from pramanix.audit.merkle import MerkleAnchor, PersistentMerkleAnchor
+
+# Process-scoped (in-memory)
+anchor = MerkleAnchor()
+anchor.append(decision_1)
+anchor.append(decision_2)
+
+root_hash = anchor.root()   # SHA-256 Merkle root
+proof     = anchor.proof(1) # inclusion proof for decision at index 1
+
+# Persistent (cross-restart durability)
+anchor = PersistentMerkleAnchor(store=your_append_only_store)
+```
+
+- Rolling SHA-256 hash chain: each chain hash depends on the previous one
+- Any insertion, deletion, or modification of any decision breaks all subsequent chain hashes
+- Checkpoint Merkle root can be published to an immutable store (S3 + Object Lock, Azure Blob + Immutable Storage, blockchain timestamp)
+
+### Audit CLI
+
+```bash
+# Sign a decision
+pramanix sign-decision <decision_json_file>
+
+# Verify a signed token
+pramanix verify-proof <token>          # exits 0 (VALID) or 1 (INVALID)
+pramanix verify-proof <token> --json   # structured JSON output
+
+# Verify a full decision log offline
+pramanix audit verify decisions.jsonl --public-key public.pem
+# Output:
+# Verified 10000 decisions. 0 tampered. 100 checkpoints.
+# Final Merkle root: 09d082c0...
+```
+
+### Compliance Reporter
+
+```python
+from pramanix.helpers.compliance import classify_compliance_event
+
+category = classify_compliance_event(
+    violated_invariants=decision.violated_invariants,
+    intent_dump=decision.intent_dump,
+)
+# Returns: "CRITICAL_PREVENTION" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL"
+```
+
+---
+
+## Resilience
+
+### Adaptive Circuit Breaker
+
+```python
+from pramanix import AdaptiveCircuitBreaker, CircuitBreakerConfig
+
+breaker = AdaptiveCircuitBreaker(CircuitBreakerConfig(
+    namespace           = "banking_guard",
+    failure_threshold   = 5,    # OPEN after 5 consecutive failures
+    recovery_timeout_s  = 30,   # attempt HALF_OPEN after 30 seconds
+    half_open_max_calls = 3,    # 3 probe calls before returning to CLOSED
+))
+
+# State transitions:
+# CLOSED --(5 failures)--> OPEN --(30s)--> HALF_OPEN --(3 ok)--> CLOSED
+# OPEN or HALF_OPEN --(3 consecutive failure cycles)--> ISOLATED (manual reset required)
+
+with breaker:
+    decision = guard.verify(intent, state)
+
+breaker.reset()  # reset from ISOLATED state
+```
+
+### Fast-Path Evaluator
+
+Pre-Z3 semantic rules that block obvious violations before invoking the solver. Average fast-path decision: under 0.1 ms (no Z3 context creation).
+
+```python
+from pramanix.fast_path import SemanticFastPath
+
+GuardConfig(
+    fast_path_enabled = True,
+    fast_path_rules   = (
+        SemanticFastPath.negative_amount("amount"),           # amount < 0 --> BLOCK
+        SemanticFastPath.account_frozen("is_frozen"),         # is_frozen = True --> BLOCK
+        SemanticFastPath.zero_or_negative_balance("balance"), # balance <= 0 --> BLOCK
+    ),
+)
+```
+
+- Fast-path BLOCK is still a `Decision(allowed=False)` -- the fail-safe contract is unchanged
+- Fast-path results are a performance optimization, not a formal proof
+- When in doubt, disable `fast_path_enabled` and rely on Z3 alone
+
+### Load Shedding
+
+```python
+GuardConfig(
+    shed_worker_pct           = 90.0,   # shed when pool utilisation > 90%
+    shed_latency_threshold_ms = 200.0,  # shed when rolling P99 > 200ms
+)
+```
+
+- Shed decisions return `Decision.rate_limited(status=RATE_LIMITED)`
+- Fail-safe contract holds: shed decisions are `allowed=False`
 
 ---
 
@@ -901,16 +924,15 @@ callback = PramanixToolCallback.wrap(BankingPolicy)
 ### Prometheus Metrics
 
 ```
-pramanix_decisions_total{policy, status}           counter   — all decisions by outcome
-pramanix_decision_latency_seconds{policy}          histogram — full verify() latency
-pramanix_solver_timeouts_total{policy}             counter   — Z3 timeout events
-pramanix_validation_failures_total{policy}         counter   — Pydantic rejection events
-pramanix_circuit_breaker_state{namespace, state}   gauge     — breaker state
-pramanix_circuit_breaker_pressure_total{namespace} counter   — shed/timeout pressure
+pramanix_decisions_total{policy, status}           counter   -- all decisions by outcome
+pramanix_decision_latency_seconds{policy}          histogram -- full verify() latency
+pramanix_solver_timeouts_total{policy}             counter   -- Z3 timeout events
+pramanix_validation_failures_total{policy}         counter   -- Pydantic rejection events
+pramanix_circuit_breaker_state{namespace, state}   gauge     -- breaker state
+pramanix_circuit_breaker_pressure_total{namespace} counter   -- shed/timeout pressure
 ```
 
-Enable: `GuardConfig(metrics_enabled=True)` and expose `/metrics` via
-`prometheus_client.start_http_server(8001)`.
+Enable: `GuardConfig(metrics_enabled=True)` and expose `/metrics` via `prometheus_client.start_http_server(8001)`.
 
 ### OpenTelemetry
 
@@ -920,7 +942,7 @@ GuardConfig(otel_enabled=True)
 # Compatible with OTLP collectors (Jaeger, Tempo, Honeycomb, Datadog)
 ```
 
-### Structured JSON Logging
+### Structured JSON Logs
 
 Every decision emits a structlog JSON line:
 
@@ -944,274 +966,196 @@ Every decision emits a structlog JSON line:
 ### Docker
 
 ```dockerfile
-# Alpine is BANNED — z3-solver has musl compatibility issues
+# Alpine is NOT supported
+# z3-solver is compiled against glibc; musl causes segfaults and 3-10x performance degradation
 FROM python:3.13-slim
 
 WORKDIR /app
 COPY pyproject.toml .
-# Wheel install — never use pip install -e . in production
 RUN pip install --no-cache-dir '.[fastapi,otel,identity,audit]'
 
 COPY src/ src/
-CMD ["uvicorn", "myapp:app", "--host", "0.0.0.0", "--port", "8000", \
-     "--workers", "4"]
+CMD ["uvicorn", "myapp:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
 ```
 
 ### Environment Variables
 
 ```bash
+# Execution
 PRAMANIX_EXECUTION_MODE=async-process
-PRAMANIX_SOLVER_TIMEOUT_MS=100
-PRAMANIX_SOLVER_RLIMIT=500000
 PRAMANIX_MAX_WORKERS=8
 PRAMANIX_MAX_DECISIONS_PER_WORKER=10000
+
+# Solver
+PRAMANIX_SOLVER_TIMEOUT_MS=100
+PRAMANIX_SOLVER_RLIMIT=10000000
+
+# Input safety
+PRAMANIX_MAX_INPUT_BYTES=65536
+PRAMANIX_MIN_RESPONSE_MS=50.0
+PRAMANIX_REDACT_VIOLATIONS=true
+
+# Observability
 PRAMANIX_METRICS_ENABLED=true
 PRAMANIX_OTEL_ENABLED=true
 PRAMANIX_LOG_LEVEL=INFO
+
+# Identity (if using zero-trust identity)
 PRAMANIX_JWT_SECRET=your-32-char-minimum-secret
 PRAMANIX_INTENT_CACHE_REDIS_URL=redis://redis:6379
+
+# Audit signing (if using Ed25519 signing)
+PRAMANIX_SIGNING_KEY_PEM=<contents of private key PEM>
 ```
 
 ### Graceful Shutdown
 
 ```python
-# Always call on application exit — releases worker pool and drains pending work
+# Call on application exit -- drains the worker pool and releases pending work
 await guard.shutdown()
 ```
 
 ---
 
-## Known Limitations
-
-**TOCTOU:** Pramanix verifies state at the moment `verify()` is called, not at
-execution time. In concurrent systems, two requests can both pass verification
-and then both execute against the same shared resource. Compose with optimistic
-locking or transactional commit protocols at the execution layer.
-
-**Z3 encoding scope:** Z3 verifies that submitted values satisfy your declared
-constraints. It does not verify that state was accurately fetched, that the
-intent dict matches what the executor will actually do, or that your invariants
-fully capture your safety requirements. Invariants should be reviewed by domain
-experts.
-
-**Z3 native crashes (sync / async-thread):** Python's `except Exception` cannot
-catch a Z3 C++ segfault (SIGABRT/SIGSEGV). In `async-process` mode, worker
-process death surfaces correctly as a fail-safe BLOCK. Use `async-process` in
-production for process-level isolation.
-
-**Z3 string theory:** The `String` sort uses Z3 sequence theory, which is
-decidable but slower than arithmetic sorts. For string-heavy policies, prefer
-`is_in()` membership checks and tune `solver_timeout_ms` accordingly.
-
-**Merkle persistence:** `MerkleAnchor` is process-scoped. Export `root_hash` to
-an append-only store at every checkpoint for cross-restart durability.
-
-**Phase 1 injection:** When `parse_and_verify()` is used, the LLM extraction
-layer processes untrusted text. The injection confidence threshold (≥ 0.5 →
-`InjectionBlockedError`) is currently hardcoded. Phase 2 (Z3) is the binding
-safety guarantee regardless of Phase 1 outcome.
-
-**Ollama / small models:** `llama3.2:1b` (1B parameters) cannot reliably perform
-structured intent extraction — it echoes the schema instead of filling it in.
-Use `llama3.2` (3B, Q4_K_M) or larger. `temperature=0.0` is set by default for
-deterministic extraction.
-
----
-
 ## Benchmarks
 
-All numbers measured on this machine:
-**Windows 11 / Python 3.13.7 / z3-solver 4.16.0 / single process**
+All numbers measured on: **Windows 11 / Python 3.13.7 / z3-solver 4.16.0**
 
-### Latency — 5-Invariant Policy (2,000 decisions, warm cache)
+No mocks, no sampling. Reproduce locally with the commands below.
 
-Policy: `BenchmarkPolicy` (5 invariants: balance, frozen, daily limit, risk
-score, positive amount). Measured via `python benchmarks/latency_benchmark.py --n 2000`.
+### Latency: 5-Invariant Policy (2,000 decisions, warm cache)
 
-| Metric | Target | Measured (real) |
-|--------|--------|----------------|
-| P50 latency | < 6 ms | **5.235 ms** ✅ |
-| P95 latency | < 10 ms | **6.361 ms** ✅ |
-| P99 latency | < 15 ms | **7.109 ms** ✅ |
-| Mean latency | — | **5.336 ms** |
+Policy: `BenchmarkPolicy` (5 invariants: balance, frozen flag, daily limit, risk score, positive amount).
 
-> Note: These numbers include structlog JSON serialisation overhead (one JSON
-> line emitted per decision). Raw `guard.verify()` on a 1-invariant policy
-> in a tight loop averages **0.033 ms / decision** — see throughput below.
+```bash
+python benchmarks/latency_benchmark.py --n 2000
+```
 
-> **Note on the latency gap:** The 1M-decision numbers below (P50 = 11.283 ms,
-> P99 = 30.538 ms) are higher than the 2,000-decision burst above (P50 = 5.235 ms,
-> P99 = 7.109 ms). The difference is expected: the 2,000-decision run is a
-> short warm-cache burst; the 1M run is 3.4 hours of sustained single-threaded
-> load where cumulative GC pressure and Windows OS scheduling variance inflate
-> the tail.
+| Metric | Target | Measured |
+|--------|--------|----------|
+| P50 latency | < 6 ms | **5.235 ms** |
+| P95 latency | < 10 ms | **6.361 ms** |
+| P99 latency | < 15 ms | **7.109 ms** |
+| Mean latency | -- | **5.336 ms** |
 
-## 🛡️ Sovereign Architecture: The 1-Million Decision Memory Proof
+These numbers include structlog JSON serialization overhead (one JSON line per decision).
 
-Before scaling to a multi-core, high-throughput cluster, Pramanix was subjected
-to a grueling **Single-Threaded Baseline Stress Test**. The goal: prove that
-the C++ Z3 SMT solver, wrapped in Python, achieves a perfect GC equilibrium
-with zero memory leaks under sustained, single-core torture.
+### Memory Stability: 1,000,000 Decisions (Single Thread, ~3.4 Hours)
 
-**The Methodology:**
+```bash
+python benchmarks/1m_decisions_full_audit.py
+```
 
-- **Test:** 1,000,000 real `Guard.verify()` calls, each running a live Z3 SMT solve.
-- **Environment:** Single-threaded execution on one CPU core — forcing the Python GC
-  to manage the native Z3 heap synchronously, with no parallelism to hide leaks.
-- **Instrumentation:** 1 Hz RSS sampling (12,298 samples), per-second spike detection,
-  GC cycle tracking across all three CPython generations.
-- **Duration:** ~3.4 hours continuous execution.
-- **Platform:** Windows 11 / Python 3.13.7 / z3-solver 4.16.0
+| Metric | Result |
+|--------|--------|
+| Total decisions | 1,000,000 |
+| Total wall time | 12,298.48 s (~3.4 hours) |
+| Peak throughput (100K mark) | 152 decisions/sec |
+| Sustained throughput (average) | 81 decisions/sec |
+| Baseline memory | 57.617 MiB |
+| Final memory | 60.422 MiB |
+| Net memory growth | **+2.80 MiB** |
+| GC gen0 cycles | 6 |
+| GC gen1 / gen2 | 0 / 0 |
+| Cumulative P50 latency | 11.283 ms |
+| Cumulative P99 latency | 30.538 ms |
 
-> All numbers are real. Measured via `python benchmarks/1m_decisions_full_audit.py`.
-> No mocks, no sampling, no cherry-picking.
+This is a single-threaded run -- one CPU core, no parallelism. The goal is to verify that the engine does not accumulate memory over time. The +2.80 MiB net growth over 1M decisions confirms that per-call `del ctx` (destroying the Z3 Context after each decision) is working correctly at the C++ level.
 
-### Live Terminal Output (actual run)
+The final 100K sliding-window P99 was 110.205 ms, reflecting end-of-run GC pressure after 3.4 hours on a single core. This is OS scheduler jitter, not Z3 degradation. The cumulative figure (30.538 ms) covers all 1M decisions and is the relevant performance number.
 
-![1M Decisions — live terminal output](public/1M%20descisions%20ran%20on%20a%20single%20CPU%20thread.jpeg)
-
-### 📊 Audit Results: PASS
-
-| Metric | Result | Auditor Takeaway |
-| :--- | :--- | :--- |
-| **Total Decisions** | 1,000,000 | Statistically significant sample size. |
-| **Total Wall Time** | 12,298.48 s (~3.4 hrs) | Single core, no parallelism. |
-| **Peak Throughput (100K mark)** | 152 decisions / sec | Post-JIT-warmup peak before GC pressure builds. |
-| **Sustained Throughput (avg)** | 81 decisions / sec | Settled rate over the full 3.4h single-core run. |
-| **Baseline Memory** | 57.617 MiB | Standard initialization footprint. |
-| **Final Memory** | 60.422 MiB | Engine achieved perfect memory equilibrium. |
-| **Peak Memory** | 80.395 MiB | Windows page-file activity — not heap growth. |
-| **Net Memory Growth** | **+2.80 MiB** | **Definitively leak-free over 1M decisions.** |
-| **RSS Spike Events** | 10,345 ⚠️ ² | Bidirectional GC oscillation — not monotonic growth. |
-| **P50 Latency** | 11.283 ms | Steady-state evaluation speed. |
-| **P99 Latency (cumulative)** | 30.538 ms ¹ | Aggregate over all 1M decisions. |
-| **P99 Latency (final window)** | 110.205 ms | Last 100K decisions; end-of-run GC pressure. |
-| **GC gen0 cycles** | 6 | Near-zero garbage — explicit `del ctx` after every call. |
-| **GC gen1 / gen2** | 0 / 0 | No long-lived objects accumulate. |
-
-> ¹ **Cumulative P99 across all 1,000,000 decisions.** The final 100K sliding
-> window P99 was 110.205 ms, reflecting end-of-run GC pressure on a sustained
-> 3.4-hour single-threaded workload. The cumulative figure is the statistically
-> correct aggregate; the window figure shows the worst sustained segment of the
-> run. Both are reported verbatim in
-> `benchmarks/results/1m_audit_checkpoints.json`.
-
-> ² **Spike criterion flagged: 10,345 events exceeded the ±1 MiB per-second
-> threshold.** All events are bidirectional (matched alloc → release within
-> the same or next 1 Hz sample), non-monotonic, and consistent with CPython
-> gen0 GC cycling and Windows memory-manager page reclassification. No
-> monotonic growth pattern was observed — net RSS growth of +2.80 MiB over
-> the full 3.4-hour run confirms the absence of a real leak. The spike flag
-> is an instrumentation artefact of 1 Hz sampling on Windows, not a Z3
-> memory defect.
-
-### Latency Distribution (1,000,000 decisions, fully sorted)
+**Latency distribution (1,000,000 decisions):**
 
 | Percentile | Measured |
-| :--- | :--- |
+|:-----------|:---------|
 | Min | 4.454 ms |
-| **P50** | **11.283 ms** |
+| P50 | 11.283 ms |
 | P95 | 20.145 ms |
-| **P99** | **30.538 ms** ✅ (cumulative) |
+| P99 | 30.538 ms (cumulative) |
 | P99.9 | 153.848 ms |
 | P99.99 | 270.578 ms |
 | Max | 1,565.746 ms |
 | Mean ± StdDev | 12.287 ms ± 10.033 ms |
 
-> The long tail (P99.9+) is Windows OS scheduler jitter across a 3.4-hour
-> single-threaded run — not Z3 pathology. P99 stays firmly under 100 ms.
+The P99.9 tail is Windows OS scheduler jitter across a 3.4-hour single-threaded run, not Z3 pathology.
 
-> ¹ See footnote above.
+### Memory Charts
 
-### 📈 Visualisations
-
-**RSS Memory — 1 Hz sampling across the full 3.4-hour run**
+**RSS over time (1 Hz sampling, 3.4 hours)**
 
 ![RSS Memory Timeline](public/1m_rss_timeline.png)
 
-> Baseline (green dashed) and final (yellow dashed) lines show net growth of
-> only +2.80 MiB. The noisy oscillation is Windows page-file reclassification —
-> the net trend is flat, confirming zero Z3 heap accumulation.
+Baseline (green dashed) and final (yellow dashed) lines show net growth of +2.80 MiB. The oscillation is Windows page-file reclassification, not heap growth.
 
----
+**Latency percentiles at each 100K checkpoint**
 
-**Latency Percentiles — window stats at each 100K checkpoint**
+![Latency Percentiles](public/1m_latency_percentiles.png)
 
-![Latency Percentiles across Checkpoints](public/1m_latency_percentiles.png)
-
-> P50 (green) stays stable throughout. P99 (red) holds well under the 100 ms
-> target through the first 800K decisions, then **breaches to ~118 ms at the
-> 900K checkpoint and ~110 ms at the 1M checkpoint** — visible in the chart.
-> This is not Z3 degradation: it matches the OS scheduler jitter pattern seen
-> in the final segment of the 3.4h run. The **cumulative P99 across all 1M
-> decisions is 30.538 ms**, because 800K decisions contribute a much larger
-> weight than the final 200K noisy segment. Both figures are real; the chart
-> shows why they differ.
-
----
-
-**Throughput — RPS at each 100K checkpoint**
+**Throughput at each 100K checkpoint**
 
 ![RPS Progression](public/1m_rps_progression.png)
 
-> Initial warm-up delivers ~152 RPS as Z3's JIT stabilises, settling to a
-> steady-state of ~81–92 RPS for the remainder of the run on a single core.
-
----
-
-**Full Latency Distribution — log scale (Min → P99.99 → Max)**
+**Full latency distribution (log scale)**
 
 ![Latency Distribution](public/1m_latency_distribution.png)
 
-> Log scale reveals the full picture: Min–P99 stay green/yellow (under 100 ms).
-> The tail beyond P99.9 is OS jitter, not solver regression.
-
----
-
-**Python GC Cycles — before vs after 1M decisions**
+**GC cycles before vs after 1M decisions**
 
 ![GC Cycles](public/1m_gc_cycles.png)
 
-> Only **6 gen0 GC cycles** fired across 1,000,000 decisions. gen1 and gen2
-> show zero delta. Explicit `del ctx` after every call means Python's collector
-> sees near-zero garbage — the engine cleans up after itself at the C++ level.
+Only 6 gen0 GC cycles fired across 1,000,000 decisions. gen1 and gen2 show zero delta.
 
----
+### Multi-Worker Finance Benchmark (3 Workers)
 
-### Architectural Conclusion
+```bash
+python benchmarks/fast_benchmark_worker.py  # finance domain, 1002 decisions, 3 workers
+```
 
-The Pramanix engine is **mathematically proven to be memory-safe at scale**.
-The engine natively destroys and reclaims the C++ `z3.Context` after every
-single decision — no state-bleed, no memory fragmentation, no accumulation.
+| Metric | Result |
+|--------|--------|
+| Decisions | 1,002 |
+| Workers | 3 |
+| Elapsed | 4.1 s |
+| Throughput | **247 RPS** |
+| Allow / Block | 704 / 298 |
+| Timeouts | 0 |
+| Errors | 0 |
+| Average P99 | 45.637 ms |
+| Max P99 | 54.467 ms |
+| Max worker RSS growth | +1.37 MiB |
 
-With the single-core baseline proven, the system is cleared for deployment
-via the `async-process` multi-worker architecture to achieve enterprise-grade
-throughput. RPS scales **linearly with CPU cores** — on an 8-core machine,
-expect ~648 decisions / sec sustained; on a 32-core cluster node, ~2,592 / sec —
-all with the same memory stability guarantee proven here.
-
-### Z3 Resource Limits — Proof
+### Z3 Resource Limit Verification
 
 ```python
-# rlimit=1 exhausts Z3's budget on ANY formula — real kill, not a mock
+# rlimit=1 exhausts Z3's budget on any formula -- real kill, not a mock
 solve(invariants, values, timeout_ms=5000, rlimit=1)
-# → SolverTimeoutError: Z3 timeout on invariant '<all-invariants>'
-# This is a real Z3 resource counter, verified in test_solver.py
+# --> SolverTimeoutError: Z3 timeout on invariant '<all-invariants>'
 ```
+
+Verified in `tests/unit/test_solver.py::TestSolveTimeout`. This is a real Z3 resource counter, not a monkeypatched timeout.
+
+### Scaling Projection (from single-core baseline)
+
+RPS scales linearly with isolated worker processes:
+- 1 core: ~81 RPS (single-thread baseline)
+- 8 cores: ~648 RPS (projected)
+- 32 cores: ~2,592 RPS (projected)
+
+These are projections based on the single-core measurement. Actual multi-core throughput depends on OS scheduling and IPC overhead.
 
 ### Reproduce Locally
 
 ```bash
-# Latency benchmark
+# 2,000-decision latency benchmark
 python benchmarks/latency_benchmark.py --n 2000
 
-# 1M decision full audit (RSS + latency + GC, ~3.4h on Windows)
+# 1M-decision memory audit (~3.4 hours on Windows)
 python benchmarks/1m_decisions_full_audit.py
 
-# Automated memory stability assertion
+# Memory stability assertion (automated, asserts net growth < 50 MiB)
 pytest tests/perf/test_memory_stability.py::test_memory_stability_1m_decisions -v
 
-# Z3 rlimit kill
+# Z3 rlimit kill test
 pytest tests/unit/test_solver.py::TestSolveTimeout -v
 ```
 
@@ -1219,64 +1163,63 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 ## Test Suite
 
-**1,821 tests passing, 1 skipped, 0 failures.**
-**Coverage: 96.55%** (threshold: 95%)
+**1,821 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
 
-Measured: `pytest --ignore=tests/perf` — excludes the 1M-decision perf test
-which takes ~15 minutes. Full suite including perf: **1,817 passed**.
+Measured with `pytest --ignore=tests/perf`. The 1M-decision perf test runs separately (it takes ~15 minutes).
 
-### Test Distribution
+### Distribution
 
 | Suite | Tests | Files | What it covers |
-|-------|-------|-------|---------------|
+|-------|-------|-------|----------------|
 | Unit | 1,486 | 39 | All modules, every public method, edge cases, DSL correctness |
-| Integration | 173 | 10 | Full verify() pipeline, all 3 execution modes, JWT+Redis zero-trust |
+| Integration | 173 | 10 | Full verify() pipeline, all 3 execution modes, JWT + Redis zero-trust |
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
-| Property | 11 | 2 | Hypothesis-based serialisation round-trips, fintech invariant properties |
+| Property | 11 | 2 | Hypothesis-based serialization round-trips, fintech invariant properties |
 | Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS |
 
 ### Coverage by Module
 
 | Module | Coverage | Notes |
 |--------|----------|-------|
-| `solver.py` | **100%** | Two-phase Z3 logic, rlimit, attribution |
-| `expressions.py` | **100%** | Full DSL operator coverage |
-| `transpiler.py` | **100%** | All Z3 sort conversions |
-| `policy.py` | **100%** | Validation, field registry |
-| `decision.py` | **100%** | All factory methods, JSON safety |
-| `fast_path.py` | **100%** | All semantic rule evaluators |
-| `decorator.py` | **100%** | `@guard` decorator |
-| `identity/linker.py` | **100%** | JWT verify, expiry, tamper detection |
-| `translator/ollama.py` | **100%** | Real TCP tests + live llama3.2 |
-| `guard.py` | **97%** | Async-process HMAC path partially covered |
-| `worker.py` | **96%** | Async-process submit path partially covered |
-| `circuit_breaker.py` | **91%** | ISOLATED state transitions |
-| `cli.py` | **82%** | CLI UI paths (timestamp edge cases) |
+| `solver.py` | 100% | Two-phase Z3 logic, rlimit, violation attribution |
+| `expressions.py` | 100% | Full DSL operator coverage |
+| `transpiler.py` | 100% | All Z3 sort conversions |
+| `policy.py` | 100% | Validation, field registry |
+| `decision.py` | 100% | All factory methods, JSON safety |
+| `fast_path.py` | 100% | All semantic rule evaluators |
+| `decorator.py` | 100% | @guard decorator |
+| `identity/linker.py` | 100% | JWT verify, expiry, tamper detection |
+| `translator/ollama.py` | 100% | Real TCP tests against live llama3.2 |
+| `guard.py` | 97% | Async-process HMAC path partially covered |
+| `worker.py` | 96% | Async-process submit path partially covered |
+| `circuit_breaker.py` | 91% | ISOLATED state transitions |
+| `cli.py` | 82% | CLI UI paths |
 
-### Real Test Examples — No Mocks
+### No Mocks Policy
+
+Tests use real resources wherever possible:
 
 ```python
-# From test_solver.py — real Z3 rlimit, not a monkeypatch
+# Real Z3 rlimit -- not a monkeypatch
 def test_fast_path_timeout_propagates(self) -> None:
     with pytest.raises(SolverTimeoutError) as exc_info:
         solve(INVARIANTS, _BASE, timeout_ms=5000, rlimit=1)
     assert exc_info.value.label == "<all-invariants>"
 
-# From test_translator_ollama.py — real TCP to localhost:11434
-@_needs_ollama  # skips if Ollama not running
+# Real TCP connection to localhost:11434
+@_needs_ollama  # skips if Ollama is not running
 async def test_extract_transfer_intent(self) -> None:
-    t = OllamaTranslator()  # hits real llama3.2 at localhost:11434
+    t = OllamaTranslator()
     result = await t.extract("Transfer 250 dollars to account acc_789", _TransferIntent)
     assert "amount" in result and "recipient" in result
 
-# From test_zero_trust_identity.py — real Redis (testcontainers)
+# Real Redis via testcontainers
 async def test_caller_cannot_inject_own_state(self, redis_client):
     await redis_client.set("pramanix:state:alice", json.dumps({"balance": "100"}))
-    # Caller sends {"balance": "999999"} in body — must be IGNORED
     claims, state = await linker.extract_and_load(_Request())
-    assert str(state["balance"]) == "100"  # Redis value, not caller's
+    assert str(state["balance"]) == "100"  # Redis value, not the "999999" from request body
 
-# From test_worker_dark_paths.py — real psutil process kill verification
+# Real psutil process kill verification
 def test_alive_process_is_killed(self) -> None:
     executor = ProcessPoolExecutor(max_workers=1)
     executor.submit(_sleeper)
@@ -1285,42 +1228,64 @@ def test_alive_process_is_killed(self) -> None:
     _force_kill_processes(executor)
     time.sleep(0.5)
     for pid in alive_pids:
-        _assert_pid_dead(pid)  # psutil.Process(pid) → NoSuchProcess or STATUS_ZOMBIE
+        _assert_pid_dead(pid)
 ```
+
+---
+
+## Known Limitations
+
+**TOCTOU (Time-of-Check vs Time-of-Use):**
+Pramanix verifies state at the moment `verify()` is called, not at execution time. In concurrent systems, two requests can both pass verification and then both execute against the same shared resource. Mitigate this with optimistic locking or transactional commit at the execution layer. The `ExecutionToken` (one-time-use HMAC token) reduces the window but does not eliminate the TOCTOU gap if execution is not atomic.
+
+**Z3 encoding scope:**
+Z3 verifies that the submitted values satisfy your declared constraints. It does not verify that state was accurately fetched from your database, that the intent dict matches what the executor will actually do, or that your invariants fully capture your safety requirements. Invariants should be reviewed by domain experts before deployment in regulated environments.
+
+**Z3 native crashes in sync and async-thread modes:**
+Python's `except Exception` cannot catch a Z3 C++ segfault (SIGABRT/SIGSEGV). In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK and the host process is unaffected. Use `async-process` in production.
+
+**Z3 string theory performance:**
+The `String` sort uses Z3 sequence theory, which is decidable but slower than arithmetic sorts. For string-heavy policies, prefer integer-encoded enumerations and `.is_in()` membership checks. Tune `solver_timeout_ms` accordingly if string constraints are necessary.
+
+**Merkle anchor persistence:**
+`MerkleAnchor` is process-scoped. Export `root_hash` to an append-only store at every checkpoint for cross-restart durability. Individual Ed25519-signed decision records remain independently verifiable without the chain.
+
+**Phase 1 injection threshold:**
+When `parse_and_verify()` is used, the injection confidence threshold (score >= 0.5 triggers `InjectionBlockedError`) is currently hardcoded. Phase 2 (Z3) is the binding safety guarantee regardless of Phase 1 outcome.
+
+**Small LLM models:**
+`llama3.2:1b` (1 billion parameters) cannot reliably perform structured intent extraction -- it echoes the schema instead of filling it in. Use `llama3.2` (3B) or larger.
 
 ---
 
 ## Project Status
 
-**v0.8.0** — Production-ready core. 53 source files, 2,982 statements, 96.55% covered.
+**v0.8.0 -- 53 source files, 2,982 statements, 96.55% covered.**
 
 | Milestone | Status |
 |-----------|--------|
-| v0.1 Core SDK — Policy DSL, Z3 solver, sync verify | ✅ |
-| v0.2 Async modes — thread/process pools, worker recycling | ✅ |
-| v0.3 Hardening — ContextVar isolation, HMAC IPC, OTel, Hypothesis | ✅ |
-| v0.4 Translator — dual-LLM consensus, 6-layer injection defence | ✅ |
-| v0.5 CI/CD — SLSA provenance, Sigstore, SBOM, hardened Docker | ✅ |
-| v0.6 Primitives — 35 domain primitives (finance, AML, RBAC, infra, healthcare, time) | ✅ |
-| v0.7 Performance — expression cache, load shedding, benchmarks | ✅ |
-| v0.8 Audit — Ed25519 signing, Merkle chain, compliance reporter, audit CLI, zero-trust identity, execution tokens | ✅ |
-| v0.9 Docs site, policy registry, extended benchmark suite | 📋 |
-| v1.0 GA — chaos testing, RC deployment, API contract lock | 📋 |
+| v0.1: Core SDK -- Policy DSL, Z3 solver, sync verify() | Done |
+| v0.2: Async modes -- thread and process pools, worker recycling | Done |
+| v0.3: Hardening -- ContextVar isolation, HMAC IPC, OTel, Hypothesis | Done |
+| v0.4: Translator -- dual-LLM consensus, 6-layer injection defense | Done |
+| v0.5: CI/CD -- SLSA provenance, Sigstore, SBOM, hardened Docker | Done |
+| v0.6: Primitives -- 38 domain primitives (finance, AML, RBAC, infra, healthcare, time) | Done |
+| v0.7: Performance -- expression cache, load shedding, benchmarks | Done |
+| v0.8: Audit -- Ed25519 signing, Merkle chain, compliance reporter, audit CLI, zero-trust identity, execution tokens | Done |
+| v0.9: Documentation suite, policy registry, extended benchmark suite | In progress |
+| v1.0 GA: Chaos testing, RC deployment, API contract lock | Planned |
 
 ---
 
 ## Supply Chain
 
-Every release ships with GitHub-attested provenance (Sigstore OIDC), SBOM, and
-Sigstore signatures. Verify:
+Every release ships with GitHub-attested provenance (Sigstore OIDC), an SBOM, and Sigstore signatures.
 
 ```bash
 gh attestation verify --owner virajjain dist/pramanix-*.whl
 ```
 
-> **Provenance level:** Current pipeline satisfies SLSA Level 2 (hosted build,
-> signed provenance). SLSA Level 3 (hermetic/reproducible build) is on the roadmap
-> for v1.0 GA.
+Current pipeline satisfies SLSA Level 2 (hosted build, signed provenance). SLSA Level 3 (hermetic/reproducible build) is on the roadmap for v1.0 GA.
 
 ---
 
@@ -1328,32 +1293,54 @@ gh attestation verify --owner virajjain dist/pramanix-*.whl
 
 | Capability | Pramanix | LangChain Guards | Guardrails AI | LLM-as-Judge | OpenPolicy Agent |
 |------------|:--------:|:----------------:|:-------------:|:------------:|:----------------:|
-| Constraint satisfaction proof (SMT) | ✅ | ❌ | ❌ | ❌ | ✅ (Rego) |
-| Per-invariant counterexample | ✅ | ❌ | ❌ | ❌ | Partial |
-| Complete violation attribution | ✅ | ❌ | ❌ | ❌ | Partial |
-| Fail-safe: every error = BLOCK | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Natural language → verified action | ✅ | ✅ | ✅ | ✅ | ❌ |
-| LLM not required for verification | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Cryptographic audit trail | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Merkle chain + HMAC signing | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Adaptive circuit breaker | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Adaptive load shedding | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Process-level worker isolation | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Zero-trust identity (JWT + Redis) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| One-time execution tokens | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Python policy DSL (no new language) | ✅ | ❌ | ✅ | ❌ | ❌ (Rego) |
-| RSS-stable at 1M decisions | ✅ (+2.80 MiB growth) | Unknown | Unknown | N/A | ✅ |
+| Constraint satisfaction proof (SMT) | Yes | No | No | No | Yes (Rego) |
+| Per-invariant counterexample | Yes | No | No | No | Partial |
+| Complete violation attribution | Yes | No | No | No | Partial |
+| Fail-safe: every error returns BLOCK | Yes | No | No | No | Yes |
+| Natural language to verified action | Yes | Yes | Yes | Yes | No |
+| LLM not required for verification | Yes | No | No | No | Yes |
+| Cryptographic audit trail (Ed25519) | Yes | No | No | No | No |
+| Merkle chain + HMAC IPC sealing | Yes | No | No | No | No |
+| Adaptive circuit breaker | Yes | No | No | No | No |
+| Adaptive load shedding | Yes | No | No | No | No |
+| Process-level worker isolation | Yes | No | No | No | Yes |
+| Zero-trust identity (JWT + Redis) | Yes | No | No | No | No |
+| One-time execution tokens | Yes | No | No | No | No |
+| Python policy DSL (no new language) | Yes | No | Yes | No | No (Rego) |
+| RSS-stable at 1M decisions | +2.80 MiB | Unknown | Unknown | N/A | Yes |
+
+Notes on comparison accuracy:
+- OPA (Open Policy Agent) uses the Rego language. Pramanix uses Python. Both produce deterministic enforcement.
+- LangChain Guards and Guardrails AI use classifiers or validators, not formal SMT proofs. They may produce ALLOW with non-zero false-positive rates.
+- "LLM-as-Judge" refers to patterns where an LLM model itself decides safety. Pramanix can use an LLM for intent extraction (Phase 1) but not for safety decisions (Phase 2, which is always Z3).
+
+---
+
+## Documentation
+
+Full documentation is in the [`docs/`](docs/) directory:
+
+| File | Contents |
+|------|----------|
+| [`docs/architecture.md`](docs/architecture.md) | Pipeline internals, worker lifecycle, Z3 context isolation, TOCTOU/ExecutionToken flow |
+| [`docs/security.md`](docs/security.md) | Threat model (T01-T07), Phase 12 hardening (H01-H15), cryptographic audit trail, key management |
+| [`docs/performance.md`](docs/performance.md) | Benchmark methodology, per-stage latency budget, tuning guide |
+| [`docs/policy_authoring.md`](docs/policy_authoring.md) | DSL operator reference, 30 production rules, multi-policy composition patterns |
+| [`docs/primitives.md`](docs/primitives.md) | All 38 primitives with DSL formulas, SAT/UNSAT examples, regulatory citations |
+| [`docs/integrations.md`](docs/integrations.md) | FastAPI, LangChain, LlamaIndex, AutoGen -- full request pipeline for each |
+| [`docs/compliance.md`](docs/compliance.md) | HIPAA, BSA/AML, OFAC, SOC 2, PCI DSS, GDPR patterns with policy code |
+| [`docs/deployment.md`](docs/deployment.md) | Docker, Kubernetes, environment variables, health probes, upgrade runbook |
+| [`docs/why_smt_wins.md`](docs/why_smt_wins.md) | Why formal verification outperforms probabilistic classifiers at scale |
 
 ---
 
 ## License
 
-- **Community:** [AGPL-3.0](LICENSE) — free to use and modify; changes must be
-  open-sourced
-- **Enterprise:** Commercial license for closed-source deployments, SLA support,
-  and compliance packages
+- **Community:** [AGPL-3.0](LICENSE) -- free to use and modify. Changes to Pramanix source must be open-sourced under the same license.
+- **Enterprise:** Commercial license available for closed-source deployments, SLA-backed support, and compliance packages.
 
 ---
 
-*Built by Viraj Jain. Pramāṇa (प्रमाण) — "valid source of knowledge" or "proof."*
+*Built by Viraj Jain.*
+*Pramana (प्रमाण) -- "valid source of knowledge" or "proof" in Sanskrit.*
 *z3-solver 4.16.0 · pydantic 2.12.5 · Python 3.13.7*
