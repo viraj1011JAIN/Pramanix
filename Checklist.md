@@ -1199,126 +1199,320 @@ Additions injected during the Hardening Sprint to defeat memory-injection and Do
 
 ---
 
+# Pramanix — Phase 13 & 14 Updated Checklist
+
+> **Status as of v0.8.0:** Phases 0–12 complete.
+> **Current test suite:** 1,821 passing, 1 skipped, 0 failures. Coverage: 96.55%.
+> **Current primitives:** 38 (finance, fintech, healthcare, infra, rbac, time, common).
+> **Current benchmark:** 1M single-core run complete (+2.80 MiB, PASS). 500M multi-domain runs in progress.
+
+---
+
 ## PHASE 13 — PRE-RELEASE HARDENING (v0.9.x RC)
 
 > **Goal:** Production chaos before anyone else runs it in production. Every failure
-> mode exercised. No known issues remain. RC tag deployed to a real cloud environment.
+> mode exercised. 500M benchmark complete and published. No known issues remain.
+> RC tag deployed to a real cloud environment.
 
-### 13.1 — Chaos & Adversarial Load Testing
+---
+
+### 13.1 — 500M Sovereign Audit Completion
+
+The 500M audit (5 × 100M decisions across finance, banking, fintech, healthcare, infra)
+is the performance and memory-safety proof required before v1.0 GA. The multi-worker
+architecture (18 OS processes, zero IPC per decision) is calibrated at ~120 RPS/worker
+(2,177 aggregate RPS) on the development machine.
+
+- [ ] **Finance domain run** — 100M decisions, 18 workers, `100m_orchestrator_fast.py`
+  - [ ] `summary.json` shows `n_decisions ≥ 100,000,000`
+  - [ ] `n_error == 0`, `n_timeout == 0`
+  - [ ] `max_worker_rss_growth < 50 MiB`
+  - [ ] All 18 worker chain hashes intact
+  - [ ] Verdict: `PASS`
+- [ ] **Banking domain run** — same gates
+- [ ] **FinTech domain run** — same gates
+- [ ] **Healthcare domain run** — same gates
+- [ ] **Infra domain run** — same gates
+- [ ] **Merge audit** — run `benchmarks/100m_audit_merge.py`
+  - [ ] `500m_final_report.json` produced
+  - [ ] All 5 domains: PASS
+  - [ ] Total decisions across all domains: ≥ 500,000,000
+  - [ ] Aggregate Merkle roots published (one per worker per domain = 90 roots)
+
+**Investor-grade claim (publish only after all 5 domains PASS):**
+> "500 million production-grade Z3 SMT decisions across 5 high-risk domains
+> (finance, banking, fintech, healthcare, infra). 18 async workers per domain run.
+> Memory bounded at < 50 MiB net growth per worker across all runs.
+> Zero worker crashes, zero timeouts, zero errors.
+> Every decision cryptographically logged with rolling SHA-256 audit chain.
+> All 5 runs: PASS."
+
+- [ ] Update `docs/performance.md` — add 500M audit results section with real numbers
+- [ ] Update `README.md` — update benchmark table with actual multi-domain RPS and elapsed times
+- [ ] Update `PERFORMANCE_WHITEPAPER.md` — §2 latency budget updated with domain-specific P99s
+
+### 13.1 Gate
+
+- [ ] **GATE 0:** `benchmarks/100m_audit_merge.py` exits 0 — all 5 domains PASS
+- [ ] **GATE 0:** `500m_final_report.json` exists with `total_decisions ≥ 500_000_000`
+
+---
+
+### 13.2 — Chaos & Adversarial Load Testing
 
 - [ ] `tests/perf/test_chaos_recovery.py`:
   - [ ] Inject random worker crashes mid-solve → assert `Decision(allowed=False)` returned, worker recycled
-  - [ ] Inject Z3 timeout at max solver time → assert `TIMEOUT` status, P99 bounded
+  - [ ] Inject Z3 timeout at max solver time → assert `TIMEOUT` status, P99 bounded within 200ms gate
   - [ ] Inject Pydantic validation failure under concurrent load → assert no cross-request contamination
   - [ ] Inject LLM timeout (mock) under concurrent load → assert `EXTRACTION_FAILURE`, correct status
+  - [ ] Inject HMAC seal failure on IPC result → assert forged ALLOW is rejected → BLOCK
+  - [ ] Kill parent process mid-run → assert PPID watchdog fires `os._exit(0)` on all workers (H02)
 - [ ] `tests/perf/test_sustained_load.py`:
   - [ ] 200 RPS sustained for 120 seconds — assert 0 errors, 0 timeouts on healthy requests
   - [ ] 500 RPS sustained for 60 seconds — assert load shedding activates gracefully, no crashes
+  - [ ] Worker recycle fires mid-load — assert no request failures during recycle window
 - [ ] `tests/adversarial/test_full_pipeline_adversarial.py`:
-  - [ ] Full neuro-symbolic pipeline with adversarial inputs from all Phase 5 vectors
-  - [ ] All vectors → `Decision(allowed=False)` — no regression from Phase 5
+  - [ ] Full neuro-symbolic pipeline with adversarial inputs from all Phase 5 injection vectors
+  - [ ] All vectors → `Decision(allowed=False)` — zero regressions from Phase 5
+  - [ ] Adversarial suffix attack (Zou et al. pattern) → BLOCK at Z3 regardless of Phase 1 outcome
+  - [ ] Unicode homoglyph in recipient field → injection scorer flags → BLOCK before Z3
+  - [ ] Threshold probing (1,000 variations of same request) → deterministic result every time
 
-### 13.2 — RC Deployment to Cloud
+---
+
+### 13.3 — RC Deployment to Cloud
 
 - [ ] Deploy to a real cloud environment (AWS/GCP/Azure) using Phase 6 Kubernetes manifests
-- [ ] Push `v0.9.0-rc.1` tag → full release pipeline → publishes to Test PyPI
-- [ ] Install from Test PyPI in clean cloud VM → run all examples → all pass
-- [ ] Run `benchmarks/latency_benchmark.py` on cloud hardware — document actual numbers (may differ from CI)
-- [ ] `trivy image pramanix:0.9.0-rc.1` — 0 CRITICAL, 0 HIGH confirmed on published image
-- [ ] `pramanix audit verify` tested with 10,000 real Decision records from RC deployment
+  - [ ] `PRAMANIX_SOLVER_TIMEOUT_MS=150` confirmed in deployed ConfigMap (not the SDK default of 5000)
+  - [ ] Readiness probe: `initialDelaySeconds: 15` — no traffic before warmup completes
+  - [ ] Liveness probe threshold: `z3_timeout_rate > 0.05` (not 0.50)
+  - [ ] `trivy image pramanix:0.9.0-rc.1` — 0 CRITICAL, 0 HIGH confirmed on cloud image
+- [ ] Push `v0.9.0-rc.1` tag → full release pipeline triggers automatically
+  - [ ] SAST → Alpine-ban → Lint → Test → Coverage → License chain passes
+  - [ ] SBOM generated (CycloneDX JSON)
+  - [ ] Sigstore `cosign` signs the wheel
+  - [ ] Publishes to **Test PyPI** (not production PyPI)
+- [ ] Install from Test PyPI in a clean cloud VM:
 
-### 13.3 — API Contract Lock
+  ```bash
+  pip install --index-url https://test.pypi.org/simple/ pramanix==0.9.0rc1
+  python examples/banking_transfer.py   # SAT and UNSAT paths
+  pramanix audit verify decisions.jsonl --public-key public.pem
+  ```
 
-- [ ] Audit `src/pramanix/__init__.py` — exactly the exports that will be stable in v1.0
-- [ ] All internal modules prefixed with `_` or in `_internal/` — verified not exposed in `__all__`
-- [ ] Write `docs/api_stability.md` — which exports are stable, which are experimental
-- [ ] Confirm: `@guard` is the canonical decorator — no `@shield` alternative exists
-- [ ] No breaking changes permitted after this gate without major version bump
+  All pass with zero errors.
+- [ ] Run `benchmarks/latency_benchmark.py --n 2000` on cloud hardware — document actual numbers (cloud P99 may differ from Windows dev machine)
+- [ ] `pramanix audit verify` tested with ≥ 10,000 real Decision records from RC deployment
 
-### 13.4 — Final Coverage & Quality Gate
+---
+
+### 13.4 — API Contract Lock
+
+This is a one-way door. Once locked, no breaking changes without a major version bump.
+
+- [ ] Audit `src/pramanix/__init__.py` — confirm exactly the exports that will be stable in v1.0:
+  - `Guard`, `GuardConfig`, `Policy`, `Field`, `E`, `Decision`, `SolverStatus`
+  - `@guard` decorator (canonical — no `@shield` alternative)
+  - All 38 primitives via `pramanix.primitives.*`
+  - All exception types from `pramanix.exceptions`
+  - `PramanixSigner`, `PramanixVerifier` from `pramanix.crypto`
+  - `ExecutionToken`, `ExecutionTokenSigner`, `ExecutionTokenVerifier`
+  - `pramanix audit verify` CLI
+- [ ] All internal modules verified not exposed in `__all__`
+  - Internal modules use `_` prefix or live in `_internal/`
+  - No private API surface exposed in type stubs
+- [ ] Write `docs/api_stability.md`:
+  - Section: **Stable (locked at v1.0)** — the exports above, guaranteed until v2.0
+  - Section: **Experimental** — any integrations or helpers not yet locked
+  - Section: **Internal** — explicitly lists what is NOT part of the public API
+  - Section: **Deprecation policy** — how breaking changes will be communicated
+- [ ] Confirm `@guard` is the canonical decorator — verify no `@shield` alias exists anywhere
+- [ ] No breaking changes permitted after this gate without a major version bump
+
+---
+
+### 13.5 — Final Coverage & Quality Gate
+
+> **Note:** Several of these gates are already passed at v0.8.0 (1,821 tests, 96.55%
+> coverage). This step verifies nothing regressed during Phase 13 work.
 
 - [ ] Full test suite run: all unit + integration + property + adversarial + perf tests
-- [ ] Coverage: ≥ 95% branch coverage on `src/pramanix/`
+- [ ] Test count: ≥ 1,821 tests passing (the v0.8.0 baseline — no regression permitted)
+- [ ] Coverage: ≥ 95% branch coverage on `src/pramanix/` (currently 96.55% — must not regress)
+- [ ] All 38 primitives tested — coverage confirmed for each
 - [ ] `mypy --strict` — zero errors, zero `# type: ignore` without documented justification
 - [ ] `ruff check` — zero warnings
-- [ ] `bandit` — zero HIGH severity
-- [ ] `pip-audit` — zero known CVEs
-- [ ] All 25 primitives tested — coverage confirmed
-- [ ] Test count: ≥ 1,000 tests passing
+- [ ] `bandit -r src/pramanix/` — zero HIGH severity findings
+- [ ] `pip-audit` — zero known CVEs in production dependencies
+- [ ] `pytest tests/perf/test_chaos_recovery.py` — all chaos scenarios pass
+- [ ] `pytest tests/perf/test_sustained_load.py` — all load scenarios pass
+
+---
 
 ### Phase 13 Gate
 
-- [ ] **GATE 1:** `tests/perf/test_chaos_recovery.py` passes — all chaos scenarios produce `allowed=False`, no crashes
-- [ ] **GATE 2:** `v0.9.0-rc.1` installs from Test PyPI cleanly — banking example runs on clean cloud VM
+All six gates must pass before Phase 14 begins. No exceptions.
+
+- [ ] **GATE 0:** `500m_final_report.json` exists — all 5 domains PASS, total ≥ 500M decisions
+- [ ] **GATE 1:** `tests/perf/test_chaos_recovery.py` passes — all chaos scenarios produce `allowed=False`, no crashes, no cross-request contamination
+- [ ] **GATE 2:** `v0.9.0-rc.1` installs from Test PyPI cleanly on a cloud VM — banking example runs with zero errors
 - [ ] **GATE 3:** `trivy image pramanix:0.9.0-rc.1` → 0 CRITICAL, 0 HIGH
-- [ ] **GATE 4:** Full test suite ≥ 1,000 tests passing, coverage ≥ 95%
-- [ ] **GATE 5:** API contract locked — `docs/api_stability.md` written and reviewed
+- [ ] **GATE 4:** Full test suite ≥ 1,821 tests passing (no regression from v0.8.0 baseline), coverage ≥ 95%
+- [ ] **GATE 5:** `docs/api_stability.md` written and reviewed — API contract locked
 
 ---
 
 ## PHASE 14 — v1.0 GA RELEASE & PRODUCTION SHAKEDOWN (v1.0)
 
 > **Goal:** v1.0 is globally available, cryptographically signed, and running in
-> at least one real production workload. The feedback loop is established.
+> at least one real production workload. The 500M audit report is published.
+> The feedback loop is established.
+
+---
 
 ### 14.1 — v1.0 Release Execution
 
 - [ ] `pyproject.toml` version bumped to `1.0.0`
-- [ ] `src/pramanix/__init__.py __version__ = "1.0.0"`
-- [ ] CHANGELOG `[1.0.0]` section finalized with release date
-- [ ] Push `v1.0.0` git tag — release pipeline triggers automatically
-- [ ] Monitor pipeline: SAST → Build → SBOM → PyPI → Sigstore → GitHub Release
-- [ ] Verify: `pip install pramanix==1.0.0` succeeds globally (CDN propagation check after 5 minutes)
-- [ ] Verify: `pip install pramanix[all]==1.0.0` — all extras install without conflict
-- [ ] Verify: `from pramanix import Guard, Policy, Field, E, Decision` — zero import errors
-- [ ] Verify: `python examples/fintech_killshot.py` runs against installed package — not source
+- [ ] `src/pramanix/__init__.py` → `__version__ = "1.0.0"`
+- [ ] `CHANGELOG.md` `[1.0.0]` section finalized — move from `[Unreleased]`, add release date
+  - [ ] Include Phase 12 hardening measures (H01-H15)
+  - [ ] Include 500M audit result summary with links to full report
+  - [ ] Include API contract lock note
+- [ ] Push `v1.0.0` git tag — release pipeline triggers automatically:
+  - [ ] SAST → Alpine-ban → Lint → Test (1,821+) → Coverage (≥95%) → License chain
+  - [ ] SBOM generated (CycloneDX JSON format)
+  - [ ] Sigstore `cosign` signs the wheel and attaches SLSA Level 3 provenance
+  - [ ] Publishes to **production PyPI** (not Test PyPI)
+  - [ ] GitHub Release created with: wheel, SBOM, Sigstore bundle, release notes
+- [ ] Monitor pipeline — do not proceed until all jobs green
+- [ ] Verify CDN propagation (wait 5 minutes after publish):
+
+  ```bash
+  pip install pramanix==1.0.0
+  pip install 'pramanix[all]==1.0.0'
+  from pramanix import Guard, Policy, Field, E, Decision  # zero import errors
+  python examples/banking_transfer.py                      # runs against installed package
+  ```
+
+---
 
 ### 14.2 — Post-Release Smoke Tests
 
-- [ ] **Fresh Ubuntu VM:**
-  - [ ] `pip install pramanix==1.0.0` → run banking example → SAT and UNSAT paths verified
-  - [ ] `pramanix audit verify` CLI works on generated Decision log
-- [ ] **Fresh Docker:**
-  - [ ] `docker pull pramanix/pramanix:1.0.0` → container starts → health check returns 200
-  - [ ] Run integration test against containerized instance
-- [ ] **Import time:** `python -c "import time; t=time.time(); import pramanix; print(time.time()-t)"` < 500ms
-- [ ] **PyPI page:** README renders correctly, all links valid, classifiers accurate
+All tests run against the **installed package** (`pip install pramanix==1.0.0`), not the source tree.
 
-### 14.3 — Production Monitoring Setup
+- [ ] **Fresh Ubuntu 22.04 VM (AWS/GCP/Azure):**
+  - [ ] `pip install pramanix==1.0.0` → banking example → SAT and UNSAT paths verified
+  - [ ] `pramanix audit verify` CLI works on generated Decision log
+  - [ ] `pip install 'pramanix[all]==1.0.0'` — all extras install without dependency conflicts
+- [ ] **Fresh macOS (M-series):**
+  - [ ] `pip install pramanix==1.0.0` → banking example passes
+  - [ ] Confirm z3-solver wheel resolves correctly for arm64
+- [ ] **Fresh Docker (python:3.13-slim, NOT alpine):**
+  - [ ] `docker pull pramanix/pramanix:1.0.0` → container starts → `/health/ready` returns 200
+  - [ ] `docker run pramanix/pramanix:1.0.0 python examples/banking_transfer.py` — passes
+- [ ] **Import time check:**
+
+  ```bash
+  python -c "import time; t=time.time(); import pramanix; print(f'{(time.time()-t)*1000:.0f}ms')"
+  ```
+
+  Must be < 500ms on a warm Python interpreter.
+- [ ] **PyPI page audit:**
+  - [ ] README renders correctly (no broken badge links, no raw markdown artifacts)
+  - [ ] All links in long description are valid
+  - [ ] Classifiers accurate: `Development Status :: 5 - Production/Stable`
+  - [ ] Python version classifiers correct: 3.11, 3.12, 3.13
+
+---
+
+### 14.3 — 500M Audit Report Publication
+
+- [ ] `docs/500m_audit_report.md` written and committed:
+  - [ ] Per-domain table: domain | decisions | elapsed hours | agg RPS | max RSS/worker | avg P99 | verdict
+  - [ ] System configuration: hardware specs, Python version, z3-solver version, OS
+  - [ ] Architecture description: 18 OS processes, zero IPC per decision, payload cache, orjson serialization
+  - [ ] Merkle root table: all 90 chain anchors (18 workers × 5 domains)
+  - [ ] Investor-grade claim (verbatim, only publishable after all 5 PASS)
+  - [ ] Honest limitations section: single-machine, specific hardware, Z3 version pinned
+- [ ] `PERFORMANCE_WHITEPAPER.md` updated:
+  - [ ] Executive Summary §3 updated with real P99 numbers from production-policy benchmarks (not single-invariant benchmark only)
+  - [ ] New §7: 500M Sovereign Audit — full results table with links to `500m_audit_report.md`
+- [ ] `README.md` benchmark section updated:
+  - [ ] Multi-Worker section shows real 100M per-domain results (not the 1,002-decision pilot)
+  - [ ] Aggregate RPS table across all 5 domains
+
+---
+
+### 14.4 — Production Monitoring Setup
 
 - [ ] Grafana dashboard template (`deploy/grafana/pramanix_dashboard.json`):
   - [ ] Panel: Decision rate by status (SAFE/UNSAFE/TIMEOUT/ERROR/RATE_LIMITED) — time series
-  - [ ] Panel: P50/P95/P99 decision latency — time series
-  - [ ] Panel: Worker cold-start frequency — counter
+  - [ ] Panel: P50/P95/P99 decision latency — time series with 15ms P99 alert line
+  - [ ] Panel: Worker cold-start frequency — counter (triggered by warmup after recycle)
   - [ ] Panel: Validation failure rate — counter
-  - [ ] Panel: Active workers — gauge
-  - [ ] Panel: Decisions/sec by policy — counter
+  - [ ] Panel: Active workers — gauge (should equal `PRAMANIX_MAX_WORKERS`)
+  - [ ] Panel: Decisions/sec by policy — stacked counter
+  - [ ] Panel: Z3 timeout rate — counter with 1% alert threshold
 - [ ] Alert rules (`deploy/grafana/alerts.yaml`):
-  - [ ] `PramanixHighTimeout`: timeout rate > 1% for 2m → page on-call
-  - [ ] `PramanixWorkerRecycling`: cold starts > 1/10min for 5m → alert
-  - [ ] `PramanixHighBlockRate`: > 20% blocked for 5m → alert (may indicate attack or misconfiguration)
-  - [ ] `PramanixP99Latency`: P99 > 100ms for 5m → alert
+
+  | Alert | Condition | Severity | Action |
+  |-------|-----------|----------|--------|
+  | `PramanixHighTimeout` | timeout rate > 1% for 2m | PAGE | Increase `solver_timeout_ms` or investigate constraint complexity |
+  | `PramanixWorkerRecycling` | cold starts > 1/10min for 5m | WARN | Increase `max_decisions_per_worker` if memory allows |
+  | `PramanixHighBlockRate` | > 20% blocked for 5m | WARN | Check `violated_invariants` in logs — may indicate attack or misconfiguration |
+  | `PramanixP99Latency` | P99 > 100ms for 5m | WARN | Verify `worker_warmup=True`, check Z3 constraint complexity |
+  | `PramanixWorkerCrash` | error status rate > 0% for 1m | PAGE | `async-process` mode: check worker subprocess logs |
+
 - [ ] Runbook (`docs/runbook.md`):
-  - [ ] High timeout rate → increase `PRAMANIX_SOLVER_TIMEOUT_MS`
-  - [ ] Excessive cold starts → increase `PRAMANIX_MAX_DECISIONS_PER_WORKER`
-  - [ ] High block rate → check `violated_invariants` in logs for pattern, review policy thresholds
-  - [ ] P99 spike → verify `worker_warmup=True`, check Z3 constraint complexity
+  - [ ] **High timeout rate** → Check `solver_timeout_ms` setting. For >5 invariant policies, 150ms may be too tight. Increase to 300ms. If timeouts persist, profile Z3 constraint complexity.
+  - [ ] **Excessive cold starts** → Increase `max_decisions_per_worker`. Check container memory limit — if RSS is approaching limit, Kubernetes may be restarting workers.
+  - [ ] **High block rate** → Query `violated_invariants` field in decision logs. If one invariant dominates, either the policy threshold needs review or an attack campaign is in progress. Cross-reference `injection_spikes` counter.
+  - [ ] **P99 spike** → Verify `worker_warmup=True`. Check if spike correlates with worker recycle (expected < 200ms). If persistent, check Z3 constraint complexity and `solver_rlimit`.
+  - [ ] **Worker process crash (async-process mode)** → `Decision(allowed=False)` is returned automatically. Worker restarts automatically. Check subprocess stderr in structured logs for Z3 C++ segfault signature.
+  - [ ] **Alpine image deployed** → Immediate rollback. Z3's `libz3.so` is compiled against glibc. musl causes segfaults and 3-10x performance degradation. See `docs/deployment.md` §2.
 
-### 14.4 — Feedback Loop
+---
 
-- [ ] GitHub Issues template for bug reports: Decision JSON + policy config + Python version
-- [ ] GitHub Discussions enabled for Q&A and use-case sharing
-- [ ] `CONTRIBUTING.md` — how to submit new domain primitives (test requirements: SAT + UNSAT + boundary + Hypothesis)
-- [ ] Track: production edge cases found → add to adversarial test suite
-- [ ] Track: performance regressions → add to benchmark CI (Phase 10 benchmarks run nightly)
+### 14.5 — Feedback Loop
+
+- [ ] GitHub Issues template for bug reports:
+  - Fields: Decision JSON (redacted), policy config, Python version, z3-solver version, execution mode, OS
+  - Label taxonomy: `bug`, `security`, `performance`, `documentation`, `new-primitive`
+- [ ] GitHub Discussions enabled:
+  - Category: Q&A (usage questions)
+  - Category: Show and Tell (deployed use cases)
+  - Category: Ideas (new primitives, feature requests)
+- [ ] `CONTRIBUTING.md` — how to submit new domain primitives:
+  - Required tests for any new primitive: SAT path, UNSAT path, exact-boundary case, Hypothesis property test
+  - Required fields: DSL formula, label, regulatory citation (if applicable), SAT/UNSAT table
+  - Review process: domain expert sign-off required for regulated-domain primitives (finance, healthcare, legal)
+- [ ] Nightly CI jobs:
+  - [ ] `benchmarks/latency_benchmark.py --n 2000` — P99 regression gate (fail if P99 > 15ms)
+  - [ ] `pip-audit` — fail on any new CVE in production dependencies
+  - [ ] `trivy image pramanix:latest` — fail on any new CRITICAL or HIGH
+- [ ] Production edge case tracking:
+  - [ ] Any Z3 UNKNOWN result from production → add to `tests/adversarial/` as a regression test
+  - [ ] Any consensus mismatch spike → add the adversarial input pattern to `tests/adversarial/test_full_pipeline_adversarial.py`
+
+---
 
 ### Phase 14 Gate (The Final Checkpoints)
 
-- [ ] **GATE 1:** `pip install pramanix==1.0.0` works on AWS, GCP, Azure, fresh macOS, fresh Ubuntu — all succeed
-- [ ] **GATE 2:** SLSA Level 3 provenance attestation verifiable via `cosign verify-attestation` on the published wheel
+All five gates must pass. No exceptions.
+
+- [ ] **GATE 1:** `pip install pramanix==1.0.0` works on AWS, GCP, Azure, fresh macOS (arm64), fresh Ubuntu — all succeed without errors
+- [ ] **GATE 2:** SLSA Level 3 provenance attestation verifiable:
+
+  ```bash
+  cosign verify-attestation --type slsaprovenance \
+    --certificate-identity-regexp "https://github.com/virajjain1011/Pramanix" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    pramanix/pramanix:1.0.0
+  ```
+
 - [ ] **GATE 3:** `trivy image pramanix/pramanix:1.0.0` → 0 CRITICAL, 0 HIGH
-- [ ] **GATE 4:** Grafana dashboard shows real data from at least one production or staging deployment
-- [ ] **GATE 5:** API contract guaranteed: no breaking changes to `Guard`, `Policy`, `Field`, `E`, `Decision`, `@guard`, all exceptions, all 25 primitives until v2.0
+- [ ] **GATE 4:** `docs/500m_audit_report.md` published — all 5 domain runs PASS, total ≥ 500M decisions
+- [ ] **GATE 5:** API contract live in production — `Guard`, `Policy`, `Field`, `E`, `Decision`, `@guard`, all 38 primitives, all exceptions: no breaking changes until v2.0
 
 ---
 
@@ -1326,53 +1520,62 @@ Additions injected during the Hardening Sprint to defeat memory-injection and Do
 
 > These invariants hold at every commit, every phase. Any violation is a critical
 > build failure and a mandatory revert.
+>
+> **Status annotation:** ✅ Confirmed implemented and tested at v0.8.0.
+> Items without ✅ are enforced but not yet formally gate-tested.
 
-### A.1 — Fail-Safe Invariant (Absolute)
+### A.1 — Fail-Safe Invariant (Absolute) ✅
 
-- [ ] **INVARIANT:** Every exception path in `Guard.verify()` returns `Decision(allowed=False)` — never propagates
-- [ ] **INVARIANT:** `Decision(allowed=True)` is generated only when Z3 returns `sat` on all invariants — no other code path can produce it
-- [ ] **INVARIANT:** `allowed=True` ↔ `status=SAFE` — never inconsistent
-- [ ] **INVARIANT:** Load shedding, rate limiting, cache errors — all produce `allowed=False`
+- **INVARIANT ✅:** Every exception path in `Guard.verify()` returns `Decision(allowed=False)` — never propagates. Verified in `tests/adversarial/` and `tests/unit/test_hardening.py`.
+- **INVARIANT ✅:** `Decision(allowed=True)` is generated only when Z3 returns `sat` on all invariants — no other code path produces it.
+- **INVARIANT ✅:** `allowed=True` ↔ `status=SAFE` — never inconsistent. Enforced in `Decision` frozen dataclass post-init.
+- **INVARIANT ✅:** Load shedding, rate limiting, cache errors, signing failures — all produce `allowed=False`. Verified by `test_load_shedding.py` and H15 test.
 
 ### A.2 — Type Safety Invariant
 
-- [ ] **INVARIANT:** `mypy --strict` passes on every commit — zero `Any` in the core verification path
-- [ ] **INVARIANT:** `ruff check` zero warnings on every commit
-- [ ] **INVARIANT:** No `eval()`, `exec()`, `pickle.loads()` on untrusted input — anywhere in the codebase
+- **INVARIANT:** `mypy --strict` passes on every commit — zero `Any` in the core verification path
+- **INVARIANT:** `ruff check` zero warnings on every commit
+- **INVARIANT:** No `eval()`, `exec()`, `pickle.loads()` on untrusted input — anywhere in the codebase. Transpiler uses `as_integer_ratio()` + Z3 AST construction only; no string eval.
 
-### A.3 — Coverage Invariant
+### A.3 — Coverage Invariant ✅
 
-- [ ] **INVARIANT:** Branch coverage ≥ 95% on `src/pramanix/` at every commit
-- [ ] **INVARIANT:** Every new module has a test file before merging
+- **INVARIANT ✅:** Branch coverage ≥ 95% on `src/pramanix/` at every commit. Currently 96.55% — enforced by `codecov.yml` delta threshold.
+- **INVARIANT:** Every new module has a test file before merging.
 
-### A.4 — Serialization Boundary Invariant
+### A.4 — Serialization Boundary Invariant ✅
 
-- [ ] **INVARIANT:** No Pydantic model instances cross process boundary — `model_dump()` dicts only
-- [ ] **INVARIANT:** No Z3 objects created outside worker scope
+- **INVARIANT ✅:** No Pydantic model instances cross process boundary — `model_dump()` dicts only. Enforced by `tests/unit/test_hardening.py` H07.
+- **INVARIANT ✅:** No Z3 objects created outside worker scope. Per-call `z3.Context()` created and destroyed within the worker function.
 
-### A.5 — LLM Independence Invariant
+### A.5 — LLM Independence Invariant ✅
 
-- [ ] **INVARIANT:** LLM extracts fields only — never decides policy
-- [ ] **INVARIANT:** LLM never produces canonical IDs
-- [ ] **INVARIANT:** Policy DSL is unreachable from user input — compiled at `Guard.__init__()`
-- [ ] **INVARIANT:** `PRAMANIX_TRANSLATOR_ENABLED=false` is the default — opt-in only
+- **INVARIANT ✅:** LLM extracts fields only — never decides policy. Phase 1 output is a typed dict; Phase 2 Z3 is the safety gate.
+- **INVARIANT ✅:** LLM never produces canonical IDs — Blind ID resolution (Layer 4) enforced in `RedundantTranslator`.
+- **INVARIANT ✅:** Policy DSL is unreachable from user input — compiled to Z3 AST at `Guard.__init__()` before any request arrives.
+- **INVARIANT ✅:** `PRAMANIX_TRANSLATOR_ENABLED=false` is the default — opt-in only. Verified in `GuardConfig` defaults.
 
-### A.6 — Cryptographic Invariant (Phase 11 onwards)
+### A.6 — Cryptographic Invariant ✅
 
-- [ ] **INVARIANT:** `Decision.decision_hash` is computed deterministically — same inputs always produce same hash
-- [ ] **INVARIANT:** Any mutation of a signed `Decision` is detectable via `audit verify`
+- **INVARIANT ✅:** `Decision.decision_hash` is computed deterministically via `orjson` with `OPT_SORT_KEYS`. Same inputs always produce same hash. Verified by H11 test.
+- **INVARIANT ✅:** Any mutation of a signed `Decision` is detectable via `pramanix audit verify`. Ed25519 signature covers `decision_hash`; any field mutation changes the hash. Verified by `test_integrity.py`.
 
-### A.7 — Performance Invariant
+### A.7 — Performance Invariant ✅
 
-- [ ] **INVARIANT:** Every Z3 solver has `timeout` set — no unbounded solves
-- [ ] **INVARIANT:** Workers recycled at `max_decisions_per_worker` — no unbounded memory growth
-- [ ] **INVARIANT:** API mode P99 regression check runs in CI — fails build if P99 > 15ms
+- **INVARIANT ✅:** Every Z3 solver instance has `timeout` set — no unbounded solves. `s.set("timeout", timeout_ms)` enforced in `solver.py`.
+- **INVARIANT ✅:** Workers recycled at `max_decisions_per_worker` — no unbounded memory growth. Confirmed: +2.80 MiB net growth over 1M decisions.
+- **INVARIANT:** API mode P99 regression check runs in CI — fails build if P99 > 15ms. Gate: `test_perf_gates.py::test_p99_api_mode`.
 
-### A.8 — Supply Chain Invariant (Phase 6 onwards)
+### A.8 — Supply Chain Invariant ✅
 
-- [ ] **INVARIANT:** Every release has SLSA Level 3 provenance
-- [ ] **INVARIANT:** No Alpine/musl in any container image
-- [ ] **INVARIANT:** Zero known CVEs in production dependencies — `pip-audit` runs in CI
+- **INVARIANT ✅:** Every release has SLSA Level 3 provenance (Phase 6 pipeline, OIDC PyPI publish, Sigstore signing).
+- **INVARIANT ✅:** No Alpine/musl in any container image. Alpine ban enforced in Iron Gate CI pipeline as a dedicated job.
+- **INVARIANT ✅:** Zero known CVEs in production dependencies — `pip-audit` runs in CI. Fails build on any HIGH or CRITICAL CVE.
+
+### A.9 — 500M Audit Invariant (Phase 13 onwards)
+
+- **INVARIANT:** All 5 domain runs complete with `n_error == 0`, `n_timeout == 0`, `max_worker_rss_growth < 50 MiB`.
+- **INVARIANT:** `500m_final_report.json` Merkle roots match independently verifiable chain hashes from worker JSONL files.
+- **INVARIANT:** No performance numbers are published that were not produced by an actual completed run — no projections presented as results.
 
 ---
 
@@ -1380,40 +1583,62 @@ Additions injected during the Hardening Sprint to defeat memory-injection and Do
 
 ```
 [COMPLETED]
-Phase 0  (Repo Bootstrap)
+Phase 0   (Repo Bootstrap)                  ✅ Done
    │
-Phase 1  (Transpiler Spike)          ← Z3 unsat_core() validated
+Phase 1   (Transpiler Spike)                ✅ Done — Z3 unsat_core() finding validated
    │
-Phase 2  (Core SDK v0.1)             ← Guard, Policy, Decision, sync mode
+Phase 2   (Core SDK v0.1)                   ✅ Done — Guard, Policy, Decision, sync mode
    │
-Phase 3  (Async + Workers v0.2)      ← Worker pool, recycling, @guard, primitives
+Phase 3   (Async + Workers v0.2)            ✅ Done — Worker pool, recycling, @guard, 18 primitives
    │
-Phase 4  (Hardening v0.4.0)          ← ContextVar isolation, HMAC IPC, OTel, Hypothesis
+Phase 4   (Hardening v0.4.0)               ✅ Done — ContextVar isolation, HMAC IPC, OTel, Hypothesis
    │
-Phase 5  (Translator v0.4)           ← Neuro-symbolic, 5-layer injection defense
+Phase 5   (Translator v0.4)                ✅ Done — Neuro-symbolic, 5-layer injection defense
    │
-[ACTIVE]
+Phase 6   (SLSA CI/CD v0.5)               ✅ Done — Iron Gate pipeline, Sigstore, hardened Docker, K8s
    │
-Phase 6  (SLSA CI/CD v0.5)           ← Iron Gate pipeline, signed release, hardened Docker
+Phase 7   (Security Review v0.5.x)         ✅ Done — Threat model T01-T07, adversarial test suite
    │
-Phase 7  (Security Review v0.5.x)    ← Formal threat model, penetration tests — BLOCKS Phase 8
+Phase 8   (Domain Primitives v0.6)         ✅ Done — 38 primitives, regulatory citations, killshot examples
    │
-Phase 8  (Domain Primitives v0.6)    ← 25 industry primitives, killshot examples
+Phase 9   (Ecosystem v0.6.x)              ✅ Done — FastAPI, LangChain, LlamaIndex, AutoGen
    │
-Phase 9  (Ecosystem v0.6.x)          ← FastAPI, LangChain, LlamaIndex, AutoGen integrations
+Phase 10  (Performance v0.7)               ✅ Done — Expression cache, intent LRU, load shedding, benchmarks
    │
-Phase 10 (Performance v0.7)          ← Expression cache, intent LRU, load shedding, benchmarks
+Phase 11  (Crypto Audit v0.8)              ✅ Done — Ed25519, Merkle chain, audit CLI, compliance reporter
    │
-Phase 11 (Crypto Audit v0.8)         ← Ed25519 signatures, audit CLI, compliance reporter
+Phase 12  (Documentation v0.8.x)           ✅ Done — 12-doc suite, README, whitepaper, compliance patterns
    │
-Phase 12 (Documentation v0.9)        ← Giant-killer README, comparison table, manifesto
+[IN PROGRESS]
    │
-Phase 13 (Pre-Release RC v0.9.x)     ← Chaos testing, RC deployment, API contract lock
+Phase 13  (Pre-Release RC v0.9.x)          ← 500M audit, chaos tests, RC deployment, API contract lock
    │
-Phase 14 (v1.0 GA)                   ← Global release, production monitoring, feedback loop
+Phase 14  (v1.0 GA)                        ← Global release, 500M report published, monitoring live
 ```
 
 ---
 
-*End of checklist. Every checkbox is a contract. Every gate is measurable.
-No phase begins until the prior gate passes. No shortcut survives production.*
+## VERSION MAP
+
+| Phase | Version | Status |
+|-------|---------|--------|
+| 0–1 | v0.0.0 | ✅ Complete |
+| 2 | v0.1.0 | ✅ Complete |
+| 3 | v0.2.0 | ✅ Complete |
+| 4 | v0.4.0 | ✅ Complete |
+| 5 | v0.4.x | ✅ Complete |
+| 6 | v0.5.0 | ✅ Complete |
+| 7 | v0.5.x | ✅ Complete |
+| 8 | v0.6.0 | ✅ Complete |
+| 9 | v0.6.x | ✅ Complete |
+| 10 | v0.7.0 | ✅ Complete |
+| 11 | v0.8.0 | ✅ Complete |
+| 12 | v0.8.x | ✅ Complete |
+| **13** | **v0.9.x-rc** | **← Active** |
+| **14** | **v1.0.0** | Pending Phase 13 gate |
+
+---
+
+*End of updated checklist. Every checkbox is a contract. Every gate is measurable.*
+*No phase begins until the prior gate passes. No shortcut survives production.*
+*The 500M audit is the proof. Everything else is the foundation.*
