@@ -35,6 +35,11 @@ import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+
     from pramanix.decision import Decision
 
 log = logging.getLogger(__name__)
@@ -75,6 +80,9 @@ class PramanixSigner:
         assert verifier.verify(decision)
     """
 
+    _private_key: Ed25519PrivateKey
+    _public_key: Ed25519PublicKey
+
     def __init__(
         self,
         private_key_pem: bytes | str | None = None,
@@ -100,6 +108,7 @@ class PramanixSigner:
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
                 Ed25519PrivateKey,
+                Ed25519PublicKey,
             )
             from cryptography.hazmat.primitives.serialization import (
                 Encoding,
@@ -120,13 +129,20 @@ class PramanixSigner:
                 if isinstance(private_key_pem, str)
                 else private_key_pem
             )
-            self._private_key = load_pem_private_key(raw, password=None)
+            self._private_key: Ed25519PrivateKey = load_pem_private_key(raw, password=None)  # type: ignore[assignment]
+            if not isinstance(self._private_key, Ed25519PrivateKey):
+                raise ValueError(
+                    "PEM key is not an Ed25519 private key. "
+                    "Pramanix requires Ed25519 for deterministic signing."
+                )
         else:
             env_pem = os.environ.get(_ENV_KEY_PEM, "")
             if env_pem:
-                self._private_key = load_pem_private_key(
-                    env_pem.encode(), password=None
-                )
+                self._private_key = load_pem_private_key(env_pem.encode(), password=None)  # type: ignore[assignment]
+                if not isinstance(self._private_key, Ed25519PrivateKey):
+                    raise ValueError(
+                        "PRAMANIX_SIGNING_KEY_PEM is not an Ed25519 private key."
+                    )
             elif force_ephemeral:
                 # Ephemeral key — development only, warn loudly
                 self._private_key = Ed25519PrivateKey.generate()
@@ -148,7 +164,7 @@ class PramanixSigner:
                     "audit trail unverifiable."
                 )
 
-        self._public_key = self._private_key.public_key()
+        self._public_key: Ed25519PublicKey = self._private_key.public_key()
 
         # Cache PEM exports
         self._private_pem = self._private_key.private_bytes(
@@ -256,6 +272,9 @@ class PramanixVerifier:
 
     def __init__(self, public_key_pem: bytes | str) -> None:
         try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PublicKey,
+            )
             from cryptography.hazmat.primitives.serialization import (
                 load_pem_public_key,
             )
@@ -270,7 +289,13 @@ class PramanixVerifier:
             if isinstance(public_key_pem, str)
             else public_key_pem
         )
-        self._public_key = load_pem_public_key(raw)
+        loaded_pub = load_pem_public_key(raw)
+        if not isinstance(loaded_pub, Ed25519PublicKey):
+            raise ValueError(
+                "PEM key is not an Ed25519 public key. "
+                "Pramanix requires Ed25519 for decision verification."
+            )
+        self._public_key: Ed25519PublicKey = loaded_pub
 
     def verify(self, decision_hash: str, signature: str) -> bool:
         """Verify that decision_hash was signed with the corresponding private key.

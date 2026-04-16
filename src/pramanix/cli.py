@@ -25,6 +25,7 @@ import json as _json
 import os
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 
 def main() -> int:
@@ -322,7 +323,7 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
     return 1 if any_failure else 0
 
 
-def _recompute_hash(record: dict) -> str:
+def _recompute_hash(record: dict[str, Any]) -> str:
     """Recompute decision_hash from a JSONL audit record.
 
     Delegates to :func:`pramanix.decision._build_decision_canonical` and

@@ -65,7 +65,7 @@ except ImportError:  # pragma: no cover
 __all__ = ["Decision", "SolverStatus", "_make_json_safe", "_build_decision_canonical"]
 
 
-def _make_json_safe(d: dict) -> dict:
+def _make_json_safe(d: dict[str, Any]) -> dict[str, Any]:
     """Convert a dict to JSON-safe types, preserving Decimal precision.
 
     Decimal → str (exact representation, no float drift)
@@ -102,9 +102,9 @@ def _build_decision_canonical(
     *,
     allowed: bool,
     explanation: str,
-    intent_dump: dict,
+    intent_dump: dict[str, Any],
     policy: str,
-    state_dump: dict,
+    state_dump: dict[str, Any],
     status: str,
     violated_invariants: Any,
 ) -> dict[str, Any]:
@@ -245,8 +245,8 @@ class Decision:
     metadata: dict[str, Any] = field(default_factory=dict)
     solver_time_ms: float = 0.0
     decision_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    intent_dump: dict = field(default_factory=dict)
-    state_dump: dict = field(default_factory=dict)
+    intent_dump: dict[str, Any] = field(default_factory=dict)
+    state_dump: dict[str, Any] = field(default_factory=dict)
     decision_hash: str = field(default="")
     signature: str | None = None
     public_key_id: str | None = None
@@ -345,8 +345,8 @@ class Decision:
         *,
         solver_time_ms: float = 0.0,
         metadata: dict[str, Any] | None = None,
-        intent_dump: dict | None = None,
-        state_dump: dict | None = None,
+        intent_dump: dict[str, Any] | None = None,
+        state_dump: dict[str, Any] | None = None,
     ) -> Decision:
         """Construct an *allowed* decision (all invariants satisfied).
 
@@ -375,8 +375,8 @@ class Decision:
         explanation: str = "",
         solver_time_ms: float = 0.0,
         metadata: dict[str, Any] | None = None,
-        intent_dump: dict | None = None,
-        state_dump: dict | None = None,
+        intent_dump: dict[str, Any] | None = None,
+        state_dump: dict[str, Any] | None = None,
     ) -> Decision:
         """Construct a *blocked* decision (one or more invariants violated).
 

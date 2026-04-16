@@ -236,7 +236,7 @@ def _ppid_watchdog() -> None:
         try:  # pragma: no cover
             import ctypes  # pragma: no cover
 
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]  # pragma: no cover
+            kernel32 = ctypes.windll.kernel32  # pragma: no cover
             initial_ppid = int(  # pragma: no cover
                 ctypes.c_ulong(kernel32.GetCurrentProcessId()).value
             )

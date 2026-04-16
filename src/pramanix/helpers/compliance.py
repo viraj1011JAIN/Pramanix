@@ -84,7 +84,7 @@ _REGULATORY_MAP: dict[str, list[str]] = {
 
 def _classify_severity(
     violated_invariants: tuple[str, ...],
-    intent_dump: dict,
+    intent_dump: dict[str, Any],
 ) -> str:
     """Classify decision severity based on violated rules and intent context.
 
