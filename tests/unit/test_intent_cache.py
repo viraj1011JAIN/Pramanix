@@ -10,6 +10,8 @@ from __future__ import annotations
 import threading
 import time
 
+import fakeredis as _fakeredis_module
+
 from pramanix.translator._cache import (
     IntentCache,
     _InProcessLRUCache,
@@ -309,8 +311,6 @@ class TestInProcessLRUCacheEdgeCases:
 
 
 # ── Error-injection subclasses — real fakeredis with one overridden method ─────
-
-import fakeredis as _fakeredis_module
 
 
 class _ErrorOnGet(_fakeredis_module.FakeRedis):

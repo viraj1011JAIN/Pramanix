@@ -332,7 +332,7 @@ class TestAuditCLIEdgeCases:
 
         log_path = tmp_path / "audit.jsonl"
         key_path = tmp_path / "key.pem"
-        _write_jsonl([tampered_record] + valid_records, log_path)
+        _write_jsonl([tampered_record, *valid_records], log_path)
         _write_public_key(signer, key_path)
 
         code, output = _run_audit_cli(log_path, key_path, ["--fail-fast"])

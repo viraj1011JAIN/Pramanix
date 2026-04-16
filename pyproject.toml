@@ -30,7 +30,7 @@ packages = [{include = "pramanix", from = "src"}]
 pramanix = "pramanix.cli:main"
 
 [tool.poetry.dependencies]
-python = ">=3.13,<3.14"
+python = ">=3.13"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"
@@ -186,6 +186,13 @@ ignore = [
 "tests/integration/test_langchain_tool.py" = ["T20"]
 "tests/integration/test_integration_matrix.py" = ["T20"]
 "examples/*.py" = ["T20", "TCH", "E402"]
+# test_audit_cli.py and test_crypto.py: pytest.importorskip() must be called before
+# the optional-dependency imports, structurally forcing those imports below the top of
+# file.  E402 (import not at top) and I001 (import sort order, since the late-import
+# block cannot be merged with the top block) are suppressed here — not fixable by
+# reordering without breaking the importorskip() semantics.
+"tests/unit/test_audit_cli.py" = ["E402", "I001"]
+"tests/unit/test_crypto.py" = ["E402", "I001"]
 # Benchmark and spike scripts use print() for output and have sys.path setup
 # before imports — both T20 and E402 are intentional patterns here.
 "benchmarks/*.py" = ["T20", "E402"]

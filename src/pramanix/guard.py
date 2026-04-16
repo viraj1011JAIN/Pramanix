@@ -58,24 +58,21 @@ with ``allowed=False`` on any error path.
 
 ``Decision(allowed=True)`` is **never** returned from any error handler.
 
-Phase 2 scope (M1 — sync only)
---------------------------------
-Async worker-pool modes (``ThreadPoolExecutor`` / ``ProcessPoolExecutor``) are
-reserved for M2.  This implementation is single-threaded and synchronous.
+See also
+--------
+:mod:`pramanix.guard_config`  — :class:`GuardConfig` dataclass, logging,
+    OTel, Prometheus, and environment-variable helpers.
+:mod:`pramanix.guard_pipeline` — semantic post-consensus check, policy
+    fingerprinting, and explanation formatting helpers.
 """
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import dataclasses
-import os
-import re
 import time
 import uuid
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-import structlog
 from pydantic import BaseModel
 
 from pramanix.decision import Decision
@@ -89,386 +86,34 @@ from pramanix.exceptions import (
     ValidationError,
     WorkerError,
 )
+from pramanix.guard_config import (
+    GuardConfig,
+    _PROM_AVAILABLE,
+    _decision_latency,
+    _decisions_total,
+    _env_bool,
+    _env_int,
+    _env_str,
+    _log,
+    _resolver_registry,
+    _solver_timeouts_total,
+    _span,
+    _validation_failures_total,
+)
+from pramanix.guard_pipeline import (
+    _compute_policy_fingerprint,
+    _fmt,
+    _semantic_post_consensus_check,
+)
 from pramanix.helpers.serialization import safe_dump
-from pramanix.resolvers import ResolverRegistry
 from pramanix.solver import _SolveResult, solve
 from pramanix.validator import validate_intent, validate_state
 from pramanix.worker import WorkerPool
 
 if TYPE_CHECKING:
-    from pramanix.crypto import PramanixSigner
-    from pramanix.expressions import ConstraintExpr
     from pramanix.policy import Policy
 
 __all__ = ["GuardConfig", "Guard"]
-
-# ── Structlog secrets redaction ───────────────────────────────────────────────
-# Pattern matches any event-dict key that looks like a credential.
-# The processor is applied BEFORE any renderer so secrets never reach disk.
-_SECRET_KEY_RE = re.compile(
-    r"(secret|api[_\-]?key|token|hmac|password|passwd|credential|private[_\-]?key)",
-    re.IGNORECASE,
-)
-_REDACTED = "<redacted>"
-
-
-def _redact_secrets_processor(
-    _logger: Any,
-    _method: str,
-    event_dict: Any,
-) -> Any:
-    """Structlog processor — redact any event-dict key that looks like a secret.
-
-    Applied as the first processor in the chain so that secret values are
-    never visible in any downstream processor, renderer, or log sink.
-
-    Matches keys containing: ``secret``, ``api_key``, ``apikey``, ``token``,
-    ``hmac``, ``password``, ``passwd``, ``credential``, ``private_key``.
-    """
-    return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else v) for k, v in event_dict.items()}
-
-
-structlog.configure(
-    processors=[
-        _redact_secrets_processor,  # must be first — sanitise before anything else
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer(),
-    ],
-    context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory(),
-    wrapper_class=structlog.BoundLogger,
-    cache_logger_on_first_use=True,
-)
-
-_log = structlog.get_logger("pramanix.guard")
-
-
-# ── OpenTelemetry — graceful optional dependency ──────────────────────────────
-# Each span is a no-op (contextlib.nullcontext) when the ``otel`` extra is
-# absent, so there is zero overhead on deployments that do not use tracing.
-
-try:
-    from opentelemetry import trace as _otel_trace  # pragma: no cover
-
-    def _span(name: str) -> Any:  # pragma: no cover
-        """Return a live OTel span context-manager."""
-        return _otel_trace.get_tracer("pramanix.guard").start_as_current_span(name)
-
-except ImportError:  # pragma: no cover
-
-    def _span(name: str) -> Any:  # pragma: no cover
-        """No-op span when opentelemetry is not installed."""
-        return contextlib.nullcontext()
-
-
-# ── Prometheus — graceful optional dependency ─────────────────────────────────
-# Each metric is a no-op when ``prometheus_client`` is absent, so there is zero
-# overhead on deployments that do not expose a /metrics endpoint.
-
-try:
-    import prometheus_client as _prom
-
-    _decisions_total = _prom.Counter(
-        "pramanix_decisions_total",
-        "Total policy decisions by outcome",
-        ["policy", "status"],
-    )
-    _decision_latency = _prom.Histogram(
-        "pramanix_decision_latency_seconds",
-        "End-to-end verify() latency in seconds",
-        ["policy"],
-        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
-    )
-    _solver_timeouts_total = _prom.Counter(
-        "pramanix_solver_timeouts_total",
-        "Number of Z3 solver timeouts by policy",
-        ["policy"],
-    )
-    _validation_failures_total = _prom.Counter(
-        "pramanix_validation_failures_total",
-        "Number of intent/state validation failures by policy",
-        ["policy"],
-    )
-    _PROM_AVAILABLE = True
-
-except ImportError:  # pragma: no cover
-    _PROM_AVAILABLE = False  # pragma: no cover
-
-
-# ── Module-level resolver registry ───────────────────────────────────────────
-# Shared registry for lazy field resolvers.  The thread-local cache inside
-# ResolverRegistry ensures User A's resolved values are never visible to
-# User B's concurrent request.  Guard.verify() clears the cache in its
-# finally block so no stale values survive across requests.
-
-_resolver_registry = ResolverRegistry()
-
-
-# ── Environment variable helpers ──────────────────────────────────────────────
-
-
-def _env_str(key: str, default: str) -> str:
-    return os.environ.get(f"PRAMANIX_{key}", default)
-
-
-def _env_int(key: str, default: int) -> int:
-    raw = os.environ.get(f"PRAMANIX_{key}")
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def _env_bool(key: str, default: bool) -> bool:
-    raw = os.environ.get(f"PRAMANIX_{key}")
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes"}
-
-
-# ── Configuration ─────────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class GuardConfig:
-    """Immutable configuration for a :class:`Guard` instance.
-
-    All fields have defaults and can be overridden via ``PRAMANIX_*``
-    environment variables, which are read at *construction time*
-    (i.e. when you call ``GuardConfig()``).
-
-    Environment variable precedence: ``PRAMANIX_<UPPER_FIELD_NAME>`` overrides
-    the coded default but is superseded by an explicit constructor argument.
-
-    Attributes:
-        execution_mode:           Execution backend. ``"sync"`` only in v0.1.
-        solver_timeout_ms:        Per-solver Z3 timeout (ms).  Must be > 0.
-        max_workers:              Worker pool size (M2).  Must be > 0.
-        max_decisions_per_worker: Max verifications per worker before restart.
-        worker_warmup:            Run a dummy Z3 solve on worker startup.
-        log_level:                Structured logging level string.
-        metrics_enabled:          Enable Prometheus metrics export.
-        otel_enabled:             Enable OpenTelemetry trace export.
-        translator_enabled:       Enable LLM-based intent translation (M3).
-    """
-
-    execution_mode: str = field(default_factory=lambda: _env_str("EXECUTION_MODE", "sync"))
-    solver_timeout_ms: int = field(default_factory=lambda: _env_int("SOLVER_TIMEOUT_MS", 5_000))
-    max_workers: int = field(default_factory=lambda: _env_int("MAX_WORKERS", 4))
-    max_decisions_per_worker: int = field(
-        default_factory=lambda: _env_int("MAX_DECISIONS_PER_WORKER", 10_000)
-    )
-    worker_warmup: bool = field(default_factory=lambda: _env_bool("WORKER_WARMUP", True))
-    log_level: str = field(default_factory=lambda: _env_str("LOG_LEVEL", "INFO"))
-    metrics_enabled: bool = field(default_factory=lambda: _env_bool("METRICS_ENABLED", False))
-    otel_enabled: bool = field(default_factory=lambda: _env_bool("OTEL_ENABLED", False))
-    translator_enabled: bool = field(default_factory=lambda: _env_bool("TRANSLATOR_ENABLED", False))
-    fast_path_enabled: bool = field(default_factory=lambda: _env_bool("FAST_PATH_ENABLED", False))
-    fast_path_rules: tuple[Any, ...] = field(default_factory=tuple)
-    shed_latency_threshold_ms: float = field(
-        default_factory=lambda: float(_env_str("SHED_LATENCY_THRESHOLD_MS", "200"))
-    )
-    shed_worker_pct: float = field(default_factory=lambda: float(_env_str("SHED_WORKER_PCT", "90")))
-    signer: PramanixSigner | None = field(default=None)
-    # ── Phase 12 hardening fields ──────────────────────────────────────────────
-    solver_rlimit: int = field(
-        default_factory=lambda: _env_int("SOLVER_RLIMIT", 10_000_000)
-    )
-    """Z3 resource limit (elementary operations per solver call).
-    Prevents logic-bomb and non-linear-expression DoS regardless of wall time.
-    0 = disabled.  Default: 10 million operations.
-    """
-    max_input_bytes: int = field(
-        default_factory=lambda: _env_int("MAX_INPUT_BYTES", 65_536)
-    )
-    """Maximum serialised byte-size of the combined intent + state payload.
-    Requests exceeding this limit are rejected before reaching the Z3 solver,
-    preventing Big-Data DoS.  0 = disabled.  Default: 64 KiB.
-    """
-    min_response_ms: float = field(default=0.0)
-    """Minimum wall-clock time (ms) before verify() returns its result.
-    Pads short decisions to a fixed floor, making timing side-channels
-    statistically infeasible.  0.0 = disabled (default).
-    """
-    redact_violations: bool = field(default=False)
-    """When True, BLOCK decisions returned to callers have their
-    ``explanation`` and ``violated_invariants`` replaced with a generic
-    "Policy Violation: Action Blocked" message.  The signed ``decision_hash``
-    is computed over the real fields *before* redaction, so the full audit
-    log remains verifiable server-side.  Default: False (backwards-compatible).
-    """
-    expected_policy_hash: str | None = field(default=None)
-    """SHA-256 fingerprint of the compiled policy.  When set, Guard.__init__
-    raises ConfigurationError if the running policy does not match this hash,
-    preventing silent policy drift in distributed deployments.
-    """
-
-    def __post_init__(self) -> None:
-        if self.solver_timeout_ms <= 0:
-            raise ConfigurationError(
-                f"GuardConfig.solver_timeout_ms must be a positive integer, "
-                f"got {self.solver_timeout_ms}."
-            )
-        if self.max_workers <= 0:
-            raise ConfigurationError(
-                f"GuardConfig.max_workers must be a positive integer, got {self.max_workers}."
-            )
-        valid_modes = {"sync", "async-thread", "async-process"}
-        if self.execution_mode not in valid_modes:
-            raise ConfigurationError(
-                f"GuardConfig.execution_mode must be one of {valid_modes!r}, "
-                f"got '{self.execution_mode}'."
-            )
-        if self.solver_rlimit < 0:
-            raise ConfigurationError(
-                f"GuardConfig.solver_rlimit must be >= 0, got {self.solver_rlimit}."
-            )
-        if self.max_input_bytes < 0:
-            raise ConfigurationError(
-                f"GuardConfig.max_input_bytes must be >= 0, got {self.max_input_bytes}."
-            )
-        if self.min_response_ms < 0.0:
-            raise ConfigurationError(
-                f"GuardConfig.min_response_ms must be >= 0.0, got {self.min_response_ms}."
-            )
-
-
-# ── Explanation formatter ─────────────────────────────────────────────────────
-
-
-def _semantic_post_consensus_check(
-    intent_dict: dict[str, Any],
-    state_values: dict[str, Any],
-) -> None:
-    """Fast pure-Python semantic guard applied after LLM consensus, before Z3.
-
-    Catches obvious business-rule violations immediately without invoking
-    the Z3 solver, reducing latency and attack surface:
-
-    * Positive-amount enforcement (amount > 0).
-    * Minimum-reserve floor (balance - amount >= minimum_reserve).
-    * Full-balance drain guard (requires secondary approval when reserve = 0).
-    * Daily limit breach (when ``daily_limit`` and ``daily_spent`` are present).
-
-    Only activates for the fields that are present in *both* intent and state,
-    so it is safe to call for any policy/intent combination regardless of
-    the domain.
-
-    Args:
-        intent_dict:  Validated dict extracted from the LLM (post-consensus).
-        state_values: Plain dict of current system state.
-
-    Raises:
-        SemanticPolicyViolation: If a business rule is violated.
-    """
-    from decimal import Decimal, InvalidOperation
-
-    # ── Extract amount (skip check if no amount field) ───────────────────────
-    raw_amount = intent_dict.get("amount")
-    if raw_amount is None:
-        return  # no amount field — nothing to check
-
-    try:
-        amount = Decimal(str(raw_amount))
-    except InvalidOperation as exc:
-        raise SemanticPolicyViolation(f"amount is not a valid number: {raw_amount!r}") from exc
-
-    if amount <= 0:
-        raise SemanticPolicyViolation(f"amount must be positive, got {amount}")
-
-    # ── Balance / minimum-reserve check ────────────────────────────────────
-    raw_balance = state_values.get("balance")
-    if raw_balance is not None:
-        try:
-            balance = Decimal(str(raw_balance))
-            minimum_reserve = Decimal(str(state_values.get("minimum_reserve", "0")))
-            if balance - amount < minimum_reserve:
-                raise SemanticPolicyViolation(
-                    f"Transfer would leave balance below minimum reserve "
-                    f"(balance={balance}, amount={amount}, "
-                    f"minimum_reserve={minimum_reserve})."
-                )
-            if minimum_reserve == Decimal("0") and amount == balance:
-                raise SemanticPolicyViolation(
-                    "Full balance transfer requires secondary human approval."
-                )
-        except SemanticPolicyViolation:
-            raise
-        except Exception:
-            pass  # Non-numeric balance — let Z3 enforce the invariant
-
-    # ── Daily limit check ───────────────────────────────────────────────
-    raw_daily_limit = state_values.get("daily_limit")
-    raw_daily_spent = state_values.get("daily_spent")
-    if raw_daily_limit is not None and raw_daily_spent is not None:
-        try:
-            remaining = Decimal(str(raw_daily_limit)) - Decimal(str(raw_daily_spent))
-            if amount > remaining:
-                raise SemanticPolicyViolation(
-                    f"Transfer exceeds remaining daily limit "
-                    f"(remaining={remaining}, amount={amount})."
-                )
-        except SemanticPolicyViolation:
-            raise
-        except Exception:
-            pass  # Let Z3 handle non-numeric daily fields
-
-
-def _compute_policy_fingerprint(policy: type[Policy]) -> str:
-    """Compute a stable SHA-256 fingerprint of a compiled policy.
-
-    Covers: class name, version, sorted invariant labels + explanations, and
-    the name + Z3 type of every field referenced by those invariants.
-    Stable across restarts; invariant to code comments and whitespace.
-    """
-    import hashlib
-    import json
-
-    from pramanix.transpiler import collect_fields
-
-    invariants = policy.invariants()
-    version = policy.meta_version() or ""
-    all_fields: dict[str, Any] = {}
-    for inv in invariants:
-        all_fields.update(collect_fields(inv.node))
-
-    payload = {
-        "name": policy.__name__,
-        "version": version,
-        "invariants": sorted(
-            ({"label": inv.label or "", "explanation": inv.explanation or ""}
-             for inv in invariants),
-            key=lambda x: x["label"],
-        ),
-        "fields": sorted(
-            ({"name": n, "type": f.z3_type} for n, f in all_fields.items()),
-            key=lambda x: x["name"],
-        ),
-    }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def _fmt(inv: ConstraintExpr, values: dict[str, Any]) -> str:
-    """Format an invariant's explanation template with concrete *values*.
-
-    The template may contain ``{field_name}`` placeholders.  If formatting
-    fails (missing key, bad format string), the raw template is returned
-    unchanged so the violation is never silently swallowed.
-    """
-    template = inv.explanation or inv.label or ""
-    if not template:
-        return ""
-    try:
-        return template.format_map(values)
-    except (KeyError, ValueError):
-        return template
 
 
 # ── Guard ─────────────────────────────────────────────────────────────────────

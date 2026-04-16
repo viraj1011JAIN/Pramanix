@@ -1257,7 +1257,7 @@ def test_alive_process_is_killed(self) -> None:
 
 ## Project Status
 
-**v0.8.0 -- 53 source files, 2,982 statements, 96.55% covered.**
+**v0.8.0 -- 56 source files, 3,012 statements, 96.55% covered.**
 
 | Milestone | Status |
 |-----------|--------|

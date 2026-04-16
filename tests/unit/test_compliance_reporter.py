@@ -8,8 +8,8 @@ from decimal import Decimal
 
 import pytest
 
-from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.decision import Decision
+from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 
 
 def _block(

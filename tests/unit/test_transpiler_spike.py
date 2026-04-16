@@ -22,8 +22,8 @@ import pytest
 # transpiler_spike.py lives in spikes/, not inside src/
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "spikes"))
 
-import z3  # noqa: E402
-from transpiler_spike import (  # noqa: E402
+import z3
+from transpiler_spike import (
     REFERENCE_INVARIANTS,
     ConstraintExpr,
     E,

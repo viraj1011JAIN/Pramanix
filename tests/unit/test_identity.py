@@ -27,6 +27,7 @@ import json
 import time
 from dataclasses import dataclass
 from decimal import Decimal
+
 import fakeredis.aioredis as fakeredis
 import pytest
 

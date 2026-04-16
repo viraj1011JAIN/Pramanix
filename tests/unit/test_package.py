@@ -162,17 +162,5 @@ def test_package_docstring_exists() -> None:
 
 
 def test_minimum_python_version() -> None:
-    """The running interpreter must be at least Python 3.10."""
-    assert sys.version_info >= (3, 10), f"Pramanix requires Python >= 3.10, running {sys.version}"
-
-
-def test_maximum_python_version() -> None:
-    """The running interpreter must be below Python 3.14.
-
-    pyproject.toml declares python = ">=3.10,<3.14", so 3.14 and above are
-    outside the tested and supported range (3.13 is the current latest stable).
-    """
-    assert sys.version_info < (3, 14), (
-        f"Python 3.14+ is not yet supported (supported range: >=3.10,<3.14); "
-        f"running {sys.version}. Use Python 3.10, 3.11, 3.12, or 3.13."
-    )
+    """The running interpreter must be at least Python 3.13."""
+    assert sys.version_info >= (3, 13), f"Pramanix requires Python >= 3.13, running {sys.version}"

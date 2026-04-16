@@ -414,7 +414,6 @@ class TestGuardSigningIntegration:
         verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
 
         # Construct a decision with a non-None signature but no hash
-        d = _make_decision()
         # Manually corrupt by passing a broken metadata type that _compute_hash
         # would struggle with — use a decision with signature set via factory
         broken = Decision.safe(

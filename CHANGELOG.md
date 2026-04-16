@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-16
+
 ### Added
 
 - **15 Phase 12 hardening measures (H01-H15)** -- all fully unit-tested (`tests/unit/test_hardening.py`)
