@@ -423,9 +423,13 @@ class RedisExecutionTokenVerifier:
         # ── 3. Atomic SETNX with TTL = remaining token lifetime ───────────────
         # max(1, ...) ensures the key gets at least 1 second TTL even if the
         # token is about to expire — so Redis doesn't reject the SET.
+        # Fail-safe: any Redis error → deny (False), never allow.
         remaining_s = max(1, int(token.expires_at - time.time()))
         redis_key = f"{self._prefix}{token.token_id}"
-        result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
+        try:
+            result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
+        except Exception:
+            return False
         return bool(result)
 
     def consumed_count(self) -> int:
@@ -436,14 +440,18 @@ class RedisExecutionTokenVerifier:
 
         Returns:
             Number of unconsumed-TTL token keys in Redis under this prefix.
+            Returns 0 if Redis is unreachable (fail-safe default).
         """
         cursor = 0
         count = 0
-        while True:
-            cursor, keys = self._redis.scan(
-                cursor, match=f"{self._prefix}*", count=100
-            )
-            count += len(keys)
-            if cursor == 0:
-                break
+        try:
+            while True:
+                cursor, keys = self._redis.scan(
+                    cursor, match=f"{self._prefix}*", count=100
+                )
+                count += len(keys)
+                if cursor == 0:
+                    break
+        except Exception:
+            return 0
         return count

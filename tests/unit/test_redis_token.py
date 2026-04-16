@@ -11,6 +11,7 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+
 import fakeredis
 import pytest
 
@@ -397,6 +398,87 @@ class TestRedisKeyFormat:
         redis_key = f"pramanix:token:{token.token_id}"
         ttl = r.ttl(redis_key)
         assert 0 < ttl <= 30
+
+
+# ── Redis connection failure handling ─────────────────────────────────────────
+
+
+class _BrokenRedis:
+    """Stub that raises ConnectionError on every method call.
+
+    Simulates a Redis server that is unreachable (network partition,
+    container crash, DNS failure).  Not a mock — a real class with
+    deterministic, documented behaviour.
+    """
+
+    def set(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    def get(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    def scan(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    def scan_iter(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    def exists(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    def ttl(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    def ping(self, *args: object, **kwargs: object) -> None:
+        raise ConnectionError("Redis unreachable")
+
+
+class TestRedisConnectionFailure:
+    """Redis unavailability must never allow a token — fail closed."""
+
+    def test_consume_fails_closed_on_connection_error(self):
+        """If Redis is unreachable, consume() must return False (deny, not crash)."""
+        key = secrets.token_bytes(32)
+        signer = ExecutionTokenSigner(secret_key=key)
+        token = signer.mint(_make_decision())
+
+        broken = _BrokenRedis()
+        verifier = RedisExecutionTokenVerifier(
+            secret_key=key,
+            redis_client=broken,
+        )
+        # Must return False (fail-safe DENY), never raise
+        result = verifier.consume(token)
+        assert result is False
+
+    def test_consumed_count_returns_zero_on_connection_error(self):
+        """consumed_count() must not crash when Redis is unavailable."""
+        key = secrets.token_bytes(32)
+        broken = _BrokenRedis()
+        verifier = RedisExecutionTokenVerifier(
+            secret_key=key,
+            redis_client=broken,
+        )
+        # Must return 0 (safe default), never raise
+        count = verifier.consumed_count()
+        assert count == 0
+
+    def test_no_exception_propagates_on_connection_error(self):
+        """No ConnectionError or any other exception must escape consume()."""
+        key = secrets.token_bytes(32)
+        signer = ExecutionTokenSigner(secret_key=key)
+        token = signer.mint(_make_decision())
+        verifier = RedisExecutionTokenVerifier(
+            secret_key=key,
+            redis_client=_BrokenRedis(),
+        )
+        try:
+            verifier.consume(token)
+        except Exception as exc:
+            pytest.fail(
+                f"consume() raised {type(exc).__name__} when Redis was "
+                f"unavailable — must silently return False instead: {exc}"
+            )
 
 
 # ── Compatibility: matches in-memory verifier ──────────────────────────────────

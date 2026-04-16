@@ -385,6 +385,183 @@ Enable with `PRAMANIX_METRICS_ENABLED=true` or `GuardConfig(metrics_enabled=True
 | `pramanix_solver_timeouts_total` | Counter | Z3 solver timeouts by `policy` label |
 | `pramanix_validation_failures_total` | Counter | Intent/state validation failures by `policy` label |
 
+#### Exposing the `/metrics` Endpoint (FastAPI)
+
+Pramanix metrics are collected via the `prometheus_client` library.  Wire the
+scrape endpoint into your application:
+
+```python
+from fastapi import FastAPI, Response
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+app = FastAPI()
+
+@app.get("/metrics")
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+```
+
+#### Prometheus Scrape Configuration
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: pramanix
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["pramanix-guard:8080"]
+
+    # Optional: filter to Pramanix metrics only (reduces cardinality)
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "pramanix_.*"
+        action: keep
+```
+
+For Kubernetes Service Discovery, replace `static_configs` with:
+
+```yaml
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ["pramanix"]
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        regex: pramanix-guard
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_ip]
+        target_label: __address__
+        replacement: "${1}:8080"
+```
+
+#### Recommended Grafana Alert Rules
+
+```yaml
+# alerts/pramanix.yml
+groups:
+  - name: pramanix
+    rules:
+      - alert: PramanixHighBlockRate
+        expr: |
+          rate(pramanix_decisions_total{status="UNSAFE"}[5m]) /
+          rate(pramanix_decisions_total[5m]) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pramanix BLOCK rate > 20% on {{ $labels.policy }}"
+
+      - alert: PramanixSolverTimeouts
+        expr: rate(pramanix_solver_timeouts_total[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Z3 solver timeout rate > 1% — possible constraint DoS"
+
+      - alert: PramanixHighLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            rate(pramanix_decision_latency_seconds_bucket[5m])
+          ) > 0.015
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pramanix P99 latency > 15 ms on {{ $labels.policy }}"
+```
+
+### OpenTelemetry Traces
+
+Enable with `PRAMANIX_OTEL_ENABLED=true` or `GuardConfig(otel_enabled=True)`.
+
+Every `Guard.verify()` call produces an OpenTelemetry span named `pramanix.verify`
+with the following attributes:
+
+| Attribute | Value |
+|-----------|-------|
+| `pramanix.policy` | Policy class name |
+| `pramanix.decision_id` | UUID4 of the Decision |
+| `pramanix.allowed` | `true` / `false` |
+| `pramanix.status` | `SAFE` / `UNSAFE` / `ERROR` / `TIMEOUT` |
+| `pramanix.latency_ms` | End-to-end verify latency |
+
+#### Exporting to Jaeger (OTLP gRPC)
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+# Configure OTLP exporter (Jaeger, Grafana Tempo, Honeycomb, etc.)
+exporter = OTLPSpanExporter(
+    endpoint="http://jaeger-collector:4317",  # gRPC endpoint
+    insecure=True,                             # use insecure=False + credentials in prod
+)
+provider = TracerProvider()
+provider.add_span_processor(BatchSpanProcessor(exporter))
+trace.set_tracer_provider(provider)
+
+# Then initialize Guard — it picks up the global tracer provider automatically
+from pramanix import Guard, GuardConfig
+guard = Guard(policy, GuardConfig(otel_enabled=True))
+```
+
+#### Exporting to Grafana Tempo (OTLP HTTP)
+
+```python
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+exporter = OTLPSpanExporter(
+    endpoint="http://tempo:4318/v1/traces",  # HTTP endpoint
+)
+```
+
+#### Kubernetes OTEL Collector Sidecar
+
+```yaml
+# Add to pod spec alongside pramanix-guard container
+- name: otel-collector
+  image: otel/opentelemetry-collector-contrib:0.95.0
+  args: ["--config=/conf/otel-collector-config.yaml"]
+  volumeMounts:
+    - name: otel-config
+      mountPath: /conf
+  ports:
+    - containerPort: 4317   # OTLP gRPC
+    - containerPort: 4318   # OTLP HTTP
+    - containerPort: 55679  # zpages (debug)
+```
+
+```yaml
+# otel-collector-config.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  otlphttp/tempo:
+    endpoint: "http://grafana-tempo:4318"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/tempo]
+```
+
+Set `PRAMANIX_OTEL_ENABLED=true` and point the SDK at the sidecar:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+PRAMANIX_OTEL_ENABLED=true
+```
+
 ### Red-Flag Telemetry (NLP mode)
 
 Three rolling-window counters with 300-second window:

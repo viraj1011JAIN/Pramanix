@@ -279,7 +279,7 @@ def run_domain(domain_name: str, run_dir: Path) -> dict:
     worker_results: list[dict] = []
     finished = 0
     consecutive_timeouts = 0
-    MAX_CONSECUTIVE_TIMEOUTS = 60   # 60 × 60 s = 1 hour wait max per worker
+    MAX_CONSECUTIVE_TIMEOUTS = 1080  # 1080 × 60 s = 18 hours wait max per worker
 
     while finished < N_WORKERS:
         try:

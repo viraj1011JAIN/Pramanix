@@ -3,7 +3,7 @@
 ![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)
 ![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
 ![Version 0.8.0](https://img.shields.io/badge/Version-0.8.0-orange)
-![Tests 1821 passed](https://img.shields.io/badge/Tests-1821%20passed-brightgreen)
+![Tests 1824 passed](https://img.shields.io/badge/Tests-1824%20passed-brightgreen)
 ![Coverage 96.55%](https://img.shields.io/badge/Coverage-96.55%25-brightgreen)
 ![Z3 4.16.0](https://img.shields.io/badge/Z3-4.16.0-purple)
 
@@ -1184,9 +1184,9 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 ## Test Suite
 
-**1,821 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
+**1,824 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
 
-Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the 1M-decision run takes ~15 minutes). The badge count of 1,821 excludes the perf suite.
+Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the 1M-decision run takes ~15 minutes). The badge count of 1,824 excludes the perf suite.
 
 ### Distribution
 
@@ -1197,7 +1197,7 @@ Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
 | Property | 11 | 2 | Hypothesis-based serialization round-trips, fintech invariant properties |
 | Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS (run separately) |
-| **Total (badge)** | **1,821** | | **Excludes perf suite** |
+| **Total (badge)** | **1,824** | | **Excludes perf suite** |
 
 ### Coverage by Module
 

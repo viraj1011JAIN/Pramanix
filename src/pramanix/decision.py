@@ -86,13 +86,13 @@ def _json_safe_value(v: Any) -> Any:
         return v
     if isinstance(v, Decimal):
         return str(v)
-    if isinstance(v, (int, float)):
+    if isinstance(v, int | float):
         return v
     if isinstance(v, str):
         return v
     if isinstance(v, dict):
         return _make_json_safe(v)
-    if isinstance(v, (list, tuple)):
+    if isinstance(v, list | tuple):
         return [_json_safe_value(i) for i in v]
     if hasattr(v, "isoformat"):  # datetime
         return v.isoformat()

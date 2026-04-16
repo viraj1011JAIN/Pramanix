@@ -179,6 +179,119 @@ P50 total                           ~500 ms - 2 s  (dominated by LLM latency)
 | `async-thread` | Web APIs, concurrent workloads. Z3 runs in `ThreadPoolExecutor`. Python GIL limits true parallelism above 4-8 workers. |
 | `async-process` | High-security environments, True parallelism beyond 8 workers. Z3 runs in spawned subprocesses with HMAC-sealed IPC. Higher per-call overhead (~2-5 ms) due to IPC. |
 
+#### Choosing the Right Mode
+
+**Use `sync` when:**
+- Running in scripts, CLI tools, or test suites where concurrency is not needed.
+- `Guard.verify()` is called sequentially and you want zero threading overhead.
+- You are profiling the Z3 solver in isolation without pool scheduling noise.
+
+**Use `async-thread` when:**
+- Running a web API (FastAPI, Flask, Django) where multiple requests arrive concurrently.
+- Your policy set is CPU-bound but moderate (< 8 active invariants per call).
+- You need low per-call latency overhead and can tolerate the GIL serializing solver calls above ~4 workers.
+- Memory pressure matters — thread workers share the parent's address space, so baseline
+  RSS cost per worker is ~0 additional bytes (only Z3 heap allocations add up).
+
+**Use `async-process` when:**
+- You need true CPU parallelism beyond 4–8 workers on multi-core hardware.
+- Z3 crash isolation is required: a segfault in a subprocess kills only that worker;
+  the parent process and all other workers continue serving requests. The crashed
+  subprocess is automatically replaced and warmed up before it re-enters the pool.
+  In `async-thread` mode a Z3 segfault kills the entire process.
+- You are running in a high-security environment where you want the solver to run in
+  a separate process boundary (Defense-in-Depth — limits blast radius of Z3 memory
+  corruption bugs to the subprocess).
+- **Trade-offs:** ~2–5 ms additional per-call IPC overhead; each subprocess adds
+  50–90 MiB baseline RSS; `max_decisions_per_worker` recycle is more expensive
+  (subprocess teardown + respawn vs executor pool swap).
+
+#### Mode-Specific Tuning
+
+```
+Mode             max_workers guidance        max_decisions_per_worker
+──────────────────────────────────────────────────────────────────────
+sync             N/A (no pool)               N/A
+async-thread     2× physical CPU cores       10,000 (default)
+                 Cap at 8 — GIL saturates    Lower to 2,000 in
+                 beyond this point.          memory-constrained pods.
+async-process    physical CPU cores          5,000 (lower — subprocess
+                 (not 2×; each process       respawn is expensive)
+                 runs the solver at 100%)
+```
+
+**Example: 8-core server, web API (recommended)**
+```bash
+PRAMANIX_EXECUTION_MODE=async-thread
+PRAMANIX_MAX_WORKERS=8
+PRAMANIX_MAX_DECISIONS_PER_WORKER=10000
+```
+
+**Example: 8-core server, high-security isolated solver**
+```bash
+PRAMANIX_EXECUTION_MODE=async-process
+PRAMANIX_MAX_WORKERS=8
+PRAMANIX_MAX_DECISIONS_PER_WORKER=5000
+```
+
+**Example: 2-core container pod (256 MiB RAM)**
+```bash
+PRAMANIX_EXECUTION_MODE=async-thread
+PRAMANIX_MAX_WORKERS=4
+PRAMANIX_MAX_DECISIONS_PER_WORKER=2000   # ~10 MiB peak RSS growth before recycle
+```
+
+### solver_rlimit (`PRAMANIX_SOLVER_RLIMIT`, default: 10000000)
+
+Z3 exposes a **resource limit (rlimit)** — a count of internal solver operations.
+When the rlimit is exhausted, Z3 returns `unknown` (neither SAT nor UNSAT) and
+Pramanix converts this to `status=TIMEOUT, allowed=False`. Unlike the wall-clock
+timeout (`solver_timeout_ms`), the rlimit is CPU-speed-independent: the same policy
+runs the same number of Z3 operations regardless of machine speed.
+
+**What "10M operations" means in practice:**
+- A single-invariant linear policy (`balance - amount >= 0`) exhausts roughly
+  100K–500K rlimit operations per call on typical inputs.
+- A policy with 5 linear invariants: ~500K–2M operations.
+- A policy with 10 mixed invariants including non-linear arithmetic: ~2M–8M operations.
+- Adversarially crafted inputs targeting quantified formulas can consume 10M+ operations
+  in under 1 ms wall-clock time — the rlimit stops these before the timeout fires.
+
+**How to measure per-policy rlimit usage:**
+
+```python
+import z3
+
+# One-off measurement — run in a test or script, not in production hot path
+ctx = z3.Context()
+solver = z3.Solver(ctx=ctx)
+
+# Set rlimit artificially high to observe natural usage
+solver.set("rlimit", 100_000_000)
+
+# Add your policy invariants
+x, y = z3.Ints("x y", ctx=ctx)
+solver.add(x - y >= 0)          # add your actual invariants here
+
+result = solver.check(z3.IntVal(5, ctx=ctx) - z3.IntVal(3, ctx=ctx) >= 0)
+stats = solver.statistics()
+# Find "rlimit count" in stats
+for key in stats.keys():
+    if "rlimit" in key.lower():
+        print(f"  {key}: {stats.get_key_value(key)}")
+```
+
+**Tuning the rlimit safely:**
+- Set `PRAMANIX_SOLVER_RLIMIT` to **10× the measured maximum** for your policy set
+  under legitimate inputs. This gives legitimate queries headroom while stopping
+  adversarial complexity blowups.
+- If you observe `status=TIMEOUT` on legitimate queries before wall-clock timeout fires,
+  increase the rlimit (your policy is more complex than the default assumes).
+- Never set rlimit to `0` (disabled) in production — this removes the only protection
+  against non-linear formula DoS within the `solver_timeout_ms` window.
+- After policy changes, re-run the measurement above to confirm the new policy still
+  fits comfortably within your configured rlimit.
+
 ### fast_path_enabled (`PRAMANIX_FAST_PATH_ENABLED`, default: false)
 
 - Enables O(1) pre-Z3 screening using up to 5 configurable rules.

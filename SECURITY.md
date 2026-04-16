@@ -4,9 +4,9 @@
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| `0.5.x`  | ✅ Current — security fixes applied |
-| `0.4.x`  | ⚠️ Critical fixes only (90-day window from 0.5.0 release) |
-| `< 0.4`  | ❌ End-of-life — please upgrade |
+| `0.8.x`  | ✅ Current — full security support |
+| `0.7.x`  | ⚠️ Critical fixes only (90-day window from 0.8.0 release) |
+| `< 0.7`  | ❌ End-of-life — please upgrade to 0.8.x |
 
 ---
 
