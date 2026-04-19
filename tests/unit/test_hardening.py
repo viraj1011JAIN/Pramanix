@@ -707,13 +707,16 @@ class TestLogInjection:
     """Log injection is prevented by structured logging (not format strings)."""
 
     def test_structlog_is_used_in_guard(self):
-        """guard.py must import structlog, not use % or .format() on user data."""
+        """guard.py pipeline must use structlog, not % or .format() on user data."""
         import inspect
 
         import pramanix.guard as guard_mod
+        import pramanix.guard_config as guard_config_mod
 
-        src = inspect.getsource(guard_mod)
-        assert "structlog" in src, "guard.py must use structlog for structured logging"
+        # After guard refactor, structlog lives in guard_config (where _log is
+        # defined and exported).  Either module containing structlog is correct.
+        src = inspect.getsource(guard_mod) + inspect.getsource(guard_config_mod)
+        assert "structlog" in src, "guard pipeline must use structlog for structured logging"
 
     def test_malicious_newline_in_decision_id_does_not_corrupt_log(self):
         """Embedded newlines in intent values must not break structured logs.

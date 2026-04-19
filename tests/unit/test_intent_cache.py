@@ -485,7 +485,7 @@ class TestRedisCache:
         """IntentCache end-to-end: real fakeredis hit returns cached dict."""
         import json
 
-        from pramanix.translator._cache import _RedisCache, _normalize_key
+        from pramanix.translator._cache import _normalize_key, _RedisCache
 
         r = _fakeredis_module.FakeRedis()
         hashed = _normalize_key("transfer 500")

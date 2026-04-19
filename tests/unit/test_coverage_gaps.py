@@ -14,10 +14,10 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+
 import pramanix.guard as _guard_mod
 import pramanix.transpiler as _transpiler_mod
 import pramanix.worker as _worker_mod
-
 from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.exceptions import PolicyCompilationError, SemanticPolicyViolation
 from pramanix.expressions import (

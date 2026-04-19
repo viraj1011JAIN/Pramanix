@@ -87,13 +87,10 @@ from pramanix.exceptions import (
     WorkerError,
 )
 from pramanix.guard_config import (
-    GuardConfig,
     _PROM_AVAILABLE,
+    GuardConfig,
     _decision_latency,
     _decisions_total,
-    _env_bool,
-    _env_int,
-    _env_str,
     _log,
     _resolver_registry,
     _solver_timeouts_total,

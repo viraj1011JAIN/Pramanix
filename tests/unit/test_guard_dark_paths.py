@@ -114,19 +114,19 @@ class _ModelledPolicy(Policy):
 
 class TestEnvInt:
     def test_valid_env_var_returns_int(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_int
+        from pramanix.guard_config import _env_int
 
         monkeypatch.setenv("PRAMANIX_SOLVER_TIMEOUT_MS", "9999")
         assert _env_int("SOLVER_TIMEOUT_MS", 5000) == 9999
 
     def test_invalid_env_var_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_int
+        from pramanix.guard_config import _env_int
 
         monkeypatch.setenv("PRAMANIX_SOLVER_TIMEOUT_MS", "not_a_number")
         assert _env_int("SOLVER_TIMEOUT_MS", 5000) == 5000
 
     def test_missing_env_var_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_int
+        from pramanix.guard_config import _env_int
 
         monkeypatch.delenv("PRAMANIX_SOLVER_TIMEOUT_MS", raising=False)
         assert _env_int("SOLVER_TIMEOUT_MS", 42) == 42
@@ -139,25 +139,25 @@ class TestEnvInt:
 
 class TestEnvBool:
     def test_true_string_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_bool
+        from pramanix.guard_config import _env_bool
 
         monkeypatch.setenv("PRAMANIX_METRICS_ENABLED", "true")
         assert _env_bool("METRICS_ENABLED", False) is True
 
     def test_one_string_returns_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_bool
+        from pramanix.guard_config import _env_bool
 
         monkeypatch.setenv("PRAMANIX_METRICS_ENABLED", "1")
         assert _env_bool("METRICS_ENABLED", False) is True
 
     def test_false_string_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_bool
+        from pramanix.guard_config import _env_bool
 
         monkeypatch.setenv("PRAMANIX_METRICS_ENABLED", "false")
         assert _env_bool("METRICS_ENABLED", True) is False
 
     def test_missing_env_var_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.guard import _env_bool
+        from pramanix.guard_config import _env_bool
 
         monkeypatch.delenv("PRAMANIX_METRICS_ENABLED", raising=False)
         assert _env_bool("METRICS_ENABLED", True) is True
@@ -170,26 +170,26 @@ class TestEnvBool:
 
 class TestFmt:
     def test_empty_label_returns_empty_string(self) -> None:
-        from pramanix.guard import _fmt
+        from pramanix.guard_pipeline import _fmt
 
         inv = (E(_amount_field) >= 0).named("")
         assert _fmt(inv, {"amount": "100"}) == ""
 
     def test_normal_interpolation_works(self) -> None:
-        from pramanix.guard import _fmt
+        from pramanix.guard_pipeline import _fmt
 
         inv = (E(_amount_field) >= 0).named("lbl").explain("amount is {amount}")
         assert _fmt(inv, {"amount": "50"}) == "amount is 50"
 
     def test_missing_key_returns_raw_template(self) -> None:
-        from pramanix.guard import _fmt
+        from pramanix.guard_pipeline import _fmt
 
         inv = (E(_amount_field) >= 0).named("lbl").explain("value={missing_key}")
         result = _fmt(inv, {"amount": "50"})
         assert result == "value={missing_key}"
 
     def test_bad_format_spec_returns_raw_template(self) -> None:
-        from pramanix.guard import _fmt
+        from pramanix.guard_pipeline import _fmt
 
         inv = (E(_amount_field) >= 0).named("lbl").explain("{amount!invalid_conversion}")
         result = _fmt(inv, {"amount": "50"})
@@ -203,7 +203,7 @@ class TestFmt:
 
 class TestSemanticPostConsensusCheck:
     def _call(self, intent: dict, state: dict) -> None:
-        from pramanix.guard import _semantic_post_consensus_check
+        from pramanix.guard_pipeline import _semantic_post_consensus_check
 
         _semantic_post_consensus_check(intent, state)
 
