@@ -24,7 +24,6 @@ import argparse
 import json as _json
 import os
 import sys
-from datetime import UTC, datetime
 from typing import Any
 
 
@@ -107,7 +106,9 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
             "status": result.status,
             "violated_invariants": result.violated_invariants,
             "explanation": result.explanation,
-            "policy": result.policy,
+            "policy_hash": result.policy_hash,
+            # issued_at is always 0 for tokens produced by SDK >= v0.5.x
+            # (iat was removed from the signed payload for deterministic replay).
             "issued_at": result.issued_at,
         }
         if result.error:
@@ -116,16 +117,14 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
         return 0 if result.valid else 1
 
     if result.valid:
-        try:
-            ts = datetime.fromtimestamp(result.issued_at, tz=UTC).isoformat()
-        except Exception:  # pragma: no cover
-            ts = str(result.issued_at)  # pragma: no cover
         status_line = f"status={result.status}"
         if result.violated_invariants:
             status_line += f"  violated={result.violated_invariants}"
         if result.explanation:
             status_line += f"  explanation={result.explanation!r}"
-        print(f"VALID  decision_id={result.decision_id}  issued_at={ts}  {status_line}")
+        if result.policy_hash:
+            status_line += f"  policy_hash={result.policy_hash[:12]}..."
+        print(f"VALID  decision_id={result.decision_id}  {status_line}")
         return 0
     else:
         print(f"INVALID  decision_id={result.decision_id}  error={result.error or 'signature mismatch'}")

@@ -89,11 +89,15 @@ try:
         """Return a live OTel span context-manager."""
         return _otel_trace.get_tracer("pramanix.guard").start_as_current_span(name)
 
+    _OTEL_AVAILABLE = True  # pragma: no cover
+
 except ImportError:  # pragma: no cover
 
     def _span(name: str) -> Any:  # pragma: no cover
         """No-op span when opentelemetry is not installed."""
         return contextlib.nullcontext()
+
+    _OTEL_AVAILABLE = False  # pragma: no cover
 
 
 # ── Prometheus — graceful optional dependency ─────────────────────────────────
@@ -309,6 +313,14 @@ class GuardConfig:
                 "GuardConfig(metrics_enabled=True) has no effect: "
                 "prometheus_client is not installed. "
                 "Install it: pip install 'pramanix[metrics]'",
+                UserWarning,
+                stacklevel=2,
+            )
+        if self.otel_enabled and not _OTEL_AVAILABLE:
+            warnings.warn(
+                "GuardConfig(otel_enabled=True) has no effect: "
+                "opentelemetry-sdk is not installed. "
+                "Install it: pip install 'pramanix[otel]'",
                 UserWarning,
                 stacklevel=2,
             )

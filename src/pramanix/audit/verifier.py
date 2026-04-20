@@ -29,8 +29,20 @@ class VerificationResult:
     status: str
     violated_invariants: list[str]
     explanation: str
-    policy: str
+    policy_hash: str
+    """SHA-256 fingerprint of the policy that produced this decision.
+
+    Previously named ``policy`` (which was always empty because the signed
+    payload used the wrong key name).  Corrected in v0.5.x to read the
+    actual ``policy_hash`` field written by :class:`~pramanix.audit.signer.DecisionSigner`.
+    """
     issued_at: int
+    """Unix timestamp (milliseconds) of signing.  Always ``0`` for tokens
+    produced by the current SDK — ``iat`` was removed from the signed payload
+    in v0.5.x to make signing deterministic (replay-verifiable).  The
+    timestamp is available on :attr:`~pramanix.audit.signer.SignedDecision.issued_at`
+    when the token is produced, but is NOT embedded in the JWS body.
+    """
     error: str | None = None
 
 
@@ -76,7 +88,11 @@ class DecisionVerifier:
                 status=str(payload.get("status", "")),
                 violated_invariants=list(payload.get("violated_invariants", [])),
                 explanation=str(payload.get("explanation", "")),
-                policy=str(payload.get("policy", "")),
+                # "policy_hash" is the correct key written by DecisionSigner._canonicalize().
+                # The old key "policy" was a bug — it never existed in to_dict() and
+                # always resolved to "".  "iat" was removed from the signed payload in
+                # v0.5.x (N6 fix) to make signing deterministic; it is therefore always 0.
+                policy_hash=str(payload.get("policy_hash", "")),
                 issued_at=int(payload.get("iat", 0)),
             )
         except Exception as exc:
@@ -91,7 +107,7 @@ class DecisionVerifier:
             status="",
             violated_invariants=[],
             explanation="",
-            policy="",
+            policy_hash="",
             issued_at=0,
             error=error,
         )

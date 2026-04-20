@@ -121,15 +121,18 @@ class MerkleAnchor:
         )
 
     def _build_root(self, leaves: list[str]) -> str:
-        if len(leaves) == 1:
-            return leaves[0]
-        if len(leaves) % 2 == 1:
-            leaves.append(leaves[-1])
-        next_level = [
-            hashlib.sha256((leaves[i] + leaves[i + 1]).encode()).hexdigest()
-            for i in range(0, len(leaves), 2)
-        ]
-        return self._build_root(next_level)
+        # Iterative implementation avoids Python's default recursion limit
+        # (1000 frames) which would be breached with ~2^1000 leaves.  Logs
+        # grow to thousands of entries in long-running production deployments.
+        level = leaves[:]
+        while len(level) > 1:
+            if len(level) % 2 == 1:
+                level.append(level[-1])
+            level = [
+                hashlib.sha256((level[i] + level[i + 1]).encode()).hexdigest()
+                for i in range(0, len(level), 2)
+            ]
+        return level[0]
 
 
 class PersistentMerkleAnchor(MerkleAnchor):
