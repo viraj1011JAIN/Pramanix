@@ -90,16 +90,21 @@ class DecisionSigner:
             return None
 
     def _canonicalize(self, decision: Decision) -> dict[str, Any]:
-        """Produce a deterministic canonical dict from a Decision."""
+        """Produce a deterministic canonical dict from a Decision.
+
+        Uses the exact key names returned by ``decision.to_dict()``.
+        ``iat`` is intentionally excluded from the signed payload — it is
+        non-deterministic (changes on every call) and is already captured
+        in ``SignedDecision.issued_at`` outside the HMAC boundary.  Including
+        it would make deterministic replay verification impossible.
+        """
         d = decision.to_dict()
         return {
             "decision_id": str(d.get("decision_id", "")),
             "allowed": bool(d.get("allowed", False)),
             "explanation": str(d.get("explanation", "")),
-            "iat": int(time.time()),
-            "policy": str(d.get("policy", "")),
+            "policy_hash": str(d.get("policy_hash", "")),
             "solver_time_ms": float(d.get("solver_time_ms", 0)),
-            "state_version": str(d.get("state_version", "")),
             "status": str(d.get("status", "")),
             "violated_invariants": sorted(str(v) for v in d.get("violated_invariants", [])),
         }

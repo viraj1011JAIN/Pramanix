@@ -73,8 +73,15 @@ class MerkleAnchor:
 
     def __init__(self) -> None:
         self._leaves: list[str] = []
+        self._ids: set[str] = set()  # O(1) duplicate guard
 
     def add(self, decision_id: str) -> None:
+        if decision_id in self._ids:
+            raise ValueError(
+                f"Duplicate decision_id {decision_id!r} already anchored in this MerkleAnchor. "
+                "Each decision_id must be unique within a single audit batch."
+            )
+        self._ids.add(decision_id)
         self._leaves.append(hashlib.sha256(decision_id.encode()).hexdigest())
 
     def root(self) -> str | None:

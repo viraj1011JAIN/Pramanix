@@ -19,13 +19,14 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from pramanix.exceptions import ConfigurationError
-from pramanix.resolvers import ResolverRegistry
+from pramanix.resolvers import ResolverRegistry, resolver_registry
 
 if TYPE_CHECKING:
     from pramanix.crypto import PramanixSigner
@@ -134,12 +135,13 @@ except ImportError:  # pragma: no cover
 
 
 # ── Module-level resolver registry ───────────────────────────────────────────
-# Shared registry for lazy field resolvers.  The thread-local cache inside
-# ResolverRegistry ensures User A's resolved values are never visible to
-# User B's concurrent request.  Guard.verify() clears the cache in its
-# finally block so no stale values survive across requests.
+# Alias the public singleton from resolvers.py so that Guard's internal
+# clear_cache() call operates on the SAME object that users register into
+# via ``from pramanix.resolvers import resolver_registry``.
+# Prior to this fix guard_config created its own private ResolverRegistry()
+# instance, so user-registered resolvers were silently ignored by Guard.
 
-_resolver_registry = ResolverRegistry()
+_resolver_registry = resolver_registry
 
 
 # ── Environment variable helpers ──────────────────────────────────────────────
@@ -301,4 +303,12 @@ class GuardConfig:
                 f"GuardConfig.shed_latency_threshold_ms must be > 0.0, "
                 f"got {self.shed_latency_threshold_ms}.  A value of 0 would "
                 f"cause every request to exceed the P99 threshold immediately."
+            )
+        if self.metrics_enabled and not _PROM_AVAILABLE:
+            warnings.warn(
+                "GuardConfig(metrics_enabled=True) has no effect: "
+                "prometheus_client is not installed. "
+                "Install it: pip install 'pramanix[metrics]'",
+                UserWarning,
+                stacklevel=2,
             )

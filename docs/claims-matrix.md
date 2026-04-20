@@ -22,6 +22,10 @@ Status values:
 | Compatibility policy/semver contract is documented | project release messaging | No `docs/api-compatibility.md` yet | unverified | Add `docs/api-compatibility.md` and contract tests for exports/schema in Phase 1.2. |
 | Translator security is a binding guarantee | README + docs phrasing in some sections | src/pramanix/guard.py always runs Phase 2 verify after parse; adversarial tests under tests/adversarial | partially verified | Keep wording: "Phase 1 is heuristic pre-screening; Phase 2 is binding safety layer." |
 | Compliance mappings are available (HIPAA/BSA/OFAC examples) | docs/compliance.md | docs/compliance.md, tests/unit/test_compliance_reporter.py | verified | Keep as implementation examples, not certification claim. |
+| Z3 encoding scope — Z3 verifies submitted values only, not data accuracy, invariant completeness, or executor intent | README.md Known Limitations + docs/architecture.md §12 | Design limitation; no direct unit test | verified | Keep explicit in Known Limitations and architecture.md §12. |
+| Z3 string theory performance — `String` sort (sequence theory) is slower than arithmetic sorts; prefer int-encoded enumerations | README.md Known Limitations | No benchmark test; documented guidance only | verified | Add to architecture.md §12; tune `solver_timeout_ms` when string constraints are required. |
+| Merkle anchor is process-scoped without `PersistentMerkleAnchor` — `root_hash` is lost on crash | README.md Known Limitations + docs/security.md H05 | tests/unit/test_hardening.py H05 checkpoint tests | verified | Keep limitation explicit; require `PersistentMerkleAnchor` + append-only callback in production deployments. |
+| Small LLM models (< ~3B params) cannot reliably perform structured intent extraction | README.md Known Limitations | No automated test (requires LLM runtime) | unverified | Add to architecture.md §12; warn users to use `llama3.2` (3B+) or a hosted model for Phase 1. |
 
 ## Notes
 

@@ -302,3 +302,36 @@ pramanix audit verify decisions.jsonl --public-key public.pem
 - When Z3 returns SAT for `balance - amount >= 0` given `balance=1000, amount=500`, it means: given these values, the formula is satisfiable under the rules of arithmetic. This is not a prediction -- it is a theorem.
 - When Z3 returns UNSAT, the counterexample it provides is proof that the constraint is violated. The policy violation is not detected -- it is mathematically derived.
 - No amount of adversarial input can make `1000 - 500 >= 0` evaluate to False in Z3's arithmetic.
+
+---
+
+## 8. Operational Limitations
+
+These are design boundaries that affect production deployments. They are not defects -- they define the correct scope for using Pramanix safely.
+
+### Z3 native crashes (SIGABRT / SIGSEGV)
+
+Python's `except Exception` cannot catch a Z3 C++ crash. If the Z3 native library raises `SIGABRT` or `SIGSEGV` (e.g., due to memory corruption or a Z3 bug), the entire Python process terminates with no recoverable exception.
+
+- **In `sync` and `async-thread` modes:** a Z3 crash kills the host process.
+- **In `async-process` mode:** the crash is confined to the worker subprocess. The host process receives a fail-safe BLOCK (`Decision(allowed=False, status=ERROR)`), the worker is restarted automatically, and the host continues serving.
+- **Recommendation:** use `execution_mode="async-process"` in any production environment where process-level isolation is required.
+
+This is tracked in the hardening table as H02 (zombie process prevention via PPID watchdog). The PPID watchdog ensures that if the *host* process dies, orphaned worker subprocesses exit within one watchdog interval rather than leaking resources.
+
+### Z3 encoding scope
+
+Z3 verifies that submitted values satisfy declared constraints. It does not:
+
+- Verify that state was accurately loaded from your database.
+- Verify that the intent dict matches what the executor will actually perform.
+- Verify that your invariants fully capture your safety requirements.
+
+The strength of the guarantee is bounded by the accuracy of the state source and the completeness of the policy. Both should be reviewed by domain experts before regulated-environment deployment.
+
+### Merkle anchor durability
+
+`MerkleAnchor` maintains the hash chain in memory only. A process crash or restart without an explicit `root_hash` export loses the in-memory chain (individual signed decisions remain verifiable; the chain linking them is lost).
+
+Use `PersistentMerkleAnchor` with a `checkpoint_callback` that writes the `root_hash` and decision count to an append-only store on every checkpoint. This is countermeasure H05.
+

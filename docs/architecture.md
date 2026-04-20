@@ -405,4 +405,19 @@ Understanding these boundaries is important for correct deployment in regulated 
 - In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK; the host process is unaffected.
 - Use `async-process` in production for full process-level isolation.
 
+**Z3 string theory performance:**
+- The `String` sort uses Z3 sequence theory, which is decidable but slower than arithmetic sorts.
+- For string-heavy policies, prefer integer-encoded enumerations and `.is_in()` membership checks.
+- Tune `solver_timeout_ms` accordingly if string constraints are necessary.
+
+**Merkle anchor persistence:**
+- `MerkleAnchor` is process-scoped. If the process terminates without exporting `root_hash`, the chain is lost.
+- Use `PersistentMerkleAnchor` with a `checkpoint_callback` that writes to an append-only store (database, object storage, transparency log) at every checkpoint.
+- Individual Ed25519-signed decisions remain independently verifiable even without the Merkle chain.
+
+**Small LLM models:**
+- Models below approximately 3 billion parameters (e.g., `llama3.2:1b`) cannot reliably perform structured intent extraction and will echo the schema prompt instead of filling in values.
+- Use `llama3.2` (3B) or larger, or any OpenAI/Anthropic model, for Phase 1 intent extraction.
+- Phase 2 (Z3 formal verification) is unaffected by model size and always runs independently.
+
 **Cross-references:** [security.md](security.md) § Threat Model, [why_smt_wins.md](why_smt_wins.md) § Section 4.

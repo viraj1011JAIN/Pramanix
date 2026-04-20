@@ -36,12 +36,15 @@ Usage::
 from __future__ import annotations
 
 import contextvars
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = ["ResolverRegistry", "resolver_registry"]
+
+_log = logging.getLogger(__name__)
 
 
 class ResolverRegistry:
@@ -83,6 +86,12 @@ class ResolverRegistry:
         """
         if not callable(resolver):
             raise TypeError(f"resolver for '{name}' must be callable, got {type(resolver)!r}")
+        if name in self._resolvers:
+            _log.warning(
+                "ResolverRegistry: overwriting existing resolver for %r. "
+                "This may indicate a misconfigured startup sequence or duplicate import.",
+                name,
+            )
         self._resolvers[name] = resolver
 
     # ── Resolution ───────────────────────────────────────────────────────────
