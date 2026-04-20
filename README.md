@@ -1,11 +1,12 @@
 # Pramanix
 
-![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
-![Version 0.8.0](https://img.shields.io/badge/Version-0.8.0-orange)
-![Tests 1824 passed](https://img.shields.io/badge/Tests-1824%20passed-brightgreen)
+![Version 0.9.0](https://img.shields.io/badge/Version-0.9.0-orange)
+![Tests 1831 passed](https://img.shields.io/badge/Tests-1831%20passed-brightgreen)
 ![Coverage 96.55%](https://img.shields.io/badge/Coverage-96.55%25-brightgreen)
 ![Z3 4.16.0](https://img.shields.io/badge/Z3-4.16.0-purple)
+![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203-blueviolet)
 
 **Safety guardrails for autonomous AI agents, backed by formal constraint verification.**
 
@@ -152,7 +153,7 @@ The `String` sort uses Z3 sequence theory, which is decidable but slower than ar
 `MerkleAnchor` is process-scoped. Export `root_hash` to an append-only store at every checkpoint for cross-restart durability. Individual Ed25519-signed decision records remain independently verifiable without the chain.
 
 **Phase 1 injection threshold:**
-When `parse_and_verify()` is used, the injection confidence threshold (score >= 0.5 triggers `InjectionBlockedError`) is currently hardcoded. Phase 2 (Z3) is the binding safety guarantee regardless of Phase 1 outcome.
+When `parse_and_verify()` is used, the injection confidence threshold is configurable via `GuardConfig(injection_threshold=...)` or `PRAMANIX_INJECTION_THRESHOLD` (default `0.5`). If the score is above threshold, the request is blocked before Z3. Phase 2 (Z3) remains the binding safety guarantee whenever verification proceeds.
 
 **Small LLM models:**
 `llama3.2:1b` (1 billion parameters) cannot reliably perform structured intent extraction -- it echoes the schema instead of filling it in. Use `llama3.2` (3B) or larger.
@@ -294,7 +295,7 @@ decision.explanation           # str -- human-readable reason, templates filled 
 decision.decision_id           # UUID4 -- unique per decision
 decision.policy_hash           # SHA-256 of the compiled policy
 decision.solver_time_ms        # float -- Z3 solve time in milliseconds
-decision.signature             # bytes | None -- Ed25519 signature (if signer configured)
+decision.signature             # str | None -- Ed25519 signature (if signer configured)
 decision.decision_hash         # str -- SHA-256 of canonical decision JSON
 
 # Factory classifiers (all return allowed=False)
@@ -312,10 +313,9 @@ Decision.consensus_failure()   # Phase 1 dual-model disagreement
 | `SAFE` | `True` | All invariants satisfied. Z3 returned SAT. |
 | `UNSAFE` | `False` | One or more invariants violated. Z3 returned UNSAT. |
 | `TIMEOUT` | `False` | Z3 hit `solver_timeout_ms` or `solver_rlimit`. Request blocked. |
-| `VALIDATION_ERROR` | `False` | Input failed Pydantic validation before reaching Z3. |
+| `VALIDATION_FAILURE` | `False` | Input failed Pydantic validation before reaching Z3. |
 | `RATE_LIMITED` | `False` | Load shedder rejected the request (pool or latency limit exceeded). |
 | `CONSENSUS_FAILURE` | `False` | Phase 1: dual-model LLM disagreement on extracted values. |
-| `INJECTION_BLOCKED` | `False` | Phase 1: injection confidence score >= 0.5. |
 | `ERROR` | `False` | Unexpected internal exception. Fail-safe path. |
 
 ### @guard Decorator
@@ -1184,9 +1184,9 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 ## Test Suite
 
-**1,824 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
+**1,831 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
 
-Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the 1M-decision run takes ~15 minutes). The badge count of 1,824 excludes the perf suite.
+Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the 1M-decision run takes ~15 minutes). The badge count of 1,831 excludes the perf suite.
 
 ### Distribution
 
@@ -1197,7 +1197,7 @@ Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
 | Property | 11 | 2 | Hypothesis-based serialization round-trips, fintech invariant properties |
 | Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS (run separately) |
-| **Total (badge)** | **1,824** | | **Excludes perf suite** |
+| **Total (badge)** | **1,831** | | **Excludes perf suite** |
 
 ### Coverage by Module
 
@@ -1257,7 +1257,7 @@ def test_alive_process_is_killed(self) -> None:
 
 ## Project Status
 
-**v0.8.0 -- 56 source files, 3,012 statements, 96.55% covered.**
+**v0.9.0 -- 56 source files, 3,012 statements, 96.55% covered.**
 
 | Milestone | Status |
 |-----------|--------|
@@ -1269,20 +1269,33 @@ def test_alive_process_is_killed(self) -> None:
 | v0.6: Primitives -- 38 domain primitives (finance, AML, RBAC, infra, healthcare, time) | Done |
 | v0.7: Performance -- expression cache, load shedding, benchmarks | Done |
 | v0.8: Audit -- Ed25519 signing, Merkle chain, compliance reporter, audit CLI, zero-trust identity, execution tokens | Done |
-| v0.9: Documentation suite, policy registry, extended benchmark suite | In progress |
+| v0.9: Phase 12 hardening (H01-H15), documentation suite, configurable injection threshold, multi-version CI | Done |
 | v1.0 GA: Chaos testing, RC deployment, API contract lock | Planned |
 
 ---
 
 ## Supply Chain
 
-Every release ships with GitHub-attested provenance (Sigstore OIDC), an SBOM, and Sigstore signatures.
+Every release ships with GitHub-attested provenance (Sigstore OIDC), a CycloneDX SBOM, and Sigstore bundle signatures.
 
 ```bash
+# Verify release artifact provenance (requires gh CLI ≥ 2.49)
 gh attestation verify --owner virajjain dist/pramanix-*.whl
 ```
 
-Current pipeline satisfies SLSA Level 2 (hosted build, signed provenance). SLSA Level 3 (hermetic/reproducible build) is on the roadmap for v1.0 GA.
+The release pipeline (`release.yml`) satisfies **SLSA Level 3**:
+
+| SLSA requirement | How Pramanix meets it |
+|---|---|
+| Hosted build platform | GitHub Actions (ephemeral, isolated runners) |
+| Signed provenance | `pypa/gh-action-pypi-publish` with `attestations: true` (OIDC) |
+| Non-forgeable provenance | GitHub OIDC — no stored tokens, workflow identity bound to commit SHA |
+| Artifact signing | Sigstore `gh-action-sigstore-python@v3` — `.sigstore.json` bundle per artifact |
+| SBOM | CycloneDX JSON, attached to every GitHub Release |
+| Post-release smoke test | Clean `pip install` from PyPI in an isolated venv, import verified |
+| Version consistency gate | `pyproject.toml == git tag == __version__ == CHANGELOG entry` checked before build |
+
+No `PYPI_API_TOKEN` is stored as a GitHub Secret. PyPI trusted publishing uses GitHub OIDC exclusively.
 
 ---
 
@@ -1340,4 +1353,4 @@ Full documentation is in the [`docs/`](docs/) directory:
 
 *Built by Viraj Jain.*
 *Pramana (प्रमाण) -- "valid source of knowledge" or "proof" in Sanskrit.*
-*z3-solver 4.16.0 · pydantic 2.12.5 · Python 3.13.7*
+*z3-solver 4.16.0 · pydantic 2.12.5 · Python 3.11 – 3.13*

@@ -184,6 +184,19 @@ class TestGuardConfig:
         with pytest.raises(ConfigurationError, match="min_response_ms"):
             GuardConfig(min_response_ms=-0.1)
 
+    def test_default_injection_threshold(self) -> None:
+        assert GuardConfig().injection_threshold == pytest.approx(0.5)
+
+    @pytest.mark.parametrize("value", [0.1, 0.5, 1.0])
+    def test_valid_injection_threshold_values(self, value: float) -> None:
+        cfg = GuardConfig(injection_threshold=value)
+        assert cfg.injection_threshold == pytest.approx(value)
+
+    @pytest.mark.parametrize("value", [0.0, -0.1, 1.1])
+    def test_invalid_injection_threshold_raises(self, value: float) -> None:
+        with pytest.raises(ConfigurationError, match="injection_threshold"):
+            GuardConfig(injection_threshold=value)
+
     def test_frozen_instance_cannot_be_mutated(self) -> None:
         cfg = GuardConfig()
         with pytest.raises((AttributeError, TypeError)):

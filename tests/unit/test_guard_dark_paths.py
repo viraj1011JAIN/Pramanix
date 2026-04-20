@@ -635,6 +635,47 @@ class TestParseAndVerifyGenericException:
         assert not result.allowed
         assert result.status == SolverStatus.ERROR
 
+    @pytest.mark.asyncio
+    async def test_parse_and_verify_forwards_configured_injection_threshold(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Guard.parse_and_verify must pass GuardConfig.injection_threshold to consensus."""
+        from pramanix.translator import redundant as _redundant
+
+        captured: dict[str, float] = {}
+
+        class _FakeTranslator:
+            async def extract(self, _text, _intent_schema, _context=None):
+                return {"amount": Decimal("10")}
+
+        def _fake_create_translator(*_a, **_kw):
+            return _FakeTranslator()
+
+        async def _fake_extract_with_consensus(
+            _text,
+            _intent_schema,
+            _translators,
+            _context=None,
+            **kwargs,
+        ):
+            captured["injection_threshold"] = float(kwargs["injection_threshold"])
+            return {"amount": Decimal("10")}
+
+        monkeypatch.setattr(_redundant, "create_translator", _fake_create_translator)
+        monkeypatch.setattr(_redundant, "extract_with_consensus", _fake_extract_with_consensus)
+
+        cfg = GuardConfig(injection_threshold=0.73)
+        g = Guard(policy=_MinimalPolicy, config=cfg)
+        result = await g.parse_and_verify(
+            prompt="transfer 10",
+            intent_schema=_Intent,
+            state={"state_version": "1.0", "balance": Decimal("1000")},
+        )
+
+        assert captured["injection_threshold"] == pytest.approx(0.73)
+        assert result.allowed
+
 
 # ===============================================================
 # Phase 11: Logging isolation — intent_dump / state_dump must

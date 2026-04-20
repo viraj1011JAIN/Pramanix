@@ -54,6 +54,7 @@ async def extract_with_consensus(
     *,
     agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = "strict_keys",
     critical_fields: frozenset[str] | None = None,
+    injection_threshold: float = 0.5,
 ) -> dict[str, Any]:
     """Call two translators concurrently and require them to agree.
 
@@ -90,6 +91,13 @@ async def extract_with_consensus(
                          ``"unanimous"``.  When *None* in ``"lenient"`` mode,
                          all fields are treated as critical (same behaviour as
                          ``"strict_keys"``).
+        injection_threshold: Post-consensus injection confidence threshold
+                         ``[0.0, 1.0]``.  Inputs whose heuristic score meets
+                         or exceeds this value are blocked with
+                         :exc:`~pramanix.exceptions.InjectionBlockedError`.
+                         Raise for stricter deployments (e.g. ``0.3``); lower
+                         for domains with legitimate high-entropy inputs such
+                         as crypto addresses (e.g. ``0.7``).  Default: ``0.5``.
 
     Returns:
         A validated ``dict`` from *intent_schema* when consensus is reached.
@@ -206,9 +214,10 @@ async def extract_with_consensus(
     # available as a signal.  This catches adversarial inputs that slip past
     # the injection-pattern regex (e.g. encoded payloads normalised by the LLM).
     score = injection_confidence_score(text, dump_a, sanitise_warnings)
-    if score >= 0.5:
+    if score >= injection_threshold:
         raise InjectionBlockedError(
-            f"Input blocked by injection scorer (confidence={score:.2f} ≥ 0.50). "
+            f"Input blocked by injection scorer "
+            f"(confidence={score:.2f} ≥ {injection_threshold:.2f}). "
             f"Sanitisation signals: {sanitise_warnings or 'none'}."
         )
 
@@ -408,11 +417,13 @@ class RedundantTranslator:
         *,
         agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = "strict_keys",
         critical_fields: frozenset[str] | None = None,
+        injection_threshold: float = 0.5,
     ) -> None:
         self._a = translator_a
         self._b = translator_b
         self._agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = agreement_mode
         self._critical_fields = critical_fields
+        self._injection_threshold = injection_threshold
         # Expose a composite model name for logging / error messages
         name_a = getattr(translator_a, "model", "a")
         name_b = getattr(translator_b, "model", "b")
@@ -432,4 +443,5 @@ class RedundantTranslator:
             context,
             agreement_mode=self._agreement_mode,
             critical_fields=self._critical_fields,
+            injection_threshold=self._injection_threshold,
         )

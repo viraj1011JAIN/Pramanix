@@ -20,12 +20,18 @@
 ARG PYTHON_VERSION=3.13
 ARG DEBIAN_CODENAME=bookworm
 
+# Digest-pinned base image — provides supply-chain attestation that the exact
+# image layer used at build time is reproducible across CI runners.
+# To update: docker pull python:3.13-slim-bookworm && docker inspect --format='{{index .RepoDigests 0}}' python:3.13-slim-bookworm
+# Last verified: 2026-04-20 — python:3.13-slim-bookworm
+ARG BASE_DIGEST="sha256:061b6e52a07ab675f0e4a9428c5a8ee6bed996983427f4691f6bebf29c56d9dc"
+
 # ════════════════════════════════════════════════════════════════════════════
 # STAGE 1 — builder
 # Installs pramanix[all] into /opt/venv. Produces a clean, portable venv.
 # Build tools (gcc, make) stay here — never copied to runner.
 # ════════════════════════════════════════════════════════════════════════════
-FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS builder
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME}@${BASE_DIGEST} AS builder
 
 # Fail fast on any shell error; treat unset vars as errors
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
@@ -65,7 +71,7 @@ RUN python -c "from pramanix import Guard, Policy, Field, E, Decision; print('bu
 # STAGE 2 — runner
 # Minimal runtime image. No build tools. No dev dependencies.
 # ════════════════════════════════════════════════════════════════════════════
-FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME} AS runner
+FROM python:${PYTHON_VERSION}-slim-${DEBIAN_CODENAME}@${BASE_DIGEST} AS runner
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 

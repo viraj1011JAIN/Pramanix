@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Pramanix Iron Gate CI Pipeline — v0.6
+# Pramanix Iron Gate CI Pipeline — v0.7
 #
 # Job execution order (dependency chain — fail-fast at each gate):
-#   sast → alpine-ban → lint-typecheck → test → coverage → trivy → license-scan
+#   sast → alpine-ban → lint-typecheck → test → coverage → wheel-smoke → trivy → license-scan
 #
 # Security rationale:
 #   SAST first: reject known-CVE deps before ANY test code runs.
@@ -10,7 +10,9 @@
 #   Lint/type third: reject broken code before spending compute on tests.
 #   Tests fourth: full adversarial + property suite, ordered unit→integ→prop→adv.
 #   Coverage fifth: enforce 95% floor; fail PRs that drop > 0.5%.
-#   Trivy sixth: container image CVE scan — fail on CRITICAL/HIGH.
+#   Wheel-smoke sixth: build wheel + sdist and install into a clean venv — catches
+#     missing manifest files and accidentally-optional runtime deps before PyPI publish.
+#   Trivy seventh: container image CVE scan — fail on CRITICAL/HIGH.
 #   License last: expensive scan runs only after everything else passes.
 #
 # Nightly benchmark (schedule trigger):
@@ -385,14 +387,14 @@ jobs:
           # via codecov.yml in the repo root (coverage.precision + coverage.status)
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 6 — Container Image Security Scan (Trivy)
+  # JOB 7 — Container Image Security Scan (Trivy)
   # Builds the production Docker image and scans for CRITICAL/HIGH CVEs.
   # Fails if any CRITICAL or HIGH vulnerability is found.
   # ──────────────────────────────────────────────────────────────────────────
   trivy:
     name: "Container scan (Trivy)"
     runs-on: ubuntu-latest
-    needs: coverage
+    needs: wheel-smoke
     steps:
       - uses: actions/checkout@v4
 
@@ -516,7 +518,121 @@ jobs:
           path: licenses.json
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 8 — Nightly Latency Benchmark
+  # JOB 8 — Wheel / sdist install smoke gate
+  #
+  # Builds the distribution artifacts with `poetry build`, then installs the
+  # wheel into a *clean* virtual environment (no source tree, no dev deps) and
+  # verifies that the public API imports correctly.
+  #
+  # Why this is needed:
+  #   The test job uses `poetry install` (editable, with all extras and dev
+  #   deps).  It cannot catch:
+  #     - A missing file in the wheel/sdist (MANIFEST/packages mis-config)
+  #     - A runtime dependency accidentally marked `optional = true`
+  #     - An import that works from src/ but fails from the installed package
+  #   All of these would reach PyPI and break every user's first `pip install`.
+  #
+  # Gate: must run after `coverage` so it only triggers on a healthy build.
+  # ──────────────────────────────────────────────────────────────────────────
+  wheel-smoke:
+    name: "Wheel install smoke (clean venv)"
+    runs-on: ubuntu-latest
+    needs: coverage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel and sdist
+        run: |
+          pip install poetry
+          poetry build
+          echo "Built artifacts:"
+          ls -lh dist/
+
+      - name: Install wheel into a clean virtual environment
+        # Deliberately does NOT install dev or test dependencies.
+        # Uses --no-cache-dir to prove the wheel is self-contained.
+        run: |
+          python -m venv /tmp/pramanix-smoke-venv
+          /tmp/pramanix-smoke-venv/bin/pip install --no-cache-dir \
+            dist/pramanix-*.whl
+
+      - name: Verify core public API is importable from the installed wheel
+        run: |
+          /tmp/pramanix-smoke-venv/bin/python - <<'PYEOF'
+          # Import every name that is guaranteed stable in pramanix.__all__.
+          # If any import fails here, the wheel is broken for end users.
+          from pramanix import (
+              Guard,
+              GuardConfig,
+              Policy,
+              Field,
+              E,
+              Decision,
+              SolverStatus,
+              PramanixError,
+              GuardViolationError,
+              ConfigurationError,
+              ExecutionToken,
+              ExecutionTokenSigner,
+              ExecutionTokenVerifier,
+          )
+          import pramanix
+
+          # Verify __version__ is present and non-empty
+          assert hasattr(pramanix, "__version__") and pramanix.__version__, (
+              "__version__ missing from installed wheel"
+          )
+
+          # Verify __all__ is present and non-empty
+          assert hasattr(pramanix, "__all__") and pramanix.__all__, (
+              "__all__ missing from installed wheel"
+          )
+
+          # Verify the Guard class is functional (no missing C-extension or data file)
+          from pydantic import BaseModel
+          from decimal import Decimal
+
+          class _Intent(BaseModel):
+              amount: Decimal
+
+          class _State(BaseModel):
+              balance: Decimal
+              state_version: str = "v1"
+
+          policy = Policy(
+              name="smoke",
+              version="v1",
+              intent_model=_Intent,
+              state_model=_State,
+              invariants=[Field("amount") <= Field("balance")],
+          )
+          guard = Guard(policy)
+          decision = guard.verify(
+              intent={"amount": Decimal("1")},
+              state={"balance": Decimal("100"), "state_version": "v1"},
+          )
+          assert decision.allowed, f"Smoke verify failed: {decision.status}"
+
+          print(f"Wheel smoke passed  version={pramanix.__version__}  "
+                f"exports={len(pramanix.__all__)}")
+          PYEOF
+
+      - name: Verify sdist is installable (build from source)
+        # Installs from the .tar.gz to catch missing source files that the
+        # wheel build step pre-compiles and therefore silently hides.
+        run: |
+          python -m venv /tmp/pramanix-sdist-venv
+          /tmp/pramanix-sdist-venv/bin/pip install --no-cache-dir \
+            dist/pramanix-*.tar.gz
+          /tmp/pramanix-sdist-venv/bin/python -c \
+            "import pramanix; print('sdist smoke passed', pramanix.__version__)"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 9 — Nightly Latency Benchmark
   # Runs only on the schedule trigger (02:00 UTC daily).
   # Enforces P99 < 15ms gate — fails the job if the target is missed.
   # ──────────────────────────────────────────────────────────────────────────

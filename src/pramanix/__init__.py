@@ -7,7 +7,7 @@ Public API contract — these are the ONLY names that are considered stable.
 All other internal modules may change without notice.
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 

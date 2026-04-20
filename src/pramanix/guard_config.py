@@ -242,6 +242,20 @@ class GuardConfig:
     raises ConfigurationError if the running policy does not match this hash,
     preventing silent policy drift in distributed deployments.
     """
+    injection_threshold: float = field(
+        default_factory=lambda: float(_env_str("INJECTION_THRESHOLD", "0.5"))
+    )
+    """Injection confidence threshold [0.0, 1.0] for the post-consensus scorer
+    in :func:`~pramanix.translator.redundant.extract_with_consensus`.
+
+    Inputs whose heuristic confidence score meets or exceeds this value are
+    blocked with :exc:`~pramanix.exceptions.InjectionBlockedError` before any
+    LLM result is returned.
+
+    Raise for high-security deployments (e.g. ``0.3``); lower for domains
+    with legitimate high-entropy inputs such as crypto addresses
+    (e.g. ``0.7``).  Default: ``0.5``.  Env var: ``PRAMANIX_INJECTION_THRESHOLD``.
+    """
 
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
@@ -270,4 +284,9 @@ class GuardConfig:
         if self.min_response_ms < 0.0:
             raise ConfigurationError(
                 f"GuardConfig.min_response_ms must be >= 0.0, got {self.min_response_ms}."
+            )
+        if not (0.0 < self.injection_threshold <= 1.0):
+            raise ConfigurationError(
+                f"GuardConfig.injection_threshold must be in (0.0, 1.0], "
+                f"got {self.injection_threshold}."
             )

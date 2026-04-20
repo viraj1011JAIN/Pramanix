@@ -805,7 +805,11 @@ class Guard:
             translator_b = create_translator(models[1])
 
             intent_dict = await extract_with_consensus(
-                prompt, intent_schema, (translator_a, translator_b), context
+                prompt,
+                intent_schema,
+                (translator_a, translator_b),
+                context,
+                injection_threshold=self._config.injection_threshold,
             )
 
             # ── Semantic post-consensus check: fast Python rules before Z3 ─────

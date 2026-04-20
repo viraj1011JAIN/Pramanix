@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Claims/evidence alignment pass started for production-readiness hardening:
+  - Added `docs/claims-matrix.md` with verification status (`verified`, `partially verified`, `unverified`, `wording too strong`) for key public claims.
+  - `Guard.parse_and_verify()` now forwards `GuardConfig.injection_threshold` into dual-model consensus extraction instead of relying on extractor defaults.
+  - README status contract corrected to match implemented API (`VALIDATION_FAILURE`, no `INJECTION_BLOCKED` status row).
+
+### Added
+
+- New unit coverage for injection-threshold contract behavior:
+  - `tests/unit/test_guard.py`: threshold default/range validation tests.
+  - `tests/unit/test_guard_dark_paths.py`: verifies `parse_and_verify()` forwards configured threshold.
+- **API contract lock (Phase 1.2 — complete rewrite)**: `tests/unit/test_api_contract.py` — 6 test classes (v0.9.0 snapshot) covering every dimension of the public surface:
+  - `TestAllExportsLock` (6 tests): exact frozenset of 43 names in `pramanix.__all__`; checks list type, count, additions, removals, attribute reachability, and no private names.
+  - `TestDirectImportSurface` (10 tests): verifies `from pramanix import X` works for every high-visibility name (`Guard`, `GuardConfig`, `Policy`, `Field`, `E`, `Decision`, `SolverStatus`, `PramanixError`, `GuardViolationError`, `ConfigurationError`).
+  - `TestSolverStatusLock` (8 tests): exact 9 members, wire values, **iteration order** (ordered tuple lock), StrEnum identity contract, SAFE/CACHE_HIT classification, and `_BLOCKED_STATUSES` membership.
+  - `TestDecisionToDictLock` (17 tests): exact 13-key schema; **per-field Python type semantics** for all 13 fields (UUID4 format, `bool` exactness, str wire value, list[str], numeric ≥ 0, dict, 64-char lowercase hex, `str|None` not bytes); cross-field invariants (`allowed↔status`); hash determinism.
+  - `TestDecisionFactories` (12 tests): all 6 factory methods exist and return correct `status`/`allowed`; `Decision` is frozen.
+  - `TestGuardConfigFieldLock` (12 tests): exact 20 fields; **18 locked default values** (operational and security defaults); zero-arg constructor; frozen-immutability invariant; valid/invalid execution modes; injection threshold range validation.
+- `docs/api-compatibility.md`: comprehensive semver rules document (9 sections) — what is/isn't public API, serialisation compatibility, enum stability, GuardConfig compatibility, deprecation policy, step-by-step contributor update guide, and full contract enforcement table.
+- **CI wheel/sdist install smoke gate (Phase 4.1)**: new `wheel-smoke` CI job inserted between
+  `coverage` and `trivy` in `.github/workflows/ci.yml`. The job:
+  - Runs `poetry build` to produce wheel + sdist.
+  - Installs the `.whl` into a clean `venv` (no dev deps, `--no-cache-dir`).
+  - Imports every stable `__all__` name and exercises `Guard.verify()` end-to-end.
+  - Installs the `.tar.gz` sdist separately to catch files missing from the source manifest.
+  Any gap between `poetry install` (editable) and the installed distribution would break
+  every user's first `pip install pramanix` — this gate ensures that cannot reach PyPI.
+
 ## [0.9.0] - 2026-04-16
 
 ### Added
