@@ -45,6 +45,8 @@ __all__ = [
     "ExpressionNode",
     "Field",
     "Z3Type",
+    "abs_expr",
+    "_AbsOp",
     "_BinOp",
     "_BoolOp",
     "_CmpOp",
@@ -56,8 +58,17 @@ __all__ = [
 
 # ── Z3 sort tag ───────────────────────────────────────────────────────────────
 
-Z3Type = Literal["Real", "Int", "Bool"]
-"""Valid Z3 sort identifiers for :class:`Field`."""
+Z3Type = Literal["Real", "Int", "Bool", "String"]
+"""Valid Z3 sort identifiers for :class:`Field`.
+
+.. note::
+    ``"String"`` maps to Z3's sequence theory.  It supports only equality
+    (``==``, ``!=``) and membership (``is_in``) constraints; arithmetic
+    operators (``+``, ``-``, etc.) on String fields will raise
+    :exc:`~pramanix.exceptions.TranspileError` at solve time.  For
+    high-throughput deployments prefer ``"Int"``-encoded enumerations over
+    ``"String"`` fields — string-theory solving is significantly slower
+    than linear-integer arithmetic."""
 
 
 # ── Field descriptor ──────────────────────────────────────────────────────────
@@ -83,7 +94,9 @@ class Field:
                      documentation and future validation; not enforced at
                      runtime by this class.
         z3_type:     Z3 sort — ``"Real"`` (exact rationals), ``"Int"``
-                     (integers), or ``"Bool"``.
+                     (integers), ``"Bool"``, or ``"String"``.
+                     See the :data:`Z3Type` alias for full details and
+                     performance trade-offs.
     """
 
     name: str
@@ -127,6 +140,16 @@ class _InOp(NamedTuple):
 
     left: Any  # ExpressionNode.node
     values: tuple[Any, ...]  # sequence of _Literal nodes
+
+
+class _AbsOp(NamedTuple):
+    """Absolute-value operator: |operand|.
+
+    Transpiled as ``z3.If(operand >= 0, operand, -operand)``.
+    Only valid for ``Real`` and ``Int``-sorted fields.
+    """
+
+    operand: Any  # ExpressionNode.node
 
 
 # ── Expression builder ────────────────────────────────────────────────────────
@@ -198,6 +221,35 @@ class ExpressionNode:
 
     def __rtruediv__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("div", _Literal(o), self.node))
+
+    def __neg__(self) -> ExpressionNode:
+        """Unary negation — returns ``-self`` as a new :class:`ExpressionNode`.
+
+        Example::
+
+            loss = E(pnl) < 0
+            within_band = (-E(delta) >= -max_delta) & (E(delta) <= max_delta)
+        """
+        return ExpressionNode(_BinOp("mul", _Literal(-1), self.node))
+
+    def abs(self) -> ExpressionNode:
+        """Absolute value — returns ``|self|`` as a new :class:`ExpressionNode`.
+
+        Transpiled as ``z3.If(self >= 0, self, -self)``.  Only valid for
+        ``Real`` and ``Int``-sorted fields; raises
+        :exc:`~pramanix.exceptions.TranspileError` at solve time if used on a
+        ``Bool`` or ``String`` field.
+
+        Example::
+
+            price_field = Field("price_delta", Decimal, "Real")
+            max_slippage = Field("max_slippage", Decimal, "Real")
+
+            within_slippage = (
+                E(price_delta).abs() <= E(max_slippage)
+            ).named("slippage_check")
+        """
+        return ExpressionNode(_AbsOp(self.node))
 
     def __pow__(self, o: Any) -> ExpressionNode:  # type: ignore[override,unused-ignore]
         """Banned: exponentiation is not supported in Z3 real/integer arithmetic.
@@ -406,3 +458,27 @@ def E(field: Field) -> ExpressionNode:  # noqa: N802
         An :class:`ExpressionNode` wrapping a ``_FieldRef`` AST leaf.
     """
     return ExpressionNode(_FieldRef(field))
+
+
+def abs_expr(expr: ExpressionNode) -> ExpressionNode:
+    """Return the absolute value of *expr* as a new :class:`ExpressionNode`.
+
+    Convenience wrapper around :meth:`ExpressionNode.abs()` for use in
+    complex expressions where the method-call syntax is awkward.
+
+    Transpiled as ``z3.If(expr >= 0, expr, -expr)``.  Only valid for
+    ``Real`` and ``Int``-sorted fields.
+
+    Example::
+
+        from pramanix.expressions import abs_expr, E, Field
+        from decimal import Decimal
+
+        delta = Field("delta", Decimal, "Real")
+        threshold = Field("max_delta", Decimal, "Real")
+
+        bounded = (
+            abs_expr(E(delta)) <= E(threshold)
+        ).named("delta_within_bounds")
+    """
+    return expr.abs()

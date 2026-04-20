@@ -276,11 +276,19 @@ class Guard:
         _t0 = time.perf_counter()
         decision = self._sign_decision(self._verify_core(intent, state))
         # ── Timing jitter buffer (side-channel mitigation) ─────────────────────
+        # Loop until the minimum has truly elapsed.  time.sleep() can return
+        # early when interrupted by a signal (e.g. SIGCHLD from a subprocess);
+        # the loop re-sleeps for any remaining time so the floor is guaranteed.
         if self._config.min_response_ms > 0.0:
-            _elapsed_ms = (time.perf_counter() - _t0) * 1000.0
-            _remaining_ms = self._config.min_response_ms - _elapsed_ms
-            if _remaining_ms > 0.0:
-                time.sleep(_remaining_ms / 1000.0)
+            _deadline = _t0 + self._config.min_response_ms / 1000.0
+            while True:
+                _left = _deadline - time.perf_counter()
+                if _left <= 0.0:
+                    break
+                try:
+                    time.sleep(_left)
+                except (InterruptedError, OSError):
+                    pass  # signal interrupted sleep; loop to check deadline
         return decision
 
     def _verify_core(
@@ -330,11 +338,11 @@ class Guard:
             try:
                 import json as _json_size
 
-                _raw_intent = (
-                    dict(intent) if isinstance(intent, dict) else {}
+                _raw_intent: dict[str, Any] = (
+                    intent if isinstance(intent, dict) else intent.model_dump()
                 )
-                _raw_state = (
-                    dict(state) if isinstance(state, dict) else {}
+                _raw_state: dict[str, Any] = (
+                    state if isinstance(state, dict) else state.model_dump()
                 )
                 _payload_size = len(
                     _json_size.dumps(
@@ -598,12 +606,19 @@ class Guard:
         _t0_async = time.perf_counter()
 
         async def _timed(d: Decision) -> Decision:
-            """Apply min_response_ms timing pad and return decision."""
+            """Apply min_response_ms timing pad and return decision.
+
+            Uses a deadline loop: asyncio.sleep() can return early if the event
+            loop is under heavy load; the loop re-sleeps for any remaining time
+            so the minimum floor is guaranteed regardless of scheduling noise.
+            """
             if self._config.min_response_ms > 0.0:
-                _elapsed_ms = (time.perf_counter() - _t0_async) * 1000.0
-                _remaining_ms = self._config.min_response_ms - _elapsed_ms
-                if _remaining_ms > 0.0:
-                    await asyncio.sleep(_remaining_ms / 1000.0)
+                _deadline_async = _t0_async + self._config.min_response_ms / 1000.0
+                while True:
+                    _left = _deadline_async - time.perf_counter()
+                    if _left <= 0.0:
+                        break
+                    await asyncio.sleep(_left)
             return d
 
         # Sync mode: delegate entirely to sync verify() in a thread.

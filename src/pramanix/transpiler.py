@@ -37,6 +37,7 @@ import z3
 from pramanix.exceptions import FieldTypeError, TranspileError
 from pramanix.expressions import (
     Field,
+    _AbsOp,
     _BinOp,
     _BoolOp,
     _CmpOp,
@@ -301,6 +302,12 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
                 return disjuncts[0]
             return cast("z3.ExprRef", z3.Or(*disjuncts))
 
+        case _AbsOp(operand=o):
+            # Transpile |x| as z3.If(x >= 0, x, -x).
+            # Z3's ArithRef supports If-then-else for Real and Int sorts.
+            z_op = cast("z3.ArithRef", transpile(o, ctx))
+            return cast("z3.ExprRef", z3.If(z_op >= 0, z_op, -z_op))
+
         case _:
             raise TranspileError(f"Unknown DSL AST node type: {type(node)!r}")
 
@@ -331,6 +338,8 @@ def collect_fields(node: Any) -> dict[str, Field]:
             # The values in _InOp are all _Literal nodes — no field references.
             # Only the left operand (the field being tested) contributes fields.
             return collect_fields(l)
+        case _AbsOp(operand=o):
+            return collect_fields(o)
         case _:
             return {}
 
@@ -411,7 +420,7 @@ def _collect_field_names(node: Any) -> list[str]:
     if (
         hasattr(node, "label")
         and hasattr(node, "node")
-        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp)
+        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp | _AbsOp)
     ):
         inner = getattr(node, "node", None)
         if inner is not None:
@@ -427,7 +436,7 @@ def _tree_has_literal(node: Any) -> bool:
     if (
         hasattr(node, "label")
         and hasattr(node, "node")
-        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp)
+        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp | _AbsOp)
     ):
         inner = getattr(node, "node", None)
         if inner is not None:
@@ -442,6 +451,8 @@ def _tree_has_literal(node: Any) -> bool:
             return any(_tree_has_literal(op) for op in ops)
         case _InOp(values=vs):
             return len(vs) > 0  # _InOp values are all _Literal nodes
+        case _AbsOp(operand=o):
+            return _tree_has_literal(o)
         case _:
             return False
 
@@ -455,7 +466,7 @@ def _tree_repr(node: Any) -> str:
     if (
         hasattr(node, "label")
         and hasattr(node, "node")
-        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp)
+        and not isinstance(node, _FieldRef | _Literal | _BinOp | _CmpOp | _BoolOp | _InOp | _AbsOp)
     ):
         inner = getattr(node, "node", None)
         label = getattr(node, "label", "") or ""
@@ -475,5 +486,7 @@ def _tree_repr(node: Any) -> str:
             return f"BoolOp({op},{','.join(_tree_repr(o) for o in ops)})"
         case _InOp(left=l, values=vs):
             return f"InOp({_tree_repr(l)},{[_tree_repr(v) for v in vs]})"
+        case _AbsOp(operand=o):
+            return f"AbsOp({_tree_repr(o)})"
         case _:
             return f"Unknown({type(node).__name__})"

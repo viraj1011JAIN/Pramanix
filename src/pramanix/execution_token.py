@@ -228,6 +228,12 @@ class ExecutionTokenVerifier:
         For distributed deployments, swap out ``_consumed`` for a
         Redis SETNX or similar transactional store.
 
+    Memory management:
+        The in-memory registry is automatically pruned on every ``consume()``
+        call: any entry whose token TTL has already elapsed is evicted.
+        This bounds memory to ``O(unique unexpired tokens)`` rather than growing
+        unboundedly over the lifetime of the process.
+
     Example::
 
         verifier = ExecutionTokenVerifier(secret_key=secret)
@@ -241,8 +247,17 @@ class ExecutionTokenVerifier:
         if len(secret_key) < 16:
             raise ValueError("secret_key must be at least 16 bytes.")
         self._key = secret_key
-        self._consumed: set[str] = set()
+        # {token_id: expires_at} — stores expiry alongside the ID so that
+        # entries can be evicted once the TTL elapses, bounding memory usage.
+        self._consumed: dict[str, float] = {}
         self._lock = threading.Lock()
+
+    def _evict_expired(self) -> None:
+        """Prune consumed entries whose TTL has elapsed.  Called under lock."""
+        now = time.time()
+        expired = [tid for tid, exp in self._consumed.items() if exp < now]
+        for tid in expired:
+            del self._consumed[tid]
 
     def consume(self, token: ExecutionToken) -> bool:
         """Verify and consume a token.  Returns ``True`` iff:
@@ -283,16 +298,34 @@ class ExecutionTokenVerifier:
 
         # ── 3. Single-use check (atomic) ──────────────────────────────────────
         with self._lock:
+            self._evict_expired()  # prune stale entries to bound memory growth
             if token.token_id in self._consumed:
                 return False
-            self._consumed.add(token.token_id)
+            self._consumed[token.token_id] = token.expires_at
 
         return True
 
     def consumed_count(self) -> int:
-        """Return the number of token IDs in the consumed registry."""
+        """Return the number of token IDs currently in the consumed registry.
+
+        Note: entries are lazily evicted on ``consume()`` calls.  The count
+        may include tokens whose TTL has elapsed if ``consume()`` has not been
+        called recently.  Use :meth:`evict_expired` to force immediate pruning.
+        """
         with self._lock:
             return len(self._consumed)
+
+    def evict_expired(self) -> int:
+        """Force eviction of all expired token entries.  Returns the count evicted.
+
+        Normally this is unnecessary — eviction runs automatically on every
+        ``consume()`` call.  Call this explicitly if the service is idle for a
+        long period and you want to reclaim memory proactively.
+        """
+        with self._lock:
+            before = len(self._consumed)
+            self._evict_expired()
+            return before - len(self._consumed)
 
 
 # ── Redis-backed distributed verifier ─────────────────────────────────────────

@@ -558,3 +558,74 @@ class Decision:
             explanation=reason,
             metadata=dict(metadata) if metadata is not None else {},
         )
+
+    # ── Deserialisation ────────────────────────────────────────────────────────
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Decision:
+        """Reconstruct a :class:`Decision` from its :meth:`to_dict` representation.
+
+        This is the inverse of :meth:`to_dict` and is the single authoritative
+        deserialisation path.  It is used by the CLI audit verifier, test
+        fixtures, and any distributed component that serialises decisions to
+        JSON for storage or transport.
+
+        The reconstructed ``Decision`` has:
+
+        * ``allowed``, ``status``, ``violated_invariants``, ``explanation``,
+          ``solver_time_ms``, ``metadata``, ``intent_dump``, ``state_dump``
+          from the dict.
+        * ``decision_id``, ``decision_hash``, ``signature``, ``public_key_id``,
+          ``policy_hash`` preserved from the dict (not re-computed).
+          ``decision_hash`` is passed directly to bypass recomputation in
+          ``__post_init__`` — the stored hash is authoritative for audit replay.
+
+        Args:
+            d: A dict as returned by :meth:`to_dict`.
+
+        Returns:
+            A :class:`Decision` instance equivalent to the original.
+
+        Raises:
+            KeyError:   If a required field is missing from *d*.
+            ValueError: If ``status`` is not a valid :class:`SolverStatus` value,
+                        or if the ``allowed``/``status`` invariant is violated.
+        """
+        return cls(
+            allowed=bool(d["allowed"]),
+            status=SolverStatus(d["status"]),
+            violated_invariants=tuple(d.get("violated_invariants", [])),
+            explanation=str(d.get("explanation", "")),
+            solver_time_ms=float(d.get("solver_time_ms", 0.0)),
+            metadata=dict(d.get("metadata", {})),
+            decision_id=str(d["decision_id"]),
+            intent_dump=dict(d.get("intent_dump", {})),
+            state_dump=dict(d.get("state_dump", {})),
+            # Preserve the stored hash — do NOT recompute.  Pass it as a
+            # non-empty string so __post_init__ skips recomputation.
+            decision_hash=str(d.get("decision_hash", "")),
+            signature=d.get("signature"),
+            public_key_id=d.get("public_key_id"),
+            policy_hash=d.get("policy_hash"),
+        )
+
+    # ── Human-readable representation ────────────────────────────────────────
+
+    def __repr__(self) -> str:
+        """Return a concise, safe representation that never exposes sensitive data.
+
+        ``intent_dump`` and ``state_dump`` are intentionally excluded — they
+        may contain financial values, PII, or other sensitive fields that must
+        not appear in logs, error messages, or REPL output.
+
+        Example::
+
+            Decision(id='3fa85f64', allowed=False, status=UNSAFE,
+                     violated=['non_negative_balance'])
+        """
+        short_id = self.decision_id[:8] if self.decision_id else "?"
+        vi = list(self.violated_invariants)
+        return (
+            f"Decision(id={short_id!r}, allowed={self.allowed}, "
+            f"status={self.status.name}, violated={vi!r})"
+        )

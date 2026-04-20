@@ -51,6 +51,14 @@ class CircuitState(enum.StrEnum):
 class FailsafeMode(enum.StrEnum):
     BLOCK_ALL = "block_all"
     ALLOW_WITH_AUDIT = "allow_with_audit"
+    """.. deprecated::
+        ``ALLOW_WITH_AUDIT`` is an alias for ``BLOCK_ALL`` and will be removed
+        in a future version.  The circuit breaker is **always fail-closed** —
+        returning ``allowed=True`` without Z3 verification would violate the
+        SDK's core safety contract.  Setting this mode emits a
+        :exc:`DeprecationWarning` at :class:`CircuitBreakerConfig` construction
+        time.  Migrate to ``FailsafeMode.BLOCK_ALL``.
+    """
 
 
 @dataclass
@@ -61,6 +69,20 @@ class CircuitBreakerConfig:
     isolation_threshold: int = 3
     failsafe_mode: FailsafeMode = FailsafeMode.BLOCK_ALL
     namespace: str = "default"
+
+    def __post_init__(self) -> None:
+        if self.failsafe_mode is FailsafeMode.ALLOW_WITH_AUDIT:
+            import warnings
+
+            warnings.warn(
+                "CircuitBreakerConfig.failsafe_mode=ALLOW_WITH_AUDIT is deprecated "
+                "and behaves identically to BLOCK_ALL.  The circuit breaker is "
+                "always fail-closed — allowing requests without Z3 verification "
+                "would violate Pramanix's core safety contract.  "
+                "Migrate to FailsafeMode.BLOCK_ALL.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
 
 @dataclass

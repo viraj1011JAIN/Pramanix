@@ -290,3 +290,15 @@ class GuardConfig:
                 f"GuardConfig.injection_threshold must be in (0.0, 1.0], "
                 f"got {self.injection_threshold}."
             )
+        if not (0.0 < self.shed_worker_pct <= 100.0):
+            raise ConfigurationError(
+                f"GuardConfig.shed_worker_pct must be in (0.0, 100.0], "
+                f"got {self.shed_worker_pct}.  A value of 0 would shed every "
+                f"request immediately; a value > 100 would never shed."
+            )
+        if self.shed_latency_threshold_ms <= 0.0:
+            raise ConfigurationError(
+                f"GuardConfig.shed_latency_threshold_ms must be > 0.0, "
+                f"got {self.shed_latency_threshold_ms}.  A value of 0 would "
+                f"cause every request to exceed the P99 threshold immediately."
+            )
