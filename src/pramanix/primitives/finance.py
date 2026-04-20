@@ -2,6 +2,11 @@
 # Copyright (C) 2026 Viraj Jain
 """Financial constraint primitives for Pramanix policies.
 
+.. warning:: **Not financial, legal, or compliance advice.**
+   These primitives are provided for illustrative purposes only and do not
+   constitute compliance guidance.  Consult qualified legal and compliance
+   professionals before use in regulated environments.
+
 Each factory returns a :class:`~pramanix.expressions.ConstraintExpr` with
 ``.named()`` and ``.explain()`` pre-set and ready to include in a Policy's
 ``invariants()`` list.

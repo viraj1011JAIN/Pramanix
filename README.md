@@ -1184,20 +1184,22 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 ## Test Suite
 
-**1,831 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
+**1,825 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
 
-Measured with `pytest --ignore=tests/perf`. The 8 perf tests run separately (the 1M-decision run takes ~15 minutes). The badge count of 1,831 excludes the perf suite.
+Measured with `pytest tests/unit/ tests/integration/`. The adversarial (151), property (34), and perf (8) suites run separately. The badge count of 1,825 is the passing total from the unit + integration run only and excludes those three suites.
+
+> **Note on count change (1,831 → 1,825):** The net decrease of 6 reflects test consolidation in `test_worker_dark_paths.py` alongside the 33 regression tests added for R1–R3 fixes; the badge has always excluded the perf suite and now also explicitly excludes adversarial and property from its sum.
 
 ### Distribution
 
 | Suite | Tests | Files | What it covers |
 |-------|-------|-------|----------------|
-| Unit | 1,486 | 39 | All modules, every public method, edge cases, DSL correctness |
+| Unit | 1,664 | 44 | All modules, every public method, edge cases, DSL correctness |
 | Integration | 173 | 10 | Full verify() pipeline, all 3 execution modes, JWT + Redis zero-trust |
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
-| Property | 11 | 2 | Hypothesis-based serialization round-trips, fintech invariant properties |
+| Property | 34 | 3 | Hypothesis-based serialization round-trips, fintech invariant properties |
 | Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS (run separately) |
-| **Total (badge)** | **1,831** | | **Excludes perf suite** |
+| **Total (badge)** | **1,825** | | **Unit + Integration passing; adversarial, property, and perf run separately** |
 
 ### Coverage by Module
 

@@ -151,20 +151,25 @@ class Guard:
         self._config = config or GuardConfig()
 
         # Extract Pydantic models from Policy.Meta (may be None)
-        self._intent_model: type[BaseModel] | None = policy.meta_intent_model()  # type: ignore[assignment,unused-ignore]
-        self._state_model: type[BaseModel] | None = policy.meta_state_model()  # type: ignore[assignment,unused-ignore]
+        self._intent_model: type[BaseModel] | None = (  # type: ignore[assignment,unused-ignore]
+            policy.meta_intent_model()
+        )
+        self._state_model: type[BaseModel] | None = (  # type: ignore[assignment,unused-ignore]
+            policy.meta_state_model()
+        )
         self._policy_version: str | None = policy.meta_version()
 
         # ── Phase 12: Policy fingerprinting ───────────────────────────────────
         self._policy_hash: str = _compute_policy_fingerprint(policy)
-        if self._config.expected_policy_hash is not None and self._policy_hash != self._config.expected_policy_hash:
-                raise ConfigurationError(
-                    f"Policy fingerprint mismatch — possible policy drift. "
-                    f"Expected: {self._config.expected_policy_hash!r}, "
-                    f"Got: {self._policy_hash!r}. "
-                    "Update expected_policy_hash in GuardConfig or investigate "
-                    "whether a different policy version is running on this node."
-                )
+        expected = self._config.expected_policy_hash
+        if expected is not None and self._policy_hash != expected:
+            raise ConfigurationError(
+                f"Policy fingerprint mismatch — possible policy drift. "
+                f"Expected: {expected!r}, "
+                f"Got: {self._policy_hash!r}. "
+                "Update expected_policy_hash in GuardConfig or investigate "
+                "whether a different policy version is running on this node."
+            )
 
         # Spawn WorkerPool for async modes.
         mode = self._config.execution_mode

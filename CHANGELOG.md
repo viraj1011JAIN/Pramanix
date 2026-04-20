@@ -15,7 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `tests/unit/test_production_fixes_r1_r3.py` — 33 regression tests covering all three fixes: `VerificationResult` field round-trips (`policy_hash`, `issued_at=0`), OTel availability warning (patched `_OTEL_AVAILABLE`), and Merkle root correctness + large-batch stability (1,500 and 5,000 decision batches).
+- `tests/unit/test_production_fixes_r1_r3.py` — 25 regression tests covering all three fixes: `VerificationResult` field round-trips (`policy_hash`, `issued_at=0`), OTel availability warning (patched `_OTEL_AVAILABLE`), and Merkle root correctness + large-batch stability (1,500 and 5,000 decision batches).
+- **HMAC IPC integrity tests** (`tests/unit/test_worker_dark_paths.py`): 12 new tests covering the full `_EphemeralKey` / `_worker_solve_sealed` / `_unseal_decision` contract — repr redaction, pickle prevention, tampered tag detection, tampered payload detection, missing envelope keys, wrong seal key, and end-to-end `WorkerPool` HMAC failure returning `Decision.error(allowed=False)`.
+- **Property-based tests for DSL and transpiler** (`tests/property/test_dsl_and_transpiler_properties.py`): 13 test groups (~500–1,000 Hypothesis examples each) covering commutativity, monotonicity, conjunction/disjunction semantics, negation complement, real/integer comparison agreement with Python decimal, set-membership exactness, bool field isolation, `named()` label preservation, empty invariant list is always SAT, and full violated-invariant attribution.
+- **CLI verify-proof test suite** (`tests/unit/test_verify_proof_cli.py`): 50 new tests covering all branches of `_cmd_verify_proof` and `_cmd_audit`: token argument / stdin / whitespace / missing-key paths; valid/invalid/tampered token human and JSON output; `--fail-fast` on malformed JSON, missing-sig, and invalid-sig; directory-as-key-path error handling; empty log file.
+- **`MIGRATION.md`**: step-by-step upgrade guide covering v0.7.x → v0.8.x → v0.9.x breaking changes (`VerificationResult.policy_hash`, `issued_at=0`, new `GuardConfig` fields and validations, OTel warning, HMAC process-mode IPC) and planned v1.0 stability contracts.
+- **`docs/incident_response.md`**: operational playbook for P0–P3 incidents — false ALLOW, audit log tampering, elevated timeout rate, circuit breaker ISOLATED state, policy drift, HMAC seal violations, key rotation procedure, and structured log queries.
+- **Legal disclaimers** added to regulatory primitive modules:
+  - `src/pramanix/primitives/fintech.py`: BSA/AML, OFAC, PSD2, Reg. T primitives — not compliance advice.
+  - `src/pramanix/primitives/healthcare.py`: HIPAA, Joint Commission, AAP/FDA primitives — not medical or clinical advice.
+  - `src/pramanix/primitives/finance.py`: financial constraint primitives — not financial or compliance advice.
+- **`GuardConfig.injection_threshold`** field (default `0.5`, env var `PRAMANIX_INJECTION_THRESHOLD`): configures the post-consensus injection confidence threshold in `RedundantTranslator`. Previously hardcoded; now operator-tunable and validated in `__post_init__` (must be in `(0.0, 1.0]`).
+- **Digest-pinned base image** in `Dockerfile.production`: both builder and runner stages now reference `python:3.13-slim-bookworm` by SHA-256 multi-arch manifest digest, satisfying SLSA Level 3 supply chain integrity requirements.
+- **`.github/dependabot.yml`**: automated weekly dependency update PRs for pip (runtime, security, and dev-tool groups) and GitHub Actions.
 
 ### Changed
 
@@ -23,28 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `docs/claims-matrix.md` with verification status (`verified`, `partially verified`, `unverified`, `wording too strong`) for key public claims.
   - `Guard.parse_and_verify()` now forwards `GuardConfig.injection_threshold` into dual-model consensus extraction instead of relying on extractor defaults.
   - README status contract corrected to match implemented API (`VALIDATION_FAILURE`, no `INJECTION_BLOCKED` status row).
-
-### Added
-
-- New unit coverage for injection-threshold contract behavior:
-  - `tests/unit/test_guard.py`: threshold default/range validation tests.
-  - `tests/unit/test_guard_dark_paths.py`: verifies `parse_and_verify()` forwards configured threshold.
+- README: SLSA level corrected from Level 2 to Level 3 (matching `release.yml` job name and v0.5 CHANGELOG); supply chain section rewritten with SLSA requirements table and attestation details.
+- `guard_config._resolver_registry` is now an alias for `pramanix.resolvers.resolver_registry` (the module-level singleton) instead of a private `ResolverRegistry()` instance. This was a silent bug: Guard's `clear_cache()` was operating on a different registry object than the one users registered resolvers into.
 - **API contract lock (Phase 1.2 — complete rewrite)**: `tests/unit/test_api_contract.py` — 6 test classes (v0.9.0 snapshot) covering every dimension of the public surface:
   - `TestAllExportsLock` (6 tests): exact frozenset of 43 names in `pramanix.__all__`; checks list type, count, additions, removals, attribute reachability, and no private names.
-  - `TestDirectImportSurface` (10 tests): verifies `from pramanix import X` works for every high-visibility name (`Guard`, `GuardConfig`, `Policy`, `Field`, `E`, `Decision`, `SolverStatus`, `PramanixError`, `GuardViolationError`, `ConfigurationError`).
-  - `TestSolverStatusLock` (8 tests): exact 9 members, wire values, **iteration order** (ordered tuple lock), StrEnum identity contract, SAFE/CACHE_HIT classification, and `_BLOCKED_STATUSES` membership.
-  - `TestDecisionToDictLock` (17 tests): exact 13-key schema; **per-field Python type semantics** for all 13 fields (UUID4 format, `bool` exactness, str wire value, list[str], numeric ≥ 0, dict, 64-char lowercase hex, `str|None` not bytes); cross-field invariants (`allowed↔status`); hash determinism.
-  - `TestDecisionFactories` (12 tests): all 6 factory methods exist and return correct `status`/`allowed`; `Decision` is frozen.
-  - `TestGuardConfigFieldLock` (12 tests): exact 20 fields; **18 locked default values** (operational and security defaults); zero-arg constructor; frozen-immutability invariant; valid/invalid execution modes; injection threshold range validation.
-- `docs/api-compatibility.md`: comprehensive semver rules document (9 sections) — what is/isn't public API, serialisation compatibility, enum stability, GuardConfig compatibility, deprecation policy, step-by-step contributor update guide, and full contract enforcement table.
-- **CI wheel/sdist install smoke gate (Phase 4.1)**: new `wheel-smoke` CI job inserted between
-  `coverage` and `trivy` in `.github/workflows/ci.yml`. The job:
-  - Runs `poetry build` to produce wheel + sdist.
-  - Installs the `.whl` into a clean `venv` (no dev deps, `--no-cache-dir`).
-  - Imports every stable `__all__` name and exercises `Guard.verify()` end-to-end.
-  - Installs the `.tar.gz` sdist separately to catch files missing from the source manifest.
-  Any gap between `poetry install` (editable) and the installed distribution would break
-  every user's first `pip install pramanix` — this gate ensures that cannot reach PyPI.
+  - `TestDirectImportSurface` (10 tests): verifies `from pramanix import X` works for every high-visibility name.
+  - `TestSolverStatusLock` (8 tests): exact 9 members, wire values, iteration order, StrEnum identity contract.
+  - `TestDecisionToDictLock` (17 tests): exact 13-key schema, per-field type semantics, cross-field invariants, hash determinism.
+  - `TestDecisionFactories` (12 tests): all 6 factory methods, frozen invariant.
+  - `TestGuardConfigFieldLock` (12 tests): exact 20 fields, 18 locked defaults, injection threshold range.
+- `docs/api-compatibility.md`: comprehensive semver rules document (9 sections).
+- **CI wheel/sdist install smoke gate (Phase 4.1)**: new `wheel-smoke` CI job inserted between `coverage` and `trivy` in `.github/workflows/ci.yml`.
+
+### Security hardening (this release)
+
+- HMAC IPC seal for async-process mode: worker results are now signed with an ephemeral `_EphemeralKey` and verified by `_unseal_decision` before being trusted. Prevents a compromised worker process from forging `allowed=True` results across the process boundary.
+- `_EphemeralKey.__reduce__` raises `TypeError` on pickle — prevents accidental serialisation of the IPC key to disk or via `multiprocessing.Queue`.
+- Legal disclaimers on regulatory primitives reduce liability exposure for deployments in regulated industries.
 
 ## [0.9.0] - 2026-04-16
 

@@ -32,6 +32,7 @@ Design principles
 from __future__ import annotations
 
 import multiprocessing
+import pickle
 import threading
 import time
 import types
@@ -716,9 +717,9 @@ class TestWorkerSolveSealedAndUnseal:
     """_worker_solve_sealed / _unseal_decision IPC integrity contract."""
 
     def test_sealed_envelope_has_payload_and_tag_keys(self) -> None:
-        from pramanix.worker import _worker_solve_sealed
-
         import secrets
+
+        from pramanix.worker import _worker_solve_sealed
 
         seal_key = secrets.token_bytes(32)
         envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, seal_key)
@@ -728,7 +729,7 @@ class TestWorkerSolveSealedAndUnseal:
         assert isinstance(envelope["_t"], str)
 
     def test_unseal_returns_correct_dict_for_valid_envelope(self) -> None:
-        from pramanix.worker import _RESULT_SEAL_KEY, _worker_solve_sealed, _unseal_decision
+        from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
         envelope = _worker_solve_sealed(
             _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
@@ -738,7 +739,7 @@ class TestWorkerSolveSealedAndUnseal:
 
     def test_unseal_raises_on_tampered_tag(self) -> None:
         """Flipping one character in _t must raise ValueError."""
-        from pramanix.worker import _RESULT_SEAL_KEY, _worker_solve_sealed, _unseal_decision
+        from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
         envelope = _worker_solve_sealed(
             _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
@@ -751,7 +752,7 @@ class TestWorkerSolveSealedAndUnseal:
 
     def test_unseal_raises_on_tampered_payload(self) -> None:
         """Modifying _p while leaving _t intact must raise ValueError."""
-        from pramanix.worker import _RESULT_SEAL_KEY, _worker_solve_sealed, _unseal_decision
+        from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
         envelope = _worker_solve_sealed(
             _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
@@ -778,16 +779,14 @@ class TestWorkerSolveSealedAndUnseal:
     def test_wrong_seal_key_raises_value_error(self) -> None:
         """Envelope signed with key A must fail verification with key B."""
         import secrets
-        import hashlib
-        import hmac as _h
 
         key_a = secrets.token_bytes(32)
         key_b = secrets.token_bytes(32)
         # Ensure the two keys differ (astronomically unlikely to collide but guard anyway)
         assert key_a != key_b
 
-        from pramanix.worker import _worker_solve_sealed, _unseal_decision, _EphemeralKey
         import pramanix.worker as _worker_mod
+        from pramanix.worker import _EphemeralKey, _unseal_decision, _worker_solve_sealed
 
         # Temporarily swap the module-level seal key so _unseal_decision uses key_b
         original_key = _worker_mod._RESULT_SEAL_KEY

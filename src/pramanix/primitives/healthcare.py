@@ -2,6 +2,28 @@
 # Copyright (C) 2026 Viraj Jain
 """HIPAA / clinical constraint primitives for Pramanix policies.
 
+.. warning:: **Legal disclaimer — not medical, legal, or compliance advice**
+
+   These primitives encode *formal constraint logic* derived from publicly
+   available regulatory text (HIPAA 45 CFR, Joint Commission NPSGs, AAP/FDA
+   paediatric dosing guidelines, etc.).  They are provided for illustrative and
+   educational purposes only.  They do **not** constitute medical, clinical,
+   legal, or compliance advice, and they do **not** guarantee compliance with
+   HIPAA, the Joint Commission, FDA requirements, or any other applicable law,
+   regulation, or clinical standard.
+
+   Healthcare regulatory requirements differ by jurisdiction, care setting, and
+   specific use case, and require interpretation by qualified clinical, legal,
+   and compliance professionals.  Incorrect dosage or access-control logic can
+   cause patient harm.  You are solely responsible for clinical validation,
+   regulatory review, and patient safety assessment before deploying any
+   healthcare-related policy in any system that affects patient care.
+
+   Anthropic, Viraj Jain, and the Pramanix contributors make no representations
+   or warranties regarding the accuracy, completeness, or fitness for purpose of
+   these primitives, and disclaim all liability for any clinical harm, regulatory
+   penalties, or damages arising from their use.
+
 Each factory returns a :class:`~pramanix.expressions.ConstraintExpr` with
 ``.named()`` and ``.explain()`` pre-set, ready to include in a Policy's
 ``invariants()`` list.

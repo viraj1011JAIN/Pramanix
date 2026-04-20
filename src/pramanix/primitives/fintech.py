@@ -2,6 +2,25 @@
 # Copyright (C) 2026 Viraj Jain
 """HFT / FinTech constraint primitives for Pramanix policies.
 
+.. warning:: **Legal disclaimer — not legal or compliance advice**
+
+   These primitives encode *formal constraint logic* derived from publicly
+   available regulatory text (31 CFR, IRC, 12 CFR, etc.).  They are provided
+   for illustrative and educational purposes only.  They do **not** constitute
+   legal, compliance, or financial advice, and they do **not** guarantee
+   compliance with any applicable law or regulation.
+
+   Regulatory requirements differ by jurisdiction, are subject to change, and
+   require interpretation by qualified legal and compliance professionals.  You
+   are solely responsible for ensuring that your use of these primitives is
+   appropriate for your specific context and for obtaining any required legal
+   or regulatory review before deploying them in production systems.
+
+   Anthropic, Viraj Jain, and the Pramanix contributors make no representations
+   or warranties regarding the accuracy, completeness, or fitness for purpose of
+   these primitives, and disclaim all liability for any regulatory penalties,
+   losses, or damages arising from their use.
+
 Each factory returns a :class:`~pramanix.expressions.ConstraintExpr` with
 ``.named()`` and ``.explain()`` pre-set, ready to include in a Policy's
 ``invariants()`` list.

@@ -444,7 +444,7 @@ def test_all_failing_invariants_are_attributed(n_failing: int) -> None:
     ]
     result = solve(inv, {"x": Decimal("0")}, timeout_ms=5_000)
     assert result.sat is False
-    violated = set(result.violated)
+    violated = {c.label for c in result.violated if c.label is not None}
     expected = {f"inv_{i}" for i in range(n_failing)}
     assert violated == expected, (
         f"Attribution incomplete: expected {expected}, got {violated}"
