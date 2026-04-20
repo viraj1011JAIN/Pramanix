@@ -61,53 +61,53 @@ from pramanix.primitives.roles import EnterpriseRole, HIPAARole
 from pramanix.primitives.time import After, Before, NotExpired, WithinTimeWindow
 
 __all__ = [
+    "After",
+    "AntiStructuring",
+    "Before",
+    # SRE / Infrastructure (phase 8 — 5 primitives)
+    "BlastRadiusCheck",
+    "BreakGlassAuth",
+    "CPUMemoryGuard",
+    "CircuitBreakerState",
+    "CollateralHaircut",
+    "ConsentActive",
+    "ConsentRequired",
+    "DepartmentMustBeIn",
+    "DosageGradientCheck",
+    "EnterpriseRole",
+    "FieldMustEqual",
+    # Role constants
+    "HIPAARole",
+    "KYCTierCheck",
+    "MarginRequirement",
+    "MaxDrawdown",
+    "MaxReplicas",
+    # Infrastructure (phase 4/5)
+    "MinReplicas",
     # Finance (phase 4/5)
     "NonNegativeBalance",
-    "UnderDailyLimit",
-    "UnderSingleTxLimit",
+    "NotExpired",
+    # Common (phase 4/5)
+    "NotSuspended",
+    # Healthcare / HIPAA (phase 8 — 5 primitives)
+    "PHILeastPrivilege",
+    "PediatricDoseBound",
+    "ProdDeployApproval",
+    "ReplicaBudget",
     "RiskScoreBelow",
     # RBAC (phase 4/5)
     "RoleMustBeIn",
-    "ConsentRequired",
-    "DepartmentMustBeIn",
-    # Infrastructure (phase 4/5)
-    "MinReplicas",
-    "MaxReplicas",
+    "SanctionsScreen",
+    "StatusMustBe",
+    # FinTech (phase 8 — 10 primitives)
+    "SufficientBalance",
+    "TradingWindowCheck",
+    "UnderDailyLimit",
+    "UnderSingleTxLimit",
+    "VelocityCheck",
+    "WashSaleDetection",
     "WithinCPUBudget",
     "WithinMemoryBudget",
     # Time (phase 4/5)
     "WithinTimeWindow",
-    "After",
-    "Before",
-    "NotExpired",
-    # Common (phase 4/5)
-    "NotSuspended",
-    "StatusMustBe",
-    "FieldMustEqual",
-    # FinTech (phase 8 — 10 primitives)
-    "SufficientBalance",
-    "VelocityCheck",
-    "AntiStructuring",
-    "WashSaleDetection",
-    "CollateralHaircut",
-    "MaxDrawdown",
-    "SanctionsScreen",
-    "KYCTierCheck",
-    "TradingWindowCheck",
-    "MarginRequirement",
-    # Healthcare / HIPAA (phase 8 — 5 primitives)
-    "PHILeastPrivilege",
-    "ConsentActive",
-    "DosageGradientCheck",
-    "BreakGlassAuth",
-    "PediatricDoseBound",
-    # SRE / Infrastructure (phase 8 — 5 primitives)
-    "BlastRadiusCheck",
-    "CircuitBreakerState",
-    "ProdDeployApproval",
-    "ReplicaBudget",
-    "CPUMemoryGuard",
-    # Role constants
-    "HIPAARole",
-    "EnterpriseRole",
 ]

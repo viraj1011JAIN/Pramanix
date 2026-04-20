@@ -49,7 +49,7 @@ def _normalize_key(text: str) -> str:
 
 
 class _CacheEntry:
-    __slots__ = ("value", "expires_at")
+    __slots__ = ("expires_at", "value")
 
     def __init__(self, value: dict[str, Any], ttl_seconds: float) -> None:
         self.value = value

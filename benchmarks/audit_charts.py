@@ -42,6 +42,7 @@ import json
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")   # headless — no display needed
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -202,7 +203,7 @@ def chart_worker_p99_comparison(
     )
 
     # Annotate each bar with the value
-    for bar, val in zip(bars, p99s):
+    for bar, val in zip(bars, p99s, strict=False):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.3,

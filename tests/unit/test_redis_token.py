@@ -71,7 +71,7 @@ class TestRedisVerifierConstruction:
             RedisExecutionTokenVerifier(secret_key=b"tooshort", redis_client=r)
 
     def test_non_redis_client_raises(self):
-        with pytest.raises(TypeError, match="redis.Redis-compatible"):
+        with pytest.raises(TypeError, match=r"redis\.Redis-compatible"):
             RedisExecutionTokenVerifier(
                 secret_key=secrets.token_bytes(32),
                 redis_client=object(),
@@ -80,7 +80,7 @@ class TestRedisVerifierConstruction:
     def test_missing_scan_raises(self):
         """Client with .set but no .scan should be rejected."""
         bad = _SetOnlyRedis()
-        with pytest.raises(TypeError, match="redis.Redis-compatible"):
+        with pytest.raises(TypeError, match=r"redis\.Redis-compatible"):
             RedisExecutionTokenVerifier(
                 secret_key=secrets.token_bytes(32),
                 redis_client=bad,

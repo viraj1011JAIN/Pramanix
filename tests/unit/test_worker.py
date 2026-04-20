@@ -169,7 +169,7 @@ class TestSerializationBoundary:
         dumped = pickle.dumps((_SimplePolicy, values, 5_000))
         # Reconstruct and verify no BaseModel instances
         unpickled = pickle.loads(dumped)
-        policy_cls, vals, tm = unpickled
+        _policy_cls, vals, _tm = unpickled
         assert not isinstance(vals["balance"], BaseModel)
         assert not isinstance(vals["amount"], BaseModel)
 

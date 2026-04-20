@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
     from pramanix.policy import Policy
 
-__all__ = ["WorkerPool", "AdaptiveConcurrencyLimiter"]
+__all__ = ["AdaptiveConcurrencyLimiter", "WorkerPool"]
 
 _log = logging.getLogger(__name__)
 

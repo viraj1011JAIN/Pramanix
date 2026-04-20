@@ -78,7 +78,10 @@ from pydantic import BaseModel
 from pramanix.decision import Decision
 from pramanix.exceptions import (
     ConfigurationError,
+    ExtractionFailureError,
+    ExtractionMismatchError,
     InjectionBlockedError,
+    LLMTimeoutError,
     PramanixError,
     SemanticPolicyViolation,
     SolverTimeoutError,
@@ -110,7 +113,7 @@ from pramanix.worker import WorkerPool
 if TYPE_CHECKING:
     from pramanix.policy import Policy
 
-__all__ = ["GuardConfig", "Guard"]
+__all__ = ["Guard", "GuardConfig"]
 
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
@@ -796,11 +799,6 @@ class Guard:
             )
         """
         try:
-            from pramanix.exceptions import (
-                ExtractionFailureError,
-                ExtractionMismatchError,
-                LLMTimeoutError,
-            )
             from pramanix.translator.redundant import create_translator, extract_with_consensus
 
             translator_a = create_translator(models[0])

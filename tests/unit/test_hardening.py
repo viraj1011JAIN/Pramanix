@@ -146,7 +146,7 @@ class TestExecutionToken:
             intent_dump={"amount": "100"},
             state_dump={},
         )
-        with pytest.raises(ValueError, match="decision.allowed=True"):
+        with pytest.raises(ValueError, match=r"decision\.allowed=True"):
             signer.mint(blocked)
 
     def test_tampered_token_signature_fails(self):

@@ -38,8 +38,8 @@ from typing import Any
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from pramanix import Field, Policy  # noqa: E402
-from pramanix.expressions import E  # noqa: E402
+from pramanix import Field, Policy
+from pramanix.expressions import E
 
 # ── 1. Finance — post-trade balance + AML risk score ─────────────────────────
 #

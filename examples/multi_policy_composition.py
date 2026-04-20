@@ -70,7 +70,7 @@ def verify_transfer(
     balance: Decimal,
     daily_limit: Decimal,
     role: int,
-) -> None:
+) -> bool:
     """Verify a transfer against both guards; both must allow."""
     fin_state = {
         "balance": balance,

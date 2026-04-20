@@ -14,11 +14,11 @@ import pytest
 
 pytest.importorskip("langchain_core", reason="langchain-core not installed")
 
-from langchain_core.tools import BaseTool  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel
 
-from pramanix import E, Field, Guard, GuardConfig, Policy  # noqa: E402
-from pramanix.integrations.langchain import PramanixGuardedTool, wrap_tools  # noqa: E402
+from pramanix import E, Field, Guard, GuardConfig, Policy
+from pramanix.integrations.langchain import PramanixGuardedTool, wrap_tools
 
 # ── Verify real inheritance ───────────────────────────────────────────────────
 

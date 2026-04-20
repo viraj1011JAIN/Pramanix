@@ -35,28 +35,34 @@ __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 
 # ── Optional LlamaIndex dependency ────────────────────────────────────────────
 
+
+@dataclass
+class ToolMetadata:  # pragma: no cover
+    """Fallback stub — replaced by llama_index import when available."""
+
+    name: str = ""
+    description: str = ""
+
+
+@dataclass
+class ToolOutput:  # pragma: no cover
+    """Fallback stub — replaced by llama_index import when available."""
+
+    content: str = ""
+    tool_name: str = ""
+    raw_input: dict[str, Any] = field(default_factory=dict)
+    raw_output: dict[str, Any] = field(default_factory=dict)
+    is_error: bool = False
+
+
 try:  # pragma: no cover
     from llama_index.core.tools import FunctionTool as _LlamaFunctionTool  # noqa: F401
     from llama_index.core.tools import QueryEngineTool as _LlamaQueryEngineTool  # noqa: F401
-    from llama_index.core.tools.types import ToolMetadata, ToolOutput
+    from llama_index.core.tools.types import ToolMetadata, ToolOutput  # type: ignore[assignment]
 
     _LLAMA_AVAILABLE = True
 except ImportError:
     _LLAMA_AVAILABLE = False
-
-    # Stub types for when llama-index-core is not installed.
-    @dataclass
-    class ToolMetadata:  # type: ignore[no-redef]
-        name: str = ""
-        description: str = ""
-
-    @dataclass
-    class ToolOutput:  # type: ignore[no-redef]
-        content: str = ""
-        tool_name: str = ""
-        raw_input: dict[str, Any] = field(default_factory=dict)
-        raw_output: dict[str, Any] = field(default_factory=dict)
-        is_error: bool = False
 
 
 # ── PramanixFunctionTool ──────────────────────────────────────────────────────

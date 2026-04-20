@@ -30,27 +30,27 @@ Hierarchy::
 from __future__ import annotations
 
 __all__ = [
-    "PramanixError",
-    "PolicyError",
-    "PolicyCompilationError",
-    "InvariantLabelError",
-    "FieldTypeError",
-    "TranspileError",
-    "GuardError",
-    "ValidationError",
-    "StateValidationError",
-    "SolverTimeoutError",
-    "SolverError",
-    "WorkerError",
-    "GuardViolationError",
     "ConfigurationError",
     # Translator exceptions
     "ExtractionFailureError",
     "ExtractionMismatchError",
+    "FieldTypeError",
+    "GuardError",
+    "GuardViolationError",
+    "InjectionBlockedError",
+    "InvariantLabelError",
     "LLMTimeoutError",
+    "PolicyCompilationError",
+    "PolicyError",
+    "PramanixError",
     # Hardening exceptions (Phase 4)
     "SemanticPolicyViolation",
-    "InjectionBlockedError",
+    "SolverError",
+    "SolverTimeoutError",
+    "StateValidationError",
+    "TranspileError",
+    "ValidationError",
+    "WorkerError",
 ]
 
 

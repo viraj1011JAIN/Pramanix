@@ -53,10 +53,10 @@ class PhiAccessPolicy(Policy):
     @classmethod
     def invariants(cls) -> list:
         return [
-            E(_is_clinician).named("must_be_clinician").explain(
+            (E(_is_clinician) == True).named("must_be_clinician").explain(  # noqa: E712
                 "PHI access requires clinical role — requester is_clinician={is_clinician}"
             ),
-            E(_consent_active).named("consent_required").explain(
+            (E(_consent_active) == True).named("consent_required").explain(  # noqa: E712
                 "PHI access requires patient consent — consent_active={consent_active}"
             ),
             (E(_purpose_code) == 1).named("treatment_purpose_only").explain(

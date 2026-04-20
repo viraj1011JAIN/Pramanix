@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from pramanix.translator.base import Translator, TranslatorContext
 
-__all__ = ["RedundantTranslator", "extract_with_consensus", "create_translator"]
+__all__ = ["RedundantTranslator", "create_translator", "extract_with_consensus"]
 
 _log = logging.getLogger(__name__)
 
@@ -411,7 +411,7 @@ class RedundantTranslator:
     ) -> None:
         self._a = translator_a
         self._b = translator_b
-        self._agreement_mode = agreement_mode
+        self._agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = agreement_mode
         self._critical_fields = critical_fields
         # Expose a composite model name for logging / error messages
         name_a = getattr(translator_a, "model", "a")

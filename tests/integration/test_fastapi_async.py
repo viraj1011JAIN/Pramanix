@@ -17,12 +17,12 @@ import pytest
 pytest.importorskip("fastapi", reason="fastapi not installed")
 pytest.importorskip("httpx", reason="httpx not installed")
 
-from fastapi import FastAPI  # type: ignore[import-not-found]  # noqa: E402
-from fastapi.testclient import TestClient  # type: ignore[import-not-found]  # noqa: E402
+from fastapi import FastAPI  # type: ignore[import-not-found]
+from fastapi.testclient import TestClient  # type: ignore[import-not-found]
 
-from pramanix import E, Field, Guard, GuardConfig, Policy  # noqa: E402
-from pramanix.decision import SolverStatus  # noqa: E402
-from pramanix.expressions import ConstraintExpr  # noqa: E402
+from pramanix import E, Field, Guard, GuardConfig, Policy
+from pramanix.decision import SolverStatus
+from pramanix.expressions import ConstraintExpr
 
 # ── Test policy ───────────────────────────────────────────────────────────────
 

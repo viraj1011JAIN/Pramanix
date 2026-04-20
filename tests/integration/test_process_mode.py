@@ -49,7 +49,7 @@ class TestSerializationBoundaryIntegration:
         dumped = pickle.dumps(payload)
 
         # Reconstruct and walk all values
-        unpickled_policy, unpickled_values, _ = pickle.loads(dumped)
+        _unpickled_policy, unpickled_values, _ = pickle.loads(dumped)
         for v in unpickled_values.values():
             assert not isinstance(
                 v, BaseModel
@@ -62,7 +62,7 @@ class TestSerializationBoundaryIntegration:
         values = {"balance": Decimal("1000"), "amount": Decimal("100")}
         payload = (_SimpleTransferPolicy, values, 5_000)
         dumped = pickle.dumps(payload)
-        unpickled_policy, unpickled_values, _ = pickle.loads(dumped)
+        _unpickled_policy, unpickled_values, _ = pickle.loads(dumped)
         for v in unpickled_values.values():
             assert not isinstance(
                 v, z3.ExprRef

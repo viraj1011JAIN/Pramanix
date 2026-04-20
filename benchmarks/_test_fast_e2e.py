@@ -4,7 +4,6 @@ Run with:  python benchmarks/_test_fast_e2e.py
 """
 import importlib.util
 import multiprocessing
-import sys
 from pathlib import Path
 
 # Load 100m_worker_fast.py so we can delegate to its worker_entry.
@@ -65,10 +64,10 @@ if __name__ == "__main__":
 
     for w in range(N_WORKERS):
         f = out / f"banking_worker_{w:02d}.jsonl"
-        lines = [l for l in f.read_bytes().split(b"\n") if l.strip()]
+        lines = [ln for ln in f.read_bytes().split(b"\n") if ln.strip()]
         print(f"  worker {w}: {len(lines)} JSONL lines  chain={results[w]['chain_hash'][:16]}...")
 
     assert errors == 0,  f"ERRORS: {[r.get('error') for r in results]}"
-    assert t_outs == 0,  f"TIMEOUTS detected"
+    assert t_outs == 0,  "TIMEOUTS detected"
     assert total == N_WORKERS * DECISIONS_PER_WORKER, f"Decision count: {total}"
     print("\nSMOKE TEST: PASS")

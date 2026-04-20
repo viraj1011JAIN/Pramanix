@@ -37,10 +37,21 @@ from pramanix.audit.signer import DecisionSigner
 from pramanix.exceptions import GuardViolationError, PolicyCompilationError
 from pramanix.guard import Guard, GuardConfig
 
+
+class JSONResponse:  # pragma: no cover
+    """Fallback stub — replaced by starlette import when available."""
+
+    headers: dict[str, str]
+
+    def __init__(self, *, status_code: int = 200, content: Any = None) -> None:
+        self.headers: dict[str, str] = {}
+        raise RuntimeError("starlette is not installed")
+
+
 try:
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request  # noqa: F401
-    from starlette.responses import JSONResponse, Response
+    from starlette.responses import JSONResponse, Response  # type: ignore[assignment]
     from starlette.types import ASGIApp  # noqa: F401
 
     _STARLETTE_AVAILABLE = True

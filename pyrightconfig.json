@@ -1,0 +1,34 @@
+{
+    "include": ["src", "tests", "examples"],
+    "exclude": ["benchmarks", "spikes", ".venv"],
+    "typeCheckingMode": "basic",
+    "pythonVersion": "3.13",
+    "venvPath": ".",
+    "venv": ".venv",
+    "reportUnknownMemberType": "none",
+    "reportUnknownVariableType": "none",
+    "reportUnknownArgumentType": "none",
+    "reportMissingTypeArgument": "none",
+    "reportPrivateImportUsage": "none",
+    "reportPrivateUsage": "none",
+    "reportUnsupportedDunderAll": "none",
+    "reportMissingModuleSource": "none",
+    "reportMissingImports": "none",
+    "reportAttributeAccessIssue": "warning",
+    "reportOperatorIssue": "warning",
+    "reportOptionalSubscript": "warning",
+    "reportOptionalMemberAccess": "warning",
+    "reportArgumentType": "warning",
+    "reportAssignmentType": "warning",
+    "executionEnvironments": [
+        {
+            "root": "src",
+            "reportAttributeAccessIssue": "error",
+            "reportOperatorIssue": "error",
+            "reportOptionalSubscript": "error",
+            "reportOptionalMemberAccess": "error",
+            "reportArgumentType": "error",
+            "reportAssignmentType": "error"
+        }
+    ]
+}

@@ -41,7 +41,7 @@ Example::
 """
 from __future__ import annotations
 
-__all__ = ["HIPAARole", "EnterpriseRole"]
+__all__ = ["EnterpriseRole", "HIPAARole"]
 
 
 class HIPAARole:

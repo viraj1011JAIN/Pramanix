@@ -51,7 +51,7 @@ __all__: list[str] = []  # internal module — nothing re-exported via pramanix.
 # ── Phase 10 — Expression Tree Pre-compilation ────────────────────────────────
 
 
-class NodeKind(str, enum.Enum):
+class NodeKind(enum.StrEnum):
     """Classification of an expression tree node for cached metadata."""
 
     FIELD_REF = "field_ref"
@@ -121,7 +121,7 @@ def z3_var(field: Field, ctx: z3.Context | None = None) -> z3.ExprRef:
         # it always creates the variable in Z3's global context, which is
         # incompatible with the per-call z3.Context() used by solver.py.
         # z3.Const(name, sort) correctly respects the provided context.
-        return cast(z3.ExprRef, z3.Const(field.name, z3.StringSort(ctx)))
+        return cast("z3.ExprRef", z3.Const(field.name, z3.StringSort(ctx)))
     raise FieldTypeError(f"Unknown z3_type {field.z3_type!r} on field '{field.name}'.")
 
 
@@ -144,9 +144,9 @@ def z3_val(field: Field, value: Any, ctx: z3.Context | None = None) -> z3.ExprRe
             field's ``z3_type`` is unknown.
     """
     if field.z3_type == "Bool":
-        return cast(z3.ExprRef, z3.BoolVal(bool(value), ctx))
+        return cast("z3.ExprRef", z3.BoolVal(bool(value), ctx))
     if field.z3_type == "Int":
-        return cast(z3.ExprRef, z3.IntVal(int(value), ctx))
+        return cast("z3.ExprRef", z3.IntVal(int(value), ctx))
     if field.z3_type == "Real":
         if isinstance(value, bool):
             raise FieldTypeError(
@@ -155,13 +155,13 @@ def z3_val(field: Field, value: Any, ctx: z3.Context | None = None) -> z3.ExprRe
             )
         if isinstance(value, Decimal):
             n, d = value.as_integer_ratio()
-            return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
+            return cast("z3.ExprRef", z3.RealVal(f"{n}/{d}", ctx))
         if isinstance(value, float):
             n, d = Decimal(str(value)).as_integer_ratio()
-            return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
-        return cast(z3.ExprRef, z3.RealVal(int(value), ctx))
+            return cast("z3.ExprRef", z3.RealVal(f"{n}/{d}", ctx))
+        return cast("z3.ExprRef", z3.RealVal(int(value), ctx))
     if field.z3_type == "String":
-        return cast(z3.ExprRef, z3.StringVal(str(value), ctx))
+        return cast("z3.ExprRef", z3.StringVal(str(value), ctx))
     raise FieldTypeError(f"Unknown z3_type {field.z3_type!r} on field '{field.name}'.")
 
 
@@ -182,17 +182,17 @@ def _z3_lit(value: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
         FieldTypeError: If *value* is of an unsupported type.
     """
     if isinstance(value, bool):
-        return cast(z3.ExprRef, z3.BoolVal(value, ctx))
+        return cast("z3.ExprRef", z3.BoolVal(value, ctx))
     if isinstance(value, Decimal):
         n, d = value.as_integer_ratio()
-        return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
+        return cast("z3.ExprRef", z3.RealVal(f"{n}/{d}", ctx))
     if isinstance(value, float):
         n, d = Decimal(str(value)).as_integer_ratio()
-        return cast(z3.ExprRef, z3.RealVal(f"{n}/{d}", ctx))
+        return cast("z3.ExprRef", z3.RealVal(f"{n}/{d}", ctx))
     if isinstance(value, int):
-        return cast(z3.ExprRef, z3.RealVal(value, ctx))  # numeric literals → Real
+        return cast("z3.ExprRef", z3.RealVal(value, ctx))  # numeric literals → Real
     if isinstance(value, str):
-        return cast(z3.ExprRef, z3.StringVal(value, ctx))
+        return cast("z3.ExprRef", z3.StringVal(value, ctx))
     raise FieldTypeError(f"Unsupported literal type in DSL expression: {type(value)!r}")
 
 
@@ -228,16 +228,16 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
             return _z3_lit(v, ctx)
 
         case _BinOp(op=op, left=l, right=r):
-            lz = cast(z3.ArithRef, transpile(l, ctx))
-            rz = cast(z3.ArithRef, transpile(r, ctx))
+            lz = cast("z3.ArithRef", transpile(l, ctx))
+            rz = cast("z3.ArithRef", transpile(r, ctx))
             if op == "add":
-                return cast(z3.ExprRef, lz + rz)
+                return cast("z3.ExprRef", lz + rz)
             if op == "sub":
-                return cast(z3.ExprRef, lz - rz)
+                return cast("z3.ExprRef", lz - rz)
             if op == "mul":
-                return cast(z3.ExprRef, lz * rz)
+                return cast("z3.ExprRef", lz * rz)
             if op == "div":
-                return cast(z3.ExprRef, lz / rz)
+                return cast("z3.ExprRef", lz / rz)
             raise TranspileError(f"Unknown BinOp operator: {op!r}")
 
         case _CmpOp(op=op, left=l, right=r):
@@ -257,30 +257,30 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
                     z3.Z3_mk_eq(lz.ctx_ref(), lz.as_ast(), rz.as_ast()),
                     lz.ctx,
                 )
-                return cast(z3.ExprRef, z3.Not(_eq))
+                return cast("z3.ExprRef", z3.Not(_eq))
 
             # Arithmetic comparisons — only valid on Real / Int sorts.
             # Cast is a type-checker hint only (no runtime effect).
-            lz_a = cast(z3.ArithRef, lz)
-            rz_a = cast(z3.ArithRef, rz)
+            lz_a = cast("z3.ArithRef", lz)
+            rz_a = cast("z3.ArithRef", rz)
             if op == "ge":
-                return cast(z3.ExprRef, lz_a >= rz_a)
+                return cast("z3.ExprRef", lz_a >= rz_a)
             if op == "le":
-                return cast(z3.ExprRef, lz_a <= rz_a)
+                return cast("z3.ExprRef", lz_a <= rz_a)
             if op == "gt":
-                return cast(z3.ExprRef, lz_a > rz_a)
+                return cast("z3.ExprRef", lz_a > rz_a)
             if op == "lt":
-                return cast(z3.ExprRef, lz_a < rz_a)
+                return cast("z3.ExprRef", lz_a < rz_a)
             raise TranspileError(f"Unknown CmpOp operator: {op!r}")
 
         case _BoolOp(op=op, operands=ops):
             zops = [transpile(o, ctx) for o in ops]
             if op == "and":
-                return cast(z3.ExprRef, z3.And(*zops))
+                return cast("z3.ExprRef", z3.And(*zops))
             if op == "or":
-                return cast(z3.ExprRef, z3.Or(*zops))
+                return cast("z3.ExprRef", z3.Or(*zops))
             if op == "not":
-                return cast(z3.ExprRef, z3.Not(zops[0]))
+                return cast("z3.ExprRef", z3.Not(zops[0]))
             raise TranspileError(f"Unknown BoolOp operator: {op!r}")
 
         case _InOp(left=l, values=vs):
@@ -289,7 +289,7 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
             lz = transpile(l, ctx)
             disjuncts = [
                 cast(
-                    z3.ExprRef,
+                    "z3.ExprRef",
                     z3.BoolRef(
                         z3.Z3_mk_eq(lz.ctx_ref(), lz.as_ast(), transpile(v, ctx).as_ast()),
                         lz.ctx,
@@ -299,7 +299,7 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
             ]
             if len(disjuncts) == 1:
                 return disjuncts[0]
-            return cast(z3.ExprRef, z3.Or(*disjuncts))
+            return cast("z3.ExprRef", z3.Or(*disjuncts))
 
         case _:
             raise TranspileError(f"Unknown DSL AST node type: {type(node)!r}")

@@ -62,7 +62,7 @@ except ImportError:  # pragma: no cover
         return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
-__all__ = ["Decision", "SolverStatus", "_make_json_safe", "_build_decision_canonical"]
+__all__ = ["Decision", "SolverStatus", "_build_decision_canonical", "_make_json_safe"]
 
 
 def _make_json_safe(d: dict[str, Any]) -> dict[str, Any]:
@@ -153,7 +153,7 @@ except ImportError:  # Python 3.10  # pragma: no cover
 # ── SolverStatus ──────────────────────────────────────────────────────────────
 
 
-class SolverStatus(str, enum.Enum):
+class SolverStatus(enum.StrEnum):
     """Outcome code attached to every :class:`Decision`.
 
     Inherits from ``str`` so instances serialise naturally to their value

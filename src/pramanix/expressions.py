@@ -31,25 +31,27 @@ Typical usage::
 """
 from __future__ import annotations
 
-from collections.abc import Iterable  # noqa: TCH003
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from pramanix.exceptions import PolicyCompilationError
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
 __all__ = [
-    "Z3Type",
-    "Field",
-    "ExpressionNode",
     "ConstraintExpr",
     "E",
+    "ExpressionNode",
+    "Field",
+    "Z3Type",
+    "_BinOp",
+    "_BoolOp",
+    "_CmpOp",
     # Internal nodes — exported for transpiler and tests
     "_FieldRef",
-    "_Literal",
-    "_BinOp",
-    "_CmpOp",
-    "_BoolOp",
     "_InOp",
+    "_Literal",
 ]
 
 # ── Z3 sort tag ───────────────────────────────────────────────────────────────
@@ -319,7 +321,7 @@ class ConstraintExpr:
         the :class:`~pramanix.decision.Decision`.
     """
 
-    __slots__ = ("node", "label", "explanation")
+    __slots__ = ("explanation", "label", "node")
 
     def __init__(
         self,

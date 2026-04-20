@@ -41,14 +41,14 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class CircuitState(str, enum.Enum):
+class CircuitState(enum.StrEnum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
     ISOLATED = "isolated"
 
 
-class FailsafeMode(str, enum.Enum):
+class FailsafeMode(enum.StrEnum):
     BLOCK_ALL = "block_all"
     ALLOW_WITH_AUDIT = "allow_with_audit"
 
@@ -97,6 +97,8 @@ class AdaptiveCircuitBreaker:
         self._last_transition = time.monotonic()
         self._lock = asyncio.Lock()
         self._metrics_available = False
+        self._state_gauge: Any = None
+        self._pressure_counter: Any = None
         self._register_metrics()
 
     @property
@@ -262,10 +264,10 @@ class AdaptiveCircuitBreaker:
             try:
                 from prometheus_client import REGISTRY
 
-                self._state_gauge = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+                self._state_gauge = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
                     "pramanix_circuit_state"
                 )
-                self._pressure_counter = REGISTRY._names_to_collectors.get(  # type: ignore[assignment]
+                self._pressure_counter = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
                     "pramanix_circuit_pressure_events_total"
                 )
                 self._metrics_available = (

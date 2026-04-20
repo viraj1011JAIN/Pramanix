@@ -58,14 +58,14 @@ pytest.importorskip(
     reason="httpx not installed — skipping OllamaTranslator tests",
 )
 
-import httpx  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+import httpx
+from pydantic import BaseModel
 
-from pramanix.exceptions import (  # noqa: E402
+from pramanix.exceptions import (
     ExtractionFailureError,
     LLMTimeoutError,
 )
-from pramanix.translator.ollama import OllamaTranslator  # noqa: E402
+from pramanix.translator.ollama import OllamaTranslator
 
 # ── Check Ollama availability ────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ class _FixedResponseHandler(http.server.BaseHTTPRequestHandler):
     _body: bytes = b""
     _content_type: str = "application/json"
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         # Read and discard the request body
         length = int(self.headers.get("Content-Length", 0))
         self.rfile.read(length)
@@ -290,7 +290,7 @@ class TestOllamaTranslatorNetworkErrors:
 
         # Start a server that deliberately delays its response
         class _SlowHandler(http.server.BaseHTTPRequestHandler):
-            def do_POST(self) -> None:  # noqa: N802
+            def do_POST(self) -> None:
                 import time
 
                 length = int(self.headers.get("Content-Length", 0))

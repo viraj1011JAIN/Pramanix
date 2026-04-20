@@ -26,13 +26,13 @@ import pytest
 pytest.importorskip("fastapi", reason="fastapi not installed — skipping live middleware tests")
 pytest.importorskip("httpx", reason="httpx not installed — skipping live middleware tests")
 
-import httpx  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+import httpx
+from fastapi import FastAPI
+from pydantic import BaseModel
 
-from pramanix import E, Field, GuardConfig, Policy  # noqa: E402
-from pramanix.audit.verifier import DecisionVerifier  # noqa: E402
-from pramanix.integrations.fastapi import PramanixMiddleware  # noqa: E402
+from pramanix import E, Field, GuardConfig, Policy
+from pramanix.audit.verifier import DecisionVerifier
+from pramanix.integrations.fastapi import PramanixMiddleware
 
 # ── Policies ──────────────────────────────────────────────────────────────────
 

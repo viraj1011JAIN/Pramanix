@@ -97,7 +97,7 @@ def main() -> None:
     if missing:
         print(f"\n{_SEP_NARROW}")
         print(f"  Domains not yet complete: {', '.join(missing)}")
-        print(f"  Run the missing domains before generating the 500 M report.")
+        print("  Run the missing domains before generating the 500 M report.")
         print(f"{_SEP_NARROW}\n")
         return
 

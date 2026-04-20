@@ -54,7 +54,7 @@ import multiprocessing
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ── No module-level pramanix imports ──────────────────────────────────────────
@@ -86,14 +86,14 @@ def _silence_guard_logging() -> None:
         class _NullLogger:
             """Discards all structlog events."""
 
-            def msg(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def msg(self, *args, **kwargs) -> None:
                 pass
 
-            def __getattr__(self, name: str):  # noqa: ANN204
+            def __getattr__(self, name: str):
                 return self.msg
 
         class _NullLoggerFactory:
-            def __call__(self, *args) -> _NullLogger:  # noqa: ANN002
+            def __call__(self, *args) -> _NullLogger:
                 return _NullLogger()
 
         structlog.configure(
@@ -187,6 +187,7 @@ def worker_entry(
     # ── Heavy imports: pramanix triggers guard.py module-level configure() ───
     import orjson
     import psutil
+
     from pramanix import Guard, GuardConfig
 
     # ── Silence structlog AFTER pramanix import, BEFORE first verify() call ──
@@ -339,7 +340,7 @@ def worker_entry(
                         "error":   n_error,
                         "rps":     round(rps, 1),
                         "rss":     round(rss_now, 2),
-                        "ts":      datetime.now(timezone.utc).isoformat(),
+                        "ts":      datetime.now(UTC).isoformat(),
                     }
                     ck_fh.write(orjson.dumps(ckpt) + b"\n")
                     log_fh.flush()  # ensure recent decisions survive a crash

@@ -35,8 +35,8 @@ from decimal import Decimal
 from typing import Any
 
 __all__ = [
-    "sanitise_user_input",
     "injection_confidence_score",
+    "sanitise_user_input",
 ]
 
 # ── Injection pattern registry ────────────────────────────────────────────────

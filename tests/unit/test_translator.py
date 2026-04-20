@@ -1033,7 +1033,7 @@ class TestAnthropicTranslator:
 # and requires real API credentials to exercise in production — these are
 # impossible-to-reach paths in a unit test environment without API keys.
 
-import pramanix.translator.redundant as _redundant_mod  # noqa: E402
+import pramanix.translator.redundant as _redundant_mod
 
 
 class TestGuardParseAndVerify:

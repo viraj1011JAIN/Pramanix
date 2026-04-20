@@ -28,17 +28,17 @@ import pytest
 pytest.importorskip("redis", reason="redis not installed")
 pytest.importorskip("testcontainers", reason="testcontainers not installed")
 
-import redis.asyncio as aioredis  # noqa: E402
-from testcontainers.redis import RedisContainer  # noqa: E402
+import redis.asyncio as aioredis
+from testcontainers.redis import RedisContainer
 
-from pramanix import E, Field, Guard, GuardConfig, Policy  # noqa: E402
-from pramanix.identity.linker import (  # noqa: E402
+from pramanix import E, Field, Guard, GuardConfig, Policy
+from pramanix.identity.linker import (
     JWTExpiredError,
     JWTIdentityLinker,
     JWTVerificationError,
     StateLoadError,
 )
-from pramanix.identity.redis_loader import RedisStateLoader  # noqa: E402
+from pramanix.identity.redis_loader import RedisStateLoader
 
 # ── JWT test helper ───────────────────────────────────────────────────────────
 
@@ -190,7 +190,7 @@ class TestZeroTrustBoundary:
         class _Req:
             headers: ClassVar[dict] = {"Authorization": f"Bearer {token}"}
 
-        claims, state = await linker.extract_and_load(_Req())
+        _claims, state = await linker.extract_and_load(_Req())
         decision = await guard.verify_async(
             intent={
                 "amount": Decimal("100"),
@@ -218,7 +218,7 @@ class TestZeroTrustBoundary:
         class _Req:
             headers: ClassVar[dict] = {"Authorization": f"Bearer {token}"}
 
-        claims, state = await linker.extract_and_load(_Req())
+        _claims, state = await linker.extract_and_load(_Req())
         decision = await guard.verify_async(
             intent={
                 "amount": Decimal("1000"),

@@ -34,16 +34,16 @@ if TYPE_CHECKING:
     from pramanix.expressions import ConstraintExpr, Field
 
 __all__ = [
-    "MinReplicas",
-    "MaxReplicas",
-    "WithinCPUBudget",
-    "WithinMemoryBudget",
     # Phase 8 SRE primitives
     "BlastRadiusCheck",
+    "CPUMemoryGuard",
     "CircuitBreakerState",
+    "MaxReplicas",
+    "MinReplicas",
     "ProdDeployApproval",
     "ReplicaBudget",
-    "CPUMemoryGuard",
+    "WithinCPUBudget",
+    "WithinMemoryBudget",
 ]
 
 

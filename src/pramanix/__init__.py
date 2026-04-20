@@ -51,66 +51,66 @@ from pramanix.policy import Policy
 from pramanix.resolvers import ResolverRegistry
 
 __all__ = [
-    # Core result
-    "Decision",
-    "SolverStatus",
-    # DSL
-    "Field",
-    "E",
-    "ConstraintExpr",
-    # Policy
-    "Policy",
-    # Guard
-    "Guard",
-    "GuardConfig",
-    # Decorator
-    "guard",
-    # Resolver cache (data-bleed guard) — singleton excluded intentionally:
-    # interact with the registry through Guard configuration, not directly.
-    "ResolverRegistry",
-    # Exceptions — core
-    "PramanixError",
-    "PolicyError",
-    "PolicyCompilationError",
-    "InvariantLabelError",
-    "FieldTypeError",
-    "TranspileError",
-    "GuardError",
-    "ValidationError",
-    "StateValidationError",
-    "SolverTimeoutError",
-    "SolverError",
-    "WorkerError",
-    "GuardViolationError",
-    "ConfigurationError",
-    # Exceptions — translator (Phase 4)
-    "ExtractionFailureError",
-    "ExtractionMismatchError",
-    "LLMTimeoutError",
-    # Exceptions — hardening (Phase 4)
-    "SemanticPolicyViolation",
-    "InjectionBlockedError",
-    # Phase 9 — Pillar 1: Cryptographic audit
-    "DecisionSigner",
-    "DecisionVerifier",
-    "MerkleAnchor",
-    # Phase 9 — Pillar 3: Zero-trust identity
-    "JWTIdentityLinker",
     # Phase 9 — Pillar 4: Adaptive circuit breaker
     "AdaptiveCircuitBreaker",
     "CircuitBreakerConfig",
-    # Phase 11 — Pillar 2: Ed25519 cryptographic signing
-    "PramanixSigner",
-    "PramanixVerifier",
+    "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
-    "ComplianceReport",
-    # Phase 12 — Hardening: persistent Merkle anchoring
-    "PersistentMerkleAnchor",
+    "ConfigurationError",
+    "ConstraintExpr",
+    # Core result
+    "Decision",
+    # Phase 9 — Pillar 1: Cryptographic audit
+    "DecisionSigner",
+    "DecisionVerifier",
+    "E",
     # Phase 12 — Hardening: sealed execution token (TOCTOU gap)
     "ExecutionToken",
     "ExecutionTokenSigner",
     "ExecutionTokenVerifier",
+    # Exceptions — translator (Phase 4)
+    "ExtractionFailureError",
+    "ExtractionMismatchError",
+    # DSL
+    "Field",
+    "FieldTypeError",
+    # Guard
+    "Guard",
+    "GuardConfig",
+    "GuardError",
+    "GuardViolationError",
+    "InjectionBlockedError",
+    "InvariantLabelError",
+    # Phase 9 — Pillar 3: Zero-trust identity
+    "JWTIdentityLinker",
+    "LLMTimeoutError",
+    "MerkleAnchor",
+    # Phase 12 — Hardening: persistent Merkle anchoring
+    "PersistentMerkleAnchor",
+    # Policy
+    "Policy",
+    "PolicyCompilationError",
+    "PolicyError",
+    # Exceptions — core
+    "PramanixError",
+    # Phase 11 — Pillar 2: Ed25519 cryptographic signing
+    "PramanixSigner",
+    "PramanixVerifier",
     # Phase 13 — Enterprise: distributed Redis token store
     "RedisExecutionTokenVerifier",
+    # Resolver cache (data-bleed guard) — singleton excluded intentionally:
+    # interact with the registry through Guard configuration, not directly.
+    "ResolverRegistry",
+    # Exceptions — hardening (Phase 4)
+    "SemanticPolicyViolation",
+    "SolverError",
+    "SolverStatus",
+    "SolverTimeoutError",
+    "StateValidationError",
+    "TranspileError",
+    "ValidationError",
+    "WorkerError",
+    # Decorator
+    "guard",
 ]

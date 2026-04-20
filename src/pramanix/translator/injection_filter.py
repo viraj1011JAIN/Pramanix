@@ -35,7 +35,7 @@ from __future__ import annotations
 import re
 from typing import Final
 
-__all__ = ["InjectionFilter", "INJECTION_PATTERNS"]
+__all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 
 
 # ── Injection pattern registry ─────────────────────────────────────────

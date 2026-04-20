@@ -203,7 +203,7 @@ def main() -> None:
     hw_path = OUT / "hardware_specs.txt"
     specs   = _collect_hardware_specs()
     hw_path.write_text(specs, encoding="utf-8")
-    print(f"  [OK] hardware_specs.txt written")
+    print("  [OK] hardware_specs.txt written")
     print()
 
     # Echo the specs to terminal as well

@@ -274,7 +274,7 @@ class TestAuditCLIEdgeCases:
         _write_jsonl([_make_audit_record(d, signer)], log_path)
         _write_public_key(signer, key_path)
 
-        code, output = _run_audit_cli(log_path, key_path, ["--json"])
+        _code, output = _run_audit_cli(log_path, key_path, ["--json"])
         parsed = json.loads(output)
         assert parsed["total"] == 1
         assert parsed["valid"] == 1

@@ -409,7 +409,7 @@ class TestVerify:
     def test_missing_label_raises(self) -> None:
         f = Field("x", int, "Real")
         unlabeled = E(f) >= 0  # no .named()
-        with pytest.raises(ValueError, match="must carry a .named\\(\\) label"):
+        with pytest.raises(ValueError, match=r"must carry a \.named\(\) label"):
             verify([unlabeled], {"x": 5})
 
     def test_real_field_with_bool_value_raises(self) -> None:

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pramanix.decision import Decision
 
-__all__ = ["format_block_feedback", "format_autogen_rejection"]
+__all__ = ["format_autogen_rejection", "format_block_feedback"]
 
 
 def format_block_feedback(decision: Decision, intent: dict[str, Any]) -> str:

@@ -131,7 +131,7 @@ class TestStage1IntentValidation:
         """Wrong type for Decimal field in strict mode → blocked."""
         guard = _make_guard()
         decision = guard.verify(
-            intent={"amount": "not-a-number"},  # type: str, not Decimal
+            intent={"amount": "not-a-number"},  # str, not Decimal
             state=_VALID_STATE,
         )
         _assert_fail_safe(decision, "intent type mismatch")
