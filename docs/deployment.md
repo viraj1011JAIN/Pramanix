@@ -1,6 +1,6 @@
 # Pramanix -- Operations and Deployment Guide
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Audience:** Platform engineers deploying and operating Pramanix in production.
 > **Prerequisite:** Read [architecture.md](architecture.md) for the pipeline overview.
 
@@ -25,7 +25,7 @@ All variables are prefixed `PRAMANIX_`.
 | `PRAMANIX_WORKER_WARMUP` | `true` | bool | Run a dummy Z3 solve on worker startup to eliminate cold-start JIT spikes. |
 | `PRAMANIX_LOG_LEVEL` | `INFO` | string | `DEBUG` / `INFO` / `WARNING` / `ERROR`. Never use DEBUG in production -- may expose field values. |
 | `PRAMANIX_METRICS_ENABLED` | `false` | bool | Enable Prometheus metrics export. |
-| `PRAMANIX_OTEL_ENABLED` | `false` | bool | Enable OpenTelemetry trace export. |
+| `PRAMANIX_OTEL_ENABLED` | `false` | bool | Enable OpenTelemetry trace export. Requires `pip install 'pramanix[otel]'`. If `true` and `opentelemetry-sdk` is not installed, a `UserWarning` is emitted at `GuardConfig()` construction time. |
 | `PRAMANIX_TRANSLATOR_ENABLED` | `false` | bool | Enable LLM-based intent translation (NLP mode). |
 | `PRAMANIX_FAST_PATH_ENABLED` | `false` | bool | Enable O(1) pre-Z3 screening. |
 | `PRAMANIX_SHED_LATENCY_THRESHOLD_MS` | `200` | float (ms) | Circuit breaker latency threshold for load shedding. |

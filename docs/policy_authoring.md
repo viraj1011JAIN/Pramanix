@@ -1,6 +1,6 @@
 # Pramanix -- Policy Authoring Guide
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Audience:** Engineers writing or reviewing `Policy` subclasses.
 > **Prerequisite:** Read [architecture.md](architecture.md) for the pipeline overview.
 

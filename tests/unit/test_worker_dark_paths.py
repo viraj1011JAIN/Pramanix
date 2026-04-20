@@ -673,3 +673,180 @@ class TestWorkerPoolExecutorProperty:
         pool.spawn()
         assert pool.executor is pool._executor
         pool.shutdown()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HMAC Result Integrity Seal — _EphemeralKey, _worker_solve_sealed, _unseal_decision
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestEphemeralKey:
+    """_EphemeralKey must be log-safe and non-picklable."""
+
+    def test_repr_is_redacted(self) -> None:
+        from pramanix.worker import _EphemeralKey
+
+        key = _EphemeralKey(b"\xab" * 32)
+        assert repr(key) == "<EphemeralKey: redacted>"
+        assert str(key) == "<EphemeralKey: redacted>"
+
+    def test_bytes_returns_raw_key(self) -> None:
+        from pramanix.worker import _EphemeralKey
+
+        raw = b"\x01\x02\x03" * 10 + b"\x04\x05"
+        key = _EphemeralKey(raw)
+        assert key.bytes == raw
+
+    def test_pickle_raises_type_error(self) -> None:
+        """_EphemeralKey.__reduce__ must raise TypeError to prevent disk serialisation."""
+        from pramanix.worker import _EphemeralKey
+
+        key = _EphemeralKey(b"secret" * 5)
+        with pytest.raises(TypeError, match="serialised to disk"):
+            pickle.dumps(key)
+
+    def test_module_level_seal_key_is_ephemeral_key(self) -> None:
+        from pramanix.worker import _RESULT_SEAL_KEY, _EphemeralKey
+
+        assert isinstance(_RESULT_SEAL_KEY, _EphemeralKey)
+        assert len(_RESULT_SEAL_KEY.bytes) == 32
+
+
+class TestWorkerSolveSealedAndUnseal:
+    """_worker_solve_sealed / _unseal_decision IPC integrity contract."""
+
+    def test_sealed_envelope_has_payload_and_tag_keys(self) -> None:
+        from pramanix.worker import _worker_solve_sealed
+
+        import secrets
+
+        seal_key = secrets.token_bytes(32)
+        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, seal_key)
+        assert "_p" in envelope
+        assert "_t" in envelope
+        assert isinstance(envelope["_p"], str)
+        assert isinstance(envelope["_t"], str)
+
+    def test_unseal_returns_correct_dict_for_valid_envelope(self) -> None:
+        from pramanix.worker import _RESULT_SEAL_KEY, _worker_solve_sealed, _unseal_decision
+
+        envelope = _worker_solve_sealed(
+            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
+        )
+        result = _unseal_decision(envelope)
+        assert "allowed" in result
+
+    def test_unseal_raises_on_tampered_tag(self) -> None:
+        """Flipping one character in _t must raise ValueError."""
+        from pramanix.worker import _RESULT_SEAL_KEY, _worker_solve_sealed, _unseal_decision
+
+        envelope = _worker_solve_sealed(
+            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
+        )
+        # Flip last character of HMAC tag
+        bad_tag = envelope["_t"][:-1] + ("a" if envelope["_t"][-1] != "a" else "b")
+        tampered = {**envelope, "_t": bad_tag}
+        with pytest.raises(ValueError, match="HMAC mismatch"):
+            _unseal_decision(tampered)
+
+    def test_unseal_raises_on_tampered_payload(self) -> None:
+        """Modifying _p while leaving _t intact must raise ValueError."""
+        from pramanix.worker import _RESULT_SEAL_KEY, _worker_solve_sealed, _unseal_decision
+
+        envelope = _worker_solve_sealed(
+            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
+        )
+        # Append a byte to the payload (tag now mismatches)
+        tampered = {**envelope, "_p": envelope["_p"] + "X"}
+        with pytest.raises(ValueError, match="HMAC mismatch"):
+            _unseal_decision(tampered)
+
+    def test_unseal_raises_key_error_on_missing_payload_key(self) -> None:
+        """Envelope missing _p raises KeyError."""
+        from pramanix.worker import _unseal_decision
+
+        with pytest.raises(KeyError):
+            _unseal_decision({"_t": "abc123"})
+
+    def test_unseal_raises_key_error_on_missing_tag_key(self) -> None:
+        """Envelope missing _t raises KeyError."""
+        from pramanix.worker import _unseal_decision
+
+        with pytest.raises(KeyError):
+            _unseal_decision({"_p": '{"allowed": false}'})
+
+    def test_wrong_seal_key_raises_value_error(self) -> None:
+        """Envelope signed with key A must fail verification with key B."""
+        import secrets
+        import hashlib
+        import hmac as _h
+
+        key_a = secrets.token_bytes(32)
+        key_b = secrets.token_bytes(32)
+        # Ensure the two keys differ (astronomically unlikely to collide but guard anyway)
+        assert key_a != key_b
+
+        from pramanix.worker import _worker_solve_sealed, _unseal_decision, _EphemeralKey
+        import pramanix.worker as _worker_mod
+
+        # Temporarily swap the module-level seal key so _unseal_decision uses key_b
+        original_key = _worker_mod._RESULT_SEAL_KEY
+        _worker_mod._RESULT_SEAL_KEY = _EphemeralKey(key_b)
+        try:
+            envelope = _worker_solve_sealed(
+                _P, {"amount": Decimal("50")}, 5000, key_a  # signed with key_a
+            )
+            with pytest.raises(ValueError, match="HMAC mismatch"):
+                _unseal_decision(envelope)  # verified with key_b
+        finally:
+            _worker_mod._RESULT_SEAL_KEY = original_key
+
+
+class TestWorkerPoolHmacFailureIntegration:
+    """WorkerPool.submit_solve in async-process mode handles HMAC failure safely."""
+
+    def test_tampered_sealed_result_returns_error_decision(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the sealed envelope is tampered, submit_solve must return an error Decision.
+
+        A real Future is pre-loaded with a tampered envelope dict (wrong tag).
+        pool._executor is replaced with a real ThreadPoolExecutor subclass whose
+        submit() returns this Future — no method patching.
+
+        The pool mode is forced to "async-process" so the HMAC verification path
+        is taken.  Because the tag is wrong, _unseal_decision raises ValueError,
+        which submit_solve catches and converts to Decision.error().
+        """
+        from concurrent.futures import Future
+
+        class _TamperedSealedExecutor(ThreadPoolExecutor):
+            """Real ThreadPoolExecutor whose submit returns a Future with bad HMAC."""
+
+            def submit(self, fn, *args, **kwargs):  # type: ignore[override]
+                f: Future = Future()
+                f.set_result({"_p": '{"allowed":true}', "_t": "badhmacsignature"})
+                return f
+
+        pool = WorkerPool(
+            mode="async-process",
+            max_workers=1,
+            max_decisions_per_worker=1000,
+            warmup=False,
+        )
+        pool.spawn()
+        old = pool._executor
+        old.shutdown(wait=False)
+        pool._executor = _TamperedSealedExecutor(max_workers=1)
+
+        log_cap = _LogCapture()
+        monkeypatch.setattr("pramanix.worker._log", log_cap)
+
+        result = pool.submit_solve(_P, {"amount": Decimal("50")}, 5000)
+
+        assert not result.allowed, "Tampered IPC result must never produce an ALLOW decision"
+        assert log_cap.error_called, "HMAC seal violation must be logged at ERROR level"
+        assert "integrity" in " ".join(log_cap.errors).lower() or "hmac" in " ".join(
+            log_cap.errors
+        ).lower()
+        pool.shutdown()

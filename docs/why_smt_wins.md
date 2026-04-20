@@ -1,6 +1,6 @@
 # Why SMT Wins -- The Case for Formal Verification in AI Agent Safety
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Audience:** Engineers, security architects, and technical decision-makers evaluating AI guardrail approaches.
 > **Related:** [security.md](security.md) for the full threat model and countermeasures.
 

@@ -1,6 +1,6 @@
 # Pramanix -- Security Architecture
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Audience:** CISOs, security engineers, and AI safety reviewers evaluating Pramanix for regulated environments.
 > **Prerequisite:** Read [architecture.md](architecture.md) for the full pipeline and module map.
 
@@ -217,6 +217,7 @@ is_authentic = verifier.verify(decision)  # True or False
 - The Merkle root can be published to a transparency log or stored in an immutable store.
 - `PersistentMerkleAnchor` triggers a callback on every checkpoint for durable storage (H05 countermeasure).
 - `pramanix audit verify` CLI reads a decision log and recomputes the chain, detecting any insertion, deletion, or mutation.
+- **Iterative root computation (R3):** `MerkleAnchor._build_root` uses an iterative `while` loop — no recursion. Production logs with thousands of decisions do not hit Python's default 1,000-frame call stack limit.
 
 ```
 Decision 0 ─┐
@@ -234,6 +235,37 @@ pramanix audit verify decisions.jsonl --public-key public.pem
 
 # Output:
 # Verified 10000 decisions. 0 tampered. Merkle root: abc123...
+```
+
+### 5.5 HMAC JWS Standalone Verifier (`DecisionVerifier`)
+
+`DecisionVerifier` is the stdlib-only verifier for HMAC JWS compact tokens produced by `DecisionSigner`. An auditor can copy `src/pramanix/audit/verifier.py` and verify tokens offline without any SDK dependency.
+
+**`VerificationResult` fields:**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `valid` | `bool` | `True` if the HMAC signature verified correctly |
+| `decision_id` | `str` | UUID of the original decision |
+| `allowed` | `bool` | `True` = ALLOW, `False` = BLOCK |
+| `status` | `str` | Wire value of `SolverStatus` |
+| `violated_invariants` | `list[str]` | Names of failed constraints |
+| `explanation` | `str` | Human-readable reason |
+| `policy_hash` | `str` | SHA-256 fingerprint of the policy — reads `payload["policy_hash"]` (corrected from the defunct `"policy"` key, which always resolved to `""`) |
+| `issued_at` | `int` | Always `0` — `iat` is not embedded in the HMAC-signed payload (removed in v0.5.x for deterministic replay); the timestamp is in `SignedDecision.issued_at` outside the HMAC boundary |
+| `error` | `str \| None` | Set on verification failure |
+
+```python
+from pramanix.audit.verifier import DecisionVerifier
+
+verifier = DecisionVerifier(signing_key="<64-char-key>")
+result   = verifier.verify(token)
+
+if result.valid:
+    print(f"decision_id={result.decision_id}  allowed={result.allowed}")
+    print(f"policy_hash={result.policy_hash}  status={result.status}")
+else:
+    print(f"INVALID: {result.error}")
 ```
 
 ---

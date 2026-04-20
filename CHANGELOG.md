@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **R1 — `DecisionVerifier` field alignment (active regression):** `VerificationResult.policy` renamed to `policy_hash`; the verifier now reads `payload["policy_hash"]` — the correct key written by `DecisionSigner._canonicalize()`. The old key `"policy"` never existed in the signed payload and always resolved to `""`. `issued_at` is documented as always `0` — `iat` was removed from the signed payload in the N6 determinism fix (it is not embedded in the JWS body; the value is available in `SignedDecision.issued_at` outside the HMAC boundary). CLI `verify-proof` JSON output updated from `"policy"` key to `"policy_hash"`; epoch timestamp display removed from text output.
+- **R2 — `GuardConfig(otel_enabled=True)` silent no-op:** Added `_OTEL_AVAILABLE` tracking flag to the OpenTelemetry `try/except` import block (mirrors the existing `_PROM_AVAILABLE` flag). A `UserWarning` is now emitted in `__post_init__` when `otel_enabled=True` but `opentelemetry-sdk` is not installed, guiding users to `pip install 'pramanix[otel]'`.
+- **R3 — `MerkleAnchor._build_root` recursion limit:** Replaced the recursive implementation with an iterative `while len(level) > 1:` loop. The recursive version would hit Python's default 1,000-frame call stack limit for production logs with more than ~1,000 decisions. The iterative version handles arbitrarily large batches with O(1) stack depth.
+
+### Added
+
+- `tests/unit/test_production_fixes_r1_r3.py` — 33 regression tests covering all three fixes: `VerificationResult` field round-trips (`policy_hash`, `issued_at=0`), OTel availability warning (patched `_OTEL_AVAILABLE`), and Merkle root correctness + large-batch stability (1,500 and 5,000 decision batches).
+
 ### Changed
 
 - Claims/evidence alignment pass started for production-readiness hardening:

@@ -1,6 +1,6 @@
 # Pramanix -- Integrations Guide
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Prerequisite:** Read [architecture.md](architecture.md) for the pipeline overview and [policy_authoring.md](policy_authoring.md) to write policies.
 
 ---

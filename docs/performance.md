@@ -1,6 +1,6 @@
 # Pramanix -- Performance Reference
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Platform (Phase 4 benchmarks):** Windows 11, Python 3.13.7, z3-solver 4.x, pytest 7.4.4
 > **Test harness:** `tests/integration/test_cold_start_warmup.py`, `benchmarks/`
 

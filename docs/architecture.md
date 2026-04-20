@@ -1,6 +1,6 @@
 # Pramanix -- Architecture Reference
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **For the complete design specification see** [Blueprint.md](Blueprint.md).
 > **Audience:** Engineers integrating Pramanix, contributors, and reviewers doing a security evaluation.
 
@@ -414,6 +414,7 @@ Understanding these boundaries is important for correct deployment in regulated 
 - `MerkleAnchor` is process-scoped. If the process terminates without exporting `root_hash`, the chain is lost.
 - Use `PersistentMerkleAnchor` with a `checkpoint_callback` that writes to an append-only store (database, object storage, transparency log) at every checkpoint.
 - Individual Ed25519-signed decisions remain independently verifiable even without the Merkle chain.
+- **Iterative root computation:** `_build_root` uses an iterative `while len(level) > 1:` loop instead of recursion, eliminating Python's default 1,000-frame stack limit for large production logs.
 
 **Small LLM models:**
 - Models below approximately 3 billion parameters (e.g., `llama3.2:1b`) cannot reliably perform structured intent extraction and will echo the schema prompt instead of filling in values.

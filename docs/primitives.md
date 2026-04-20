@@ -1,6 +1,6 @@
 # Pramanix -- Primitives Library Reference
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Import path:** `pramanix.primitives.*`
 > Each primitive factory returns a `ConstraintExpr` with `.named()` and `.explain()` pre-configured, ready to include in a `Policy.invariants()` list.
 

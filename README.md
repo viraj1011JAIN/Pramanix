@@ -3,7 +3,7 @@
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
 ![Version 0.9.0](https://img.shields.io/badge/Version-0.9.0-orange)
-![Tests 1831 passed](https://img.shields.io/badge/Tests-1831%20passed-brightgreen)
+![Tests 1825 passed](https://img.shields.io/badge/Tests-1825%20passed-brightgreen)
 ![Coverage 96.55%](https://img.shields.io/badge/Coverage-96.55%25-brightgreen)
 ![Z3 4.16.0](https://img.shields.io/badge/Z3-4.16.0-purple)
 ![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203-blueviolet)

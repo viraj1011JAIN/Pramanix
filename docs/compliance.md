@@ -1,6 +1,6 @@
 # Pramanix -- Compliance Patterns
 
-> **Version:** v0.8.0
+> **Version:** v0.9.0
 > **Audience:** Compliance engineers, legal teams, and architects implementing regulated workflows.
 > **Prerequisite:** Read [primitives.md](primitives.md) for the pre-built constraints used in these examples.
 
