@@ -33,7 +33,7 @@ import enum
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
@@ -136,6 +136,37 @@ class AdaptiveCircuitBreaker:
             last_transition=self._last_transition,
             namespace=self._config.namespace,
         )
+
+    def verify_sync(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Decision:
+        """Blocking synchronous wrapper around :meth:`verify_async`.
+
+        Use this only in synchronous (non-async) codebases.  If called from
+        within a running asyncio event loop, raises
+        :exc:`~pramanix.exceptions.ConfigurationError` directing the caller
+        to use :meth:`verify_async` instead.
+
+        Args:
+            intent: Intent dict passed to the underlying Guard.
+            state:  State dict passed to the underlying Guard.
+
+        Returns:
+            :class:`~pramanix.decision.Decision` from the underlying Guard.
+
+        Raises:
+            ConfigurationError: If called from within a running event loop.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "AdaptiveCircuitBreaker.verify_sync() cannot be called from within "
+                "a running asyncio event loop.  Use verify_async() instead."
+            )
+        return asyncio.run(self.verify_async(intent=intent, state=state))
 
     async def verify_async(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Decision:
         """Verify with circuit breaker protection.
@@ -317,3 +348,208 @@ class AdaptiveCircuitBreaker:
             return  # pragma: no cover
         with contextlib.suppress(Exception):
             self._pressure_counter.labels(namespace=self._config.namespace).inc()
+
+
+# ── Phase C-5: Distributed Circuit Breaker ───────────────────────────────────
+
+
+@dataclass
+class _DistributedState:
+    """Shared state record stored in the distributed backend."""
+
+    circuit_state: str = CircuitState.CLOSED.value
+    failure_count: int = 0
+    last_failure_time: float = 0.0
+    open_episode_count: int = 0
+
+
+class InMemoryDistributedBackend:
+    """In-process distributed backend for testing.
+
+    All instances sharing the same *namespace* see the same state, simulating
+    multiple replicas within a single process.  Thread-safe via a module-level
+    :class:`threading.Lock`.
+
+    Use :meth:`clear` to reset all namespaces between tests.
+    """
+
+    import threading as _threading
+
+    _store: ClassVar[dict[str, _DistributedState]] = {}
+    _lock: ClassVar[Any] = _threading.Lock()
+
+    @classmethod
+    async def get_state(cls, namespace: str) -> _DistributedState:
+        with cls._lock:
+            return cls._store.get(namespace, _DistributedState())
+
+    @classmethod
+    async def set_state(cls, namespace: str, state: _DistributedState) -> None:
+        with cls._lock:
+            existing = cls._store.get(namespace, _DistributedState())
+            # Conservative merge: escalate to most severe state across replicas.
+            # If either the incoming or existing state is more severe, keep it.
+            severity = {
+                CircuitState.CLOSED.value: 0,
+                CircuitState.HALF_OPEN.value: 1,
+                CircuitState.OPEN.value: 2,
+                CircuitState.ISOLATED.value: 3,
+            }
+            new_severity = severity.get(state.circuit_state, 0)
+            existing_severity = severity.get(existing.circuit_state, 0)
+            merged_state = state.circuit_state if new_severity >= existing_severity else existing.circuit_state
+            cls._store[namespace] = _DistributedState(
+                circuit_state=merged_state,
+                failure_count=existing.failure_count + state.failure_count,
+                last_failure_time=max(existing.last_failure_time, state.last_failure_time),
+                open_episode_count=max(existing.open_episode_count, state.open_episode_count),
+            )
+
+    @classmethod
+    def clear(cls, namespace: str | None = None) -> None:
+        """Clear stored state. Pass namespace to clear one namespace, or None to clear all."""
+        with cls._lock:
+            if namespace is None:
+                cls._store.clear()
+            else:
+                cls._store.pop(namespace, None)
+
+
+class DistributedCircuitBreaker:
+    """Circuit breaker with distributed state synchronization.
+
+    A drop-in replacement for :class:`AdaptiveCircuitBreaker` that shares
+    state across multiple replicas via a pluggable backend.  The aggregation
+    rule is conservative (fail-safe): if ANY replica is OPEN, all replicas
+    report OPEN.  Failure counts are summed across replicas.
+
+    Args:
+        guard:            The :class:`~pramanix.guard.Guard` to wrap.
+        config:           :class:`CircuitBreakerConfig` (same as single-node).
+        backend:          Distributed state backend.  Defaults to
+                          :class:`InMemoryDistributedBackend` (single-process
+                          testing).  Use a Redis-backed backend in production.
+
+    Usage::
+
+        # Single-process simulation (testing)
+        breaker1 = DistributedCircuitBreaker(guard, namespace="trade")
+        breaker2 = DistributedCircuitBreaker(guard, namespace="trade")
+        # breaker1 and breaker2 share state via InMemoryDistributedBackend.
+
+    """
+
+    def __init__(
+        self,
+        guard: Any,
+        config: CircuitBreakerConfig | None = None,
+        backend: Any = None,
+    ) -> None:
+        self._guard = guard
+        self._config = config or CircuitBreakerConfig()
+        self._backend = backend or InMemoryDistributedBackend()
+        self._local_state = CircuitState.CLOSED
+        self._local_failure_count = 0
+        self._last_transition = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    @property
+    def state(self) -> CircuitState:
+        return self._local_state
+
+    async def _sync_state(self) -> CircuitState:
+        """Pull current aggregate state from backend and update local view."""
+        agg = await self._backend.get_state(self._config.namespace)
+        try:
+            synced = CircuitState(agg.circuit_state)
+        except ValueError:
+            synced = CircuitState.CLOSED
+        self._local_state = synced
+        self._local_failure_count = agg.failure_count
+        return synced
+
+    async def _push_state(self, new_state: CircuitState, delta_failures: int = 0) -> None:
+        """Write local state to backend (backend merges conservatively)."""
+        self._local_state = new_state
+        now = time.monotonic()
+        self._last_transition = now
+        await self._backend.set_state(
+            self._config.namespace,
+            _DistributedState(
+                circuit_state=new_state.value,
+                failure_count=delta_failures,
+                last_failure_time=now if delta_failures > 0 else 0.0,
+                open_episode_count=1 if new_state == CircuitState.OPEN else 0,
+            ),
+        )
+
+    async def verify_async(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Decision:
+        """Verify with distributed circuit breaker protection.
+
+        Syncs state from the backend on each call.  If the aggregate state is
+        OPEN, returns a failsafe :class:`~pramanix.decision.Decision` without
+        invoking Z3.  Otherwise delegates to the underlying Guard.
+        """
+        async with self._lock:
+            current = await self._sync_state()
+
+        if current in (CircuitState.OPEN, CircuitState.ISOLATED):
+            return self._make_open_decision(current)
+
+        t0 = time.monotonic()
+        decision = await self._guard.verify_async(intent=intent, state=state)
+        solve_ms = (time.monotonic() - t0) * 1000
+
+        async with self._lock:
+            if solve_ms > self._config.pressure_threshold_ms:
+                self._local_failure_count += 1
+                if self._local_failure_count >= self._config.consecutive_pressure_count:
+                    await self._push_state(CircuitState.OPEN, delta_failures=self._local_failure_count)
+                    self._local_failure_count = 0
+                    log.error(
+                        "DistributedCircuitBreaker: OPEN (namespace=%s)",
+                        self._config.namespace,
+                    )
+                else:
+                    await self._push_state(CircuitState.CLOSED, delta_failures=1)
+            else:
+                self._local_failure_count = 0
+
+        return decision  # type: ignore[no-any-return]
+
+    def verify_sync(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Decision:
+        """Blocking synchronous wrapper (sync callers only).
+
+        Raises :exc:`~pramanix.exceptions.ConfigurationError` if called from
+        within a running asyncio event loop.  Use :meth:`verify_async` in
+        async code.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "DistributedCircuitBreaker.verify_sync() cannot be called from within "
+                "a running asyncio event loop.  Use verify_async() instead."
+            )
+        return asyncio.run(self.verify_async(intent=intent, state=state))
+
+    def reset(self) -> None:
+        """Clear distributed state for this namespace."""
+        self._local_state = CircuitState.CLOSED
+        self._local_failure_count = 0
+        self._backend.clear(self._config.namespace)
+
+    def _make_open_decision(self, current: CircuitState) -> Decision:
+        from pramanix.decision import Decision
+
+        label = "OPEN" if current == CircuitState.OPEN else "ISOLATED"
+        return Decision.error(
+            reason=(
+                f"DistributedCircuitBreaker {label} (namespace={self._config.namespace}). "
+                "Aggregate replica state indicates Z3 solver pressure. Request blocked."
+            )
+        )

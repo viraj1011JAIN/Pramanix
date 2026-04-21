@@ -9,6 +9,7 @@ Every exception raised inside ``Guard.verify()`` is caught and collapsed into a
 Hierarchy::
 
     PramanixError
+    ├── InputTooLongError               # user input exceeds configured character limit
     ├── PolicyError                     # bad policy definition (compile-time)
     │   ├── PolicyCompilationError      # unsupported type / general compile error
     │   ├── InvariantLabelError         # missing / duplicate .named() label
@@ -38,6 +39,7 @@ __all__ = [
     "GuardError",
     "GuardViolationError",
     "InjectionBlockedError",
+    "InputTooLongError",
     "InvariantLabelError",
     "LLMTimeoutError",
     "PolicyCompilationError",
@@ -52,6 +54,7 @@ __all__ = [
     "ValidationError",
     "WorkerError",
 ]
+
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────

@@ -12,7 +12,12 @@ __version__ = "1.0.0"
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor
-from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
+from pramanix.circuit_breaker import (
+    AdaptiveCircuitBreaker,
+    CircuitBreakerConfig,
+    DistributedCircuitBreaker,
+    InMemoryDistributedBackend,
+)
 from pramanix.crypto import PramanixSigner, PramanixVerifier
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
@@ -58,6 +63,9 @@ __all__ = [
     # Phase 9 — Pillar 4: Adaptive circuit breaker
     "AdaptiveCircuitBreaker",
     "CircuitBreakerConfig",
+    # C-5: Distributed circuit breaker
+    "DistributedCircuitBreaker",
+    "InMemoryDistributedBackend",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",

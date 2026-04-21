@@ -116,7 +116,27 @@ def _semantic_field_equal(
 
     # ── Bool comparison (must precede int check — bool subclasses int) ────────
     if field_type is bool or (isinstance(val_a, bool) and isinstance(val_b, bool)):
-        return bool(val_a) == bool(val_b)
+        _true_vals = {"true", "1", "yes", "t"}
+        _false_vals = {"false", "0", "no", "f"}
+
+        def _norm_bool(v: Any) -> bool | None:
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, int | float):
+                return bool(v)
+            if isinstance(v, str):
+                s = v.strip().lower()
+                if s in _true_vals:
+                    return True
+                if s in _false_vals:
+                    return False
+            return None
+
+        nb_a = _norm_bool(val_a)
+        nb_b = _norm_bool(val_b)
+        if nb_a is not None and nb_b is not None:
+            return nb_a == nb_b
+        return bool(val_a == val_b)
 
     # ── Numeric type: use Decimal regardless of whether values are strings ────
     # This handles "500" == "500.0" == 500 == 500.0 when the schema says float.
@@ -355,7 +375,12 @@ async def extract_with_consensus(
 
     # ── Consensus telemetry ───────────────────────────────────────────────────
     all_checked = set(dump_a.keys()) | set(dump_b.keys())
-    _, disagreeing_fields = _semantic_equal(dump_a, dump_b, intent_schema)
+    if strictness == ConsensusStrictness.STRICT:
+        disagreeing_fields = [
+            k for k in sorted(all_checked) if dump_a.get(k) != dump_b.get(k)
+        ]
+    else:
+        _, disagreeing_fields = _semantic_equal(dump_a, dump_b, intent_schema)
     _agreed_fields = all_checked - set(disagreeing_fields)
     _log.debug(
         "pramanix.consensus.result",

@@ -109,6 +109,9 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Limitations overrides (v0.9.0)
         "PolicyAuditor",
         "StringEnumField",
+        # C-5: distributed circuit breaker (v1.0.0)
+        "DistributedCircuitBreaker",
+        "InMemoryDistributedBackend",
         # D-1: consensus strictness enum (v1.0.0)
         "ConsensusStrictness",
         # D-3: input size guard (v1.0.0)
