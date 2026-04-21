@@ -50,7 +50,7 @@ from pramanix.execution_token import (
     ExecutionTokenVerifier,
     RedisExecutionTokenVerifier,
 )
-from pramanix.expressions import ArrayField, ConstraintExpr, DatetimeField, E, Exists, Field, ForAll
+from pramanix.expressions import ArrayField, ConstraintExpr, DatetimeField, E, Exists, Field, ForAll, NestedField
 from pramanix.guard import Guard, GuardConfig
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
@@ -86,6 +86,8 @@ __all__ = [
     "ArrayField",
     # A-4: Datetime field
     "DatetimeField",
+    # B-1: Nested model descriptor chaining
+    "NestedField",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",

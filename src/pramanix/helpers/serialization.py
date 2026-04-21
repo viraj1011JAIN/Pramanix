@@ -33,7 +33,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-__all__ = ["safe_dump"]
+__all__ = ["flatten_model", "safe_dump"]
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -57,6 +57,69 @@ def _assert_no_nested_models(value: Any, path: str = "root") -> None:
     elif isinstance(value, list | tuple | set | frozenset):
         for i, item in enumerate(value):
             _assert_no_nested_models(item, path=f"{path}[{i}]")
+
+
+# ── B-1: Nested model flattening ─────────────────────────────────────────────
+
+
+def flatten_model(
+    model: BaseModel,
+    *,
+    max_depth: int = 5,
+    _prefix: str = "",
+    _depth: int = 0,
+    _seen: frozenset[type] | None = None,
+) -> dict[str, Any]:
+    """Recursively flatten *model* to a plain dict with dotted-path keys.
+
+    Nested :class:`pydantic.BaseModel` fields are traversed and their sub-fields
+    are emitted as ``"parent.child.leaf"`` keys.  All other Python types (Decimal,
+    datetime, int, str, …) are preserved exactly — no JSON coercion.
+
+    Args:
+        model:     Any :class:`pydantic.BaseModel` instance.
+        max_depth: Maximum nesting depth before raising (default 5).
+
+    Returns:
+        A flat ``dict[str, Any]`` with dotted-path keys, pickle-safe.
+
+    Raises:
+        PolicyCompilationError: If nesting depth exceeds *max_depth* or a
+            circular model-type reference is detected.
+    """
+    from pramanix.exceptions import PolicyCompilationError
+
+    seen: frozenset[type] = _seen if _seen is not None else frozenset()
+
+    if _depth > max_depth:
+        raise PolicyCompilationError(
+            f"Nested model depth exceeds max_nesting_depth={max_depth} "
+            f"at prefix '{_prefix}'."
+        )
+    model_type = type(model)
+    if model_type in seen:
+        raise PolicyCompilationError(
+            f"Circular model reference detected: {model_type.__name__!r} "
+            f"appears recursively at prefix '{_prefix}'."
+        )
+    seen = seen | {model_type}
+
+    result: dict[str, Any] = {}
+    for field_name in type(model).model_fields:
+        value = getattr(model, field_name)
+        key = f"{_prefix}.{field_name}" if _prefix else field_name
+        if isinstance(value, BaseModel):
+            nested = flatten_model(
+                value,
+                max_depth=max_depth,
+                _prefix=key,
+                _depth=_depth + 1,
+                _seen=seen,
+            )
+            result.update(nested)
+        else:
+            result[key] = value
+    return result
 
 
 # ── Public API ────────────────────────────────────────────────────────────────

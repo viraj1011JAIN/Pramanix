@@ -107,7 +107,7 @@ from pramanix.guard_pipeline import (
     _fmt,
     _semantic_post_consensus_check,
 )
-from pramanix.helpers.serialization import safe_dump
+from pramanix.helpers.serialization import flatten_model, safe_dump
 from pramanix.solver import _SolveResult, solve
 from pramanix.validator import validate_intent, validate_state
 from pramanix.worker import WorkerPool
@@ -402,10 +402,10 @@ class Guard:
                 with _span("pramanix.resolve"):
                     # ── Step 3: model_dump() → plain dicts ────────────────────────────
                     intent_values: dict[str, Any] = (
-                        safe_dump(intent) if isinstance(intent, BaseModel) else dict(intent)
+                        flatten_model(intent) if isinstance(intent, BaseModel) else dict(intent)
                     )
                     state_values: dict[str, Any] = (
-                        safe_dump(state) if isinstance(state, BaseModel) else dict(state)
+                        flatten_model(state) if isinstance(state, BaseModel) else dict(state)
                     )
 
                     # ── Step 4: State version check ───────────────────────────────────
@@ -650,10 +650,10 @@ class Guard:
                 state = validate_state(self._state_model, state)
 
             intent_values: dict[str, Any] = (
-                safe_dump(intent) if isinstance(intent, BaseModel) else dict(intent)
+                flatten_model(intent) if isinstance(intent, BaseModel) else dict(intent)
             )
             state_values: dict[str, Any] = (
-                safe_dump(state) if isinstance(state, BaseModel) else dict(state)
+                flatten_model(state) if isinstance(state, BaseModel) else dict(state)
             )
 
             if self._policy_version is not None:
@@ -852,7 +852,7 @@ class Guard:
 
             # ── Semantic post-consensus check: fast Python rules before Z3 ─────
             state_check_values: dict[str, Any] = (
-                safe_dump(state) if isinstance(state, BaseModel) else dict(state)
+                flatten_model(state) if isinstance(state, BaseModel) else dict(state)
             )
             _semantic_post_consensus_check(intent_dict, state_check_values)
 

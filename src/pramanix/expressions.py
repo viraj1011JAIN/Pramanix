@@ -45,6 +45,7 @@ __all__ = [
     "ArrayField",
     "ConstraintExpr",
     "DatetimeField",
+    "NestedField",
     "E",
     "Exists",
     "ExpressionNode",
@@ -118,6 +119,99 @@ class Field:
     name: str
     python_type: type
     z3_type: Z3Type
+
+
+# ── Nested field descriptor (B-1) ────────────────────────────────────────────
+
+
+def _infer_z3_type(python_type: type) -> Z3Type:
+    """Infer Z3 sort from a Python annotation type."""
+    from decimal import Decimal as _Decimal
+    from datetime import datetime as _dt
+    if python_type is bool:
+        return "Bool"
+    if python_type in (int,):
+        return "Int"
+    if python_type in (_Decimal, float):
+        return "Real"
+    if python_type is str:
+        return "String"
+    if python_type is _dt:
+        return "Int"  # Unix epoch seconds
+    return "Real"  # safe default for numeric sub-types
+
+
+class NestedField:
+    """Proxy that supports descriptor-chaining access to nested Pydantic model fields.
+
+    Returned when a policy's class-level attribute is a :class:`NestedField`
+    wrapping a :class:`pydantic.BaseModel` subtype.  Subsequent attribute
+    accesses walk the model's field schema and produce either another
+    :class:`NestedField` (for nested model fields) or a plain :class:`Field`
+    (for leaf scalar fields).
+
+    Example::
+
+        from pydantic import BaseModel
+        from decimal import Decimal
+        from pramanix.expressions import NestedField, E, Field
+
+        class Position(BaseModel):
+            amount: Decimal
+
+        class Account(BaseModel):
+            position: Position
+
+        class AccountPolicy(Policy):
+            account = NestedField("account", Account)
+
+            @classmethod
+            def invariants(cls):
+                # Descriptor chaining: cls.account.position.amount → Field("account.position.amount", ...)
+                return [
+                    (E(cls.account.position.amount) >= 0).named("non_negative"),
+                ]
+    """
+
+    __slots__ = ("_prefix", "_model_type")
+
+    def __init__(self, prefix: str, model_type: type) -> None:
+        object.__setattr__(self, "_prefix", prefix)
+        object.__setattr__(self, "_model_type", model_type)
+
+    def __getattr__(self, name: str) -> "Field | NestedField":
+        try:
+            from pydantic import BaseModel as _BM
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError("NestedField requires pydantic. pip install pydantic") from exc
+
+        model_type: type = object.__getattribute__(self, "_model_type")
+        prefix: str = object.__getattribute__(self, "_prefix")
+
+        model_fields = getattr(model_type, "model_fields", None)
+        if model_fields is None or name not in model_fields:
+            raise AttributeError(
+                f"NestedField: model {model_type.__name__!r} has no field {name!r}. "
+                f"Available fields: {list(model_fields or {})}"
+            )
+
+        annotation = model_fields[name].annotation
+        full_path = f"{prefix}.{name}"
+
+        if annotation is not None:
+            try:
+                if issubclass(annotation, _BM):
+                    return NestedField(full_path, annotation)
+            except TypeError:
+                pass  # annotation is a generic, not a bare class
+
+        py_type: type = annotation if annotation is not None else object
+        return Field(full_path, py_type, _infer_z3_type(py_type))
+
+    def __repr__(self) -> str:
+        prefix: str = object.__getattribute__(self, "_prefix")
+        model_type: type = object.__getattribute__(self, "_model_type")
+        return f"NestedField({prefix!r}, {model_type.__name__!r})"
 
 
 # ── Internal AST nodes ────────────────────────────────────────────────────────

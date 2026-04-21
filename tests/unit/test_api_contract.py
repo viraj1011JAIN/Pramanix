@@ -90,6 +90,7 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "Exists",
         "Field",
         "ForAll",
+        "NestedField",
         # Core result types
         "Decision",
         "SolverStatus",
