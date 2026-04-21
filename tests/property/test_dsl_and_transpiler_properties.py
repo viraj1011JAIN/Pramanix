@@ -29,7 +29,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from hypothesis import assume, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pramanix.expressions import E, Field

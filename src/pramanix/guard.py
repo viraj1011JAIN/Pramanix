@@ -68,6 +68,7 @@ See also
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import time
 import uuid
@@ -290,10 +291,8 @@ class Guard:
                 _left = _deadline - time.perf_counter()
                 if _left <= 0.0:
                     break
-                try:
+                with contextlib.suppress(InterruptedError, OSError):
                     time.sleep(_left)
-                except (InterruptedError, OSError):
-                    pass  # signal interrupted sleep; loop to check deadline
         return decision
 
     def _verify_core(

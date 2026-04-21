@@ -1,4 +1,4 @@
-﻿# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
 """API contract lock tests â€” Phase 1.2.
 
@@ -38,9 +38,8 @@ from typing import Any
 import pytest
 
 import pramanix
-from pramanix.decision import Decision, SolverStatus, _BLOCKED_STATUSES
+from pramanix.decision import _BLOCKED_STATUSES, Decision, SolverStatus
 from pramanix.guard_config import GuardConfig
-
 
 # ============================================================================
 # 1.  pramanix.__all__ â€” exact export set
@@ -107,6 +106,9 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "GuardConfig",
         # Identity (Phase 9)
         "JWTIdentityLinker",
+        # Limitations overrides (v0.9.0)
+        "PolicyAuditor",
+        "StringEnumField",
         # Policy
         "Policy",
         # Resolvers
@@ -191,43 +193,43 @@ class TestDirectImportSurface:
     """Contract: core public names must be importable via `from pramanix import X`."""
 
     def test_guard_importable(self) -> None:
-        from pramanix import Guard  # noqa: PLC0415
+        from pramanix import Guard
         assert Guard is pramanix.Guard
 
     def test_guard_config_importable(self) -> None:
-        from pramanix import GuardConfig  # noqa: PLC0415
+        from pramanix import GuardConfig
         assert GuardConfig is pramanix.GuardConfig
 
     def test_policy_importable(self) -> None:
-        from pramanix import Policy  # noqa: PLC0415
+        from pramanix import Policy
         assert Policy is pramanix.Policy
 
     def test_field_importable(self) -> None:
-        from pramanix import Field  # noqa: PLC0415
+        from pramanix import Field
         assert Field is pramanix.Field
 
     def test_e_importable(self) -> None:
-        from pramanix import E  # noqa: PLC0415
+        from pramanix import E
         assert E is pramanix.E
 
     def test_decision_importable(self) -> None:
-        from pramanix import Decision  # noqa: PLC0415
+        from pramanix import Decision
         assert Decision is pramanix.Decision
 
     def test_solver_status_importable(self) -> None:
-        from pramanix import SolverStatus  # noqa: PLC0415
+        from pramanix import SolverStatus
         assert SolverStatus is pramanix.SolverStatus
 
     def test_pramanix_error_importable(self) -> None:
-        from pramanix import PramanixError  # noqa: PLC0415
+        from pramanix import PramanixError
         assert issubclass(PramanixError, Exception)
 
     def test_guard_violation_error_is_pramanix_error(self) -> None:
-        from pramanix import GuardViolationError, PramanixError  # noqa: PLC0415
+        from pramanix import GuardViolationError, PramanixError
         assert issubclass(GuardViolationError, PramanixError)
 
     def test_configuration_error_is_pramanix_error(self) -> None:
-        from pramanix import ConfigurationError, PramanixError  # noqa: PLC0415
+        from pramanix import ConfigurationError, PramanixError
         assert issubclass(ConfigurationError, PramanixError)
 
 
@@ -488,7 +490,7 @@ class TestDecisionToDictLock:
 
     def test_solver_time_ms_is_non_negative_numeric(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
-        assert isinstance(d["solver_time_ms"], (int, float)), (
+        assert isinstance(d["solver_time_ms"], int | float), (
             f"solver_time_ms must be numeric, got {type(d['solver_time_ms'])}"
         )
         assert d["solver_time_ms"] >= 0, (
@@ -628,7 +630,7 @@ class TestDecisionFactories:
     def test_decision_is_frozen(self) -> None:
         """Decision must be immutable â€” callers rely on this for thread safety."""
         d = Decision.safe()
-        with pytest.raises(Exception):
+        with pytest.raises(AttributeError):
             d.allowed = False  # type: ignore[misc]
 
 
@@ -771,7 +773,7 @@ class TestGuardConfigFieldLock:
     def test_guard_config_is_frozen(self) -> None:
         """GuardConfig must remain immutable (frozen=True) â€” mutable config is a hazard."""
         cfg = GuardConfig()
-        with pytest.raises(Exception):  # FrozenInstanceError (3.11+) or AttributeError
+        with pytest.raises(AttributeError):  # FrozenInstanceError (3.11+) subclasses AttributeError
             cfg.execution_mode = "async-thread"  # type: ignore[misc]
 
     @pytest.mark.parametrize("mode", ["sync", "async-thread", "async-process"])
@@ -779,7 +781,7 @@ class TestGuardConfigFieldLock:
         GuardConfig(execution_mode=mode)  # must not raise
 
     def test_invalid_execution_mode_raises_configuration_error(self) -> None:
-        from pramanix import ConfigurationError  # noqa: PLC0415
+        from pramanix import ConfigurationError
         with pytest.raises(ConfigurationError):
             GuardConfig(execution_mode="batch")  # not a valid mode
 
@@ -789,6 +791,6 @@ class TestGuardConfigFieldLock:
 
     @pytest.mark.parametrize("threshold", [0.0, -0.1, 1.1, 2.0])
     def test_injection_threshold_out_of_range_raises(self, threshold: float) -> None:
-        from pramanix import ConfigurationError  # noqa: PLC0415
+        from pramanix import ConfigurationError
         with pytest.raises(ConfigurationError):
             GuardConfig(injection_threshold=threshold)

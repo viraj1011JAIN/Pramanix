@@ -46,6 +46,8 @@ from pramanix.execution_token import (
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
+from pramanix.helpers.policy_auditor import PolicyAuditor
+from pramanix.helpers.string_enum import StringEnumField
 from pramanix.identity import JWTIdentityLinker
 from pramanix.policy import Policy
 from pramanix.resolvers import ResolverRegistry
@@ -57,6 +59,10 @@ __all__ = [
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
+    # Limitations overrides: static policy coverage analysis
+    "PolicyAuditor",
+    # Limitations overrides: string→int enum helper
+    "StringEnumField",
     "ConfigurationError",
     "ConstraintExpr",
     # Core result

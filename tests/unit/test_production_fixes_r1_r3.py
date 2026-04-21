@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Regression tests for production gap fixes R1–R3.
+"""Regression tests for production gap fixes R1-R3.
 
     R1  DecisionVerifier reads the correct payload fields after N2/N6 fixes:
         - ``policy_hash`` (not the defunct ``policy`` key)
@@ -159,26 +159,23 @@ class TestR2OtelEnabledWarning:
         """When otel_enabled=True and opentelemetry not installed, emit UserWarning."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_OTEL_AVAILABLE", False):
-            with pytest.warns(UserWarning, match="opentelemetry"):
-                GuardConfig(otel_enabled=True)
+        with patch.object(_gc, "_OTEL_AVAILABLE", False), pytest.warns(UserWarning, match="opentelemetry"):
+            GuardConfig(otel_enabled=True)
 
     def test_warning_message_contains_install_hint(self) -> None:
         """Warning message must guide the user to install the extra."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_OTEL_AVAILABLE", False):
-            with pytest.warns(UserWarning, match="pramanix\\[otel\\]"):
-                GuardConfig(otel_enabled=True)
+        with patch.object(_gc, "_OTEL_AVAILABLE", False), pytest.warns(UserWarning, match="pramanix\\[otel\\]"):
+            GuardConfig(otel_enabled=True)
 
     def test_no_warning_when_otel_enabled_and_available(self) -> None:
         """No warning when opentelemetry IS installed."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_OTEL_AVAILABLE", True):
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                GuardConfig(otel_enabled=True)
+        with patch.object(_gc, "_OTEL_AVAILABLE", True), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            GuardConfig(otel_enabled=True)
         otel_warnings = [w for w in caught if "opentelemetry" in str(w.message).lower()]
         assert otel_warnings == [], (
             "Spurious OTel UserWarning raised when opentelemetry IS available"

@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from pramanix.exceptions import ConfigurationError
-from pramanix.resolvers import ResolverRegistry, resolver_registry
+from pramanix.resolvers import resolver_registry
 
 if TYPE_CHECKING:
     from pramanix.crypto import PramanixSigner
@@ -321,6 +321,20 @@ class GuardConfig:
                 "GuardConfig(otel_enabled=True) has no effect: "
                 "opentelemetry-sdk is not installed. "
                 "Install it: pip install 'pramanix[otel]'",
+                UserWarning,
+                stacklevel=2,
+            )
+        if (
+            self.execution_mode in ("sync", "async-thread")
+            and os.environ.get("PRAMANIX_ENV", "").lower() == "production"
+        ):
+            warnings.warn(
+                f"GuardConfig(execution_mode={self.execution_mode!r}) is not "
+                "recommended for production (PRAMANIX_ENV=production). "
+                "A Z3 C++ crash (SIGABRT/SIGSEGV) will terminate the entire "
+                "process and all in-flight requests. "
+                "Use execution_mode='async-process' so that worker crashes "
+                "surface as fail-safe BLOCKs without affecting the host process.",
                 UserWarning,
                 stacklevel=2,
             )

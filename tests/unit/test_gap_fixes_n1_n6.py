@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Regression tests for gap fixes N1–N6.
+"""Regression tests for gap fixes N1-N6.
 
     N1  resolver_registry public singleton wired into Guard (same object)
     N2  DecisionSigner._canonicalize() uses correct to_dict() key names
@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from decimal import Decimal
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -24,7 +22,6 @@ from pramanix.audit.signer import DecisionSigner
 from pramanix.decision import Decision
 from pramanix.guard_config import _resolver_registry as _guard_registry
 from pramanix.resolvers import ResolverRegistry, resolver_registry
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -255,17 +252,15 @@ class TestN5MetricsWarning:
         prometheus_client is not importable."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_PROM_AVAILABLE", False):
-            with pytest.warns(UserWarning, match="prometheus_client"):
-                _gc.GuardConfig(metrics_enabled=True)
+        with patch.object(_gc, "_PROM_AVAILABLE", False), pytest.warns(UserWarning, match="prometheus_client"):
+            _gc.GuardConfig(metrics_enabled=True)
 
     def test_no_warning_when_prometheus_available(self) -> None:
         """When prometheus_client IS available, no UserWarning should be emitted
         even with metrics_enabled=True."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_PROM_AVAILABLE", True):
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", UserWarning)
-                # Must not raise
-                _gc.GuardConfig(metrics_enabled=True)
+        with patch.object(_gc, "_PROM_AVAILABLE", True), warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            # Must not raise
+            _gc.GuardConfig(metrics_enabled=True)

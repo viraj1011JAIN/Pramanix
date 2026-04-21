@@ -88,14 +88,20 @@ class ExecutionToken:
     """HMAC-signed single-use record binding a verified decision to execution.
 
     Attributes:
-        decision_id:  UUID4 from the originating ``Decision``.
-        allowed:      Must be ``True`` — mint() refuses UNSAFE/ERROR decisions.
-        intent_dump:  JSON-safe copy of the verified intent values.
-        policy_hash:  SHA-256 fingerprint of the policy (may be ``None`` if
-                      ``GuardConfig.expected_policy_hash`` was not set).
-        expires_at:   Unix timestamp after which the token is invalid.
-        token_id:     Random 16-byte hex nonce — unique per ``mint()`` call.
-        signature:    Hex-encoded HMAC-SHA256 over the canonical body.
+        decision_id:    UUID4 from the originating ``Decision``.
+        allowed:        Must be ``True`` — mint() refuses UNSAFE/ERROR decisions.
+        intent_dump:    JSON-safe copy of the verified intent values.
+        policy_hash:    SHA-256 fingerprint of the policy (may be ``None`` if
+                        ``GuardConfig.expected_policy_hash`` was not set).
+        expires_at:     Unix timestamp after which the token is invalid.
+        token_id:       Random 16-byte hex nonce — unique per ``mint()`` call.
+        signature:      Hex-encoded HMAC-SHA256 over the canonical body.
+        state_version:  Caller-supplied state version/ETag at verify time.
+                        If present, ``consume()`` will reject tokens whose
+                        ``expected_state_version`` argument does not match —
+                        detecting concurrent state mutations between
+                        ``Guard.verify()`` and the actual execution (TOCTOU).
+                        ``None`` means no state-version binding was requested.
     """
 
     decision_id: str
@@ -105,6 +111,7 @@ class ExecutionToken:
     expires_at: float
     token_id: str
     signature: str
+    state_version: str | None = None
 
     # ── Convenience predicates ────────────────────────────────────────────────
 
@@ -124,7 +131,9 @@ def _token_body(token: ExecutionToken) -> bytes:
     """Deterministic canonical bytes for HMAC computation.
 
     Excludes ``signature`` (obviously).  Uses sorted-key JSON so the output is
-    identical regardless of insertion order.
+    identical regardless of insertion order.  ``state_version`` is included so
+    that a token minted with a specific state version cannot be detached from
+    that binding by an attacker who replays a stripped token.
     """
     body: dict[str, Any] = {
         "allowed": token.allowed,
@@ -132,6 +141,7 @@ def _token_body(token: ExecutionToken) -> bytes:
         "expires_at": token.expires_at,
         "intent_dump": token.intent_dump,
         "policy_hash": token.policy_hash,
+        "state_version": token.state_version,
         "token_id": token.token_id,
     }
     return json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode()
@@ -162,11 +172,24 @@ class ExecutionTokenSigner:
         self._key = secret_key
         self._ttl = ttl_seconds
 
-    def mint(self, decision: Decision) -> ExecutionToken:
+    def mint(
+        self,
+        decision: Decision,
+        *,
+        state_version: str | None = None,
+    ) -> ExecutionToken:
         """Create a signed, single-use token from a ``Decision``.
 
         Args:
-            decision: A ``Decision`` returned by ``Guard.verify()``.
+            decision:      A ``Decision`` returned by ``Guard.verify()``.
+            state_version: Optional state version/ETag string captured at
+                           verify time.  When supplied, the token binds the
+                           decision to the exact state snapshot that was
+                           evaluated.  ``ExecutionTokenVerifier.consume()``
+                           will reject the token if the caller supplies a
+                           different ``expected_state_version`` — detecting
+                           concurrent mutations between verify and execute
+                           (TOCTOU gap mitigation).
 
         Returns:
             A signed ``ExecutionToken`` ready to pass to the executor.
@@ -193,6 +216,7 @@ class ExecutionTokenSigner:
             expires_at=expires_at,
             token_id=token_id,
             signature="",  # placeholder — replaced below
+            state_version=state_version,
         )
         body = _token_body(unsigned)
         sig = hmac.new(self._key, body, hashlib.sha256).hexdigest()
@@ -206,6 +230,7 @@ class ExecutionTokenSigner:
             expires_at=unsigned.expires_at,
             token_id=unsigned.token_id,
             signature=sig,
+            state_version=unsigned.state_version,
         )
 
 
@@ -259,23 +284,38 @@ class ExecutionTokenVerifier:
         for tid in expired:
             del self._consumed[tid]
 
-    def consume(self, token: ExecutionToken) -> bool:
+    def consume(
+        self,
+        token: ExecutionToken,
+        *,
+        expected_state_version: str | None = None,
+    ) -> bool:
         """Verify and consume a token.  Returns ``True`` iff:
 
         1. The HMAC signature is correct (token was minted by our signer).
         2. The token has not expired.
         3. The token has not been consumed before (single-use).
+        4. If ``expected_state_version`` is provided, it matches the version
+           embedded in the token at mint time (TOCTOU guard).
 
-        All three checks must pass.  The token_id is recorded as consumed
+        All checks must pass.  The token_id is recorded as consumed
         atomically — even if the caller later fails, the token cannot be
         reused.
 
         Args:
-            token: The ``ExecutionToken`` to verify.
+            token:                  The ``ExecutionToken`` to verify.
+            expected_state_version: The current state version/ETag at execution
+                                    time.  If the token was minted with a
+                                    ``state_version`` and this argument differs,
+                                    ``consume()`` returns ``False`` — indicating
+                                    that the state was mutated between verify
+                                    and execute.  Pass ``None`` to skip this
+                                    check (default, backward-compatible).
 
         Returns:
-            ``True`` if the token is valid, unexpired, and newly consumed.
-            ``False`` in all other cases (invalid sig, expired, replayed).
+            ``True`` if all checks pass.
+            ``False`` in all other cases (invalid sig, expired, replayed,
+            or state version mismatch).
         """
         # ── 1. Signature check (constant-time) ───────────────────────────────
         # Recompute expected HMAC over unsigned body (sig="" placeholder).
@@ -287,6 +327,7 @@ class ExecutionTokenVerifier:
             expires_at=token.expires_at,
             token_id=token.token_id,
             signature="",
+            state_version=token.state_version,
         )
         expected_sig = hmac.new(self._key, _token_body(unsigned), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(token.signature, expected_sig):
@@ -296,7 +337,16 @@ class ExecutionTokenVerifier:
         if token.is_expired():
             return False
 
-        # ── 3. Single-use check (atomic) ──────────────────────────────────────
+        # ── 3. State version check (TOCTOU guard) ─────────────────────────────
+        # If either the token or the caller supplied a state_version, both must
+        # agree.  A token minted with version "v3" and consumed with "v4" means
+        # the state changed between verify() and execute — block the execution.
+        if (
+            token.state_version is not None or expected_state_version is not None
+        ) and token.state_version != expected_state_version:
+            return False
+
+        # ── 4. Single-use check (atomic) ──────────────────────────────────────
         with self._lock:
             self._evict_expired()  # prune stale entries to bound memory growth
             if token.token_id in self._consumed:
@@ -418,11 +468,20 @@ class RedisExecutionTokenVerifier:
         self._redis = redis_client
         self._prefix = key_prefix
 
-    def consume(self, token: ExecutionToken) -> bool:
+    def consume(
+        self,
+        token: ExecutionToken,
+        *,
+        expected_state_version: str | None = None,
+    ) -> bool:
         """Verify and atomically consume a token via Redis SETNX.
 
         Args:
-            token: The :class:`ExecutionToken` to verify and consume.
+            token:                  The :class:`ExecutionToken` to verify and consume.
+            expected_state_version: Current state version/ETag at execution time.
+                                    If the token carries a ``state_version`` and
+                                    this argument differs, returns ``False``
+                                    (TOCTOU state-mutation guard).
 
         Returns:
             ``True`` if the token is valid, unexpired, and was not previously
@@ -442,6 +501,7 @@ class RedisExecutionTokenVerifier:
             expires_at=token.expires_at,
             token_id=token.token_id,
             signature="",
+            state_version=token.state_version,
         )
         expected_sig = hmac.new(
             self._key, _token_body(unsigned), hashlib.sha256
@@ -453,7 +513,13 @@ class RedisExecutionTokenVerifier:
         if token.is_expired():
             return False
 
-        # ── 3. Atomic SETNX with TTL = remaining token lifetime ───────────────
+        # ── 3. State version check (TOCTOU guard) ─────────────────────────────
+        if (
+            token.state_version is not None or expected_state_version is not None
+        ) and token.state_version != expected_state_version:
+            return False
+
+        # ── 4. Atomic SETNX with TTL = remaining token lifetime ───────────────
         # max(1, ...) ensures the key gets at least 1 second TTL even if the
         # token is about to expire — so Redis doesn't reject the SET.
         # Fail-safe: any Redis error → deny (False), never allow.

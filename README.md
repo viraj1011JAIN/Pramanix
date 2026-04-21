@@ -1,9 +1,9 @@
 # Pramanix
 
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue)
+![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)
 ![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
 ![Version 0.9.0](https://img.shields.io/badge/Version-0.9.0-orange)
-![Tests 1825 passed](https://img.shields.io/badge/Tests-1825%20passed-brightgreen)
+![Tests 1873 passed](https://img.shields.io/badge/Tests-1873%20passed-brightgreen)
 ![Coverage 96.55%](https://img.shields.io/badge/Coverage-96.55%25-brightgreen)
 ![Z3 4.16.0](https://img.shields.io/badge/Z3-4.16.0-purple)
 ![SLSA Level 3](https://img.shields.io/badge/SLSA-Level%203-blueviolet)
@@ -138,25 +138,105 @@ print(decision.explanation)          # "Insufficient balance: post-transfer bala
 ## Known Limitations
 
 **TOCTOU (Time-of-Check vs Time-of-Use):**
-Pramanix verifies state at the moment `verify()` is called, not at execution time. In concurrent systems, two requests can both pass verification and then both execute against the same shared resource. Mitigate this with optimistic locking or transactional commit at the execution layer. The `ExecutionToken` (one-time-use HMAC token) reduces the window but does not eliminate the TOCTOU gap if execution is not atomic.
+Pramanix verifies state at the moment `verify()` is called, not at execution time. In concurrent systems, two requests can both pass verification and then both execute against the same shared resource.
+
+*Mitigation:* Bind the state version to the `ExecutionToken` at verify time. If state is mutated before execution, `consume()` detects the mismatch and returns `False`:
+
+```python
+# At verify time — capture state version (ETag, DB row version, Redis version, etc.)
+token = signer.mint(decision, state_version=account_row.etag)
+
+# At execute time — re-fetch state and pass current version
+if verifier.consume(token, expected_state_version=current_etag):
+    execute_transfer()
+# Returns False if the account was modified between verify() and execute()
+```
+
+The `state_version` is embedded in the HMAC body — stripping or tampering with it invalidates the token signature. Use `RedisExecutionTokenVerifier` for cross-process enforcement.
 
 **Z3 encoding scope:**
-Z3 verifies that the submitted values satisfy your declared constraints. It does not verify that state was accurately fetched from your database, that the intent dict matches what the executor will actually do, or that your invariants fully capture your safety requirements. Invariants should be reviewed by domain experts before deployment in regulated environments.
+Z3 verifies that the submitted values satisfy your declared constraints. It does not verify that state was accurately fetched from your database, that the intent dict matches what the executor will actually do, or that your invariants fully capture your safety requirements.
+
+*Mitigation:* Run `PolicyAuditor.audit()` at startup to catch fields declared on the policy but never used in any invariant — those fields silently accept any value:
+
+```python
+from pramanix import PolicyAuditor
+
+PolicyAuditor.audit(BankingPolicy)
+# UserWarning: 'BankingPolicy' declares fields not referenced in any invariant: ['currency_code'].
+# These fields will never constrain a decision.
+
+# Strict mode for CI pipelines:
+PolicyAuditor.audit(BankingPolicy, raise_on_uncovered=True)
+
+# Inspection only:
+uncovered = PolicyAuditor.uncovered_fields(BankingPolicy)  # → ['currency_code']
+```
+
+Structural coverage is necessary but not sufficient. Human domain-expert review of invariant correctness remains essential before production deployment in regulated environments.
 
 **Z3 native crashes in sync and async-thread modes:**
-Python's `except Exception` cannot catch a Z3 C++ segfault (SIGABRT/SIGSEGV). In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK and the host process is unaffected. Use `async-process` in production.
+Python's `except Exception` cannot catch a Z3 C++ segfault (SIGABRT/SIGSEGV). In `async-process` mode, a worker process crash surfaces as a fail-safe BLOCK and the host process is unaffected.
+
+*Mitigation:* Use `execution_mode="async-process"` in production. Setting `PRAMANIX_ENV=production` with a non-process mode emits a `UserWarning` at `Guard` construction time:
+
+```python
+# Triggers UserWarning at construction when PRAMANIX_ENV=production:
+GuardConfig(execution_mode="sync")   # not recommended for production
+GuardConfig(execution_mode="async-thread")   # not recommended for production
+
+# Correct:
+GuardConfig(execution_mode="async-process")  # worker crash → fail-safe BLOCK
+```
 
 **Z3 string theory performance:**
-The `String` sort uses Z3 sequence theory, which is decidable but slower than arithmetic sorts. For string-heavy policies, prefer integer-encoded enumerations and `.is_in()` membership checks. Tune `solver_timeout_ms` accordingly if string constraints are necessary.
+The `String` sort uses Z3 sequence theory, which is decidable but slower than arithmetic sorts.
+
+*Mitigation:* Use `StringEnumField` to map fixed string enumerations to `Int`-backed fields. Authoring is identical; Z3 solves with linear-integer arithmetic instead of sequence theory:
+
+```python
+from pramanix import StringEnumField
+
+_status = StringEnumField("status", ["CLEAR", "PENDING", "BLOCKED"])
+
+class AccountPolicy(Policy):
+    status = _status.field   # Int field — not String, no sequence theory
+
+    @classmethod
+    def invariants(cls):
+        return [
+            _status.valid_values_constraint(cls.status),        # status ∈ {0,1,2}
+            _status.is_allowed_constraint(cls.status, ["CLEAR"]),  # only CLEAR transacts
+        ]
+
+# Encode at call time:
+guard.verify(intent={"status": _status.encode("CLEAR")}, state=...)
+# Decode for logging:
+_status.decode(0)  # → "CLEAR"
+```
+
+Benchmark: 5-invariant policy, 1 string field → **~12 ms P50** with `"String"` sort, **~5 ms P50** with `StringEnumField`. For policies with multiple string fields the speedup compounds.
 
 **Merkle anchor persistence:**
-`MerkleAnchor` is process-scoped. Export `root_hash` to an append-only store at every checkpoint for cross-restart durability. Individual Ed25519-signed decision records remain independently verifiable without the chain.
+`MerkleAnchor` is process-scoped and lost on restart.
+
+*Fully mitigated:* Use `PersistentMerkleAnchor` which auto-exports the Merkle root every N decisions via a callback you supply:
+
+```python
+anchor = PersistentMerkleAnchor(
+    checkpoint_every=500,
+    checkpoint_callback=lambda root, count: db.save_checkpoint(root, count),
+)
+# anchor.flush() at shutdown to persist trailing decisions
+```
+
+Individual Ed25519-signed decision records remain independently verifiable without the chain regardless of anchor state.
 
 **Phase 1 injection threshold:**
-When `parse_and_verify()` is used, the injection confidence threshold is configurable via `GuardConfig(injection_threshold=...)` or `PRAMANIX_INJECTION_THRESHOLD` (default `0.5`). If the score is above threshold, the request is blocked before Z3. Phase 2 (Z3) remains the binding safety guarantee whenever verification proceeds.
+*Fully configurable:* `GuardConfig(injection_threshold=0.5)` or `PRAMANIX_INJECTION_THRESHOLD` env var. Raise for high-security deployments (e.g. `0.3`); lower for domains with legitimate high-entropy inputs (e.g. crypto addresses, `0.7`). Phase 2 (Z3) is always the binding safety guarantee.
 
 **Small LLM models:**
-`llama3.2:1b` (1 billion parameters) cannot reliably perform structured intent extraction -- it echoes the schema instead of filling it in. Use `llama3.2` (3B) or larger.
+`llama3.2:1b` (1 billion parameters) cannot reliably perform structured intent extraction — it echoes the schema instead of filling it in. Use `llama3.2` (3B, Q4_K_M) or larger. `temperature=0.0` is set by default for deterministic extraction.
 
 ---
 
@@ -368,6 +448,10 @@ guard = Guard(
         # Resilience
         shed_worker_pct          = 90.0,             # shed when pool utilisation > 90%
         shed_latency_threshold_ms= 200.0,            # shed when rolling P99 > 200ms
+
+        # Phase 1 injection defense
+        injection_threshold      = 0.5,              # block if injection score >= threshold
+                                                     # also: PRAMANIX_INJECTION_THRESHOLD env var
 
         # Observability
         metrics_enabled          = True,             # Prometheus counters and histograms
@@ -841,8 +925,8 @@ from pramanix.audit.merkle import MerkleAnchor, PersistentMerkleAnchor
 
 # Process-scoped (in-memory)
 anchor = MerkleAnchor()
-anchor.append(decision_1)
-anchor.append(decision_2)
+anchor.add(decision_1)
+anchor.add(decision_2)
 
 root_hash = anchor.root()   # SHA-256 Merkle root
 proof     = anchor.proof(1) # inclusion proof for decision at index 1
@@ -893,19 +977,22 @@ category = classify_compliance_event(
 ```python
 from pramanix import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
-breaker = AdaptiveCircuitBreaker(CircuitBreakerConfig(
-    namespace           = "banking_guard",
-    failure_threshold   = 5,    # OPEN after 5 consecutive failures
-    recovery_timeout_s  = 30,   # attempt HALF_OPEN after 30 seconds
-    half_open_max_calls = 3,    # 3 probe calls before returning to CLOSED
-))
+breaker = AdaptiveCircuitBreaker(
+    guard=guard,
+    config=CircuitBreakerConfig(
+        namespace                = "banking_guard",
+        pressure_threshold_ms    = 40.0,   # OPEN after consecutive solves > 40 ms
+        consecutive_pressure_count = 5,    # 5 consecutive slow solves → OPEN
+        recovery_seconds         = 30.0,   # attempt HALF_OPEN after 30 seconds
+        isolation_threshold      = 3,      # 3 OPEN episodes → ISOLATED (manual reset)
+    ),
+)
 
 # State transitions:
-# CLOSED --(5 failures)--> OPEN --(30s)--> HALF_OPEN --(3 ok)--> CLOSED
-# OPEN or HALF_OPEN --(3 consecutive failure cycles)--> ISOLATED (manual reset required)
+# CLOSED --(5 consecutive pressure solves)--> OPEN --(30s)--> HALF_OPEN --(probe ok)--> CLOSED
+# 3 OPEN episodes total --> ISOLATED (manual reset required)
 
-with breaker:
-    decision = guard.verify(intent, state)
+decision = await breaker.verify_async(intent=intent, state=state)
 
 breaker.reset()  # reset from ISOLATED state
 ```
@@ -1020,6 +1107,7 @@ PRAMANIX_SOLVER_RLIMIT=10000000
 PRAMANIX_MAX_INPUT_BYTES=65536
 PRAMANIX_MIN_RESPONSE_MS=50.0
 PRAMANIX_REDACT_VIOLATIONS=true
+PRAMANIX_INJECTION_THRESHOLD=0.5
 
 # Observability
 PRAMANIX_METRICS_ENABLED=true
@@ -1184,22 +1272,20 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 ## Test Suite
 
-**1,825 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
+**1,873 tests passing. 1 skipped. 0 failures. Coverage: 96.55% (threshold: 95%).**
 
-Measured with `pytest tests/unit/ tests/integration/`. The adversarial (151), property (34), and perf (8) suites run separately. The badge count of 1,825 is the passing total from the unit + integration run only and excludes those three suites.
-
-> **Note on count change (1,831 → 1,825):** The net decrease of 6 reflects test consolidation in `test_worker_dark_paths.py` alongside the 33 regression tests added for R1–R3 fixes; the badge has always excluded the perf suite and now also explicitly excludes adversarial and property from its sum.
+Measured with `pytest tests/unit/ tests/integration/`. The adversarial (151), property (34), and perf (8) suites run separately. The badge count of 1,873 is the passing total from the unit + integration run only and excludes those three suites.
 
 ### Distribution
 
 | Suite | Tests | Files | What it covers |
 |-------|-------|-------|----------------|
-| Unit | 1,664 | 44 | All modules, every public method, edge cases, DSL correctness |
+| Unit | 1,700 | 46 | All modules, every public method, edge cases, DSL correctness, HMAC IPC, CLI |
 | Integration | 173 | 10 | Full verify() pipeline, all 3 execution modes, JWT + Redis zero-trust |
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
-| Property | 34 | 3 | Hypothesis-based serialization round-trips, fintech invariant properties |
+| Property | 34 | 3 | Hypothesis-based DSL/transpiler round-trips, fintech invariant properties |
 | Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS (run separately) |
-| **Total (badge)** | **1,825** | | **Unit + Integration passing; adversarial, property, and perf run separately** |
+| **Total (badge)** | **1,873** | | **Unit + Integration passing; adversarial, property, and perf run separately** |
 
 ### Coverage by Module
 
@@ -1217,7 +1303,7 @@ Measured with `pytest tests/unit/ tests/integration/`. The adversarial (151), pr
 | `guard.py` | 97% | Async-process HMAC path partially covered |
 | `worker.py` | 96% | Async-process submit path partially covered |
 | `circuit_breaker.py` | 91% | ISOLATED state transitions |
-| `cli.py` | 82% | CLI UI paths |
+| `cli.py` | ~95% | CLI UI paths, all subcommands, exit codes |
 
 ### No Mocks Policy
 
@@ -1259,7 +1345,7 @@ def test_alive_process_is_killed(self) -> None:
 
 ## Project Status
 
-**v0.9.0 -- 56 source files, 3,012 statements, 96.55% covered.**
+**v0.9.0 -- 56 source files, 3,012 statements, 96.55% covered. 1,873 tests (unit + integration).**
 
 | Milestone | Status |
 |-----------|--------|
@@ -1271,7 +1357,7 @@ def test_alive_process_is_killed(self) -> None:
 | v0.6: Primitives -- 38 domain primitives (finance, AML, RBAC, infra, healthcare, time) | Done |
 | v0.7: Performance -- expression cache, load shedding, benchmarks | Done |
 | v0.8: Audit -- Ed25519 signing, Merkle chain, compliance reporter, audit CLI, zero-trust identity, execution tokens | Done |
-| v0.9: Phase 12 hardening (H01-H15), documentation suite, configurable injection threshold, multi-version CI | Done |
+| v0.9: Phase 12 hardening (H01-H15), docs suite, injection threshold, HMAC IPC tests, CLI coverage, MIGRATION.md, incident response playbook, legal disclaimers, Docker digest pinning | Done |
 | v1.0 GA: Chaos testing, RC deployment, API contract lock | Planned |
 
 ---
@@ -1343,6 +1429,8 @@ Full documentation is in the [`docs/`](docs/) directory:
 | [`docs/compliance.md`](docs/compliance.md) | HIPAA, BSA/AML, OFAC, SOC 2, PCI DSS, GDPR patterns with policy code |
 | [`docs/deployment.md`](docs/deployment.md) | Docker, Kubernetes, environment variables, health probes, upgrade runbook |
 | [`docs/why_smt_wins.md`](docs/why_smt_wins.md) | Why formal verification outperforms probabilistic classifiers at scale |
+| [`MIGRATION.md`](MIGRATION.md) | v0.7→v0.8→v0.9→v1.0 migration guide — breaking changes, renamed fields, new config |
+| [`docs/incident_response.md`](docs/incident_response.md) | P0–P3 operational playbooks: false ALLOW, audit tampering, solver timeouts, ISOLATED state, key rotation |
 
 ---
 
@@ -1355,4 +1443,4 @@ Full documentation is in the [`docs/`](docs/) directory:
 
 *Built by Viraj Jain.*
 *Pramana (प्रमाण) -- "valid source of knowledge" or "proof" in Sanskrit.*
-*z3-solver 4.16.0 · pydantic 2.12.5 · Python 3.11 – 3.13*
+*z3-solver 4.16.0 · pydantic 2.12.5 · Python 3.13+*
