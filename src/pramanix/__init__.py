@@ -56,6 +56,12 @@ from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
 from pramanix.helpers.string_enum import StringEnumField
 from pramanix.identity import JWTIdentityLinker
+from pramanix.key_provider import (
+    EnvKeyProvider,
+    FileKeyProvider,
+    KeyProvider,
+    PemKeyProvider,
+)
 from pramanix.policy import Policy
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.redundant import ConsensusStrictness
@@ -71,6 +77,11 @@ __all__ = [
     "AuditSink",
     "InMemoryAuditSink",
     "StdoutAuditSink",
+    # E-3: KMS/HSM key providers
+    "KeyProvider",
+    "PemKeyProvider",
+    "EnvKeyProvider",
+    "FileKeyProvider",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",

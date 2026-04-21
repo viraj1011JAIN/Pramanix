@@ -32,7 +32,7 @@ import base64
 import hashlib
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -200,6 +200,30 @@ class PramanixSigner:
             encryption_algorithm=NoEncryption(),
         )
         return cls(private_key_pem=pem)
+
+    @classmethod
+    def from_provider(cls, provider: Any) -> PramanixSigner:
+        """Create a :class:`PramanixSigner` from a :class:`~pramanix.key_provider.KeyProvider`.
+
+        This is the recommended factory for institutional deployments using
+        cloud KMS, HSM, or secret-vault key sources.
+
+        Args:
+            provider: Any object implementing the
+                      :class:`~pramanix.key_provider.KeyProvider` protocol.
+
+        Returns:
+            A :class:`PramanixSigner` initialised with the private key PEM
+            loaded from *provider*.
+
+        Example::
+
+            from pramanix.key_provider import FileKeyProvider
+            signer = PramanixSigner.from_provider(
+                FileKeyProvider("/run/secrets/pramanix-ed25519.pem")
+            )
+        """
+        return cls(private_key_pem=provider.private_key_pem())
 
     def sign(self, decision: Decision) -> str:
         """Sign decision.decision_hash with Ed25519.

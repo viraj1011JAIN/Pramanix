@@ -116,6 +116,11 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "AuditSink",
         "InMemoryAuditSink",
         "StdoutAuditSink",
+        # E-3: KMS/HSM key providers (v1.0.0)
+        "KeyProvider",
+        "PemKeyProvider",
+        "EnvKeyProvider",
+        "FileKeyProvider",
         # D-1: consensus strictness enum (v1.0.0)
         "ConsensusStrictness",
         # D-3: input size guard (v1.0.0)
