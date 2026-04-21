@@ -269,6 +269,17 @@ class Guard:
             )
         return decision
 
+    def _emit_to_sinks(self, decision: Decision) -> None:
+        """Emit decision to all configured audit sinks. Never raises."""
+        for sink in self._config.audit_sinks:
+            try:
+                sink.emit(decision)
+            except Exception as exc:
+                import logging as _logging
+                _logging.getLogger(__name__).error(
+                    "Audit sink %r failed: %s", type(sink).__name__, exc
+                )
+
     def verify(
         self,
         intent: dict[str, Any] | BaseModel,
@@ -294,6 +305,7 @@ class Guard:
                     break
                 with contextlib.suppress(InterruptedError, OSError):
                     time.sleep(_left)
+        self._emit_to_sinks(decision)
         return decision
 
     def _verify_core(

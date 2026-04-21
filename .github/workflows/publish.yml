@@ -3,7 +3,7 @@
 #
 # Trigger: push of a version tag (v*)
 # Uses GitHub OIDC trusted publishing — no stored API token required.
-# Configure a trusted publisher on PyPI: owner=virajjain1011, repo=Pramanix,
+# Configure a trusted publisher on PyPI: owner=viraj1011JAIN, repo=Pramanix,
 # workflow=publish.yml, environment=pypi.
 
 name: Publish to PyPI
@@ -58,7 +58,7 @@ jobs:
           INIT_VERSION=$(python -c "
           import re, sys
           content = open('src/pramanix/__init__.py').read()
-          m = re.search(r'__version__\s*=\s*[\"\']([\d.]+(?:-rc\.\d+)?)[\"\'']', content)
+          m = re.search(r'__version__\s*=\s*[\"\']([\d.]+(?:-rc\.\d+)?)["\']', content)
           print(m.group(1) if m else sys.exit(1))
           ")
           echo "Tag: $VERSION | pyproject.toml: $PYPROJECT_VERSION | __init__.py: $INIT_VERSION"
@@ -82,5 +82,6 @@ jobs:
         run: |
           sleep 30  # allow PyPI CDN to propagate
           python -m venv /tmp/smoke-venv
-          /tmp/smoke-venv/bin/pip install pramanix=="${{ github.ref_name }#v}"
+          REF_NAME="${{ github.ref_name }}"
+          /tmp/smoke-venv/bin/pip install pramanix=="${REF_NAME#v}"
           /tmp/smoke-venv/bin/python -c "from pramanix import Guard; print('pramanix import OK')"

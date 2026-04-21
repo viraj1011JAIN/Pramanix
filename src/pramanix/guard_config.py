@@ -315,6 +315,21 @@ class GuardConfig:
     Env var: ``PRAMANIX_CONSENSUS_STRICTNESS``.
     """
 
+    audit_sinks: tuple[Any, ...] = field(default_factory=tuple)
+    """Ordered sequence of :class:`~pramanix.audit_sink.AuditSink` implementations.
+
+    Every :class:`~pramanix.decision.Decision` produced by
+    :class:`~pramanix.guard.Guard` is emitted to each sink in order.  Sink
+    failures are caught and logged — they **never** propagate to the caller.
+
+    Default: empty tuple (no sinks configured; use structlog for logging).
+
+    Example::
+
+        from pramanix.audit_sink import InMemoryAuditSink, StdoutAuditSink
+        config = GuardConfig(audit_sinks=(StdoutAuditSink(), InMemoryAuditSink()))
+    """
+
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
             raise ConfigurationError(

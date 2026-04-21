@@ -112,6 +112,10 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # C-5: distributed circuit breaker (v1.0.0)
         "DistributedCircuitBreaker",
         "InMemoryDistributedBackend",
+        # E-4: audit sinks (v1.0.0)
+        "AuditSink",
+        "InMemoryAuditSink",
+        "StdoutAuditSink",
         # D-1: consensus strictness enum (v1.0.0)
         "ConsensusStrictness",
         # D-3: input size guard (v1.0.0)
@@ -691,6 +695,8 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         "max_input_chars",
         # D-4: custom injection scorer path (v1.0.0)
         "injection_scorer_path",
+        # E-4: audit sinks (v1.0.0)
+        "audit_sinks",
     }
 )
 
@@ -718,6 +724,7 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     "max_input_chars":          512,         # (*) input character cap
     "injection_scorer_path":    None,
     "consensus_strictness":     "semantic",
+    "audit_sinks":              (),
 }
 
 

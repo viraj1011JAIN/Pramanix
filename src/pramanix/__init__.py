@@ -12,6 +12,7 @@ __version__ = "1.0.0"
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor
+from pramanix.audit_sink import AuditSink, InMemoryAuditSink, StdoutAuditSink
 from pramanix.circuit_breaker import (
     AdaptiveCircuitBreaker,
     CircuitBreakerConfig,
@@ -66,6 +67,10 @@ __all__ = [
     # C-5: Distributed circuit breaker
     "DistributedCircuitBreaker",
     "InMemoryDistributedBackend",
+    # E-4: Audit sinks
+    "AuditSink",
+    "InMemoryAuditSink",
+    "StdoutAuditSink",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",

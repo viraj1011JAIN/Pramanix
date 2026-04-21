@@ -54,7 +54,7 @@ class TestSemanticFieldEqual:
 
     def test_string_whitespace_trimmed(self) -> None:
         """'  USD  ' and 'usd' must agree after strip + casefold."""
-        assert _semantic_field_equal("  USD  ", "usd") is True
+        assert _semantic_field_equal("  USD  ", "usd", schema=TransferIntent, field_name="currency") is True
 
     def test_bool_true_vs_true_agrees(self) -> None:
         """bool True vs True must agree."""
@@ -165,6 +165,7 @@ class TestEnforceConsensus:
                 agreement_mode="strict_keys",
                 critical_fields=None,
                 strictness=ConsensusStrictness.SEMANTIC,
+                schema=TransferIntent,
             )
         err = exc_info.value
         assert "amount" in err.disagreeing_fields

@@ -7,7 +7,7 @@ complementary defences applied *before* any LLM is consulted:
 
 1. **Unicode NFKC normalisation** — collapses full-width digits and homoglyphs
    (e.g. ``Ａ`` → ``A``, ``５`` → ``5``) to defeat encoding-based evasion.
-2. **Input truncation** — prevents prompt-length denial-of-service.
+2. **Input length enforcement** — oversized inputs raise InputTooLongError.
 3. **Control-character stripping** — removes NUL bytes and C0 control codes
    that could be used for terminal injection or parser confusion.
 4. **Injection pattern detection** — regex scan covering known jailbreak and
@@ -94,7 +94,8 @@ def sanitise_user_input(
     Applies four transforms in order:
 
     1. **Unicode NFKC** — ``"Ｓend ５０ dollars"`` → ``"Send 50 dollars"``
-    2. **Truncation** — clip to *max_length* characters.
+    2. **Length enforcement** — raises :exc:`~pramanix.exceptions.InputTooLongError`
+       if the normalised input exceeds *max_length* characters.
     3. **Control-char strip** — remove NUL bytes and other C0 control codes.
     4. **Injection pattern scan** — record warning if adversarial phrases found.
 
@@ -102,12 +103,15 @@ def sanitise_user_input(
 
     Args:
         raw:        Raw user-supplied string (untrusted).
-        max_length: Maximum character count; input is clipped if longer.
+        max_length: Maximum character count allowed.
 
     Returns:
         ``(cleaned_text, warnings)`` where *warnings* is a list of string
         tags describing what was found or modified.  An empty list means the
         input appears benign.
+
+    Raises:
+        InputTooLongError: If the normalised input exceeds *max_length* characters.
     """
     warnings: list[str] = []
 
