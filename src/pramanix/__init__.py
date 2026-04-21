@@ -50,7 +50,7 @@ from pramanix.execution_token import (
     ExecutionTokenVerifier,
     RedisExecutionTokenVerifier,
 )
-from pramanix.expressions import ArrayField, ConstraintExpr, E, Exists, Field, ForAll
+from pramanix.expressions import ArrayField, ConstraintExpr, DatetimeField, E, Exists, Field, ForAll
 from pramanix.guard import Guard, GuardConfig
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
@@ -84,6 +84,8 @@ __all__ = [
     "FileKeyProvider",
     # A-3: Array field quantifiers
     "ArrayField",
+    # A-4: Datetime field
+    "DatetimeField",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",

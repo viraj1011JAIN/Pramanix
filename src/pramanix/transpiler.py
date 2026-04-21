@@ -50,6 +50,7 @@ from pramanix.expressions import (
     _LengthBetweenOp,
     _Literal,
     _ModOp,
+    _NowOp,
     _PowOp,
     _RegexMatchOp,
     _StartsWithOp,
@@ -156,6 +157,15 @@ def z3_val(field: Field, value: Any, ctx: z3.Context | None = None) -> z3.ExprRe
     if field.z3_type == "Bool":
         return cast("z3.ExprRef", z3.BoolVal(bool(value), ctx))
     if field.z3_type == "Int":
+        from datetime import datetime as _dt, timezone as _tz
+        if isinstance(value, _dt):
+            if value.tzinfo is None:
+                raise FieldTypeError(
+                    f"DatetimeField '{field.name}' requires a timezone-aware datetime "
+                    "(UTC). Got a naive datetime. Use datetime(..., tzinfo=timezone.utc) "
+                    "or datetime.now(timezone.utc)."
+                )
+            return cast("z3.ExprRef", z3.IntVal(int(value.timestamp()), ctx))
         return cast("z3.ExprRef", z3.IntVal(int(value), ctx))
     if field.z3_type == "Real":
         if isinstance(value, bool):
@@ -240,6 +250,13 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
         case _BinOp(op=op, left=l, right=r):
             lz = cast("z3.ArithRef", transpile(l, ctx))
             rz = cast("z3.ArithRef", transpile(r, ctx))
+            # Sort coercion: numeric literals default to RealVal in _z3_lit.
+            # When the peer operand is Int-sorted, coerce the literal to IntVal
+            # so that Int arithmetic (integer div, mod) propagates correctly.
+            if lz.is_int() and rz.is_real() and isinstance(r, _Literal) and isinstance(r.value, int) and not isinstance(r.value, bool):
+                rz = cast("z3.ArithRef", z3.IntVal(r.value, ctx))
+            elif rz.is_int() and lz.is_real() and isinstance(l, _Literal) and isinstance(l.value, int) and not isinstance(l.value, bool):
+                lz = cast("z3.ArithRef", z3.IntVal(l.value, ctx))
             if op == "add":
                 return cast("z3.ExprRef", lz + rz)
             if op == "sub":
@@ -378,6 +395,10 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
                     f"regex theory (no backreferences or lookahead/lookbehind allowed). "
                     f"Z3 error: {exc}"
                 ) from exc
+
+        case _NowOp():
+            import time as _time
+            return cast("z3.ExprRef", z3.IntVal(int(_time.time()), ctx))
 
         case _:
             raise TranspileError(f"Unknown DSL AST node type: {type(node)!r}")

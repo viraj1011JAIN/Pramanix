@@ -39,10 +39,12 @@ from pramanix.exceptions import PolicyCompilationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
+    from datetime import datetime as _Datetime
 
 __all__ = [
     "ArrayField",
     "ConstraintExpr",
+    "DatetimeField",
     "E",
     "Exists",
     "ExpressionNode",
@@ -64,6 +66,7 @@ __all__ = [
     "_LengthBetweenOp",
     "_Literal",
     "_ModOp",
+    "_NowOp",
     "_PowOp",
     "_RegexMatchOp",
     "_StartsWithOp",
@@ -305,6 +308,50 @@ class _ExistsOp(NamedTuple):
     predicate: Any  # Callable[[Field], ConstraintExpr]
 
 
+# ── Datetime support ─────────────────────────────────────────────────────────
+
+
+class _NowOp(NamedTuple):
+    """Current UTC Unix timestamp — evaluated lazily at transpile time.
+
+    Transpiled to ``z3.IntVal(int(time.time()), ctx)`` inside ``solve()``,
+    so each ``Guard.verify()`` call uses a fresh "now" value.
+    """
+
+
+def DatetimeField(name: str) -> Field:  # noqa: N802
+    """Convenience constructor for a datetime-typed field stored as Unix epoch seconds.
+
+    Produces a :class:`Field` with ``z3_type="Int"`` so Z3 can reason over
+    the field using linear integer arithmetic.  Callers pass Python
+    :class:`datetime.datetime` objects; the transpiler converts them to
+    Unix epoch seconds (UTC) automatically.
+
+    Args:
+        name: Field name — must match the key in ``values`` passed to
+              ``Guard.verify()``.
+
+    Returns:
+        A :class:`Field` with ``python_type=datetime`` and ``z3_type="Int"``.
+
+    Raises:
+        FieldTypeError: At solve time if the supplied value is a naive
+            (timezone-unaware) datetime.  Always use
+            ``datetime(..., tzinfo=timezone.utc)`` or ``datetime.now(timezone.utc)``.
+
+    Example::
+
+        from datetime import datetime, timezone, timedelta
+        from pramanix.expressions import DatetimeField, E
+
+        trade_time = DatetimeField('trade_time')
+
+        recent = E(trade_time).within_seconds(3600).named('trade_within_last_hour')
+    """
+    from datetime import datetime as _dt
+    return Field(name, _dt, "Int")
+
+
 # ── Expression builder ────────────────────────────────────────────────────────
 
 
@@ -455,6 +502,70 @@ class ExpressionNode:
     def __rmod__(self, o: Any) -> ExpressionNode:
         """Reflected modulo: ``literal % E(x)``."""
         return ExpressionNode(_ModOp(dividend=self._w(o), divisor=self.node))
+
+    # ── Datetime operations (Int-sorted DatetimeField) ───────────────────────
+
+    def within_seconds(self, duration: int) -> ConstraintExpr:
+        """Assert this :func:`DatetimeField` is within *duration* seconds before now.
+
+        Evaluates ``0 <= (now_utc - self) <= duration`` where ``now_utc`` is
+        the current UTC Unix epoch computed fresh at each ``Guard.verify()`` call.
+
+        Args:
+            duration: Non-negative integer number of seconds.
+
+        Raises:
+            PolicyCompilationError: If *duration* is not a positive integer.
+
+        Example::
+
+            E(trade_time).within_seconds(3600).named('trade_within_last_hour')
+        """
+        if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
+            raise PolicyCompilationError(
+                f"within_seconds() duration must be a non-negative integer; "
+                f"got {duration!r}."
+            )
+        now = ExpressionNode(_NowOp())
+        delta = now - self
+        return (delta >= 0) & (delta <= duration)
+
+    def is_before(self, other: ExpressionNode) -> ConstraintExpr:
+        """Assert this :func:`DatetimeField` is strictly before *other*.
+
+        Equivalent to ``self < other`` but communicates temporal intent.
+
+        Args:
+            other: Another datetime-typed :class:`ExpressionNode`.
+
+        Example::
+
+            E(trade_time).is_before(E(expiry)).named('trade_before_expiry')
+        """
+        return self < other
+
+    def is_business_hours(self) -> ConstraintExpr:
+        """Assert this :func:`DatetimeField` falls within UTC business hours.
+
+        Business hours: Monday–Friday, 09:00–16:59 UTC (inclusive).
+
+        Uses integer arithmetic on the Unix epoch (``Int``-sorted field).
+        Only valid on :func:`DatetimeField` or ``Field(..., z3_type="Int")``.
+
+        Day-of-week derivation (Unix epoch day 0 = Thursday):
+        ``(epoch // 86400) % 7`` → 0=Thu, 1=Fri, 2=Sat, 3=Sun, 4=Mon, 5=Tue, 6=Wed
+        Weekend: day in {2, 3} (Sat, Sun).
+
+        Example::
+
+            E(trade_time).is_business_hours().named('within_business_hours')
+        """
+        hour = (self / 3600) % 24
+        day = (self / 86400) % 7
+        work_hour = (hour >= 9) & (hour <= 16)
+        # Mon-Fri = day not in {2=Sat, 3=Sun}
+        weekday = (day != 2) & (day != 3)
+        return work_hour & weekday
 
     # ── String operations (Z3 sequence theory) ────────────────────────────────
 

@@ -85,6 +85,7 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # DSL expressions
         "ArrayField",
         "ConstraintExpr",
+        "DatetimeField",
         "E",
         "Exists",
         "Field",
