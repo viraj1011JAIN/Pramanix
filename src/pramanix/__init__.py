@@ -50,7 +50,7 @@ from pramanix.execution_token import (
     ExecutionTokenVerifier,
     RedisExecutionTokenVerifier,
 )
-from pramanix.expressions import ConstraintExpr, E, Field
+from pramanix.expressions import ArrayField, ConstraintExpr, E, Exists, Field, ForAll
 from pramanix.guard import Guard, GuardConfig
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
@@ -82,6 +82,8 @@ __all__ = [
     "PemKeyProvider",
     "EnvKeyProvider",
     "FileKeyProvider",
+    # A-3: Array field quantifiers
+    "ArrayField",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
@@ -97,6 +99,7 @@ __all__ = [
     "DecisionSigner",
     "DecisionVerifier",
     "E",
+    "Exists",
     # Phase 12 — Hardening: sealed execution token (TOCTOU gap)
     "ExecutionToken",
     "ExecutionTokenSigner",
@@ -109,6 +112,7 @@ __all__ = [
     # DSL
     "Field",
     "FieldTypeError",
+    "ForAll",
     # Guard
     "Guard",
     "GuardConfig",

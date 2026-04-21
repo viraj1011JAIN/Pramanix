@@ -38,13 +38,16 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from pramanix.exceptions import PolicyCompilationError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 __all__ = [
+    "ArrayField",
     "ConstraintExpr",
     "E",
+    "Exists",
     "ExpressionNode",
     "Field",
+    "ForAll",
     "Z3Type",
     "abs_expr",
     "_AbsOp",
@@ -53,8 +56,10 @@ __all__ = [
     "_CmpOp",
     "_ContainsOp",
     "_EndsWithOp",
+    "_ExistsOp",
     # Internal nodes — exported for transpiler and tests
     "_FieldRef",
+    "_ForAllOp",
     "_InOp",
     "_LengthBetweenOp",
     "_Literal",
@@ -238,6 +243,66 @@ class _RegexMatchOp(NamedTuple):
 
     operand: Any
     pattern: str  # validated regex pattern string
+
+
+# ── Array field and quantifier nodes ─────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ArrayField:
+    """Bounded array field — a homogeneous collection of up to *max_length* elements.
+
+    Use with :func:`ForAll` and :func:`Exists` to express collection constraints
+    without manually unrolling N separate :class:`Field` declarations.
+
+    Element fields are named ``{name}_0``, ``{name}_1``, …, ``{name}_{max_length-1}``
+    in Z3. The caller supplies ``values["amounts"]`` as a Python list; the solver
+    expands it automatically.
+
+    Args:
+        name:         Values-dict key (e.g. ``"amounts"``).
+        element_type: Expected Python type of each element.
+        z3_sort:      Z3 sort for element variables — usually ``"Real"`` or ``"Int"``.
+        max_length:   Hard upper bound.  Arrays longer than this cause an immediate
+                      BLOCK (fail-safe — never silently truncate).
+    """
+
+    name: str
+    element_type: type
+    z3_sort: Z3Type
+    max_length: int
+
+    def __post_init__(self) -> None:
+        if self.max_length < 1:
+            raise PolicyCompilationError(
+                f"ArrayField '{self.name}': max_length must be >= 1, got {self.max_length}."
+            )
+
+    def element_field(self, index: int) -> Field:
+        """Return the :class:`Field` descriptor for element at *index*."""
+        return Field(f"{self.name}_{index}", self.element_type, self.z3_sort)
+
+
+class _ForAllOp(NamedTuple):
+    """Universal quantifier: all elements of *array_field* must satisfy *predicate*.
+
+    Transpiled to ``z3.And(predicate(elem_0), …, predicate(elem_{n-1}))`` at
+    solve time, where *n* is the actual array length (≤ max_length).
+    """
+
+    array_field: "ArrayField"
+    predicate: Any  # Callable[[Field], ConstraintExpr]
+
+
+class _ExistsOp(NamedTuple):
+    """Existential quantifier: at least one element of *array_field* must satisfy *predicate*.
+
+    Transpiled to ``z3.Or(predicate(elem_0), …, predicate(elem_{n-1}))`` at
+    solve time, where *n* is the actual array length (≤ max_length).
+    """
+
+    array_field: "ArrayField"
+    predicate: Any  # Callable[[Field], ConstraintExpr]
 
 
 # ── Expression builder ────────────────────────────────────────────────────────
@@ -690,6 +755,72 @@ def E(field: Field) -> ExpressionNode:  # noqa: N802
         An :class:`ExpressionNode` wrapping a ``_FieldRef`` AST leaf.
     """
     return ExpressionNode(_FieldRef(field))
+
+
+def ForAll(  # noqa: N802
+    array_field: ArrayField,
+    predicate: Callable[[Field], ConstraintExpr],
+) -> ConstraintExpr:
+    """Universal quantifier: every element of *array_field* must satisfy *predicate*.
+
+    Produces a :class:`ConstraintExpr` that at solve time expands to
+    ``AND(predicate(elem_0), …, predicate(elem_{n-1}))`` where *n* is the
+    actual array length passed in the values dict.
+
+    An empty array satisfies ``ForAll`` vacuously (returns ALLOW for that invariant).
+
+    Args:
+        array_field: An :class:`ArrayField` descriptor declared on the policy.
+        predicate:   A callable that takes a :class:`Field` and returns a
+                     :class:`ConstraintExpr`.  It is called once per element.
+
+    Raises:
+        PolicyCompilationError: If *array_field* is not an :class:`ArrayField`
+            or *predicate* is not callable.
+
+    Example::
+
+        amounts = ArrayField('amounts', Decimal, z3_sort='Real', max_length=50)
+
+        ForAll(amounts, lambda amt: E(amt) >= Decimal('0')).named('all_non_negative')
+    """
+    if not isinstance(array_field, ArrayField):
+        raise PolicyCompilationError(
+            f"ForAll first argument must be an ArrayField; got {type(array_field).__name__!r}."
+        )
+    if not callable(predicate):
+        raise PolicyCompilationError("ForAll predicate must be callable.")
+    return ConstraintExpr(_ForAllOp(array_field, predicate))
+
+
+def Exists(  # noqa: N802
+    array_field: ArrayField,
+    predicate: Callable[[Field], ConstraintExpr],
+) -> ConstraintExpr:
+    """Existential quantifier: at least one element of *array_field* must satisfy *predicate*.
+
+    Produces a :class:`ConstraintExpr` that at solve time expands to
+    ``OR(predicate(elem_0), …, predicate(elem_{n-1}))`` where *n* is the
+    actual array length passed in the values dict.
+
+    An empty array does **not** satisfy ``Exists`` (returns BLOCK for that invariant).
+
+    Args:
+        array_field: An :class:`ArrayField` descriptor declared on the policy.
+        predicate:   A callable that takes a :class:`Field` and returns a
+                     :class:`ConstraintExpr`.
+
+    Raises:
+        PolicyCompilationError: If *array_field* is not an :class:`ArrayField`
+            or *predicate* is not callable.
+    """
+    if not isinstance(array_field, ArrayField):
+        raise PolicyCompilationError(
+            f"Exists first argument must be an ArrayField; got {type(array_field).__name__!r}."
+        )
+    if not callable(predicate):
+        raise PolicyCompilationError("Exists predicate must be callable.")
+    return ConstraintExpr(_ExistsOp(array_field, predicate))
 
 
 def abs_expr(expr: ExpressionNode) -> ExpressionNode:

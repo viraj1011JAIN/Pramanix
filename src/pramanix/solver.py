@@ -32,11 +32,24 @@ from typing import TYPE_CHECKING, Any
 
 import z3
 
-from pramanix.exceptions import FieldTypeError, InvariantLabelError, SolverTimeoutError
+from pramanix.exceptions import (
+    FieldTypeError,
+    InvariantLabelError,
+    SolverTimeoutError,
+    ValidationError,
+)
+from pramanix.expressions import (
+    ArrayField,
+    ConstraintExpr,
+    _BoolOp,
+    _ExistsOp,
+    _ForAllOp,
+    _Literal,
+)
 from pramanix.transpiler import collect_fields, transpile, z3_val, z3_var
 
 if TYPE_CHECKING:
-    from pramanix.expressions import ConstraintExpr, Field
+    from pramanix.expressions import Field
 
 __all__: list[str] = []  # internal module
 
@@ -130,6 +143,109 @@ def _build_bindings(
             )
         bindings.append((z3_var(f, ctx), z3_val(f, val, ctx)))
     return bindings
+
+
+# ── Array quantifier pre-processing ──────────────────────────────────────────
+
+
+def _realize_node(node: Any, values: dict[str, Any]) -> Any:
+    """Replace _ForAllOp/_ExistsOp with concrete _BoolOp based on actual values.
+
+    Recursively walks the expression tree.  Returns a new tree with quantifier
+    nodes replaced by their bounded unrollings.  Non-quantifier nodes are
+    returned unchanged.
+    """
+    if isinstance(node, _ForAllOp):
+        af = node.array_field
+        actual: list[Any] = values.get(af.name) or []
+        n = len(actual)
+        if n == 0:
+            return _Literal(True)  # vacuously true
+        constraints = tuple(
+            node.predicate(af.element_field(i)).node for i in range(n)
+        )
+        return constraints[0] if n == 1 else _BoolOp("and", constraints)
+
+    if isinstance(node, _ExistsOp):
+        af = node.array_field
+        actual = values.get(af.name) or []
+        n = len(actual)
+        if n == 0:
+            return _Literal(False)  # nothing exists in empty array
+        constraints = tuple(
+            node.predicate(af.element_field(i)).node for i in range(n)
+        )
+        return constraints[0] if n == 1 else _BoolOp("or", constraints)
+
+    if isinstance(node, _BoolOp):
+        return _BoolOp(node.op, tuple(_realize_node(op, values) for op in node.operands))
+
+    return node
+
+
+def _preprocess_invariants(
+    invariants: list[ConstraintExpr],
+    values: dict[str, Any],
+) -> tuple[list[ConstraintExpr], dict[str, Any]]:
+    """Expand array values and realize quantifier nodes before Z3 dispatch.
+
+    1. Collect all ArrayFields referenced in invariants.
+    2. Check overflow: if len(values[name]) > max_length, raise ValidationError (→ BLOCK).
+    3. Expand list values to per-element keys: values["amounts"] → values["amounts_0"], …
+    4. Realize quantifier nodes using the actual array lengths.
+
+    Returns:
+        Tuple of (realized invariants, expanded values dict).
+    """
+    # Collect ArrayFields
+    array_fields: dict[str, ArrayField] = {}
+    for inv in invariants:
+        _collect_array_fields_in_node(inv.node, array_fields)
+
+    if not array_fields:
+        return invariants, values
+
+    expanded = dict(values)
+
+    for af_name, af in array_fields.items():
+        raw = values.get(af_name)
+        if raw is None:
+            raw = []
+        if not isinstance(raw, (list, tuple)):
+            raise ValidationError(
+                f"ArrayField '{af_name}' expects a list or tuple in values; "
+                f"got {type(raw).__name__!r}."
+            )
+        if len(raw) > af.max_length:
+            raise ValidationError(
+                f"ArrayField '{af_name}': input length {len(raw)} exceeds "
+                f"max_length={af.max_length}. Guard blocks oversized arrays."
+            )
+        # Expand list → individual keys
+        for i, val in enumerate(raw):
+            expanded[f"{af_name}_{i}"] = val
+        # Remove the original list key so _build_bindings ignores it
+        expanded.pop(af_name, None)
+
+    # Realize quantifier nodes
+    realized = [
+        ConstraintExpr(_realize_node(inv.node, values), inv.label, inv.explanation)
+        for inv in invariants
+    ]
+    return realized, expanded
+
+
+def _collect_array_fields_in_node(node: Any, result: dict[str, "ArrayField"]) -> None:
+    """Walk the expression tree and collect all referenced ArrayField objects."""
+    if isinstance(node, _ForAllOp):
+        af = node.array_field
+        result[af.name] = af
+    elif isinstance(node, _ExistsOp):
+        af = node.array_field
+        result[af.name] = af
+    elif isinstance(node, _BoolOp):
+        for operand in node.operands:
+            _collect_array_fields_in_node(operand, result)
 
 
 # ── Fast-path helper ──────────────────────────────────────────────────────────
@@ -259,6 +375,10 @@ def solve(
         TranspileError:      If a DSL expression cannot be lowered to Z3.
     """
     start = time.perf_counter()
+
+    # Expand array fields and realize quantifier nodes before Z3 dispatch.
+    # Raises ValueError on overflow — caught by Guard and converted to Decision.block().
+    invariants, values = _preprocess_invariants(invariants, values)
 
     # Create a per-call Z3 context so this function is safe to call from
     # multiple threads simultaneously.  Z3's global default context is NOT

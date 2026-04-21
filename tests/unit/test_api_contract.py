@@ -83,9 +83,12 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "ExtractionMismatchError",
         "InjectionBlockedError",
         # DSL expressions
+        "ArrayField",
         "ConstraintExpr",
         "E",
+        "Exists",
         "Field",
+        "ForAll",
         # Core result types
         "Decision",
         "SolverStatus",
