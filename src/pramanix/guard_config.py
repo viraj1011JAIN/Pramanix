@@ -21,6 +21,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -262,6 +263,57 @@ class GuardConfig:
     with legitimate high-entropy inputs such as crypto addresses
     (e.g. ``0.7``).  Default: ``0.5``.  Env var: ``PRAMANIX_INJECTION_THRESHOLD``.
     """
+    max_input_chars: int = field(
+        default_factory=lambda: _env_int("MAX_INPUT_CHARS", 512)
+    )
+    """Maximum character count of the raw natural-language input string passed
+    to :func:`~pramanix.translator.redundant.extract_with_consensus`.
+
+    Inputs exceeding this limit are rejected with
+    :exc:`~pramanix.exceptions.InputTooLongError` *before* any LLM call is
+    made.  Previously Pramanix silently truncated long inputs; the exception
+    makes the rejection explicit and auditable.
+
+    Default: 512 chars.  Env var: ``PRAMANIX_MAX_INPUT_CHARS``.
+    """
+    injection_scorer_path: Path | None = field(
+        default_factory=lambda: (
+            Path(_env_str("INJECTION_SCORER_PATH", ""))
+            if _env_str("INJECTION_SCORER_PATH", "")
+            else None
+        )
+    )
+    """Optional path to a Python module that exports a custom injection scorer.
+
+    When set, the module at this path is imported and its ``injection_scorer``
+    callable is used in place of the built-in :func:`~pramanix.translator._sanitise.injection_confidence_score`.
+
+    The callable must match the protocol::
+
+        def injection_scorer(
+            user_input: str,
+            extracted_intent: dict,
+            warnings: list[str],
+        ) -> float: ...
+
+    Env var: ``PRAMANIX_INJECTION_SCORER_PATH`` (path string, or empty to disable).
+    """
+
+    consensus_strictness: str = field(
+        default_factory=lambda: _env_str("CONSENSUS_STRICTNESS", "semantic")
+    )
+    """How individual field values are compared during dual-model consensus.
+
+    ``"semantic"`` *(default)* — numeric strings are normalised via ``Decimal``
+    before comparison, string fields are compared case-insensitively.  This
+    eliminates spurious mismatches such as ``"500"`` vs ``"500.0"`` or
+    ``"USD"`` vs ``"usd"``.
+
+    ``"strict"`` — original behaviour: exact Python ``!=`` equality on the
+    model-validated dict dump.
+
+    Env var: ``PRAMANIX_CONSENSUS_STRICTNESS``.
+    """
 
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
@@ -287,6 +339,11 @@ class GuardConfig:
             raise ConfigurationError(
                 f"GuardConfig.max_input_bytes must be >= 0, got {self.max_input_bytes}."
             )
+        if self.max_input_chars <= 0:
+            raise ConfigurationError(
+                f"GuardConfig.max_input_chars must be a positive integer, "
+                f"got {self.max_input_chars}."
+            )
         if self.min_response_ms < 0.0:
             raise ConfigurationError(
                 f"GuardConfig.min_response_ms must be >= 0.0, got {self.min_response_ms}."
@@ -295,6 +352,17 @@ class GuardConfig:
             raise ConfigurationError(
                 f"GuardConfig.injection_threshold must be in (0.0, 1.0], "
                 f"got {self.injection_threshold}."
+            )
+        _valid_strictness = {"semantic", "strict"}
+        if self.consensus_strictness not in _valid_strictness:
+            raise ConfigurationError(
+                f"GuardConfig.consensus_strictness must be one of {_valid_strictness!r}, "
+                f"got '{self.consensus_strictness}'."
+            )
+        if self.injection_scorer_path is not None and not self.injection_scorer_path.is_file():
+            raise ConfigurationError(
+                f"GuardConfig.injection_scorer_path does not exist or is not a file: "
+                f"{self.injection_scorer_path!r}."
             )
         if not (0.0 < self.shed_worker_pct <= 100.0):
             raise ConfigurationError(

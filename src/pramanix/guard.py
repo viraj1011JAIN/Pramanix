@@ -82,6 +82,7 @@ from pramanix.exceptions import (
     ExtractionFailureError,
     ExtractionMismatchError,
     InjectionBlockedError,
+    InputTooLongError,
     LLMTimeoutError,
     PramanixError,
     SemanticPolicyViolation,
@@ -829,6 +830,12 @@ class Guard:
                 (translator_a, translator_b),
                 context,
                 injection_threshold=self._config.injection_threshold,
+                max_input_chars=self._config.max_input_chars,
+                injection_scorer_path=(
+                    str(self._config.injection_scorer_path)
+                    if self._config.injection_scorer_path is not None
+                    else None
+                ),
             )
 
             # ── Semantic post-consensus check: fast Python rules before Z3 ─────
@@ -848,6 +855,7 @@ class Guard:
             ExtractionFailureError,
             LLMTimeoutError,
             InjectionBlockedError,
+            InputTooLongError,
             SemanticPolicyViolation,
         ) as exc:
             return Decision.error(reason=str(exc))

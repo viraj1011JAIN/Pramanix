@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix PyPI Publish Workflow
+#
+# Trigger: push of a version tag (v*)
+# Uses GitHub OIDC trusted publishing — no stored API token required.
+# Configure a trusted publisher on PyPI: owner=virajjain1011, repo=Pramanix,
+# workflow=publish.yml, environment=pypi.
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+
+permissions:
+  id-token: write   # Required for OIDC trusted publishing
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  publish:
+    name: "Build and publish to PyPI"
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: |
+          pip install poetry==1.8.3
+
+      - name: Install build dependencies
+        run: |
+          pip install twine
+
+      - name: Verify version consistency
+        run: |
+          GIT_TAG="${{ github.ref_name }}"
+          VERSION="${GIT_TAG#v}"
+          PYPROJECT_VERSION=$(python -c "
+          import re, sys
+          content = open('pyproject.toml').read()
+          m = re.search(r'^version\s*=\s*\"([^\"]+)\"', content, re.MULTILINE)
+          print(m.group(1) if m else sys.exit(1))
+          ")
+          INIT_VERSION=$(python -c "
+          import re, sys
+          content = open('src/pramanix/__init__.py').read()
+          m = re.search(r'__version__\s*=\s*[\"\']([\d.]+(?:-rc\.\d+)?)[\"\'']', content)
+          print(m.group(1) if m else sys.exit(1))
+          ")
+          echo "Tag: $VERSION | pyproject.toml: $PYPROJECT_VERSION | __init__.py: $INIT_VERSION"
+          [[ "$PYPROJECT_VERSION" == "$VERSION" ]] || { echo "::error::pyproject.toml version mismatch"; exit 1; }
+          [[ "$INIT_VERSION" == "$VERSION" ]] || { echo "::error::__init__.py version mismatch"; exit 1; }
+
+      - name: Build distribution
+        run: poetry build
+
+      - name: Check distribution artifacts
+        run: |
+          ls -lh dist/
+          twine check dist/*
+
+      - name: Publish to PyPI (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+
+      - name: Smoke test install from PyPI
+        run: |
+          sleep 30  # allow PyPI CDN to propagate
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install pramanix=="${{ github.ref_name }#v}"
+          /tmp/smoke-venv/bin/python -c "from pramanix import Guard; print('pramanix import OK')"

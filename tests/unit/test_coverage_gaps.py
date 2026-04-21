@@ -19,7 +19,7 @@ import pramanix.guard as _guard_mod
 import pramanix.transpiler as _transpiler_mod
 import pramanix.worker as _worker_mod
 from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.exceptions import PolicyCompilationError, SemanticPolicyViolation
+from pramanix.exceptions import InputTooLongError, PolicyCompilationError, SemanticPolicyViolation
 from pramanix.expressions import (
     ConstraintExpr,
     _BoolOp,
@@ -453,19 +453,24 @@ class TestTreeReprEdgeCases:
 class TestSanitiseInputEdgeCases:
     """Lines 120-121, 126: truncation and control-char stripping."""
 
-    def test_long_input_is_truncated(self):
-        """Lines 120-121: input > 512 chars → truncated and warning added."""
+    def test_long_input_raises_input_too_long(self):
+        """Input > 512 chars raises InputTooLongError (fail-loud, not silent truncation)."""
         long_input = "a" * 600
-        cleaned, warnings = sanitise_user_input(long_input, max_length=512)
-        assert len(cleaned) == 512
-        assert any("input_truncated_to_512_chars" in w for w in warnings)
+        with pytest.raises(InputTooLongError) as exc_info:
+            sanitise_user_input(long_input, max_length=512)
+        err = exc_info.value
+        assert err.actual == 600
+        assert err.limit == 512
+        assert err.truncated_preview == "a" * 100
 
-    def test_long_input_custom_max_length(self):
-        """Lines 120-121: custom max_length respected."""
+    def test_long_input_custom_max_length_raises(self):
+        """Custom max_length is respected and raises InputTooLongError when exceeded."""
         long_input = "x" * 100
-        cleaned, warnings = sanitise_user_input(long_input, max_length=50)
-        assert len(cleaned) == 50
-        assert any("input_truncated_to_50_chars" in w for w in warnings)
+        with pytest.raises(InputTooLongError) as exc_info:
+            sanitise_user_input(long_input, max_length=50)
+        err = exc_info.value
+        assert err.actual == 100
+        assert err.limit == 50
 
     def test_control_characters_stripped(self):
         """Line 126: C0 control chars are removed and warning added."""

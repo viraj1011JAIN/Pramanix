@@ -61,6 +61,33 @@ class PramanixError(Exception):
     """Base class for all Pramanix exceptions."""
 
 
+# ── Input validation errors ───────────────────────────────────────────────────
+
+
+class InputTooLongError(PramanixError):
+    """User input exceeds the maximum allowed character limit.
+
+    Raised by :func:`~pramanix.translator._sanitise.sanitise_user_input` when
+    the character count of the raw input exceeds the configured
+    ``max_input_chars`` limit.  Previously Pramanix silently truncated long
+    inputs; this exception makes the rejection explicit and auditable.
+
+    Attributes:
+        actual:            Actual character count of the input.
+        limit:             Maximum allowed character count.
+        truncated_preview: First 100 chars of the input for diagnostic logging.
+    """
+
+    def __init__(self, actual: int, limit: int, truncated_preview: str) -> None:
+        self.actual = actual
+        self.limit = limit
+        self.truncated_preview = truncated_preview
+        super().__init__(
+            f"Input too long: {actual} chars exceeds limit of {limit}. "
+            f"Preview: {truncated_preview!r}"
+        )
+
+
 # ── Policy definition errors (compile-time) ───────────────────────────────────
 
 
@@ -266,6 +293,11 @@ class ExtractionMismatchError(GuardError):
         self.model_b = model_b
         self.mismatches: dict[str, tuple[object, object]] = mismatches or {}
         super().__init__(message)
+
+    @property
+    def disagreeing_fields(self) -> list[str]:
+        """Ordered list of field names where the two models disagreed."""
+        return sorted(self.mismatches.keys())
 
 
 class LLMTimeoutError(GuardError):

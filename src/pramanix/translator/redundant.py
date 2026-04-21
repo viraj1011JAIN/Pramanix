@@ -31,7 +31,9 @@ Agreement modes
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
 
 from pramanix.exceptions import ExtractionFailureError, ExtractionMismatchError, LLMTimeoutError
@@ -41,9 +43,132 @@ if TYPE_CHECKING:
 
     from pramanix.translator.base import Translator, TranslatorContext
 
-__all__ = ["RedundantTranslator", "create_translator", "extract_with_consensus"]
+__all__ = [
+    "ConsensusStrictness",
+    "RedundantTranslator",
+    "create_translator",
+    "extract_with_consensus",
+]
 
 _log = logging.getLogger(__name__)
+
+
+class ConsensusStrictness(str, enum.Enum):
+    """Controls how individual field *values* are compared during consensus.
+
+    ``STRICT``
+        Original behaviour — Python ``!=`` equality on model-dumped values.
+        ``"500"`` vs ``"500.0"`` → disagree.
+
+    ``SEMANTIC`` *(default)*
+        Type-aware comparison:
+
+        * Numeric fields (int, float, Decimal, or string representations
+          that parse as Decimal): compared via ``Decimal(str(v))`` so that
+          ``"500"``, ``"500.0"``, and ``"5.0E+2"`` are treated as equal.
+        * String fields: ``casefold() + strip()`` equality — ``"USD"`` and
+          ``"usd"`` agree.
+        * Boolean fields: ``bool(v_a) == bool(v_b)``.
+        * All other types: falls back to ``==``.
+    """
+
+    STRICT = "strict"
+    SEMANTIC = "semantic"
+
+
+# ── Semantic comparison helpers ───────────────────────────────────────────────
+
+
+def _semantic_field_equal(
+    val_a: Any,
+    val_b: Any,
+    *,
+    schema: type[BaseModel] | None = None,
+    field_name: str = "",
+) -> bool:
+    """Compare two field values semantically.
+
+    Resolution order:
+    1. Schema annotation (when schema + field_name provided).
+    2. Runtime type of the values.
+    3. Attempt Decimal conversion (catches numeric string representations).
+    4. Exact ``==`` fallback.
+    """
+    if val_a is None and val_b is None:
+        return True
+    if val_a is None or val_b is None:
+        return False
+
+    # ── Resolve field type from schema annotation ─────────────────────────────
+    field_type: type | None = None
+    if schema is not None and field_name:
+        field_info = schema.model_fields.get(field_name)
+        if field_info is not None:
+            annotation = field_info.annotation
+            # Unwrap Optional[X] → X
+            origin = getattr(annotation, "__origin__", None)
+            if origin is not None:
+                args = getattr(annotation, "__args__", ())
+                non_none = [t for t in args if t is not type(None)]
+                if len(non_none) == 1:
+                    annotation = non_none[0]
+            field_type = annotation
+
+    # ── Bool comparison (must precede int check — bool subclasses int) ────────
+    if field_type is bool or (isinstance(val_a, bool) and isinstance(val_b, bool)):
+        return bool(val_a) == bool(val_b)
+
+    # ── Numeric type: use Decimal regardless of whether values are strings ────
+    # This handles "500" == "500.0" == 500 == 500.0 when the schema says float.
+    _numeric = (int, float, Decimal)
+    is_numeric_type = field_type in _numeric
+    is_numeric_value = isinstance(val_a, _numeric) and isinstance(val_b, _numeric)
+    if is_numeric_type or is_numeric_value:
+        try:
+            return Decimal(str(val_a)) == Decimal(str(val_b))
+        except InvalidOperation:
+            pass
+
+    # ── String comparison — try Decimal parse first, then casefold ────────────
+    # Decimal-first catches numeric-looking strings ("500" vs "500.0") even
+    # when the schema annotates the field as str (e.g. a model that serialises
+    # amounts as strings).
+    if field_type is str or (isinstance(val_a, str) and isinstance(val_b, str)):
+        try:
+            dec_a = Decimal(str(val_a).strip())
+            dec_b = Decimal(str(val_b).strip())
+            return dec_a == dec_b
+        except InvalidOperation:
+            return str(val_a).strip().casefold() == str(val_b).strip().casefold()
+
+    # ── Generic fallback — try Decimal, then exact equality ───────────────────
+    try:
+        return Decimal(str(val_a)) == Decimal(str(val_b))
+    except InvalidOperation:
+        pass
+
+    return bool(val_a == val_b)
+
+
+def _semantic_equal(
+    a: dict[str, Any],
+    b: dict[str, Any],
+    schema: type[BaseModel] | None = None,
+) -> tuple[bool, list[str]]:
+    """Compare two intent dicts semantically.
+
+    Returns:
+        ``(all_equal, disagreeing_fields)`` — a bool and the list of field
+        names that differ.  Empty list means full consensus.
+    """
+    all_keys = set(a.keys()) | set(b.keys())
+    disagreeing: list[str] = []
+
+    for key in sorted(all_keys):
+        if not _semantic_field_equal(a.get(key), b.get(key), schema=schema, field_name=key):
+            disagreeing.append(key)
+
+    return len(disagreeing) == 0, disagreeing
 
 
 async def extract_with_consensus(
@@ -55,6 +180,9 @@ async def extract_with_consensus(
     agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = "strict_keys",
     critical_fields: frozenset[str] | None = None,
     injection_threshold: float = 0.5,
+    strictness: ConsensusStrictness = ConsensusStrictness.SEMANTIC,
+    max_input_chars: int = 512,
+    injection_scorer_path: str | None = None,
 ) -> dict[str, Any]:
     """Call two translators concurrently and require them to agree.
 
@@ -116,6 +244,20 @@ async def extract_with_consensus(
     from pramanix.translator._sanitise import injection_confidence_score, sanitise_user_input
     from pramanix.translator.injection_filter import InjectionFilter
 
+    # ── Resolve injection scorer (built-in or custom) ─────────────────────────
+    _scorer_fn = injection_confidence_score
+    if injection_scorer_path is not None:
+        import importlib.util as _ilu
+
+        _spec = _ilu.spec_from_file_location("_custom_injection_scorer", injection_scorer_path)
+        if _spec is None or _spec.loader is None:
+            raise ValueError(
+                f"Cannot load custom injection scorer from {injection_scorer_path!r}"
+            )
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _scorer_fn = _mod.injection_scorer
+
     # ── Step 0: System 1 fast-path injection filter ───────────────────────────
     # Runs before any LLM call.  Sub-millisecond regex scan; kills obviously
     # malicious prompts without wasting API budget or incurring GPU latency.
@@ -128,7 +270,7 @@ async def extract_with_consensus(
         )
 
     # ── Step 1: Sanitise input ────────────────────────────────────────────────
-    sanitised_text, sanitise_warnings = sanitise_user_input(text)
+    sanitised_text, sanitise_warnings = sanitise_user_input(text, max_length=max_input_chars)
 
     model_a_name = getattr(translators[0], "model", "translator_a")
     model_b_name = getattr(translators[1], "model", "translator_b")
@@ -207,13 +349,32 @@ async def extract_with_consensus(
         model_b_name=model_b_name,
         agreement_mode=agreement_mode,
         critical_fields=critical_fields,
+        strictness=strictness,
+        schema=intent_schema,
+    )
+
+    # ── Consensus telemetry ───────────────────────────────────────────────────
+    all_checked = set(dump_a.keys()) | set(dump_b.keys())
+    _, disagreeing_fields = _semantic_equal(dump_a, dump_b, intent_schema)
+    _agreed_fields = all_checked - set(disagreeing_fields)
+    _log.debug(
+        "pramanix.consensus.result",
+        extra={
+            "consensus_fields_checked": len(all_checked),
+            "consensus_fields_agreed": len(_agreed_fields),
+            "consensus_fields_disagreed": len(disagreeing_fields),
+            "agreement_mode": agreement_mode,
+            "strictness": strictness.value,
+            "model_a": model_a_name,
+            "model_b": model_b_name,
+        },
     )
 
     # ── Step 6: Post-consensus injection confidence gate ─────────────────────
     # Computed *after* both models agree so the actual extracted intent is
     # available as a signal.  This catches adversarial inputs that slip past
     # the injection-pattern regex (e.g. encoded payloads normalised by the LLM).
-    score = injection_confidence_score(text, dump_a, sanitise_warnings)
+    score = _scorer_fn(text, dump_a, sanitise_warnings)
     if score >= injection_threshold:
         raise InjectionBlockedError(
             f"Input blocked by injection scorer "
@@ -232,6 +393,8 @@ def _enforce_consensus(
     model_b_name: str,
     agreement_mode: Literal["strict_keys", "lenient", "unanimous"],
     critical_fields: frozenset[str] | None,
+    strictness: ConsensusStrictness = ConsensusStrictness.SEMANTIC,
+    schema: type[BaseModel] | None = None,
 ) -> None:
     """Raise :exc:`ExtractionMismatchError` if consensus requirements are not met.
 
@@ -242,19 +405,28 @@ def _enforce_consensus(
         model_b_name:    Display name of model B (for error messages).
         agreement_mode:  Consensus strictness level.
         critical_fields: Fields that must agree in ``"lenient"`` mode.
+        strictness:      Whether to compare values semantically (default) or
+                         with exact Python equality.
+        schema:          Pydantic model class for semantic type resolution.
     """
     all_keys: set[str] = dump_a.keys() | dump_b.keys()
+
+    def _disagrees(k: str) -> bool:
+        val_a, val_b = dump_a.get(k), dump_b.get(k)
+        if strictness is ConsensusStrictness.SEMANTIC:
+            return not _semantic_field_equal(val_a, val_b, schema=schema, field_name=k)
+        return val_a != val_b
 
     if agreement_mode == "unanimous":
         # Bitwise equality on the full canonical dicts.
         # Catches extra-field injection: if one model emits {"amount": 50, "evil": true}
         # and the other emits {"amount": 50}, they disagree → blocked.
-        if dump_a != dump_b:
-            mismatches: dict[str, tuple[object, object]] = {
-                k: (dump_a.get(k), dump_b.get(k))
-                for k in all_keys
-                if dump_a.get(k) != dump_b.get(k)
-            }
+        mismatches: dict[str, tuple[object, object]] = {
+            k: (dump_a.get(k), dump_b.get(k))
+            for k in all_keys
+            if _disagrees(k)
+        }
+        if mismatches:
             field_list = ", ".join(f"'{k}'" for k in mismatches)
             raise ExtractionMismatchError(
                 f"Models '{model_a_name}' and '{model_b_name}' disagreed on "
@@ -270,7 +442,7 @@ def _enforce_consensus(
         # Pydantic-validated dicts (extra fields are stripped by model_dump()),
         # but documents the intent that each schema field is load-bearing.
         mismatches = {
-            k: (dump_a.get(k), dump_b.get(k)) for k in all_keys if dump_a.get(k) != dump_b.get(k)
+            k: (dump_a.get(k), dump_b.get(k)) for k in all_keys if _disagrees(k)
         }
         if mismatches:
             field_list = ", ".join(f"'{k}'" for k in mismatches)
@@ -295,7 +467,7 @@ def _enforce_consensus(
         non_critical_mismatches: dict[str, tuple[object, object]] = {}
 
         for k in all_keys:
-            if dump_a.get(k) != dump_b.get(k):
+            if _disagrees(k):
                 if k in effective_critical:
                     critical_mismatches[k] = (dump_a.get(k), dump_b.get(k))
                 else:
@@ -418,12 +590,14 @@ class RedundantTranslator:
         agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = "strict_keys",
         critical_fields: frozenset[str] | None = None,
         injection_threshold: float = 0.5,
+        strictness: ConsensusStrictness = ConsensusStrictness.SEMANTIC,
     ) -> None:
         self._a = translator_a
         self._b = translator_b
         self._agreement_mode: Literal["strict_keys", "lenient", "unanimous"] = agreement_mode
         self._critical_fields = critical_fields
         self._injection_threshold = injection_threshold
+        self._strictness = strictness
         # Expose a composite model name for logging / error messages
         name_a = getattr(translator_a, "model", "a")
         name_b = getattr(translator_b, "model", "b")
@@ -444,4 +618,5 @@ class RedundantTranslator:
             agreement_mode=self._agreement_mode,
             critical_fields=self._critical_fields,
             injection_threshold=self._injection_threshold,
+            strictness=self._strictness,
         )

@@ -31,6 +31,7 @@ Typical usage::
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
@@ -50,10 +51,17 @@ __all__ = [
     "_BinOp",
     "_BoolOp",
     "_CmpOp",
+    "_ContainsOp",
+    "_EndsWithOp",
     # Internal nodes — exported for transpiler and tests
     "_FieldRef",
     "_InOp",
+    "_LengthBetweenOp",
     "_Literal",
+    "_ModOp",
+    "_PowOp",
+    "_RegexMatchOp",
+    "_StartsWithOp",
 ]
 
 # ── Z3 sort tag ───────────────────────────────────────────────────────────────
@@ -142,6 +150,29 @@ class _InOp(NamedTuple):
     values: tuple[Any, ...]  # sequence of _Literal nodes
 
 
+class _PowOp(NamedTuple):
+    """Polynomial exponentiation: ``base ** exp`` where *exp* is a positive int ≤ 4.
+
+    Encoded as repeated Z3 multiplication in the transpiler.  The exponent
+    must be a *literal* integer known at policy-definition time (0 < exp ≤ 4).
+    Symbolic exponents (``E(x) ** E(y)``) are prohibited because Z3
+    real/integer arithmetic does not support non-constant exponents.
+    """
+    base: Any
+    exp: int
+
+
+class _ModOp(NamedTuple):
+    """Integer modulo: ``dividend % divisor``.
+
+    Maps to Z3's ``z3.ArithRef.__mod__`` on Int-sorted values.  Using modulo
+    on Real-sorted fields raises :exc:`~pramanix.exceptions.TranspileError`
+    at transpilation time.
+    """
+    dividend: Any
+    divisor: Any
+
+
 class _AbsOp(NamedTuple):
     """Absolute-value operator: |operand|.
 
@@ -150,6 +181,63 @@ class _AbsOp(NamedTuple):
     """
 
     operand: Any  # ExpressionNode.node
+
+
+class _StartsWithOp(NamedTuple):
+    """String prefix check: ``field.starts_with(prefix)``.
+
+    Transpiled via Z3 sequence theory ``PrefixOf``.
+    Only valid on ``String``-sorted fields.
+    """
+
+    operand: Any  # _FieldRef node
+    prefix: _Literal  # always a _Literal wrapping a str
+
+
+class _EndsWithOp(NamedTuple):
+    """String suffix check: ``field.ends_with(suffix)``.
+
+    Transpiled via Z3 sequence theory ``SuffixOf``.
+    """
+
+    operand: Any
+    suffix: _Literal
+
+
+class _ContainsOp(NamedTuple):
+    """String containment check: ``field.contains(substring)``.
+
+    Transpiled via Z3 sequence theory ``Contains``.
+    """
+
+    operand: Any
+    substring: _Literal
+
+
+class _LengthBetweenOp(NamedTuple):
+    """String length range check: ``field.length_between(lo, hi)``.
+
+    Transpiled as ``lo <= Length(field) <= hi`` in Z3 sequence theory.
+    *lo* and *hi* are non-negative integer literals.
+    """
+
+    operand: Any
+    lo: int  # inclusive lower bound
+    hi: int  # inclusive upper bound
+
+
+class _RegexMatchOp(NamedTuple):
+    """String regex match: ``field.matches_re(pattern)``.
+
+    *pattern* must be a valid Python ``re``-compatible pattern with no
+    backreferences or lookahead/lookbehind (Z3's sequence regex is a strict
+    subset of PCRE).  Validated at policy-definition time.  Transpiled via
+    Z3 ``InRe`` with ``to_re`` / ``Intersect`` / ``Union`` / ``Star`` etc.
+    via ``z3.Re(pattern)`` shorthand.
+    """
+
+    operand: Any
+    pattern: str  # validated regex pattern string
 
 
 # ── Expression builder ────────────────────────────────────────────────────────
@@ -251,27 +339,171 @@ class ExpressionNode:
         """
         return ExpressionNode(_AbsOp(self.node))
 
-    def __pow__(self, o: Any) -> ExpressionNode:  # type: ignore[override,unused-ignore]
-        """Banned: exponentiation is not supported in Z3 real/integer arithmetic.
+    def __pow__(self, exp: Any) -> ExpressionNode:  # type: ignore[override,unused-ignore]
+        """Polynomial exponentiation ``E(x) ** n`` where *n* is a literal int 1-4.
+
+        The exponent must be a plain Python ``int`` literal known at
+        policy-definition time; symbolic exponents such as ``E(x) ** E(y)``
+        are prohibited because Z3 real/integer arithmetic does not support
+        non-constant powers.
+
+        The constraint is lowered to repeated Z3 multiplication in the
+        transpiler (``x**2`` → ``x * x``, etc.).  Degree ≤ 4 is enforced
+        here to keep Z3 solver complexity predictable.
 
         Raises:
-            PolicyCompilationError: Always.  Caught at policy-definition time.
+            PolicyCompilationError: If *exp* is not an int, is not in [1, 4],
+                or if ``E(y) ** E(x)`` (symbolic base via ``__rpow__``) is used.
         """
-        raise PolicyCompilationError(
-            "ExpressionNode does not support ** (exponentiation). "
-            "Z3 real/integer arithmetic does not support symbolic powers. "
-            "Use repeated multiplication for small integer exponents, "
-            "or reformulate the constraint without exponentiation."
-        )
+        if not isinstance(exp, int) or isinstance(exp, bool):
+            raise PolicyCompilationError(
+                "ExpressionNode ** exponent must be a plain integer literal (1-4). "
+                f"Got {type(exp).__name__!r}.  Symbolic exponents are not supported."
+            )
+        if not (1 <= exp <= 4):
+            raise PolicyCompilationError(
+                f"ExpressionNode ** exponent must be in [1, 4] to keep Z3 complexity "
+                f"predictable; got {exp}."
+            )
+        return ExpressionNode(_PowOp(base=self.node, exp=exp))
 
     def __rpow__(self, o: Any) -> ExpressionNode:  # type: ignore[override,unused-ignore]
-        """Banned: reflected exponentiation is equally unsupported."""
+        """Symbolic base (left-hand side is not an ExpressionNode) — always banned."""
         raise PolicyCompilationError(
-            "ExpressionNode does not support ** (exponentiation). "
-            "Z3 real/integer arithmetic does not support symbolic powers."
+            "ExpressionNode does not support reflected ** (i.e. literal ** E(x)). "
+            "The exponent must be the literal integer, not the base: use E(x) ** n."
         )
 
-    # ── Boolean coercion guard ────────────────────────────────────────────────
+    def __mod__(self, o: Any) -> ExpressionNode:
+        """Integer modulo ``E(x) % divisor``.
+
+        Maps to Z3's modulo operator on Int-sorted fields.  The divisor may be
+        another :class:`ExpressionNode` or a plain Python integer literal.
+
+        .. warning::
+            Using ``%`` on a ``Real``-sorted field will raise
+            :exc:`~pramanix.exceptions.TranspileError` at transpile time
+            because Z3 modulo is only defined for integers.
+        """
+        return ExpressionNode(_ModOp(dividend=self.node, divisor=self._w(o)))
+
+    def __rmod__(self, o: Any) -> ExpressionNode:
+        """Reflected modulo: ``literal % E(x)``."""
+        return ExpressionNode(_ModOp(dividend=self._w(o), divisor=self.node))
+
+    # ── String operations (Z3 sequence theory) ────────────────────────────────
+
+    def starts_with(self, prefix: str) -> ConstraintExpr:
+        """Assert this ``String`` field starts with *prefix*.
+
+        Transpiled via Z3 sequence theory ``PrefixOf``.  Only valid on
+        ``String``-sorted fields.
+
+        Args:
+            prefix: Plain string literal prefix.
+
+        Raises:
+            PolicyCompilationError: If *prefix* is not a ``str``.
+        """
+        if not isinstance(prefix, str):
+            raise PolicyCompilationError(
+                f"starts_with() requires a str argument; got {type(prefix).__name__!r}."
+            )
+        return ConstraintExpr(_StartsWithOp(operand=self.node, prefix=_Literal(prefix)))
+
+    def ends_with(self, suffix: str) -> ConstraintExpr:
+        """Assert this ``String`` field ends with *suffix*.
+
+        Transpiled via Z3 sequence theory ``SuffixOf``.
+
+        Args:
+            suffix: Plain string literal suffix.
+
+        Raises:
+            PolicyCompilationError: If *suffix* is not a ``str``.
+        """
+        if not isinstance(suffix, str):
+            raise PolicyCompilationError(
+                f"ends_with() requires a str argument; got {type(suffix).__name__!r}."
+            )
+        return ConstraintExpr(_EndsWithOp(operand=self.node, suffix=_Literal(suffix)))
+
+    def contains(self, substring: str) -> ConstraintExpr:
+        """Assert this ``String`` field contains *substring*.
+
+        Transpiled via Z3 sequence theory ``Contains``.
+
+        Args:
+            substring: Plain string literal substring.
+
+        Raises:
+            PolicyCompilationError: If *substring* is not a ``str``.
+        """
+        if not isinstance(substring, str):
+            raise PolicyCompilationError(
+                f"contains() requires a str argument; got {type(substring).__name__!r}."
+            )
+        return ConstraintExpr(_ContainsOp(operand=self.node, substring=_Literal(substring)))
+
+    def length_between(self, lo: int, hi: int) -> ConstraintExpr:
+        """Assert this ``String`` field's length is in the inclusive range [lo, hi].
+
+        Transpiled as ``lo <= Length(field) <= hi`` in Z3 sequence theory.
+
+        Args:
+            lo: Non-negative inclusive lower bound.
+            hi: Non-negative inclusive upper bound, must be ≥ lo.
+
+        Raises:
+            PolicyCompilationError: If bounds are not valid non-negative ints,
+                or if ``hi < lo``.
+        """
+        if not isinstance(lo, int) or isinstance(lo, bool):
+            raise PolicyCompilationError(
+                f"length_between() lo must be a non-negative int; got {type(lo).__name__!r}."
+            )
+        if not isinstance(hi, int) or isinstance(hi, bool):
+            raise PolicyCompilationError(
+                f"length_between() hi must be a non-negative int; got {type(hi).__name__!r}."
+            )
+        if lo < 0:
+            raise PolicyCompilationError(
+                f"length_between() lo must be >= 0; got {lo}."
+            )
+        if hi < lo:
+            raise PolicyCompilationError(
+                f"length_between() hi must be >= lo; got hi={hi}, lo={lo}."
+            )
+        return ConstraintExpr(_LengthBetweenOp(operand=self.node, lo=lo, hi=hi))
+
+    def matches_re(self, pattern: str) -> ConstraintExpr:
+        """Assert this ``String`` field matches the regular expression *pattern*.
+
+        *pattern* is validated at policy-definition time via ``re.compile``.
+        Z3's sequence regex supports a subset of PCRE; patterns with
+        backreferences or lookahead/lookbehind may compile in Python but fail
+        at Z3 transpilation time.
+
+        Transpiled via Z3 ``InRe(field, Re(pattern))``.
+
+        Args:
+            pattern: Valid Python regex pattern string.
+
+        Raises:
+            PolicyCompilationError: If *pattern* is not a ``str`` or fails
+                ``re.compile`` validation.
+        """
+        if not isinstance(pattern, str):
+            raise PolicyCompilationError(
+                f"matches_re() requires a str pattern; got {type(pattern).__name__!r}."
+            )
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise PolicyCompilationError(
+                f"matches_re() invalid regex pattern {pattern!r}: {exc}"
+            ) from exc
+        return ConstraintExpr(_RegexMatchOp(operand=self.node, pattern=pattern))
 
     def __bool__(self) -> bool:
         """Prevent silent coercion to a Python bool.

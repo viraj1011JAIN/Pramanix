@@ -7,7 +7,7 @@ Public API contract — these are the ONLY names that are considered stable.
 All other internal modules may change without notice.
 """
 
-__version__ = "0.9.0"
+__version__ = "1.0.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ from pramanix.exceptions import (
     GuardError,
     GuardViolationError,
     InjectionBlockedError,
+    InputTooLongError,
     InvariantLabelError,
     LLMTimeoutError,
     PolicyCompilationError,
@@ -51,6 +52,7 @@ from pramanix.helpers.string_enum import StringEnumField
 from pramanix.identity import JWTIdentityLinker
 from pramanix.policy import Policy
 from pramanix.resolvers import ResolverRegistry
+from pramanix.translator.redundant import ConsensusStrictness
 
 __all__ = [
     # Phase 9 — Pillar 4: Adaptive circuit breaker
@@ -78,6 +80,8 @@ __all__ = [
     # Exceptions — translator (Phase 4)
     "ExtractionFailureError",
     "ExtractionMismatchError",
+    # Phase D-3 — input length guard
+    "InputTooLongError",
     # DSL
     "Field",
     "FieldTypeError",
@@ -119,4 +123,6 @@ __all__ = [
     "WorkerError",
     # Decorator
     "guard",
+    # Phase D-1 — Consensus strictness control
+    "ConsensusStrictness",
 ]

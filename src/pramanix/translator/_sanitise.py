@@ -34,6 +34,8 @@ import unicodedata
 from decimal import Decimal
 from typing import Any
 
+from pramanix.exceptions import InputTooLongError
+
 __all__ = [
     "injection_confidence_score",
     "sanitise_user_input",
@@ -115,10 +117,13 @@ def sanitise_user_input(
         warnings.append("unicode_normalised")
     text = normalised
 
-    # Step 2: Truncate
+    # Step 2: Reject oversized input (fail-loud — no silent data loss)
     if len(text) > max_length:
-        text = text[:max_length]
-        warnings.append(f"input_truncated_to_{max_length}_chars")
+        raise InputTooLongError(
+            actual=len(text),
+            limit=max_length,
+            truncated_preview=text[:100],
+        )
 
     # Step 3: Strip control characters
     cleaned = _CONTROL_RE.sub("", text)

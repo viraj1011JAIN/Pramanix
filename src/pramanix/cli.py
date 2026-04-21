@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""pramanix CLI — verify cryptographic decision proofs.
+"""pramanix CLI — verify cryptographic decision proofs and simulate policy checks.
 
 Usage:
     pramanix verify-proof <token> [--key KEY] [--json]
     pramanix verify-proof --stdin [--key KEY] [--json]
+    pramanix simulate --policy POLICY_FILE --intent INTENT_JSON [--state STATE_JSON] [--json]
+    pramanix simulate --policy POLICY_FILE --intent-file FILE [--json]
 
 Examples:
     pramanix verify-proof eyJhbGciOiJIUzI1NiJ9...
     echo "eyJ..." | pramanix verify-proof --stdin
     PRAMANIX_SIGNING_KEY=... pramanix verify-proof eyJ...
     pramanix verify-proof eyJ... --json | jq .decision_id
+    pramanix simulate --policy banking_policy.py --intent '{"amount": 500, "currency": "USD"}'
+    pramanix simulate --policy banking_policy.py --intent-file intent.json --json
 
 Exit codes:
-    0 — proof is valid
-    1 — proof is invalid or verification error
+    0 — proof valid / policy allows the request
+    1 — proof invalid / policy blocks the request / verification error
     2 — usage error (missing key, bad arguments)
 """
 from __future__ import annotations
@@ -57,6 +61,43 @@ def main() -> int:
     av.add_argument("--json", dest="as_json", action="store_true", help="Output results as JSON")
     av.add_argument("--fail-fast", action="store_true", help="Stop at first invalid record")
 
+    sim = sub.add_parser(
+        "simulate",
+        help="Simulate a policy decision against an intent dict (no LLM, no side-effects).",
+    )
+    sim.add_argument(
+        "--policy",
+        required=True,
+        metavar="POLICY_FILE",
+        help=(
+            "Path to a Python (.py) file that defines a Policy object.  "
+            "Use --policy-var to specify the variable name (default: 'policy')."
+        ),
+    )
+    _intent_grp = sim.add_mutually_exclusive_group(required=True)
+    _intent_grp.add_argument(
+        "--intent",
+        metavar="JSON",
+        help="Intent dict as a JSON string, e.g. '{\"amount\": 500}'.",
+    )
+    _intent_grp.add_argument(
+        "--intent-file",
+        metavar="FILE",
+        help="Path to a JSON file containing the intent dict.",
+    )
+    sim.add_argument(
+        "--state",
+        metavar="JSON",
+        help="Optional state dict as a JSON string passed to guard.verify().",
+    )
+    sim.add_argument(
+        "--policy-var",
+        default="policy",
+        metavar="VAR",
+        help="Name of the Policy variable in the Python file (default: 'policy').",
+    )
+    sim.add_argument("--json", dest="as_json", action="store_true", help="Output decision as JSON")
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -64,6 +105,9 @@ def main() -> int:
 
     if args.command == "audit":
         return _cmd_audit(args)
+
+    if args.command == "simulate":
+        return _cmd_simulate(args)
 
     parser.print_help()
     return 2
@@ -359,6 +403,120 @@ def _recompute_hash(record: dict[str, Any]) -> str:
         violated_invariants=record.get("violated_invariants") or [],
     )
     return hashlib.sha256(_canonical_bytes(canonical)).hexdigest()
+
+
+def _cmd_simulate(args: argparse.Namespace) -> int:
+    """Simulate a ``Guard.verify()`` call with a literal intent dict.
+
+    Loads a Policy from a Python source file, constructs a minimal Guard
+    (no translator, no circuit breaker, no signing), then calls
+    ``guard.verify(intent)`` with the provided intent dict.
+
+    This command is **side-effect free**: it never calls any LLM, never
+    writes to any audit log, and never modifies any external state.  It is
+    designed for local policy testing and CI pipelines.
+
+    Exit codes:
+        0 — policy ALLOWS the request (Decision.allowed == True)
+        1 — policy BLOCKS or errors
+        2 — usage error (bad arguments, file not found, import error)
+    """
+    import importlib.util
+    import json
+
+    # ── Load intent ───────────────────────────────────────────────────────────
+    if args.intent:
+        try:
+            intent: dict[str, Any] = json.loads(args.intent)
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: --intent is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+    else:
+        try:
+            with open(args.intent_file, encoding="utf-8") as f:
+                intent = json.load(f)
+        except FileNotFoundError:
+            print(f"ERROR: Intent file not found: {args.intent_file}", file=sys.stderr)
+            return 2
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: --intent-file is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+
+    if not isinstance(intent, dict):
+        print("ERROR: intent must be a JSON object (dict), not a list or scalar.", file=sys.stderr)
+        return 2
+
+    # ── Load state (optional) ─────────────────────────────────────────────────
+    state: dict[str, Any] = {}
+    if getattr(args, "state", None):
+        try:
+            state = json.loads(args.state)
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: --state is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(state, dict):
+            print("ERROR: --state must be a JSON object.", file=sys.stderr)
+            return 2
+
+    # ── Load policy from Python file ──────────────────────────────────────────
+    policy_path = args.policy
+    policy_var = getattr(args, "policy_var", "policy")
+
+    try:
+        spec = importlib.util.spec_from_file_location("_pramanix_sim_policy", policy_path)
+        if spec is None or spec.loader is None:
+            print(f"ERROR: Cannot load module spec from {policy_path}", file=sys.stderr)
+            return 2
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except FileNotFoundError:
+        print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
+        return 2
+
+    policy = getattr(module, policy_var, None)
+    if policy is None:
+        print(
+            f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
+            f"Use --policy-var to specify the correct name.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # ── Build guard and verify ────────────────────────────────────────────────
+    try:
+        from pramanix.guard import Guard
+        from pramanix.guard_config import GuardConfig
+
+        config = GuardConfig(execution_mode="sync")
+        guard_instance = Guard(policy=policy, config=config)
+        decision = guard_instance.verify(intent=intent, state=state)
+    except Exception as exc:
+        print(f"ERROR: Guard verification failed: {exc}", file=sys.stderr)
+        return 2
+
+    # ── Output ────────────────────────────────────────────────────────────────
+    if getattr(args, "as_json", False):
+        output: dict[str, Any] = {
+            "allowed": decision.allowed,
+            "status": decision.status,
+            "explanation": decision.explanation,
+            "violated_invariants": decision.violated_invariants,
+            "decision_id": decision.decision_id,
+        }
+        print(_json.dumps(output))
+    else:
+        verdict = "ALLOW" if decision.allowed else "BLOCK"
+        print(f"{verdict}  status={decision.status}")
+        if decision.explanation:
+            print(f"  explanation: {decision.explanation}")
+        if decision.violated_invariants:
+            print(f"  violated:    {decision.violated_invariants}")
+        print(f"  decision_id: {decision.decision_id}")
+
+    return 0 if decision.allowed else 1
 
 
 if __name__ == "__main__":

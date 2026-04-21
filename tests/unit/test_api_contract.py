@@ -109,6 +109,10 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Limitations overrides (v0.9.0)
         "PolicyAuditor",
         "StringEnumField",
+        # D-1: consensus strictness enum (v1.0.0)
+        "ConsensusStrictness",
+        # D-3: input size guard (v1.0.0)
+        "InputTooLongError",
         # Policy
         "Policy",
         # Resolvers
@@ -678,6 +682,12 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         "redact_violations",
         "expected_policy_hash",
         "injection_threshold",
+        # D-1: consensus strictness (v1.0.0)
+        "consensus_strictness",
+        # D-3: input size guard (v1.0.0)
+        "max_input_chars",
+        # D-4: custom injection scorer path (v1.0.0)
+        "injection_scorer_path",
     }
 )
 
@@ -702,6 +712,9 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     "redact_violations":        False,
     "expected_policy_hash":     None,
     "injection_threshold":      0.5,         # (*) injection confidence gate
+    "max_input_chars":          512,         # (*) input character cap
+    "injection_scorer_path":    None,
+    "consensus_strictness":     "semantic",
 }
 
 

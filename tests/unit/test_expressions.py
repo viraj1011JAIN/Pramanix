@@ -345,58 +345,6 @@ class TestConstraintExprBoolTrap:
             bool(c)
 
 
-# ── __pow__ ban ───────────────────────────────────────────────────────────────
-
-
-class TestExpressionNodePowBan:
-    """ExpressionNode.__pow__ and __rpow__ must raise PolicyCompilationError.
-
-    Z3's real/integer arithmetic does not support symbolic exponentiation.
-    Catching this at policy-definition time (not at solver runtime) gives
-    the developer an immediate, actionable error message.
-    """
-
-    def test_pow_raises_policy_compilation_error(self) -> None:
-        with pytest.raises(PolicyCompilationError):
-            _ = E(_balance) ** 2  # type: ignore[operator,unused-ignore]
-
-    def test_rpow_raises_policy_compilation_error(self) -> None:
-        with pytest.raises(PolicyCompilationError):
-            _ = 2 ** E(_balance)  # type: ignore[operator,unused-ignore]
-
-    def test_pow_error_message_mentions_exponentiation(self) -> None:
-        with pytest.raises(PolicyCompilationError, match="exponentiation"):
-            _ = E(_balance) ** 3  # type: ignore[operator,unused-ignore]
-
-    def test_pow_error_message_mentions_z3(self) -> None:
-        with pytest.raises(PolicyCompilationError, match="Z3"):
-            _ = E(_balance) ** 2  # type: ignore[operator,unused-ignore]
-
-    def test_pow_error_is_policy_compilation_error_subclass(self) -> None:
-        from pramanix.exceptions import PolicyError
-
-        with pytest.raises(PolicyError):
-            _ = E(_balance) ** 2  # type: ignore[operator,unused-ignore]
-
-    def test_rpow_error_message_mentions_exponentiation(self) -> None:
-        with pytest.raises(PolicyCompilationError, match="exponentiation"):
-            _ = 2 ** E(_count)  # type: ignore[operator,unused-ignore]
-
-    def test_pow_does_not_return_expression_node(self) -> None:
-        """Confirm no accidental fallthrough to a numeric result."""
-        try:
-            result = E(_balance) ** 2  # type: ignore[operator,unused-ignore]
-        except PolicyCompilationError:
-            pass  # expected
-        else:
-            pytest.fail(f"Expected PolicyCompilationError, got {result!r}")
-
-    @pytest.mark.parametrize("exponent", [0, 1, 2, 10, -1, 0.5])
-    def test_pow_banned_for_all_exponent_values(self, exponent: object) -> None:
-        with pytest.raises(PolicyCompilationError):
-            _ = E(_balance) ** exponent  # type: ignore[operator,unused-ignore]
-
-
 # ── is_in() helper ────────────────────────────────────────────────────────────
 
 

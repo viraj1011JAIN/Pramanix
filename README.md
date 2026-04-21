@@ -1,11 +1,12 @@
 # Pramanix
 
-![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-blue)
+![PyPI](https://img.shields.io/badge/PyPI-not%20yet%20published-lightgrey)
+![Python Version](https://img.shields.io/badge/python-3.13-blue)
 ![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
-![Version 0.9.0](https://img.shields.io/badge/Version-0.9.0--beta-orange)
+![Version 0.9.0-beta](https://img.shields.io/badge/Version-0.9.0--beta-blue)
 ![Tests 1924 passed](https://img.shields.io/badge/Tests-1924%20passed-brightgreen)
 ![Coverage 97%](https://img.shields.io/badge/Coverage-97%25-brightgreen)
-![Status Beta](https://img.shields.io/badge/Status-Beta%20%E2%80%94%20not%20on%20PyPI-yellow)
+![SLSA Level 3 Ready](https://img.shields.io/badge/SLSA-Level%203%20Ready-blueviolet)
 
 Safety guardrails for autonomous AI agents, backed by formal constraint verification.
 

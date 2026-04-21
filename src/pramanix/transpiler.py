@@ -41,9 +41,16 @@ from pramanix.expressions import (
     _BinOp,
     _BoolOp,
     _CmpOp,
+    _ContainsOp,
+    _EndsWithOp,
     _FieldRef,
     _InOp,
+    _LengthBetweenOp,
     _Literal,
+    _ModOp,
+    _PowOp,
+    _RegexMatchOp,
+    _StartsWithOp,
 )
 
 __all__: list[str] = []  # internal module — nothing re-exported via pramanix.*
@@ -308,6 +315,68 @@ def transpile(node: Any, ctx: z3.Context | None = None) -> z3.ExprRef:
             z_op = cast("z3.ArithRef", transpile(o, ctx))
             return cast("z3.ExprRef", z3.If(z_op >= 0, z_op, -z_op))
 
+        case _PowOp(base=b, exp=e):
+            # Lower x**n to repeated Z3 multiplication (n ≤ 4 is enforced in expressions.py).
+            z_base = cast("z3.ArithRef", transpile(b, ctx))
+            result: z3.ArithRef = z_base
+            for _ in range(e - 1):
+                result = cast("z3.ArithRef", result * z_base)
+            return cast("z3.ExprRef", result)
+
+        case _ModOp(dividend=d, divisor=v):
+            # Z3 modulo — only defined for Int sorts.
+            z_dividend = cast("z3.ArithRef", transpile(d, ctx))
+            # Integer literals are compiled as RealVal by default (_z3_lit).
+            # If the dividend is Int-sorted, coerce a plain integer literal
+            # divisor to IntVal so the sorts match.
+            if isinstance(v, _Literal) and isinstance(v.value, int) and not isinstance(v.value, bool):
+                z_divisor: z3.ArithRef = cast("z3.ArithRef", z3.IntVal(v.value, ctx))
+            else:
+                z_divisor = cast("z3.ArithRef", transpile(v, ctx))
+            try:
+                return cast("z3.ExprRef", z_dividend % z_divisor)
+            except z3.Z3Exception as exc:
+                raise TranspileError(
+                    "Modulo (%) is only supported for Int-sorted fields. "
+                    "Declare your Field with z3_type='Int'.  "
+                    f"Z3 error: {exc}"
+                ) from exc
+
+        case _StartsWithOp(operand=o, prefix=p):
+            z_str = transpile(o, ctx)
+            z_pre = cast("z3.SeqRef", z3.StringVal(p.value, ctx))
+            return cast("z3.ExprRef", z3.PrefixOf(z_pre, cast("z3.SeqRef", z_str)))
+
+        case _EndsWithOp(operand=o, suffix=s):
+            z_str = transpile(o, ctx)
+            z_suf = cast("z3.SeqRef", z3.StringVal(s.value, ctx))
+            return cast("z3.ExprRef", z3.SuffixOf(z_suf, cast("z3.SeqRef", z_str)))
+
+        case _ContainsOp(operand=o, substring=sub):
+            z_str = transpile(o, ctx)
+            z_sub = cast("z3.SeqRef", z3.StringVal(sub.value, ctx))
+            return cast("z3.ExprRef", z3.Contains(cast("z3.SeqRef", z_str), z_sub))
+
+        case _LengthBetweenOp(operand=o, lo=lo, hi=hi):
+            z_str = cast("z3.SeqRef", transpile(o, ctx))
+            z_len = cast("z3.ArithRef", z3.Length(z_str))
+            return cast(
+                "z3.ExprRef",
+                z3.And(z_len >= z3.IntVal(lo, ctx), z_len <= z3.IntVal(hi, ctx)),
+            )
+
+        case _RegexMatchOp(operand=o, pattern=pat):
+            z_str = cast("z3.SeqRef", transpile(o, ctx))
+            try:
+                z_re = cast("z3.ReRef", z3.Re(pat))
+                return cast("z3.ExprRef", z3.InRe(z_str, z_re))
+            except z3.Z3Exception as exc:
+                raise TranspileError(
+                    f"matches_re() pattern {pat!r} is not supported by Z3's sequence "
+                    f"regex theory (no backreferences or lookahead/lookbehind allowed). "
+                    f"Z3 error: {exc}"
+                ) from exc
+
         case _:
             raise TranspileError(f"Unknown DSL AST node type: {type(node)!r}")
 
@@ -339,6 +408,12 @@ def collect_fields(node: Any) -> dict[str, Field]:
             # Only the left operand (the field being tested) contributes fields.
             return collect_fields(l)
         case _AbsOp(operand=o):
+            return collect_fields(o)
+        case _PowOp(base=b):
+            return collect_fields(b)
+        case _ModOp(dividend=d, divisor=v):
+            return {**collect_fields(d), **collect_fields(v)}
+        case _StartsWithOp(operand=o) | _EndsWithOp(operand=o) | _ContainsOp(operand=o) | _LengthBetweenOp(operand=o) | _RegexMatchOp(operand=o):
             return collect_fields(o)
         case _:
             return {}
