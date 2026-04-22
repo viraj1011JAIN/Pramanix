@@ -439,11 +439,36 @@ class Policy:
 
     @classmethod
     def meta_version(cls) -> str | None:
-        """Return ``Meta.version`` if declared, otherwise ``None``."""
+        """Return ``Meta.version`` if declared, otherwise ``None``.
+
+        When ``Meta.semver`` is also declared, the semver string
+        representation is returned (e.g. ``"1.2.0"``).  Plain
+        ``Meta.version`` strings are returned as-is for backward
+        compatibility.
+        """
+        semver = cls.meta_semver()
+        if semver is not None:
+            return "{}.{}.{}".format(*semver)
         meta = vars(cls).get("Meta")
         if meta is None:
             return None
         return getattr(meta, "version", None)
+
+    @classmethod
+    def meta_semver(cls) -> tuple[int, int, int] | None:
+        """Return ``Meta.semver`` if declared, otherwise ``None``.
+
+        ``Meta.semver`` must be a 3-tuple of non-negative ints:
+        ``(major, minor, patch)``.  Validation happens at
+        :class:`~pramanix.guard.Guard` construction time.
+
+        Returns:
+            The semver tuple or ``None`` if not declared.
+        """
+        meta = vars(cls).get("Meta")
+        if meta is None:
+            return None
+        return getattr(meta, "semver", None)
 
     @classmethod
     def meta_intent_model(cls) -> type | None:

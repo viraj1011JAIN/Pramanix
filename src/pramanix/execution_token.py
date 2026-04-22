@@ -77,7 +77,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pramanix.decision import Decision
 
-__all__ = ["ExecutionToken", "ExecutionTokenSigner", "ExecutionTokenVerifier"]
+__all__ = [
+    "ExecutionToken",
+    "ExecutionTokenSigner",
+    "ExecutionTokenVerifier",
+    "InMemoryExecutionTokenVerifier",
+    "SQLiteExecutionTokenVerifier",
+]
 
 
 # ── Token dataclass ───────────────────────────────────────────────────────────
@@ -376,6 +382,180 @@ class ExecutionTokenVerifier:
             before = len(self._consumed)
             self._evict_expired()
             return before - len(self._consumed)
+
+
+# ── E-1: InMemoryExecutionTokenVerifier ───────────────────────────────────────
+
+
+class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
+    """Explicit in-memory single-use token verifier for single-process deployments.
+
+    Drop-in replacement for :class:`ExecutionTokenVerifier` with an explicit
+    name that signals intent: this backend is *not* safe for multi-process or
+    multi-server deployments.  For distributed enforcement, use
+    :class:`RedisExecutionTokenVerifier` or :class:`SQLiteExecutionTokenVerifier`.
+
+    Identical to :class:`ExecutionTokenVerifier` in all respects — provided
+    as a named variant so that code using the explicit backend name is
+    searchable and the intent is self-documenting.
+
+    Args:
+        secret_key: Must match the key used by :class:`ExecutionTokenSigner`.
+    """
+
+    # Inherit all methods from ExecutionTokenVerifier unchanged.
+
+
+# ── E-1: SQLiteExecutionTokenVerifier ─────────────────────────────────────────
+
+
+class SQLiteExecutionTokenVerifier:
+    """SQLite-backed single-use token verifier for small production deployments.
+
+    Uses WAL-mode SQLite so that concurrent reads do not block writes.  A
+    UNIQUE constraint on ``token_id`` provides atomic single-use enforcement —
+    the second ``consume()`` call for the same token_id will violate the
+    constraint and return ``False`` without any race window.
+
+    Thread-safe: multiple threads in the same process can call ``consume()``
+    concurrently.  Not suitable for multi-process or multi-server deployments
+    where processes cannot share the same SQLite file on the same host.
+
+    Args:
+        secret_key: Must match the key used by :class:`ExecutionTokenSigner`.
+        db_path:    Path to the SQLite database file.  Use ``':memory:'`` for
+                    testing (not thread-safe across Python threads — prefer a
+                    real file path in multi-threaded tests).
+
+    Example::
+
+        verifier = SQLiteExecutionTokenVerifier(
+            secret_key=secret, db_path="/var/lib/pramanix/tokens.db"
+        )
+        if verifier.consume(token):
+            execute_action(token.intent_dump)
+        else:
+            abort("Token invalid, expired, or already used.")
+    """
+
+    def __init__(self, secret_key: bytes, db_path: str = ":memory:") -> None:
+        import sqlite3
+
+        if len(secret_key) < 16:
+            raise ValueError("secret_key must be at least 16 bytes.")
+        self._key = secret_key
+        self._db_path = db_path
+        # check_same_thread=False: we serialise access with a threading.Lock below.
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._lock = threading.Lock()
+        self._init_db()
+
+    def _init_db(self) -> None:
+        import sqlite3
+
+        with self._lock:
+            cur = self._conn.cursor()
+            # WAL mode for better concurrent read performance.
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS consumed_tokens ("
+                "  token_id  TEXT NOT NULL PRIMARY KEY,"
+                "  expires_at REAL NOT NULL"
+                ")"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_expires ON consumed_tokens(expires_at)"
+            )
+            self._conn.commit()
+
+    def _evict_expired(self) -> None:
+        """Delete expired rows.  Must be called under self._lock."""
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM consumed_tokens WHERE expires_at < ?", (time.time(),))
+        self._conn.commit()
+
+    def consume(
+        self,
+        token: ExecutionToken,
+        *,
+        expected_state_version: str | None = None,
+    ) -> bool:
+        """Verify and single-use-consume a token.
+
+        Returns ``True`` iff all four checks pass:
+        1. HMAC signature is valid.
+        2. Token has not expired.
+        3. ``expected_state_version`` matches (when provided).
+        4. Token has not been consumed before (UNIQUE constraint).
+        """
+        import sqlite3
+
+        # ── 1. Signature check ────────────────────────────────────────────────
+        unsigned = ExecutionToken(
+            decision_id=token.decision_id,
+            allowed=token.allowed,
+            intent_dump=token.intent_dump,
+            policy_hash=token.policy_hash,
+            expires_at=token.expires_at,
+            token_id=token.token_id,
+            signature="",
+            state_version=token.state_version,
+        )
+        expected_sig = hmac.new(self._key, _token_body(unsigned), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(token.signature, expected_sig):
+            return False
+
+        # ── 2. Expiry check ───────────────────────────────────────────────────
+        if token.is_expired():
+            return False
+
+        # ── 3. State version check ────────────────────────────────────────────
+        if (
+            token.state_version is not None or expected_state_version is not None
+        ) and token.state_version != expected_state_version:
+            return False
+
+        # ── 4. Single-use (atomic INSERT — UNIQUE constraint) ─────────────────
+        with self._lock:
+            self._evict_expired()
+            try:
+                cur = self._conn.cursor()
+                cur.execute(
+                    "INSERT INTO consumed_tokens (token_id, expires_at) VALUES (?, ?)",
+                    (token.token_id, token.expires_at),
+                )
+                self._conn.commit()
+            except sqlite3.IntegrityError:
+                # UNIQUE constraint violation — token already consumed.
+                return False
+
+        return True
+
+    def consumed_count(self) -> int:
+        """Return the number of non-expired token IDs in the database."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM consumed_tokens WHERE expires_at >= ?",
+                (time.time(),),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+    def evict_expired(self) -> int:
+        """Force eviction of expired entries.  Returns the count removed."""
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM consumed_tokens WHERE expires_at < ?", (time.time(),))
+            row = cur.fetchone()
+            count = row[0] if row else 0
+            self._evict_expired()
+            return count
+
+    def close(self) -> None:
+        """Close the underlying SQLite connection."""
+        with self._lock:
+            self._conn.close()
 
 
 # ── Redis-backed distributed verifier ─────────────────────────────────────────

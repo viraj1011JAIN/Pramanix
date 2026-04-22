@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix — slim Debian-based production image
+#
+# WHY NOT ALPINE?
+# ---------------
+# z3-solver ships glibc-compiled wheels. Alpine Linux uses musl libc, which
+# causes segfaults and 3-10x latency regressions with z3. Pramanix enforces
+# this at runtime via a startup check that raises ConfigurationError on musl.
+# Use this image (python:3.13-slim-bookworm) instead.
+#
+# Build:
+#   docker build -f Dockerfile.slim -t pramanix:slim .
+#
+# Run:
+#   docker run --rm pramanix:slim python -c "import pramanix; print('OK')"
+
+FROM python:3.13-slim-bookworm
+
+WORKDIR /app
+
+# Install build deps for any compiled extensions (not z3 — that uses pre-built wheels)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml ./
+COPY src/ ./src/
+
+RUN pip install --no-cache-dir -e ".[all]"
+
+# Verify z3 works and musl check passes cleanly
+RUN python -c "from pramanix import Guard; print('Pramanix OK')"
+
+CMD ["python", "-m", "pramanix"]

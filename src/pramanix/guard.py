@@ -107,6 +107,7 @@ from pramanix.guard_pipeline import (
     _fmt,
     _semantic_post_consensus_check,
 )
+from pramanix._platform import check_platform
 from pramanix.helpers.serialization import flatten_model
 from pramanix.solver import _SolveResult, solve
 from pramanix.validator import validate_intent, validate_state
@@ -116,6 +117,20 @@ if TYPE_CHECKING:
     from pramanix.policy import Policy
 
 __all__ = ["Guard", "GuardConfig"]
+
+# C-1: Fail fast on musl libc (Alpine). Runs once at module import time.
+check_platform()
+
+
+def _Guard_is_picklable(obj: Any) -> bool:
+    """Return True if *obj* can be round-tripped through pickle."""
+    import pickle as _p
+
+    try:
+        _p.dumps(obj)
+        return True
+    except Exception:
+        return False
 
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
@@ -159,6 +174,8 @@ class Guard:
         self._state_model: type[BaseModel] | None = (  # type: ignore[assignment,unused-ignore]
             policy.meta_state_model()
         )
+        # B-4: validate semver first so malformed tuples raise before meta_version() formats them.
+        self._policy_semver: tuple[int, int, int] | None = self._validate_semver(policy)
         self._policy_version: str | None = policy.meta_version()
 
         # ── Phase 12: Policy fingerprinting ───────────────────────────────────
@@ -268,6 +285,28 @@ class Guard:
                 violated_invariants=(),
             )
         return decision
+
+    @staticmethod
+    def _validate_semver(policy: type) -> "tuple[int, int, int] | None":
+        """Validate Meta.semver and return it, or None if not declared.
+
+        Raises:
+            ConfigurationError: If Meta.semver is declared but malformed.
+        """
+        semver = policy.meta_semver()
+        if semver is None:
+            return None
+        if (
+            not isinstance(semver, tuple)
+            or len(semver) != 3
+            or not all(isinstance(v, int) and v >= 0 for v in semver)
+        ):
+            raise ConfigurationError(
+                f"Policy.Meta.semver in '{policy.__name__}' must be a 3-tuple of "
+                f"non-negative ints, e.g. (1, 2, 0). Got {semver!r}. "
+                "Fix Meta.semver or use Meta.version for plain-string versioning."
+            )
+        return semver  # type: ignore[return-value]
 
     def _emit_to_sinks(self, decision: Decision) -> None:
         """Emit decision to all configured audit sinks. Never raises."""
@@ -409,7 +448,39 @@ class Guard:
                     )
 
                     # ── Step 4: State version check ───────────────────────────────────
-                    if self._policy_version is not None:
+                    if self._policy_semver is not None:
+                        # B-4: Semver comparison — parse state_version as X.Y.Z
+                        actual_version = state_values.get("state_version")
+                        if actual_version is None:
+                            _metric_status = "validation_failure"
+                            return Decision.validation_failure(
+                                reason=(
+                                    "state_version is missing from state data. "
+                                    f"Policy '{self._policy.__name__}' requires "
+                                    f"semver='{'{}.{}.{}'.format(*self._policy_semver)}'."
+                                )
+                            )
+                        try:
+                            parts = tuple(int(p) for p in str(actual_version).split("."))
+                            if len(parts) != 3:
+                                raise ValueError
+                        except (ValueError, AttributeError):
+                            _metric_status = "validation_failure"
+                            return Decision.validation_failure(
+                                reason=(
+                                    f"state_version {actual_version!r} is not a valid "
+                                    "semver string (expected 'X.Y.Z'). "
+                                    f"Policy '{self._policy.__name__}' requires "
+                                    f"semver='{'{}.{}.{}'.format(*self._policy_semver)}'."
+                                )
+                            )
+                        if parts != self._policy_semver:
+                            _metric_status = "stale_state"
+                            return Decision.stale_state(
+                                expected="{}.{}.{}".format(*self._policy_semver),
+                                actual=str(actual_version),
+                            )
+                    elif self._policy_version is not None:
                         actual_version = state_values.get("state_version")
                         if actual_version is None:
                             _metric_status = "validation_failure"
@@ -734,6 +805,33 @@ class Guard:
                 _worker_solve_sealed,
             )
 
+            # C-3: Pre-flight picklability check. The values dict crosses the
+            # process boundary via pickle. Catch non-picklable objects here so
+            # the caller gets a clean Decision instead of a cryptic PicklingError.
+            import pickle as _pickle
+
+            try:
+                _pickle.dumps(values)
+            except Exception as _pickle_exc:
+                _non_picklable = [
+                    k for k, v in values.items()
+                    if not _Guard_is_picklable(v)
+                ]
+                return await _timed(
+                    self._sign_decision(
+                        Decision.error(
+                            reason=(
+                                f"unpicklable_intent: values dict cannot be pickled "
+                                f"for process-mode dispatch ({type(_pickle_exc).__name__}: "
+                                f"{_pickle_exc}). "
+                                f"Non-picklable fields: {_non_picklable}. "
+                                "Call model_dump() on your intent/state before passing "
+                                "to verify_async()."
+                            )
+                        )
+                    )
+                )
+
             loop = asyncio.get_running_loop()
             # _worker_solve_sealed is a module-level free function — picklable.
             # seal_key is plain bytes — picklable.
@@ -902,3 +1000,41 @@ class Guard:
     def config(self) -> GuardConfig:
         """The active :class:`GuardConfig`."""
         return self._config
+
+    # ── C-3: Pickling diagnostics ────────────────────────────────────────────────
+
+    def assert_process_safe(
+        self,
+        intent: dict[str, Any] | BaseModel,
+        state: dict[str, Any] | BaseModel | None = None,
+    ) -> None:
+        """Raise ValueError listing every non-picklable field in *intent* (and *state*).
+
+        Call this during development/testing to diagnose pickling issues before
+        using ``execution_mode='async-process'`` in production.  For clean
+        inputs this is a no-op.
+
+        Args:
+            intent: Intent dict or Pydantic model.
+            state:  Optional state dict or Pydantic model.
+
+        Raises:
+            ValueError: If any field value cannot be pickled, with a message
+                        listing the offending field names.
+        """
+        values: dict[str, Any] = (
+            flatten_model(intent) if isinstance(intent, BaseModel) else dict(intent)
+        )
+        if state is not None:
+            state_vals: dict[str, Any] = (
+                flatten_model(state) if isinstance(state, BaseModel) else dict(state)
+            )
+            values = {**values, **state_vals}
+
+        bad: list[str] = [k for k, v in values.items() if not _Guard_is_picklable(v)]
+        if bad:
+            raise ValueError(
+                f"assert_process_safe: the following fields cannot be pickled and "
+                f"will cause process-mode dispatch to fail: {bad}. "
+                "Call model_dump() on your intent/state before passing to verify_async()."
+            )

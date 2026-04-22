@@ -11,7 +11,7 @@ __version__ = "1.0.0"
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
-from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor
+from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, MerkleArchiver, PersistentMerkleAnchor
 from pramanix.audit_sink import AuditSink, InMemoryAuditSink, StdoutAuditSink
 from pramanix.circuit_breaker import (
     AdaptiveCircuitBreaker,
@@ -48,7 +48,9 @@ from pramanix.execution_token import (
     ExecutionToken,
     ExecutionTokenSigner,
     ExecutionTokenVerifier,
+    InMemoryExecutionTokenVerifier,
     RedisExecutionTokenVerifier,
+    SQLiteExecutionTokenVerifier,
 )
 from pramanix.expressions import (
     ArrayField,
@@ -71,6 +73,7 @@ from pramanix.key_provider import (
     KeyProvider,
     PemKeyProvider,
 )
+from pramanix.migration import PolicyMigration
 from pramanix.policy import Policy, invariant_mixin
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.redundant import ConsensusStrictness
@@ -117,6 +120,9 @@ __all__ = [
     "ExecutionToken",
     "ExecutionTokenSigner",
     "ExecutionTokenVerifier",
+    # E-1: Redis-free token backends
+    "InMemoryExecutionTokenVerifier",
+    "SQLiteExecutionTokenVerifier",
     # Exceptions — translator (Phase 4)
     "ExtractionFailureError",
     "ExtractionMismatchError",
@@ -137,10 +143,13 @@ __all__ = [
     "JWTIdentityLinker",
     "LLMTimeoutError",
     "MerkleAnchor",
+    # E-2: Merkle pruning and archival
+    "MerkleArchiver",
     # Phase 12 — Hardening: persistent Merkle anchoring
     "PersistentMerkleAnchor",
     # Policy
     "Policy",
+    "PolicyMigration",
     "invariant_mixin",
     "PolicyCompilationError",
     "PolicyError",

@@ -98,6 +98,31 @@ def main() -> int:
     )
     sim.add_argument("--json", dest="as_json", action="store_true", help="Output decision as JSON")
 
+    # B-4: policy migrate subcommand
+    pm = sub.add_parser(
+        "policy",
+        help="Policy management tools (semver migration, schema validation).",
+    )
+    pm_sub = pm.add_subparsers(dest="policy_command")
+    mig = pm_sub.add_parser(
+        "migrate",
+        help="Apply a PolicyMigration spec to a state JSON file.",
+    )
+    mig.add_argument("--state", required=True, metavar="JSON_FILE",
+                     help="Path to the state JSON file to migrate.")
+    mig.add_argument("--from-version", required=True, metavar="X.Y.Z",
+                     help="Expected current semver of the state (e.g. 1.0.0).")
+    mig.add_argument("--to-version", required=True, metavar="X.Y.Z",
+                     help="Target semver after migration (e.g. 2.0.0).")
+    mig.add_argument("--rename", action="append", default=[], metavar="OLD=NEW",
+                     help="Rename a field: --rename old_name=new_name (repeatable).")
+    mig.add_argument("--remove", action="append", default=[], metavar="FIELD",
+                     help="Remove a field: --remove field_name (repeatable).")
+    mig.add_argument("--output", metavar="JSON_FILE",
+                     help="Write migrated state to this file (default: stdout).")
+    mig.add_argument("--json", dest="as_json", action="store_true",
+                     help="Output migrated state as JSON (default when --output not set).")
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -108,6 +133,9 @@ def main() -> int:
 
     if args.command == "simulate":
         return _cmd_simulate(args)
+
+    if args.command == "policy":
+        return _cmd_policy(args)
 
     parser.print_help()
     return 2
@@ -517,6 +545,91 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         print(f"  decision_id: {decision.decision_id}")
 
     return 0 if decision.allowed else 1
+
+
+def _cmd_policy(args: argparse.Namespace) -> int:
+    """Handle the 'policy' subcommand group."""
+    if getattr(args, "policy_command", None) == "migrate":
+        return _cmd_policy_migrate(args)
+    # No subcommand given — print help.
+    print("Usage: pramanix policy <migrate>", file=sys.stderr)
+    return 2
+
+
+def _cmd_policy_migrate(args: argparse.Namespace) -> int:
+    """Apply a PolicyMigration to a state JSON file (B-4)."""
+    import json as _json_mod
+    import pathlib
+
+    from pramanix.migration import PolicyMigration
+
+    # Parse versions
+    def _parse_semver(s: str, flag: str) -> tuple[int, int, int]:
+        try:
+            parts = tuple(int(p) for p in s.strip().split("."))
+            if len(parts) != 3:
+                raise ValueError
+            return parts  # type: ignore[return-value]
+        except ValueError:
+            print(
+                f"ERROR: {flag} must be a semver string like '1.2.0', got {s!r}.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+
+    from_ver = _parse_semver(args.from_version, "--from-version")
+    to_ver = _parse_semver(args.to_version, "--to-version")
+
+    # Parse field renames
+    renames: dict[str, str] = {}
+    for rename_spec in (args.rename or []):
+        if "=" not in rename_spec:
+            print(
+                f"ERROR: --rename must be OLD=NEW, got {rename_spec!r}.",
+                file=sys.stderr,
+            )
+            return 2
+        old, new = rename_spec.split("=", 1)
+        renames[old.strip()] = new.strip()
+
+    removed = [f.strip() for f in (args.remove or [])]
+
+    # Load state
+    try:
+        state_path = pathlib.Path(args.state)
+        state = _json_mod.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print(f"ERROR: State file not found: {args.state}", file=sys.stderr)
+        return 2
+    except _json_mod.JSONDecodeError as exc:
+        print(f"ERROR: Invalid JSON in state file: {exc}", file=sys.stderr)
+        return 2
+
+    migration = PolicyMigration(
+        from_version=from_ver,
+        to_version=to_ver,
+        field_renames=renames,
+        removed_fields=removed,
+    )
+
+    if not migration.can_migrate(state):
+        print(
+            f"ERROR: state_version {state.get('state_version')!r} does not match "
+            f"--from-version {args.from_version!r}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    migrated = migration.migrate(state)
+    output_json = _json_mod.dumps(migrated, indent=2, default=str)
+
+    if args.output:
+        pathlib.Path(args.output).write_text(output_json + "\n", encoding="utf-8")
+        print(f"Migrated state written to {args.output}")
+    else:
+        print(output_json)
+
+    return 0
 
 
 if __name__ == "__main__":
