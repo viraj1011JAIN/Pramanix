@@ -39,6 +39,10 @@ __all__ = [
     "PramanixQueryEngineTool",
     # AutoGen
     "PramanixToolCallback",
+    # CrewAI (Phase F-1)
+    "PramanixCrewAITool",
+    # DSPy (Phase F-1)
+    "PramanixGuardedModule",
     "pramanix_route",
     "wrap_tools",
 ]
@@ -47,6 +51,8 @@ _FASTAPI_NAMES = {"PramanixMiddleware", "pramanix_route"}
 _LANGCHAIN_NAMES = {"PramanixGuardedTool", "wrap_tools"}
 _LLAMA_NAMES = {"PramanixFunctionTool", "PramanixQueryEngineTool"}
 _AUTOGEN_NAMES = {"PramanixToolCallback"}
+_CREWAI_NAMES = {"PramanixCrewAITool"}
+_DSPY_NAMES = {"PramanixGuardedModule"}
 
 
 def __getattr__(name: str) -> object:
@@ -64,6 +70,14 @@ def __getattr__(name: str) -> object:
         return getattr(_m, name)
     if name in _AUTOGEN_NAMES:
         from pramanix.integrations import autogen as _m  # type: ignore[no-redef]
+
+        return getattr(_m, name)
+    if name in _CREWAI_NAMES:
+        from pramanix.integrations import crewai as _m  # type: ignore[no-redef]
+
+        return getattr(_m, name)
+    if name in _DSPY_NAMES:
+        from pramanix.integrations import dspy as _m  # type: ignore[no-redef]
 
         return getattr(_m, name)
     raise AttributeError(f"module 'pramanix.integrations' has no attribute {name!r}")

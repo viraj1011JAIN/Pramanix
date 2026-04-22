@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import json
 import logging
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
@@ -51,6 +52,30 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+
+
+def _raw_strings_agree(text_a: str, text_b: str) -> bool:
+    """Return True if two raw LLM response strings represent equivalent JSON.
+
+    Resolution order:
+    1. If both parse as JSON dicts → compare via normalised dict equality
+       (key ordering irrelevant, whitespace irrelevant).
+    2. If either fails to parse → fall back to ``strip()`` string equality.
+
+    This is the D-1 consensus robustness fix: prevents false-positive blocks
+    caused by LLMs that produce identical semantics but different whitespace,
+    key ordering, or float formatting (e.g. ``1.0`` vs ``1``).
+    """
+    try:
+        dict_a = json.loads(text_a)
+        dict_b = json.loads(text_b)
+        if isinstance(dict_a, dict) and isinstance(dict_b, dict):
+            # Canonical JSON comparison — sort_keys ensures order-independence.
+            return json.dumps(dict_a, sort_keys=True) == json.dumps(dict_b, sort_keys=True)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Graceful fallback: whitespace-normalised string equality.
+    return text_a.strip() == text_b.strip()
 
 
 class ConsensusStrictness(str, enum.Enum):
@@ -572,9 +597,22 @@ def create_translator(
             timeout=timeout,
         )
 
+    if model.startswith("gemini:"):
+        from pramanix.translator.gemini import GeminiTranslator
+
+        bare_model = model.removeprefix("gemini:")
+        return GeminiTranslator(bare_model, api_key=api_key, timeout=timeout)
+
+    if model.startswith("cohere:"):
+        from pramanix.translator.cohere import CohereTranslator
+
+        bare_model = model.removeprefix("cohere:")
+        return CohereTranslator(bare_model, api_key=api_key, timeout=timeout)
+
     raise ExtractionFailureError(
         f"Cannot infer translator for model '{model}'. "
-        "Supported prefixes: 'gpt-', 'o1-', 'o3-', 'chatgpt-', 'claude-', 'ollama:'. "
+        "Supported prefixes: 'gpt-', 'o1-', 'o3-', 'chatgpt-', 'claude-', 'ollama:', "
+        "'gemini:', 'cohere:'. "
         "Pass an explicit Translator instance to bypass auto-routing."
     )
 

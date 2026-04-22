@@ -339,6 +339,59 @@ class Policy:
                 )
             seen.add(inv.label)
 
+    # ── G-3: JSON Schema export ───────────────────────────────────────────────
+
+    @classmethod
+    def export_json_schema(cls) -> "dict[str, Any]":
+        """Export a JSON Schema draft-07 representation of this policy's fields.
+
+        Returns:
+            A ``dict`` that is a valid JSON Schema (draft-07) document
+            describing all declared fields, their JSON types, and the title
+            of the policy class.
+
+        Example::
+
+            schema = TransferPolicy.export_json_schema()
+            # {
+            #   "$schema": "http://json-schema.org/draft-07/schema#",
+            #   "title": "TransferPolicy",
+            #   "type": "object",
+            #   "properties": {
+            #       "amount": {"type": "number"},
+            #       "is_frozen": {"type": "boolean"},
+            #   },
+            #   "required": ["amount", "is_frozen"],
+            #   "additionalProperties": False,
+            # }
+        """
+        from decimal import Decimal as _Decimal
+
+        _TYPE_MAP: "dict[type, str]" = {
+            int: "integer",
+            float: "number",
+            str: "string",
+            bool: "boolean",
+            _Decimal: "number",
+        }
+
+        properties: "dict[str, Any]" = {}
+        required: "list[str]" = []
+
+        for field_name, field in cls.fields().items():
+            json_type = _TYPE_MAP.get(field.python_type, "string")
+            properties[field_name] = {"type": json_type}
+            required.append(field_name)
+
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": cls.__name__,
+            "type": "object",
+            "properties": properties,
+            "required": sorted(required),
+            "additionalProperties": False,
+        }
+
     # ── B-2: Dynamic policy factory ──────────────────────────────────────────
 
     @classmethod
