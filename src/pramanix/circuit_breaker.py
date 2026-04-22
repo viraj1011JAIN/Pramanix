@@ -553,3 +553,177 @@ class DistributedCircuitBreaker:
                 "Aggregate replica state indicates Z3 solver pressure. Request blocked."
             )
         )
+
+
+# ── C-5: Redis distributed backend ───────────────────────────────────────────
+
+
+class RedisDistributedBackend:
+    """Distributed state backend using ``redis.asyncio``.
+
+    All replicas pointing at the same Redis instance and namespace will share
+    circuit-breaker state.  The aggregation rule is conservative: the most
+    severe state stored in Redis wins (ISOLATED > OPEN > HALF_OPEN > CLOSED).
+
+    A per-namespace Redis Hash is used.  Each entry stores the four
+    :class:`_DistributedState` fields as string-encoded hash fields.
+    The key TTL prevents stale OPEN entries from locking out a recovered
+    system indefinitely.
+
+    Requires: ``pip install 'pramanix[redis]'`` (``redis[asyncio]``).
+
+    Args:
+        redis_url:            Redis connection URL (e.g.
+                              ``"redis://localhost:6379/0"``).
+        sync_interval_seconds: Minimum interval between Redis reads in
+                               :meth:`get_state`.  Default: 1.0 s.
+        key_prefix:           Redis key prefix for all namespaces.
+                              Default: ``"pramanix:cb:"``.
+        ttl_seconds:          TTL for each namespace Hash key.  Default: 300 s.
+
+    Raises:
+        ConfigurationError: If ``redis[asyncio]`` is not installed.
+    """
+
+    # Conservative severity ordering (higher = worse = takes priority).
+    _SEVERITY: dict[str, int] = {
+        CircuitState.CLOSED.value: 0,
+        CircuitState.HALF_OPEN.value: 1,
+        CircuitState.OPEN.value: 2,
+        CircuitState.ISOLATED.value: 3,
+    }
+
+    def __init__(
+        self,
+        redis_url: str,
+        *,
+        sync_interval_seconds: float = 1.0,
+        key_prefix: str = "pramanix:cb:",
+        ttl_seconds: int = 300,
+    ) -> None:
+        try:
+            import redis.asyncio  # noqa: F401
+        except ImportError as exc:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "redis[asyncio] is required for RedisDistributedBackend. "
+                "Install it with: pip install 'pramanix[redis]'"
+            ) from exc
+
+        self._redis_url = redis_url
+        self._sync_interval = sync_interval_seconds
+        self._prefix = key_prefix
+        self._ttl = ttl_seconds
+        self._client: Any = None
+
+    async def _get_client(self) -> Any:
+        """Lazily create and cache the async Redis client."""
+        if self._client is None:
+            import redis.asyncio as aioredis  # type: ignore[import-untyped]
+
+            self._client = aioredis.from_url(self._redis_url, decode_responses=True)
+        return self._client
+
+    def _key(self, namespace: str) -> str:
+        return f"{self._prefix}{namespace}"
+
+    async def get_state(self, namespace: str) -> _DistributedState:
+        """Fetch state from Redis for *namespace*.
+
+        Returns a default :class:`_DistributedState` (CLOSED) if the key does
+        not exist yet.
+        """
+        try:
+            client = await self._get_client()
+            data: dict[str, str] = await client.hgetall(self._key(namespace))
+        except Exception:
+            # If Redis is unavailable, fail open (return CLOSED).
+            return _DistributedState()
+
+        if not data:
+            return _DistributedState()
+
+        try:
+            return _DistributedState(
+                circuit_state=data.get("circuit_state", CircuitState.CLOSED.value),
+                failure_count=int(data.get("failure_count", 0)),
+                last_failure_time=float(data.get("last_failure_time", 0.0)),
+                open_episode_count=int(data.get("open_episode_count", 0)),
+            )
+        except (ValueError, KeyError):
+            return _DistributedState()
+
+    async def set_state(self, namespace: str, state: _DistributedState) -> None:
+        """Merge *state* into the Redis Hash for *namespace* (conservative merge).
+
+        Conservative merge means:
+        - ``circuit_state`` escalates to the most severe value.
+        - ``failure_count`` is summed with the existing count.
+        - ``last_failure_time`` takes the maximum.
+        - ``open_episode_count`` takes the maximum.
+        """
+        try:
+            client = await self._get_client()
+            key = self._key(namespace)
+
+            # Fetch existing state for conservative merge.
+            existing = await self.get_state(namespace)
+
+            # Severity-wins merge for circuit_state.
+            new_severity = self._SEVERITY.get(state.circuit_state, 0)
+            existing_severity = self._SEVERITY.get(existing.circuit_state, 0)
+            merged_circuit_state = (
+                state.circuit_state
+                if new_severity >= existing_severity
+                else existing.circuit_state
+            )
+
+            merged = {
+                "circuit_state": merged_circuit_state,
+                "failure_count": str(existing.failure_count + state.failure_count),
+                "last_failure_time": str(
+                    max(existing.last_failure_time, state.last_failure_time)
+                ),
+                "open_episode_count": str(
+                    max(existing.open_episode_count, state.open_episode_count)
+                ),
+            }
+
+            # Use a pipeline for atomicity: HSET + EXPIRE in one round-trip.
+            async with client.pipeline(transaction=True) as pipe:
+                await pipe.hset(key, mapping=merged)
+                await pipe.expire(key, self._ttl)
+                await pipe.execute()
+        except Exception:
+            # State-sync failures are non-fatal — local state still governs.
+            pass
+
+    def clear(self, namespace: str | None = None) -> None:
+        """Synchronously clear Redis state.
+
+        This is a best-effort fire-and-forget operation used in tests.
+        For production teardown, prefer an async variant.
+        """
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        loop.run_until_complete(self._async_clear(namespace))
+
+    async def _async_clear(self, namespace: str | None) -> None:
+        try:
+            client = await self._get_client()
+            if namespace is None:
+                # Delete all keys matching the prefix pattern.
+                keys = await client.keys(f"{self._prefix}*")
+                if keys:
+                    await client.delete(*keys)
+            else:
+                await client.delete(self._key(namespace))
+        except Exception:
+            pass

@@ -88,7 +88,7 @@ from typing import Any, Callable, cast
 from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyCompilationError, PolicyError
 from pramanix.expressions import ConstraintExpr, Field, Z3Type
 
-__all__ = ["Policy", "invariant_mixin"]
+__all__ = ["Policy", "invariant_mixin", "model_dump_z3"]
 
 # Type alias for a mixin function: receives the policy's field dict and returns
 # one or more ConstraintExpr objects.
@@ -538,3 +538,99 @@ class Policy:
         if meta is None:
             return None
         return getattr(meta, "state_model", None)
+
+
+# ── B-1: Nested Pydantic model_dump_z3 ───────────────────────────────────────
+
+
+def model_dump_z3(
+    model: "BaseModel",
+    prefix: str = "",
+    *,
+    max_nesting_depth: int = 5,
+    _seen: "frozenset[type] | None" = None,
+) -> "dict[str, Any]":
+    """Recursively flatten a nested Pydantic model to dotted-path keys.
+
+    Converts a Pydantic ``BaseModel`` instance (potentially with nested
+    model fields) to a flat dict whose keys are dot-separated field paths.
+    The resulting dict can be passed directly to :meth:`Guard.verify` as
+    the ``state=`` or ``intent=`` argument.
+
+    Example::
+
+        class Address(BaseModel):
+            street: str
+            city: str
+
+        class Customer(BaseModel):
+            name: str
+            address: Address
+            balance: Decimal
+
+        c = Customer(name="Alice", address=Address(street="1 Main", city="NYC"),
+                     balance=Decimal("1000.00"))
+        flat = model_dump_z3(c)
+        # {
+        #   "name":            "Alice",
+        #   "address.street":  "1 Main",
+        #   "address.city":    "NYC",
+        #   "balance":         Decimal("1000.00"),
+        # }
+
+    Args:
+        model:             A Pydantic ``BaseModel`` instance.
+        prefix:            Dot-separated key prefix prepended to all keys.
+                           Used internally for recursion; callers typically
+                           leave this as the default ``""``.
+        max_nesting_depth: Maximum recursion depth.  Nested models beyond
+                           this limit are serialised as raw dicts via
+                           ``model.model_dump()``.  Default: 5.
+        _seen:             Circular-reference guard (internal).  A
+                           ``frozenset`` of already-visited model types in
+                           the current call stack.  Do **not** pass this
+                           argument; it is managed automatically.
+
+    Returns:
+        Flat ``dict[str, Any]`` with dotted-path keys.
+
+    Raises:
+        TypeError: If *model* is not a Pydantic ``BaseModel`` instance.
+    """
+    try:
+        from pydantic import BaseModel as _BaseModel
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError("pydantic is required for model_dump_z3") from exc
+
+    if not isinstance(model, _BaseModel):
+        raise TypeError(
+            f"model_dump_z3 expects a pydantic.BaseModel instance, got {type(model)!r}."
+        )
+
+    if _seen is None:
+        _seen = frozenset()
+
+    result: dict[str, Any] = {}
+
+    for field_name, value in model.model_dump().items():
+        full_key = f"{prefix}{field_name}" if not prefix else f"{prefix}.{field_name}"
+
+        # Attempt to get the actual nested model instance (model_dump gave us a dict).
+        raw_value = getattr(model, field_name, value)
+
+        if (
+            isinstance(raw_value, _BaseModel)
+            and max_nesting_depth > 0
+            and type(raw_value) not in _seen
+        ):
+            nested = model_dump_z3(
+                raw_value,
+                prefix=full_key,
+                max_nesting_depth=max_nesting_depth - 1,
+                _seen=_seen | {type(model)},
+            )
+            result.update(nested)
+        else:
+            result[full_key] = value
+
+    return result

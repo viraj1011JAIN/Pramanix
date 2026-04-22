@@ -609,10 +609,23 @@ def create_translator(
         bare_model = model.removeprefix("cohere:")
         return CohereTranslator(bare_model, api_key=api_key, timeout=timeout)
 
+    if model.startswith("mistral:"):
+        from pramanix.translator.mistral import MistralTranslator
+
+        bare_model = model.removeprefix("mistral:")
+        return MistralTranslator(bare_model, api_key=api_key, timeout=timeout)
+
+    if model.startswith("llama:"):
+        from pramanix.translator.llamacpp import LlamaCppTranslator
+
+        # "llama:" prefix uses the remainder as the model file path.
+        model_path = model.removeprefix("llama:")
+        return LlamaCppTranslator(model_path)
+
     raise ExtractionFailureError(
         f"Cannot infer translator for model '{model}'. "
         "Supported prefixes: 'gpt-', 'o1-', 'o3-', 'chatgpt-', 'claude-', 'ollama:', "
-        "'gemini:', 'cohere:'. "
+        "'gemini:', 'cohere:', 'mistral:', 'llama:'. "
         "Pass an explicit Translator instance to bypass auto-routing."
     )
 

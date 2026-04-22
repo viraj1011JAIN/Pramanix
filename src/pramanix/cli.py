@@ -123,6 +123,66 @@ def main() -> int:
     mig.add_argument("--json", dest="as_json", action="store_true",
                      help="Output migrated state as JSON (default when --output not set).")
 
+    # G-3: schema export subcommand
+    schema_cmd = sub.add_parser(
+        "schema",
+        help="Policy JSON schema tools.",
+    )
+    schema_sub = schema_cmd.add_subparsers(dest="schema_command")
+    schema_export = schema_sub.add_parser(
+        "export",
+        help="Export a Policy's JSON schema to stdout or a file.",
+    )
+    schema_export.add_argument(
+        "--policy",
+        required=True,
+        metavar="FILE:CLASS",
+        help=(
+            "Python file and class name, e.g. my_policy.py:TradePolicy.  "
+            "The class must be a subclass of pramanix.policy.Policy."
+        ),
+    )
+    schema_export.add_argument(
+        "--output",
+        metavar="FILE",
+        help="Write JSON schema to this file (default: stdout).",
+    )
+    schema_export.add_argument(
+        "--indent",
+        type=int,
+        default=2,
+        metavar="N",
+        help="JSON indentation level (default: 2).",
+    )
+
+    # D-4: calibrate-injection subcommand
+    calib_cmd = sub.add_parser(
+        "calibrate-injection",
+        help="Fit a calibrated injection scorer from a labelled dataset.",
+    )
+    calib_cmd.add_argument(
+        "--dataset",
+        required=True,
+        metavar="JSONL_FILE",
+        help=(
+            "Path to a JSONL file.  Each line: "
+            '{"text": "...", "is_injection": true|false}'
+        ),
+    )
+    calib_cmd.add_argument(
+        "--output",
+        required=True,
+        metavar="PKL_FILE",
+        help="Write the fitted scorer pickle to this path.",
+    )
+    calib_cmd.add_argument(
+        "--min-examples",
+        type=int,
+        default=200,
+        metavar="N",
+        help="Minimum labelled examples required (default: 200).",
+    )
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -136,6 +196,12 @@ def main() -> int:
 
     if args.command == "policy":
         return _cmd_policy(args)
+
+    if args.command == "schema":
+        return _cmd_schema(args)
+
+    if args.command == "calibrate-injection":
+        return _cmd_calibrate_injection(args)
 
     parser.print_help()
     return 2
@@ -634,3 +700,178 @@ def _cmd_policy_migrate(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _cmd_schema(args: argparse.Namespace) -> int:
+    """Handle the 'schema' subcommand group."""
+    if getattr(args, "schema_command", None) == "export":
+        return _cmd_schema_export(args)
+    print("Usage: pramanix schema export --policy FILE:CLASS [--output FILE]", file=sys.stderr)
+    return 2
+
+
+def _cmd_schema_export(args: argparse.Namespace) -> int:
+    """Export a Policy's JSON schema (G-3).
+
+    Loads a Policy subclass from a Python file and calls
+    ``Policy.export_json_schema()``, then writes the result to stdout
+    or a file.
+
+    The ``--policy`` argument must be in the form ``path/to/file.py:ClassName``.
+
+    Exit codes:
+        0 — schema exported successfully
+        2 — usage error (bad arguments, class not found, not a Policy)
+    """
+    import importlib.util
+    import json as _json_mod
+    import pathlib
+
+    from pramanix.policy import Policy
+
+    policy_spec: str = args.policy
+    if ":" not in policy_spec:
+        print(
+            "ERROR: --policy must be in the form FILE:ClassName, e.g. "
+            "my_policy.py:TradePolicy",
+            file=sys.stderr,
+        )
+        return 2
+
+    policy_file, class_name = policy_spec.rsplit(":", 1)
+
+    try:
+        spec = importlib.util.spec_from_file_location("_pramanix_schema_policy", policy_file)
+        if spec is None or spec.loader is None:
+            print(f"ERROR: Cannot load module spec from {policy_file}", file=sys.stderr)
+            return 2
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except FileNotFoundError:
+        print(f"ERROR: Policy file not found: {policy_file}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
+        return 2
+
+    policy_cls = getattr(module, class_name, None)
+    if policy_cls is None:
+        print(
+            f"ERROR: Class '{class_name}' not found in {policy_file}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if not (isinstance(policy_cls, type) and issubclass(policy_cls, Policy)):
+        print(
+            f"ERROR: '{class_name}' is not a subclass of pramanix.policy.Policy.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        schema = policy_cls.export_json_schema()
+    except Exception as exc:
+        print(f"ERROR: Failed to export schema: {exc}", file=sys.stderr)
+        return 2
+
+    indent: int = getattr(args, "indent", 2)
+    output_json = _json_mod.dumps(schema, indent=indent, default=str)
+
+    output_path = getattr(args, "output", None)
+    if output_path:
+        pathlib.Path(output_path).write_text(output_json + "\n", encoding="utf-8")
+        print(f"Schema exported to {output_path}")
+    else:
+        print(output_json)
+
+    return 0
+
+
+def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
+    """Fit and persist a calibrated injection scorer (D-4).
+
+    Reads a JSONL file where each line is:
+        {"text": "...", "is_injection": true|false}
+
+    Fits a ``CalibratedScorer`` and pickles it to ``--output``.
+
+    Exit codes:
+        0 — scorer fitted and saved
+        1 — insufficient data or fitting failed
+        2 — usage error
+    """
+    import json as _json_mod
+    import pathlib
+
+    dataset_path = pathlib.Path(args.dataset)
+    if not dataset_path.exists():
+        print(f"ERROR: Dataset file not found: {dataset_path}", file=sys.stderr)
+        return 2
+
+    texts: list[str] = []
+    labels: list[bool] = []
+
+    try:
+        with open(dataset_path, encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = _json_mod.loads(line)
+                except _json_mod.JSONDecodeError as exc:
+                    print(
+                        f"ERROR: Invalid JSON on line {line_num}: {exc}", file=sys.stderr
+                    )
+                    return 2
+                if "text" not in row or "is_injection" not in row:
+                    print(
+                        f"ERROR: Line {line_num} missing 'text' or 'is_injection' key.",
+                        file=sys.stderr,
+                    )
+                    return 2
+                texts.append(str(row["text"]))
+                labels.append(bool(row["is_injection"]))
+    except Exception as exc:
+        print(f"ERROR: Cannot read dataset: {exc}", file=sys.stderr)
+        return 2
+
+    min_examples: int = getattr(args, "min_examples", 200)
+    if len(texts) < min_examples:
+        print(
+            f"ERROR: Dataset has only {len(texts)} examples; "
+            f"minimum required is {min_examples}.  "
+            "Provide more labelled examples for a reliable scorer.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        from pramanix.translator.injection_scorer import CalibratedScorer
+    except ImportError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        scorer = CalibratedScorer()
+        scorer.fit(texts, labels)
+    except Exception as exc:
+        print(f"ERROR: Failed to fit scorer: {exc}", file=sys.stderr)
+        return 1
+
+    output_path = pathlib.Path(args.output)
+    try:
+        scorer.save(output_path)
+    except Exception as exc:
+        print(f"ERROR: Failed to save scorer: {exc}", file=sys.stderr)
+        return 1
+
+    positives = sum(labels)
+    negatives = len(labels) - positives
+    print(
+        f"Scorer fitted on {len(texts)} examples "
+        f"({positives} injection, {negatives} benign) "
+        f"and saved to {output_path}"
+    )
+    return 0

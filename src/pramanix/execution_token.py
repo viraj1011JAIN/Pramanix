@@ -734,3 +734,231 @@ class RedisExecutionTokenVerifier:
         except Exception:
             return 0
         return count
+
+
+# ── E-1: Postgres-backed distributed verifier ─────────────────────────────────
+
+
+class PostgresExecutionTokenVerifier:
+    """Postgres-backed single-use token verifier using ``asyncpg``.
+
+    Suitable for multi-server deployments where Redis is unavailable or a
+    relational audit trail is preferred.  Uses a ``consumed_tokens`` table with
+    a ``UNIQUE`` constraint on ``token_id`` to guarantee atomicity — two
+    concurrent ``consume()`` calls for the same token will result in exactly one
+    ``True`` return and one ``False`` return, with no race window.
+
+    Token IDs are stored with their expiry time so expired entries can be
+    evicted periodically without scanning all rows.
+
+    Implementation note
+    -------------------
+    ``asyncpg`` is async-only; this class wraps all operations with
+    ``asyncio.run()`` so the public API remains synchronous (consistent with
+    :class:`SQLiteExecutionTokenVerifier` and :class:`RedisExecutionTokenVerifier`).
+    If you are already in an async context, call the ``_async_*`` helpers directly.
+
+    Requires: ``pip install 'pramanix[postgres]'`` (``asyncpg``).
+
+    Args:
+        secret_key:  Must match the key used by :class:`ExecutionTokenSigner`.
+        dsn:         asyncpg connection DSN, e.g.
+                     ``"postgresql://user:pass@host/db"``.
+        key_prefix:  Not used for table lookups but kept for API symmetry.
+                     Default: ``"pramanix:token:"``.
+
+    Raises:
+        ConfigurationError: If ``asyncpg`` is not installed.
+        ValueError:          If ``secret_key`` is shorter than 16 bytes.
+
+    Example::
+
+        verifier = PostgresExecutionTokenVerifier(
+            secret_key=secret,
+            dsn="postgresql://app_user:hunter2@db.prod/pramanix",
+        )
+        if verifier.consume(token):
+            execute_action(token.intent_dump)
+        else:
+            abort("Token already used or invalid.")
+    """
+
+    def __init__(
+        self,
+        secret_key: bytes,
+        dsn: str,
+        key_prefix: str = "pramanix:token:",
+    ) -> None:
+        try:
+            import asyncpg  # noqa: F401
+        except ImportError as exc:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "asyncpg is required for PostgresExecutionTokenVerifier. "
+                "Install it with: pip install 'pramanix[postgres]'"
+            ) from exc
+
+        if len(secret_key) < 16:
+            raise ValueError("secret_key must be at least 16 bytes.")
+        self._key = secret_key
+        self._dsn = dsn
+        self._prefix = key_prefix  # for API symmetry only
+
+    def _run(self, coro: Any) -> Any:
+        """Run *coro* synchronously, creating an event loop if necessary."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We are inside an async context (e.g., running under pytest-asyncio).
+                # Use a new thread with its own event loop to avoid nesting.
+                import concurrent.futures
+                import threading
+
+                result: list[Any] = []
+                exc_container: list[BaseException] = []
+
+                def _run_in_thread() -> None:
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        result.append(new_loop.run_until_complete(coro))
+                    except BaseException as e:
+                        exc_container.append(e)
+                    finally:
+                        new_loop.close()
+
+                t = threading.Thread(target=_run_in_thread)
+                t.start()
+                t.join()
+                if exc_container:
+                    raise exc_container[0]
+                return result[0]
+            return loop.run_until_complete(coro)
+        except RuntimeError:
+            return asyncio.run(coro)
+
+    async def _ensure_table(self, conn: Any) -> None:
+        """Create the consumed_tokens table if it does not exist."""
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS consumed_tokens (
+                token_id   TEXT    NOT NULL PRIMARY KEY,
+                expires_at DOUBLE PRECISION NOT NULL
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ct_expires
+            ON consumed_tokens(expires_at)
+        """)
+
+    async def _async_consume(
+        self,
+        token: ExecutionToken,
+        expected_state_version: str | None,
+    ) -> bool:
+        import asyncpg  # type: ignore[import-untyped]
+
+        # ── 1. Signature check ────────────────────────────────────────────────
+        unsigned = ExecutionToken(
+            decision_id=token.decision_id,
+            allowed=token.allowed,
+            intent_dump=token.intent_dump,
+            policy_hash=token.policy_hash,
+            expires_at=token.expires_at,
+            token_id=token.token_id,
+            signature="",
+            state_version=token.state_version,
+        )
+        expected_sig = hmac.new(self._key, _token_body(unsigned), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(token.signature, expected_sig):
+            return False
+
+        # ── 2. Expiry check ───────────────────────────────────────────────────
+        if token.is_expired():
+            return False
+
+        # ── 3. State version check ────────────────────────────────────────────
+        if (
+            token.state_version is not None or expected_state_version is not None
+        ) and token.state_version != expected_state_version:
+            return False
+
+        # ── 4. Atomic INSERT with UNIQUE constraint ───────────────────────────
+        conn: Any = await asyncpg.connect(self._dsn)
+        try:
+            await self._ensure_table(conn)
+            try:
+                await conn.execute(
+                    "INSERT INTO consumed_tokens (token_id, expires_at) VALUES ($1, $2)",
+                    token.token_id,
+                    token.expires_at,
+                )
+                return True
+            except asyncpg.UniqueViolationError:
+                # Token already consumed — single-use enforced.
+                return False
+        finally:
+            await conn.close()
+
+    def consume(
+        self,
+        token: ExecutionToken,
+        *,
+        expected_state_version: str | None = None,
+    ) -> bool:
+        """Verify and single-use-consume a token against Postgres.
+
+        Returns:
+            ``True`` iff all four checks pass and the INSERT succeeded.
+            ``False`` if the token is invalid, expired, state-version-mismatched,
+            or has already been consumed.
+        """
+        return self._run(self._async_consume(token, expected_state_version))
+
+    async def _async_evict_expired(self) -> int:
+        import asyncpg  # type: ignore[import-untyped]
+
+        conn: Any = await asyncpg.connect(self._dsn)
+        try:
+            await self._ensure_table(conn)
+            result = await conn.execute(
+                "DELETE FROM consumed_tokens WHERE expires_at < $1",
+                time.time(),
+            )
+            # asyncpg returns "DELETE N" as a string.
+            parts = result.split()
+            return int(parts[1]) if len(parts) == 2 else 0
+        finally:
+            await conn.close()
+
+    def evict_expired(self) -> int:
+        """Delete expired token records from Postgres.
+
+        Returns:
+            Number of rows deleted.
+        """
+        return self._run(self._async_evict_expired())
+
+    async def _async_consumed_count(self) -> int:
+        import asyncpg  # type: ignore[import-untyped]
+
+        conn: Any = await asyncpg.connect(self._dsn)
+        try:
+            await self._ensure_table(conn)
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) AS n FROM consumed_tokens WHERE expires_at >= $1",
+                time.time(),
+            )
+            return row["n"] if row else 0
+        finally:
+            await conn.close()
+
+    def consumed_count(self) -> int:
+        """Count non-expired consumed tokens in Postgres.
+
+        Returns:
+            Number of active (not yet expired) consumed token entries.
+        """
+        return self._run(self._async_consumed_count())

@@ -593,3 +593,131 @@ def _tree_repr(node: Any) -> str:
             return f"AbsOp({_tree_repr(o)})"
         case _:
             return f"Unknown({type(node).__name__})"
+
+
+# ── C-2: Invariant AST cache ──────────────────────────────────────────────────
+
+
+class InvariantASTCache:
+    """LRU cache for compiled :class:`InvariantMeta` lists.
+
+    Keyed by ``(policy_class_id, schema_hash)`` where:
+
+    * ``policy_class_id`` = ``id(policy_cls)`` — unique per class object
+      (valid for the lifetime of the interpreter session).
+    * ``schema_hash`` = an opaque string derived from the policy's field
+      schema (used to invalidate entries when the policy is dynamically
+      modified, e.g. in tests that swap field defaults).
+
+    This cache is **thread-safe** via a module-level :class:`threading.Lock`.
+    Cache entries are read-only after insertion — no mutable Z3 objects are
+    stored.
+
+    Class-level state (all instances share one cache) is intentional; ``Guard``
+    instances for the same policy class should share the pre-compiled metadata.
+
+    Args:
+        max_size: Maximum number of entries to keep.  LRU eviction removes the
+                  least-recently-used entry when this limit is exceeded.
+                  Default: 512.
+    """
+
+    import threading as _threading
+
+    _cache: dict[tuple[int, str], list[InvariantMeta]] = {}
+    _access_order: list[tuple[int, str]] = []  # ordered by last access
+    _max_size: int = 512
+    _lock: Any = _threading.Lock()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:  # pragma: no cover
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def get(
+        cls, policy_cls: type, field_schema_hash: str
+    ) -> list[InvariantMeta] | None:
+        """Retrieve cached metadata for *(policy_cls, field_schema_hash)*.
+
+        Args:
+            policy_cls:        The policy class whose invariants were compiled.
+            field_schema_hash: An opaque hash string of the policy's schema.
+
+        Returns:
+            Cached :class:`InvariantMeta` list, or ``None`` on a cache miss.
+        """
+        key = (id(policy_cls), field_schema_hash)
+        with cls._lock:
+            entry = cls._cache.get(key)
+            if entry is not None:
+                # Move to most-recently-used position.
+                try:
+                    cls._access_order.remove(key)
+                except ValueError:
+                    pass
+                cls._access_order.append(key)
+            return entry
+
+    @classmethod
+    def put(
+        cls,
+        policy_cls: type,
+        field_schema_hash: str,
+        meta: list[InvariantMeta],
+    ) -> None:
+        """Insert or update metadata for *(policy_cls, field_schema_hash)*.
+
+        If the cache is at capacity, the least-recently-used entry is evicted
+        before insertion.
+
+        Args:
+            policy_cls:        The policy class.
+            field_schema_hash: Schema hash identifying this specific compilation.
+            meta:              Compiled :class:`InvariantMeta` list.
+        """
+        key = (id(policy_cls), field_schema_hash)
+        with cls._lock:
+            if key in cls._cache:
+                # Update in place; refresh access order.
+                try:
+                    cls._access_order.remove(key)
+                except ValueError:
+                    pass
+                cls._access_order.append(key)
+                cls._cache[key] = meta
+                return
+
+            # LRU eviction when at capacity.
+            while len(cls._cache) >= cls._max_size and cls._access_order:
+                oldest = cls._access_order.pop(0)
+                cls._cache.pop(oldest, None)
+
+            cls._cache[key] = meta
+            cls._access_order.append(key)
+
+    @classmethod
+    def clear(cls, policy_cls: type | None = None) -> None:
+        """Clear all cache entries, or only entries for *policy_cls*.
+
+        Args:
+            policy_cls: If provided, remove only entries for this class.
+                        If ``None`` (default), clear the entire cache.
+        """
+        with cls._lock:
+            if policy_cls is None:
+                cls._cache.clear()
+                cls._access_order.clear()
+            else:
+                target_id = id(policy_cls)
+                keys_to_remove = [k for k in cls._cache if k[0] == target_id]
+                for k in keys_to_remove:
+                    del cls._cache[k]
+                    try:
+                        cls._access_order.remove(k)
+                    except ValueError:
+                        pass
+
+    @classmethod
+    def size(cls) -> int:
+        """Return the current number of cached entries."""
+        with cls._lock:
+            return len(cls._cache)

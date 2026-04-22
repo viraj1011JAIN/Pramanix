@@ -43,6 +43,12 @@ __all__ = [
     "PramanixCrewAITool",
     # DSPy (Phase F-1)
     "PramanixGuardedModule",
+    # Haystack (Phase F-1)
+    "HaystackGuardedComponent",
+    # Semantic Kernel (Phase F-1)
+    "PramanixSemanticKernelPlugin",
+    # PydanticAI (Phase F-1)
+    "PramanixPydanticAIValidator",
     "pramanix_route",
     "wrap_tools",
 ]
@@ -53,6 +59,9 @@ _LLAMA_NAMES = {"PramanixFunctionTool", "PramanixQueryEngineTool"}
 _AUTOGEN_NAMES = {"PramanixToolCallback"}
 _CREWAI_NAMES = {"PramanixCrewAITool"}
 _DSPY_NAMES = {"PramanixGuardedModule"}
+_HAYSTACK_NAMES = {"HaystackGuardedComponent"}
+_SK_NAMES = {"PramanixSemanticKernelPlugin"}
+_PYDANTIC_AI_NAMES = {"PramanixPydanticAIValidator"}
 
 
 def __getattr__(name: str) -> object:
@@ -78,6 +87,18 @@ def __getattr__(name: str) -> object:
         return getattr(_m, name)
     if name in _DSPY_NAMES:
         from pramanix.integrations import dspy as _m  # type: ignore[no-redef]
+
+        return getattr(_m, name)
+    if name in _HAYSTACK_NAMES:
+        from pramanix.integrations import haystack as _m  # type: ignore[no-redef]
+
+        return getattr(_m, name)
+    if name in _SK_NAMES:
+        from pramanix.integrations import semantic_kernel as _m  # type: ignore[no-redef]
+
+        return getattr(_m, name)
+    if name in _PYDANTIC_AI_NAMES:
+        from pramanix.integrations import pydantic_ai as _m  # type: ignore[no-redef]
 
         return getattr(_m, name)
     raise AttributeError(f"module 'pramanix.integrations' has no attribute {name!r}")

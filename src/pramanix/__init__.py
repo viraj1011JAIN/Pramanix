@@ -12,12 +12,21 @@ __version__ = "1.0.0"
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, MerkleArchiver, PersistentMerkleAnchor
-from pramanix.audit_sink import AuditSink, InMemoryAuditSink, StdoutAuditSink
+from pramanix.audit_sink import (
+    AuditSink,
+    DatadogAuditSink,
+    InMemoryAuditSink,
+    KafkaAuditSink,
+    S3AuditSink,
+    SplunkHecAuditSink,
+    StdoutAuditSink,
+)
 from pramanix.circuit_breaker import (
     AdaptiveCircuitBreaker,
     CircuitBreakerConfig,
     DistributedCircuitBreaker,
     InMemoryDistributedBackend,
+    RedisDistributedBackend,
 )
 from pramanix.crypto import PramanixSigner, PramanixVerifier
 from pramanix.decision import Decision, SolverStatus
@@ -49,6 +58,7 @@ from pramanix.execution_token import (
     ExecutionTokenSigner,
     ExecutionTokenVerifier,
     InMemoryExecutionTokenVerifier,
+    PostgresExecutionTokenVerifier,
     RedisExecutionTokenVerifier,
     SQLiteExecutionTokenVerifier,
 )
@@ -74,7 +84,9 @@ from pramanix.key_provider import (
     PemKeyProvider,
 )
 from pramanix.migration import PolicyMigration
-from pramanix.policy import Policy, invariant_mixin
+from pramanix.policy import Policy, invariant_mixin, model_dump_z3
+from pramanix.translator.injection_scorer import BuiltinScorer, CalibratedScorer, InjectionScorer
+from pramanix.transpiler import InvariantASTCache
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.redundant import ConsensusStrictness
 
@@ -85,9 +97,14 @@ __all__ = [
     # C-5: Distributed circuit breaker
     "DistributedCircuitBreaker",
     "InMemoryDistributedBackend",
+    "RedisDistributedBackend",
     # E-4: Audit sinks
     "AuditSink",
+    "DatadogAuditSink",
     "InMemoryAuditSink",
+    "KafkaAuditSink",
+    "S3AuditSink",
+    "SplunkHecAuditSink",
     "StdoutAuditSink",
     # E-3: KMS/HSM key providers
     "KeyProvider",
@@ -122,6 +139,7 @@ __all__ = [
     "ExecutionTokenVerifier",
     # E-1: Redis-free token backends
     "InMemoryExecutionTokenVerifier",
+    "PostgresExecutionTokenVerifier",
     "SQLiteExecutionTokenVerifier",
     # Exceptions — translator (Phase 4)
     "ExtractionFailureError",
@@ -151,6 +169,13 @@ __all__ = [
     "Policy",
     "PolicyMigration",
     "invariant_mixin",
+    "model_dump_z3",
+    # C-2: Invariant AST cache
+    "InvariantASTCache",
+    # D-4: Injection scorer
+    "InjectionScorer",
+    "BuiltinScorer",
+    "CalibratedScorer",
     "PolicyCompilationError",
     "PolicyError",
     # Exceptions — core

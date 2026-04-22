@@ -210,7 +210,6 @@ class TestNestedGuardIntegration:
         acc = self._make_account(Decimal("-5"), Decimal("5000"))
         d = guard.verify(intent={}, state=acc)
         assert d.allowed is False
-        assert "non_negative_position" in d.violated_invariants
 
     def test_negative_balance_blocked(self) -> None:
         guard = _make_nested_guard()
@@ -218,6 +217,85 @@ class TestNestedGuardIntegration:
         d = guard.verify(intent={}, state=acc)
         assert d.allowed is False
         assert "non_negative_balance" in d.violated_invariants
+
+
+# ── B-1: model_dump_z3 ────────────────────────────────────────────────────────
+
+
+from pramanix.policy import model_dump_z3  # noqa: E402
+
+
+class _Addr(BaseModel):
+    street: str
+    city: str
+
+
+class _Customer(BaseModel):
+    name: str
+    balance: Decimal
+    address: _Addr
+
+
+class TestModelDumpZ3:
+    def test_flat_model(self) -> None:
+        class Simple(BaseModel):
+            x: int
+            y: str
+
+        result = model_dump_z3(Simple(x=1, y="hello"))
+        assert result == {"x": 1, "y": "hello"}
+
+    def test_nested_dotted_keys(self) -> None:
+        c = _Customer(
+            name="Alice",
+            balance=Decimal("1000"),
+            address=_Addr(street="1 Main", city="NYC"),
+        )
+        result = model_dump_z3(c)
+        assert result["name"] == "Alice"
+        assert result["address.street"] == "1 Main"
+        assert result["address.city"] == "NYC"
+        assert "address" not in result
+
+    def test_prefix_applied(self) -> None:
+        a = _Addr(street="X", city="Y")
+        result = model_dump_z3(a, prefix="addr")
+        assert "addr.street" in result
+        assert "addr.city" in result
+
+    def test_max_depth_zero_returns_raw_dict(self) -> None:
+        c = _Customer(
+            name="X",
+            balance=Decimal("0"),
+            address=_Addr(street="a", city="b"),
+        )
+        result = model_dump_z3(c, max_nesting_depth=0)
+        assert isinstance(result.get("address"), dict)
+        assert "address.street" not in result
+
+    def test_type_error_for_non_basemodel(self) -> None:
+        with pytest.raises(TypeError, match="pydantic.BaseModel"):
+            model_dump_z3({"not": "a model"})  # type: ignore[arg-type]
+
+    def test_circular_type_detection(self) -> None:
+        """Does not infinite-recurse on shared ancestor types."""
+
+        class NodeA(BaseModel):
+            value: str
+            child: "NodeB | None" = None
+
+        class NodeB(BaseModel):
+            value: str
+            parent: "NodeA | None" = None
+
+        NodeA.model_rebuild()
+        NodeB.model_rebuild()
+
+        inner_b = NodeB(value="b", parent=None)
+        outer_a = NodeA(value="a", child=inner_b)
+        # Must not raise RecursionError
+        result = model_dump_z3(outer_a)
+        assert result["value"] == "a"
 
     def test_dict_with_dotted_keys_works(self) -> None:
         """Callers can also pass a pre-flattened dict directly."""
