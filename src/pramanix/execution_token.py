@@ -531,6 +531,87 @@ class SQLiteExecutionTokenVerifier:
 
         return True
 
+    def consume_within(
+        self,
+        conn: Any,
+        token: ExecutionToken,
+        *,
+        expected_state_version: str | None = None,
+    ) -> bool:
+        """Verify and consume a token atomically within a caller-provided transaction.
+
+        Unlike :meth:`consume`, this method does **not** commit.  The caller owns
+        the transaction boundary — if the subsequent business write fails the caller
+        can roll back, which also rolls back the token consumption.  This closes
+        the TOCTOU gap that exists in the two-step pattern::
+
+            # ✗ Two-step — token consumed even if transfer fails:
+            if verifier.consume(token):
+                execute_transfer()   # failure here wastes the token
+
+            # ✓ Single-transaction — atomic:
+            with sqlite3.connect(db_path) as conn:
+                if verifier.consume_within(conn, token):
+                    conn.execute("UPDATE accounts SET balance = ... WHERE ...")
+                conn.commit()   # both or neither
+
+        Args:
+            conn:                    Open :mod:`sqlite3` connection.  Must share
+                                     the same ``db_path`` as this verifier (or
+                                     ``':memory:'`` for tests).  The consumed_tokens
+                                     table is created on *conn* if absent.
+            token:                   The :class:`ExecutionToken` to verify.
+            expected_state_version:  Passed directly to the state-version check.
+
+        Returns:
+            ``True`` iff all four checks pass and the INSERT succeeded.
+            ``False`` if the signature is invalid, the token is expired, the
+            state version does not match, or the token was already consumed.
+        """
+        import sqlite3 as _sqlite3
+
+        # ── 1. Signature check ────────────────────────────────────────────────
+        unsigned = ExecutionToken(
+            decision_id=token.decision_id,
+            allowed=token.allowed,
+            intent_dump=token.intent_dump,
+            policy_hash=token.policy_hash,
+            expires_at=token.expires_at,
+            token_id=token.token_id,
+            signature="",
+            state_version=token.state_version,
+        )
+        expected_sig = hmac.new(self._key, _token_body(unsigned), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(token.signature, expected_sig):
+            return False
+
+        # ── 2. Expiry check ───────────────────────────────────────────────────
+        if token.is_expired():
+            return False
+
+        # ── 3. State version check ────────────────────────────────────────────
+        if (
+            token.state_version is not None or expected_state_version is not None
+        ) and token.state_version != expected_state_version:
+            return False
+
+        # ── 4. Atomic INSERT within caller's transaction ──────────────────────
+        # Ensure the table exists on this connection (may differ from self._conn).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS consumed_tokens ("
+            "token_id TEXT PRIMARY KEY, "
+            "expires_at REAL NOT NULL"
+            ")"
+        )
+        try:
+            conn.execute(
+                "INSERT INTO consumed_tokens (token_id, expires_at) VALUES (?, ?)",
+                (token.token_id, token.expires_at),
+            )
+            return True
+        except _sqlite3.IntegrityError:
+            return False
+
     def consumed_count(self) -> int:
         """Return the number of non-expired token IDs in the database."""
         with self._lock:
@@ -962,3 +1043,75 @@ class PostgresExecutionTokenVerifier:
             Number of active (not yet expired) consumed token entries.
         """
         return self._run(self._async_consumed_count())
+
+    async def consume_within(
+        self,
+        conn: Any,
+        token: ExecutionToken,
+        *,
+        expected_state_version: str | None = None,
+    ) -> bool:
+        """Verify and consume a token within a caller-managed asyncpg transaction.
+
+        Unlike :meth:`consume`, this method does **not** open, commit, or close
+        the connection.  The caller manages the transaction boundary, so a failed
+        business write can roll back the token consumption atomically::
+
+            async with conn.transaction():
+                if await verifier.consume_within(conn, token):
+                    await conn.execute(
+                        "UPDATE accounts SET balance = balance - $1 WHERE id = $2",
+                        amount, account_id,
+                    )
+                else:
+                    raise ValueError("Token invalid, expired, or already used")
+            # asyncpg commits on clean exit — both writes or neither
+
+        Args:
+            conn:                    Open ``asyncpg.Connection``.  Must be connected
+                                     to the same database as *dsn* passed at
+                                     construction time.
+            token:                   The :class:`ExecutionToken` to verify.
+            expected_state_version:  Passed to the state-version check.
+
+        Returns:
+            ``True`` iff all four checks pass and the INSERT succeeded.
+        """
+        import asyncpg  # type: ignore[import-untyped]
+
+        # ── 1. Signature check ────────────────────────────────────────────────
+        unsigned = ExecutionToken(
+            decision_id=token.decision_id,
+            allowed=token.allowed,
+            intent_dump=token.intent_dump,
+            policy_hash=token.policy_hash,
+            expires_at=token.expires_at,
+            token_id=token.token_id,
+            signature="",
+            state_version=token.state_version,
+        )
+        expected_sig = hmac.new(self._key, _token_body(unsigned), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(token.signature, expected_sig):
+            return False
+
+        # ── 2. Expiry check ───────────────────────────────────────────────────
+        if token.is_expired():
+            return False
+
+        # ── 3. State version check ────────────────────────────────────────────
+        if (
+            token.state_version is not None or expected_state_version is not None
+        ) and token.state_version != expected_state_version:
+            return False
+
+        # ── 4. Atomic INSERT within caller's transaction ──────────────────────
+        await self._ensure_table(conn)
+        try:
+            await conn.execute(
+                "INSERT INTO consumed_tokens (token_id, expires_at) VALUES ($1, $2)",
+                token.token_id,
+                token.expires_at,
+            )
+            return True
+        except asyncpg.UniqueViolationError:
+            return False

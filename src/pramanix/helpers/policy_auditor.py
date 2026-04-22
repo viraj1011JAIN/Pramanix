@@ -33,6 +33,8 @@ Integrate with Guard startup::
 from __future__ import annotations
 
 import warnings
+from decimal import Decimal
+from fractions import Fraction
 from typing import Any
 
 from pramanix.expressions import (
@@ -73,6 +75,34 @@ def _collect_field_names(node: Any) -> set[str]:
     if isinstance(node, _Literal):
         return set()
     return set()
+
+
+# ── Model value extractor ─────────────────────────────────────────────────────
+
+
+def _model_to_dict(model: Any, fields: dict[str, Field], ctx: Any, z3_var_fn: Any) -> dict[str, Any]:
+    """Extract a Z3 model into a dict of Python values keyed by field name."""
+    import z3
+
+    result: dict[str, Any] = {}
+    for name, field in fields.items():
+        var = z3_var_fn(field, ctx)
+        val = model[var]
+        if val is None:
+            continue
+        try:
+            if field.z3_type == "Real":
+                frac = Fraction(val.as_fraction())
+                result[name] = Decimal(frac.numerator) / Decimal(frac.denominator)
+            elif field.z3_type == "Int":
+                result[name] = val.as_long()
+            elif field.z3_type == "Bool":
+                result[name] = z3.is_true(val)
+            elif field.z3_type == "String":
+                result[name] = val.as_string()
+        except Exception:
+            pass
+    return result
 
 
 # ── Auditor ───────────────────────────────────────────────────────────────────
@@ -163,6 +193,82 @@ class PolicyAuditor:
         declared = set(cls.declared_fields(policy_cls).keys())
         referenced = cls.referenced_fields(policy_cls)
         return sorted(declared - referenced)
+
+    @classmethod
+    def boundary_examples(
+        cls,
+        policy_cls: type[Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Use Z3 to generate SAT and UNSAT boundary witnesses for each invariant.
+
+        For each named invariant this method asks Z3 two questions:
+
+        1. **SAT witness** — find a concrete assignment of field values that
+           *satisfies* this invariant.  This is the "safe side" boundary case.
+        2. **UNSAT witness** — find a concrete assignment that *violates* this
+           invariant.  This is the counterexample right on the other side of the
+           decision boundary.
+
+        Together they form a minimal regression test for every invariant: the SAT
+        witness should remain ALLOW; the UNSAT witness should remain BLOCK.  No
+        test authoring required — Z3 is the oracle.
+
+        Args:
+            policy_cls: A :class:`~pramanix.policy.Policy` subclass.
+
+        Returns:
+            Dict mapping invariant label → ``{"sat": dict | None, "unsat": dict | None}``.
+            A value of ``None`` means Z3 could not find a witness (e.g. the
+            invariant is unsatisfiable or trivially always satisfied with
+            unconstrained fields).  Fields not referenced by the invariant may
+            be absent from the returned dicts.
+
+        Example::
+
+            examples = PolicyAuditor.boundary_examples(BankingPolicy)
+            # examples["sufficient_funds"] == {
+            #     "sat":   {"balance": Decimal("0"), "amount": Decimal("0")},
+            #     "unsat": {"balance": Decimal("0"), "amount": Decimal("1")},
+            # }
+        """
+        import z3
+
+        from pramanix.transpiler import transpile, z3_var
+
+        try:
+            invariants = policy_cls.invariants()
+        except Exception:
+            return {}
+
+        all_fields = cls.declared_fields(policy_cls)
+        examples: dict[str, dict[str, Any]] = {}
+
+        for i, inv in enumerate(invariants):
+            label: str = getattr(inv, "label", None) or f"invariant_{i}"
+            ctx = z3.Context()
+
+            try:
+                node = inv.node if isinstance(inv, ConstraintExpr) else inv
+                z3_expr = transpile(node, ctx)
+            except Exception:
+                examples[label] = {"sat": None, "unsat": None}
+                continue
+
+            sat_example: dict[str, Any] | None = None
+            sat_solver = z3.Solver(ctx=ctx)
+            sat_solver.add(z3_expr)
+            if sat_solver.check() == z3.sat:
+                sat_example = _model_to_dict(sat_solver.model(), all_fields, ctx, z3_var)
+
+            unsat_example: dict[str, Any] | None = None
+            unsat_solver = z3.Solver(ctx=ctx)
+            unsat_solver.add(z3.Not(z3_expr))
+            if unsat_solver.check() == z3.sat:
+                unsat_example = _model_to_dict(unsat_solver.model(), all_fields, ctx, z3_var)
+
+            examples[label] = {"sat": sat_example, "unsat": unsat_example}
+
+        return examples
 
     @classmethod
     def audit(
