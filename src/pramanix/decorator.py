@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""``@guard`` decorator — one-line async policy enforcement.
+"""``@guard`` decorator — one-line policy enforcement for async and sync functions.
 
 Usage::
 
@@ -8,19 +8,24 @@ Usage::
 
     class BankingPolicy(Policy): ...
 
+    # Async function — uses Guard.verify_async() under the hood.
     @guard(policy=BankingPolicy, config=GuardConfig(execution_mode="async-thread"))
     async def transfer(intent: dict, state: dict) -> dict:
         # Only reached when Guard.verify_async() returns Decision(allowed=True)
         return {"status": "ok"}
 
-    # on_block="return" - return the Decision instead of raising
+    # Sync function — uses Guard.verify() (blocking) under the hood.
+    # Works in Django views, Flask endpoints, Celery tasks, and any
+    # synchronous Python context.
+    @guard(policy=BankingPolicy)
+    def transfer_sync(intent: dict, state: dict) -> dict:
+        return {"status": "ok"}
+
+    # on_block="return" — return the Decision instead of raising.
+    # Works identically for both async and sync variants.
     @guard(policy=BankingPolicy, on_block="return")
     async def transfer_soft(intent: dict, state: dict) -> dict | Decision:
         return {"status": "ok"}
-
-The decorated function must be an ``async def`` coroutine.  Passing a sync
-function raises :exc:`TypeError` at decoration time (not at call time), so
-mistakes are caught immediately.
 """
 from __future__ import annotations
 
@@ -46,10 +51,19 @@ def guard(
     config: GuardConfig | None = None,
     on_block: Literal["raise", "return"] = "raise",
 ) -> Callable[[Any], Any]:
-    """Policy-enforcement decorator factory.
+    """Policy-enforcement decorator factory for async and sync functions.
 
     Creates a :class:`~pramanix.guard.Guard` instance **once** at decoration
     time and reuses it across all calls to the wrapped function.
+
+    * **Async functions** are wrapped with
+      :meth:`~pramanix.guard.Guard.verify_async`.
+    * **Sync functions** are wrapped with :meth:`~pramanix.guard.Guard.verify`
+      (the blocking synchronous interface), enabling use in Django views, Flask
+      endpoints, Celery tasks, and any synchronous Python context.
+
+    The decorator signature is identical for both variants — no ``async def``
+    requirement.
 
     Args:
         policy:   A :class:`~pramanix.policy.Policy` subclass (the class,
@@ -63,16 +77,15 @@ def guard(
                     caller without executing the wrapped function.
 
     Returns:
-        A decorator that wraps an ``async def`` function.
-
-    Raises:
-        TypeError: At decoration time if the wrapped function is not a
-            coroutine function (``async def``).
+        A decorator that wraps an ``async def`` or ``def`` function.
 
     Example::
 
         @guard(policy=BankingPolicy)
-        async def handle_transfer(intent, state): ...
+        async def handle_transfer_async(intent, state): ...
+
+        @guard(policy=BankingPolicy)
+        def handle_transfer_sync(intent, state): ...
     """
     # Import here to avoid circular imports at module load time.
     from pramanix.guard import Guard, GuardConfig
@@ -81,35 +94,51 @@ def guard(
     _guard_instance: Guard = Guard(policy=policy, config=_config)
 
     def decorator(fn: Any) -> Any:
-        if not asyncio.iscoroutinefunction(fn):
-            raise TypeError(
-                f"@guard can only decorate async functions (coroutines). "
-                f"'{fn.__name__}' is a synchronous function. "
-                "Use guard_instance.verify() directly for sync contexts."
-            )
+        if asyncio.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                # Extract intent and state from positional / keyword args.
+                # Convention: first two positional args are (intent, state).
+                if len(args) < 2:
+                    intent = kwargs.get("intent", {})
+                    state = kwargs.get("state", {})
+                else:
+                    intent, state = args[0], args[1]
 
-        @functools.wraps(fn)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Extract intent and state from positional / keyword args.
-            # Convention: first two positional args are (intent, state).
-            if len(args) < 2:
-                intent = kwargs.get("intent", {})
-                state = kwargs.get("state", {})
-            else:
-                intent, state = args[0], args[1]
+                decision: Decision = await _guard_instance.verify_async(intent=intent, state=state)
 
-            decision: Decision = await _guard_instance.verify_async(intent=intent, state=state)
+                if not decision.allowed:
+                    if on_block == "raise":
+                        raise GuardViolationError(decision)
+                    else:  # on_block == "return"
+                        return decision
 
-            if not decision.allowed:
-                if on_block == "raise":
-                    raise GuardViolationError(decision)
-                else:  # on_block == "return"
-                    return decision
+                return await fn(*args, **kwargs)
 
-            return await fn(*args, **kwargs)
+            async_wrapper.__guard__ = _guard_instance  # type: ignore[attr-defined]
+            return async_wrapper
 
-        # Attach the guard instance for introspection in tests.
-        wrapper.__guard__ = _guard_instance  # type: ignore[attr-defined]
-        return wrapper
+        else:
+            @functools.wraps(fn)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                # Same intent/state extraction convention as the async path.
+                if len(args) < 2:
+                    intent = kwargs.get("intent", {})
+                    state = kwargs.get("state", {})
+                else:
+                    intent, state = args[0], args[1]
+
+                decision: Decision = _guard_instance.verify(intent=intent, state=state)
+
+                if not decision.allowed:
+                    if on_block == "raise":
+                        raise GuardViolationError(decision)
+                    else:  # on_block == "return"
+                        return decision
+
+                return fn(*args, **kwargs)
+
+            sync_wrapper.__guard__ = _guard_instance  # type: ignore[attr-defined]
+            return sync_wrapper
 
     return decorator

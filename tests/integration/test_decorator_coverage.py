@@ -88,28 +88,63 @@ _STATE = {"state_version": "1.0", "balance": Decimal("1000")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TypeError: sync function
+# F-2: sync functions are now supported (no TypeError)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestDecoratorSyncRejection:
-    def test_sync_function_raises_type_error_at_decoration(self) -> None:
-        with pytest.raises(TypeError, match="async"):
+class TestDecoratorSyncFunctionSupport:
+    def test_sync_function_does_not_raise_at_decoration(self) -> None:
+        """F-2: @guard on a sync function must not raise TypeError."""
 
-            @guard(policy=_AllowPolicy)
-            def sync_transfer(  # type: ignore[return]
-                intent: dict, state: dict
-            ) -> dict:
-                return {"status": "ok"}
+        @guard(policy=_AllowPolicy)
+        def sync_transfer(intent: dict, state: dict) -> dict:
+            return {"status": "ok"}
 
-    def test_error_message_includes_function_name(self) -> None:
-        def my_sync_fn(  # type: ignore[return]
-            intent: dict, state: dict
-        ) -> dict:
+        assert callable(sync_transfer)
+
+    def test_sync_wrapper_is_not_coroutine(self) -> None:
+        import asyncio
+
+        @guard(policy=_AllowPolicy)
+        def fn(intent: dict, state: dict) -> dict:
             return {}
 
-        with pytest.raises(TypeError, match="my_sync_fn"):
-            guard(policy=_AllowPolicy)(my_sync_fn)
+        assert not asyncio.iscoroutinefunction(fn)
+
+    def test_sync_allow_executes_function(self) -> None:
+        @guard(policy=_AllowPolicy)
+        def fn(intent: dict, state: dict) -> dict:
+            return {"called": True}
+
+        result = fn(_ALLOW_INTENT, _STATE)
+        assert result["called"] is True
+
+    def test_sync_block_raises_guard_violation_error(self) -> None:
+        @guard(policy=_BlockPolicy)
+        def fn(intent: dict, state: dict) -> dict:
+            pytest.fail("should not be reached")
+
+        with pytest.raises(GuardViolationError):
+            fn(_BLOCK_INTENT, _STATE)
+
+    def test_sync_block_returns_decision_when_on_block_return(self) -> None:
+        from pramanix import Decision
+
+        @guard(policy=_BlockPolicy, on_block="return")
+        def fn(intent: dict, state: dict):  # type: ignore[return]
+            pytest.fail("should not be reached")
+
+        result = fn(_BLOCK_INTENT, _STATE)
+        assert isinstance(result, Decision)
+        assert not result.allowed
+
+    def test_sync_wrapper_has_guard_attribute(self) -> None:
+        @guard(policy=_AllowPolicy)
+        def fn(intent: dict, state: dict) -> dict:
+            return {}
+
+        assert hasattr(fn, "__guard__")
+        assert isinstance(fn.__guard__, Guard)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
