@@ -107,7 +107,7 @@ from pramanix.guard_pipeline import (
     _fmt,
     _semantic_post_consensus_check,
 )
-from pramanix.helpers.serialization import flatten_model, safe_dump
+from pramanix.helpers.serialization import flatten_model
 from pramanix.solver import _SolveResult, solve
 from pramanix.validator import validate_intent, validate_state
 from pramanix.worker import WorkerPool

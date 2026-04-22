@@ -157,7 +157,7 @@ def z3_val(field: Field, value: Any, ctx: z3.Context | None = None) -> z3.ExprRe
     if field.z3_type == "Bool":
         return cast("z3.ExprRef", z3.BoolVal(bool(value), ctx))
     if field.z3_type == "Int":
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
         if isinstance(value, _dt):
             if value.tzinfo is None:
                 raise FieldTypeError(

@@ -3,21 +3,20 @@
 """Gate: TradeWindowPolicy must ALLOW within-window datetimes and BLOCK outside."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
+from pramanix.exceptions import FieldTypeError
 from pramanix.expressions import (
     ConstraintExpr,
     DatetimeField,
     E,
     Field,
 )
-from pramanix.exceptions import FieldTypeError
 
-
-UTC = timezone.utc
+UTC = UTC
 
 
 # ── DatetimeField construction ────────────────────────────────────────────────
@@ -50,7 +49,6 @@ class TestDatetimeConversion:
         f = DatetimeField("ts")
         now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
         result = z3_val(f, now)
-        import z3
         assert result is not None
         assert int(str(result)) == int(now.timestamp())
 

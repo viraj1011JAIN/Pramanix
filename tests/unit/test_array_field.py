@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from pramanix.exceptions import PolicyCompilationError, ValidationError
 from pramanix.expressions import (
     ArrayField,
     ConstraintExpr,
@@ -18,8 +19,6 @@ from pramanix.expressions import (
     _ExistsOp,
     _ForAllOp,
 )
-from pramanix.exceptions import PolicyCompilationError, ValidationError
-
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

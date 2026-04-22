@@ -39,7 +39,6 @@ from pramanix.exceptions import PolicyCompilationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
-    from datetime import datetime as _Datetime
 
 __all__ = [
     "ArrayField",
@@ -126,8 +125,8 @@ class Field:
 
 def _infer_z3_type(python_type: type) -> Z3Type:
     """Infer Z3 sort from a Python annotation type."""
-    from decimal import Decimal as _Decimal
     from datetime import datetime as _dt
+    from decimal import Decimal as _Decimal
     if python_type is bool:
         return "Bool"
     if python_type in (int,):
@@ -179,7 +178,7 @@ class NestedField:
         object.__setattr__(self, "_prefix", prefix)
         object.__setattr__(self, "_model_type", model_type)
 
-    def __getattr__(self, name: str) -> "Field | NestedField":
+    def __getattr__(self, name: str) -> Field | NestedField:
         try:
             from pydantic import BaseModel as _BM
         except ImportError as exc:  # pragma: no cover
@@ -387,7 +386,7 @@ class _ForAllOp(NamedTuple):
     solve time, where *n* is the actual array length (≤ max_length).
     """
 
-    array_field: "ArrayField"
+    array_field: ArrayField
     predicate: Any  # Callable[[Field], ConstraintExpr]
 
 
@@ -398,7 +397,7 @@ class _ExistsOp(NamedTuple):
     solve time, where *n* is the actual array length (≤ max_length).
     """
 
-    array_field: "ArrayField"
+    array_field: ArrayField
     predicate: Any  # Callable[[Field], ConstraintExpr]
 
 

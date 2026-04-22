@@ -83,10 +83,15 @@ unique before verification begins.
 """
 from __future__ import annotations
 
-from pramanix.exceptions import InvariantLabelError, PolicyError
-from pramanix.expressions import ConstraintExpr, Field
+from typing import Any, Callable, cast
+
+from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyError
+from pramanix.expressions import ConstraintExpr, Field, Z3Type
 
 __all__ = ["Policy"]
+
+# ── B-2: Dynamic policy cache — keyed by (fields_schema, invariant_ids) ──────
+_DYNAMIC_POLICY_CACHE: dict[tuple[Any, ...], type["Policy"]] = {}
 
 
 class Policy:
@@ -197,6 +202,99 @@ class Policy:
                     "Labels must be unique within a policy."
                 )
             seen.add(inv.label)
+
+    # ── B-2: Dynamic policy factory ──────────────────────────────────────────
+
+    @classmethod
+    def from_config(
+        cls,
+        fields: dict[str, tuple[str, type]],
+        invariants: list[Callable[[dict[str, Field]], "ConstraintExpr | list[ConstraintExpr]"]],
+    ) -> "type[Policy]":
+        """Create a sealed :class:`Policy` subclass from a runtime field configuration.
+
+        Useful for multi-tenant deployments where each tenant has a distinct field
+        schema.  The invariant lambdas are evaluated **once at construction time**
+        (not per ``verify()`` call), so the returned class carries pre-built
+        :class:`~pramanix.expressions.ConstraintExpr` objects.
+
+        Args:
+            fields: Mapping of ``field_name → (z3_type, python_type)`` where
+                ``z3_type`` is one of ``"Real"``, ``"Int"``, ``"Bool"``, ``"String"``
+                and ``python_type`` is the corresponding Python type (e.g. ``Decimal``).
+            invariants: List of callables ``f → ConstraintExpr | list[ConstraintExpr]``
+                where ``f`` is a ``dict[str, Field]`` keyed by field name.  Each
+                callable is called once with the constructed field dict.
+
+        Returns:
+            A new :class:`Policy` subclass with the given fields and invariants.
+            Identical ``(fields, invariant-function-ids)`` combinations are cached
+            and return the same class object.
+
+        Raises:
+            ConfigurationError: If *fields* is empty, any field spec is malformed,
+                an unsupported ``z3_type`` is used, or any invariant lambda raises.
+        """
+        _VALID_Z3 = {"Bool", "Int", "Real", "String"}
+
+        if not fields:
+            raise ConfigurationError("Policy.from_config: 'fields' must be a non-empty dict.")
+        if not invariants:
+            raise ConfigurationError("Policy.from_config: 'invariants' must be a non-empty list.")
+
+        # ── Validate field spec and build Field instances ─────────────────────
+        field_instances: dict[str, Field] = {}
+        for name, spec in fields.items():
+            if not isinstance(spec, tuple) or len(spec) != 2:
+                raise ConfigurationError(
+                    f"Policy.from_config: field '{name}' spec must be a 2-tuple "
+                    f"(z3_type, python_type), got {spec!r}."
+                )
+            z3_type, python_type = spec
+            if z3_type not in _VALID_Z3:
+                raise ConfigurationError(
+                    f"Policy.from_config: field '{name}' z3_type must be one of "
+                    f"{sorted(_VALID_Z3)}, got {z3_type!r}."
+                )
+            field_instances[name] = Field(name, python_type, cast(Z3Type, z3_type))
+
+        # ── Check cache before evaluating lambdas ────────────────────────────
+        fields_key = tuple(
+            sorted((n, z3t, pt.__name__) for n, (z3t, pt) in fields.items())
+        )
+        cache_key = (fields_key, tuple(id(inv) for inv in invariants))
+        if cache_key in _DYNAMIC_POLICY_CACHE:
+            return _DYNAMIC_POLICY_CACHE[cache_key]
+
+        # ── Evaluate invariant lambdas once (compile-time, not per-request) ──
+        realized: list[ConstraintExpr] = []
+        for i, inv_fn in enumerate(invariants):
+            try:
+                result = inv_fn(field_instances)
+            except Exception as exc:
+                raise ConfigurationError(
+                    f"Policy.from_config: invariants[{i}] raised during evaluation: {exc}"
+                ) from exc
+            if isinstance(result, list):
+                realized.extend(result)
+            else:
+                realized.append(result)
+
+        # ── Build the dynamic class ───────────────────────────────────────────
+        schema_hash = abs(hash(fields_key)) % 10**8
+        class_name = f"_DynamicPolicy_{schema_hash:08d}"
+        _realized_copy = list(realized)
+
+        @classmethod  # type: ignore[misc]
+        def _inv_method(klass: type) -> list[ConstraintExpr]:
+            return list(_realized_copy)
+
+        namespace: dict[str, Any] = dict(field_instances)
+        namespace["invariants"] = _inv_method
+
+        dynamic_cls: type[Policy] = type(class_name, (cls,), namespace)
+        _DYNAMIC_POLICY_CACHE[cache_key] = dynamic_cls
+        return dynamic_cls
 
     # ── Meta accessors ────────────────────────────────────────────────────────
 

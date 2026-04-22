@@ -235,12 +235,9 @@ def _preprocess_invariants(
     return realized, expanded
 
 
-def _collect_array_fields_in_node(node: Any, result: dict[str, "ArrayField"]) -> None:
+def _collect_array_fields_in_node(node: Any, result: dict[str, ArrayField]) -> None:
     """Walk the expression tree and collect all referenced ArrayField objects."""
-    if isinstance(node, _ForAllOp):
-        af = node.array_field
-        result[af.name] = af
-    elif isinstance(node, _ExistsOp):
+    if isinstance(node, _ForAllOp) or isinstance(node, _ExistsOp):
         af = node.array_field
         result[af.name] = af
     elif isinstance(node, _BoolOp):
