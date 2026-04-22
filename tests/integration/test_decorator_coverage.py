@@ -47,13 +47,12 @@ class _AllowPolicy(Policy):
 
     class Meta:
         version = "1.0"
-
-    intent_schema = _SimpleIntent
-    state_schema = _SimpleState
+        intent_model = _SimpleIntent
+        state_model = _SimpleState
 
     @classmethod
-    def fields(cls):  # type: ignore[override]
-        return [_amount_field, _balance_field]
+    def fields(cls) -> dict:
+        return {"amount": _amount_field, "balance": _balance_field}
 
     @classmethod
     def invariants(cls):  # type: ignore[override]
@@ -69,13 +68,12 @@ class _BlockPolicy(Policy):
 
     class Meta:
         version = "1.0"
-
-    intent_schema = _SimpleIntent
-    state_schema = _SimpleState
+        intent_model = _SimpleIntent
+        state_model = _SimpleState
 
     @classmethod
-    def fields(cls):  # type: ignore[override]
-        return [_amount_field, _balance_field]
+    def fields(cls) -> dict:
+        return {"amount": _amount_field, "balance": _balance_field}
 
     @classmethod
     def invariants(cls):  # type: ignore[override]
@@ -84,9 +82,9 @@ class _BlockPolicy(Policy):
         ]
 
 
-_ALLOW_INTENT = {"amount": "100"}
-_BLOCK_INTENT = {"amount": "500"}
-_STATE = {"state_version": "1.0", "balance": "1000"}
+_ALLOW_INTENT = {"amount": Decimal("100")}
+_BLOCK_INTENT = {"amount": Decimal("500")}
+_STATE = {"state_version": "1.0", "balance": Decimal("1000")}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -127,7 +125,7 @@ class TestDecoratorAllowPath:
             return {"status": "ok", "amount": intent["amount"]}
 
         result = await transfer(_ALLOW_INTENT, _STATE)
-        assert result == {"status": "ok", "amount": "100"}
+        assert result == {"status": "ok", "amount": Decimal("100")}
 
     @pytest.mark.asyncio
     async def test_allow_with_keyword_args_executes_function(self) -> None:

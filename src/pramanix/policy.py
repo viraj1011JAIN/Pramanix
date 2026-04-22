@@ -260,9 +260,12 @@ class Policy:
 
         # ── Check cache before evaluating lambdas ────────────────────────────
         fields_key = tuple(
-            sorted((n, z3t, pt.__name__) for n, (z3t, pt) in fields.items())
+            sorted((n, z3t, getattr(pt, "__name__", repr(pt))) for n, (z3t, pt) in fields.items())
         )
-        cache_key = (fields_key, tuple(id(inv) for inv in invariants))
+        # Use actual function objects (not id()) so they stay alive as long as the
+        # cache entry exists — prevents id reuse after GC causing stale cache hits.
+        inv_key = tuple(invariants)
+        cache_key = (fields_key, inv_key)
         if cache_key in _DYNAMIC_POLICY_CACHE:
             return _DYNAMIC_POLICY_CACHE[cache_key]
 
@@ -286,7 +289,7 @@ class Policy:
         _realized_copy = list(realized)
 
         @classmethod  # type: ignore[misc]
-        def _inv_method(klass: type) -> list[ConstraintExpr]:
+        def _inv_method(_cls: type) -> list[ConstraintExpr]:
             return list(_realized_copy)
 
         namespace: dict[str, Any] = dict(field_instances)
