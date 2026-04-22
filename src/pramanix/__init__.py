@@ -71,7 +71,7 @@ from pramanix.key_provider import (
     KeyProvider,
     PemKeyProvider,
 )
-from pramanix.policy import Policy
+from pramanix.policy import Policy, invariant_mixin
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.redundant import ConsensusStrictness
 
@@ -141,6 +141,7 @@ __all__ = [
     "PersistentMerkleAnchor",
     # Policy
     "Policy",
+    "invariant_mixin",
     "PolicyCompilationError",
     "PolicyError",
     # Exceptions — core

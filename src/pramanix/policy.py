@@ -85,10 +85,57 @@ from __future__ import annotations
 
 from typing import Any, Callable, cast
 
-from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyError
+from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyCompilationError, PolicyError
 from pramanix.expressions import ConstraintExpr, Field, Z3Type
 
-__all__ = ["Policy"]
+__all__ = ["Policy", "invariant_mixin"]
+
+# Type alias for a mixin function: receives the policy's field dict and returns
+# one or more ConstraintExpr objects.
+_MixinFn = Callable[[dict[str, Field]], "ConstraintExpr | list[ConstraintExpr]"]
+
+
+def invariant_mixin(fn: _MixinFn) -> _MixinFn:
+    """Mark a callable as a reusable policy invariant mixin.
+
+    A mixin function accepts a ``dict[str, Field]`` (the receiving policy's
+    field set) and returns a :class:`~pramanix.expressions.ConstraintExpr` or
+    a ``list[ConstraintExpr]``.  Every returned constraint **must** carry a
+    unique ``.named()`` label.
+
+    Compose mixins into a :class:`Policy` subclass via the ``mixins`` keyword
+    argument at class definition time::
+
+        @invariant_mixin
+        def AccountSafetyMixin(fields: dict[str, Field]) -> list[ConstraintExpr]:
+            return [
+                (E(fields["balance"]) >= 0).named("non_neg_balance"),
+                (E(fields["is_frozen"]) == False).named("account_not_frozen"),  # noqa: E712
+            ]
+
+        class TradePolicy(Policy, mixins=[AccountSafetyMixin]):
+            balance   = Field("balance",   Decimal, "Real")
+            is_frozen = Field("is_frozen", bool,    "Bool")
+            amount    = Field("amount",    Decimal, "Real")
+
+            @classmethod
+            def invariants(cls) -> list[ConstraintExpr]:
+                return [(E(cls.amount) <= Decimal("10000")).named("max_tx")]
+
+    Missing fields are detected at :class:`~pramanix.guard.Guard` construction
+    time via :meth:`Policy.validate`, not at ``verify()`` time.
+
+    Args:
+        fn: A callable ``(fields: dict[str, Field]) → ConstraintExpr |
+            list[ConstraintExpr]``.
+
+    Returns:
+        The same callable, with ``._is_invariant_mixin = True`` set for
+        introspection.
+    """
+    fn._is_invariant_mixin = True  # type: ignore[attr-defined]
+    return fn
+
 
 # ── B-2: Dynamic policy cache — keyed by (fields_schema, invariant_ids) ──────
 _DYNAMIC_POLICY_CACHE: dict[tuple[Any, ...], type["Policy"]] = {}
@@ -129,6 +176,95 @@ class Policy:
     :meth:`meta_version`, :meth:`meta_intent_model`, and
     :meth:`meta_state_model`.
     """
+
+    # ── B-3: Subclass hook — mixin composition ────────────────────────────────
+
+    def __init_subclass__(
+        cls,
+        mixins: list[_MixinFn] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Hook applied whenever a :class:`Policy` is subclassed.
+
+        If *mixins* is provided, each callable is woven into the class's
+        :meth:`invariants` return value.  Mixin functions are **evaluated
+        lazily** — on the first :meth:`invariants` call, which happens at
+        :class:`~pramanix.guard.Guard` construction time via
+        :meth:`validate`.  This means missing-field errors surface when you
+        instantiate ``Guard(MyPolicy)``, not when the class is defined.
+
+        Args:
+            mixins: List of :func:`invariant_mixin`-decorated callables.
+                Each receives ``dict[str, Field]`` (this class's fields) and
+                must return a :class:`~pramanix.expressions.ConstraintExpr`
+                or ``list[ConstraintExpr]``.
+
+        Raises:
+            PolicyCompilationError: At ``Guard.__init__`` time if a mixin
+                accesses a field not declared in this policy, or if a mixin
+                is not callable.
+        """
+        super().__init_subclass__(**kwargs)
+        if not mixins:
+            return
+
+        _raw_mixins: list[_MixinFn] = list(mixins)
+
+        # Snapshot THIS class's own invariants method (may be None if the
+        # class body didn't override invariants).  We do NOT call it here —
+        # evaluation is deferred to the first invariants() call.
+        _own_inv: classmethod | None = cls.__dict__.get("invariants")  # type: ignore[assignment]
+
+        @classmethod  # type: ignore[misc]
+        def _merged(_cls: type) -> list[ConstraintExpr]:
+            # Step 1: get the policy's own (non-mixin) invariants.
+            if _own_inv is not None:
+                own: list[ConstraintExpr] = _own_inv.__func__(_cls)
+            else:
+                # This class didn't define invariants() — walk the MRO to
+                # find the first ancestor that did.
+                own = []
+                for ancestor in _cls.__mro__[1:]:
+                    ancestor_inv = vars(ancestor).get("invariants")
+                    if ancestor_inv is not None:
+                        try:
+                            if hasattr(ancestor_inv, "__func__"):
+                                own = ancestor_inv.__func__(_cls)
+                            else:
+                                own = ancestor_inv(_cls)
+                        except NotImplementedError:
+                            own = []
+                        break
+
+            # Step 2: evaluate each mixin with this class's field dict.
+            fields = _cls.fields()
+            extra: list[ConstraintExpr] = []
+            for mixin_fn in _raw_mixins:
+                if not callable(mixin_fn):
+                    raise PolicyCompilationError(
+                        f"Each mixin must be callable, got "
+                        f"{type(mixin_fn).__name__!r} in policy '{_cls.__name__}'. "
+                        "Decorate your mixin function with @invariant_mixin."
+                    )
+                try:
+                    result = mixin_fn(fields)
+                except KeyError as key_e:
+                    mixin_name = getattr(mixin_fn, "__name__", repr(mixin_fn))
+                    raise PolicyCompilationError(
+                        f"Mixin '{mixin_name}' requires field {key_e!s} which is "
+                        f"not declared in '{_cls.__name__}'. "
+                        f"Declared fields: {sorted(fields.keys())}. "
+                        f"Add the missing field to {_cls.__name__} or remove "
+                        "the mixin."
+                    ) from key_e
+                if isinstance(result, list):
+                    extra.extend(result)
+                else:
+                    extra.append(result)
+
+            return own + extra
+
+        cls.invariants = _merged
 
     # ── Field discovery ───────────────────────────────────────────────────────
 
