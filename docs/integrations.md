@@ -1,6 +1,6 @@
 # Pramanix -- Integrations Guide
 
-> **Version:** v0.9.0
+> **Version:** v1.0.0
 > **Prerequisite:** Read [architecture.md](architecture.md) for the pipeline overview and [policy_authoring.md](policy_authoring.md) to write policies.
 
 ---
@@ -305,20 +305,138 @@ async def handle_transfer(intent: dict, state: dict):
 
 ---
 
-## 7. Integration Compatibility
+## 7. CrewAI
 
-| Framework | Version Tested | Module | Status |
-|-----------|---------------|--------|--------|
-| FastAPI | 0.100+ | `integrations.fastapi` | Stable |
-| Starlette | 0.27+ | `integrations.fastapi` | Stable (FastAPI uses Starlette) |
-| LangChain | langchain-core 0.1+ | `integrations.langchain` | Stable |
-| LlamaIndex | llama-index-core 0.10+ | `integrations.llamaindex` | Stable |
-| AutoGen | 0.2+ | `integrations.autogen` | Stable |
+```python
+from pramanix.integrations.crewai import PramanixCrewAITool
+
+guard_tool = PramanixCrewAITool(guard=guard)
+# Pass to a CrewAI Agent's tools list:
+agent = Agent(role="Analyst", tools=[guard_tool])
+```
+
+`PramanixCrewAITool` wraps `Guard.verify()` as a CrewAI `BaseTool`. The tool's `_run(intent_json)` method deserializes the JSON intent, calls `verify()`, and returns the `Decision` result. Install with `pip install 'pramanix[crewai]'`.
+
+## 8. DSPy
+
+```python
+from pramanix.integrations.dspy import PramanixDSPyModule
+
+guard_module = PramanixDSPyModule(guard=guard)
+# Use in a DSPy program:
+result = guard_module(intent={"amount": Decimal("100")}, state=account_state)
+```
+
+`PramanixDSPyModule` subclasses `dspy.Module`. Install with `pip install 'pramanix[dspy]'`.
+
+## 9. PydanticAI
+
+```python
+from pramanix.integrations.pydantic_ai import PramanixPydanticAIGuard
+
+guard_wrapper = PramanixPydanticAIGuard(guard=guard)
+decision = guard_wrapper.verify(intent={"amount": Decimal("100")}, state=account_state)
+```
+
+`PramanixPydanticAIGuard` adapts the guard for PydanticAI pipelines. Install with `pip install 'pramanix[pydantic-ai]'`.
+
+## 10. Haystack
+
+```python
+from pramanix.integrations.haystack import PramanixHaystackComponent
+
+component = PramanixHaystackComponent(guard=guard)
+pipeline.add_component("guard", component)
+```
+
+`PramanixHaystackComponent` implements the Haystack `Component` protocol. The `run()` method accepts `intent` and `state` keyword arguments and outputs a `Decision`. Install with `pip install 'pramanix[haystack]'`.
+
+## 11. Microsoft Semantic Kernel
+
+```python
+from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
+
+plugin = PramanixSemanticKernelPlugin(guard=guard)
+kernel.add_plugin(plugin, plugin_name="PramanixGuard")
+```
+
+The plugin exposes `verify_intent` as a `@kernel_function`. Install with `pip install 'pramanix[semantic_kernel]'`.
+
+## 12. gRPC Server Interceptor
+
+```python
+from pramanix.interceptors.grpc import PramanixGrpcInterceptor
+
+interceptor = PramanixGrpcInterceptor(
+    guard=guard,
+    policy_fn=lambda context: {"amount": Decimal(context.invocation_metadata["amount"])},
+)
+server = grpc.server(
+    futures.ThreadPoolExecutor(max_workers=10),
+    interceptors=[interceptor],
+)
+```
+
+Requests that fail `Guard.verify()` are aborted with `grpc.StatusCode.PERMISSION_DENIED` before the handler runs. Install with `pip install 'pramanix[grpc]'`.
+
+## 13. Kafka Consumer Guard
+
+```python
+from pramanix.interceptors.kafka import PramanixKafkaGuard
+
+kafka_guard = PramanixKafkaGuard(
+    guard=guard,
+    intent_extractor=lambda msg: json.loads(msg.value()),
+)
+# Wraps the confluent-kafka Consumer:
+for message in kafka_guard.consume(consumer, topics=["transfers"]):
+    process(message)  # only reaches here if Guard.verify() returns ALLOW
+```
+
+Messages that fail verification are not forwarded to `process()` — they are logged and the offset is committed. Install with `pip install 'pramanix[kafka]'`.
+
+## 14. Kubernetes Admission Webhook
+
+```python
+# app.py — mount as a MutatingWebhookConfiguration endpoint
+from pramanix.k8s import AdmissionWebhook
+
+app = AdmissionWebhook(guard=guard, policy=ResourcePolicy).app
+```
+
+The webhook validates Pod and Deployment resource specs against the guard before they enter the cluster. See `deploy/k8s/webhook/` for the full `MutatingWebhookConfiguration` manifest and TLS bootstrapping guide. Install with `pip install 'pramanix[k8s]'`.
+
+---
+
+## 15. Integration Compatibility
+
+| Framework | Version Tested | Extra | Status |
+| --------- | -------------- | ----- | ------ |
+| FastAPI | 0.100+ | `fastapi` | Stable |
+| Starlette | 0.27+ | `fastapi` | Stable (FastAPI uses Starlette) |
+| LangChain | langchain-core 0.1+ | `langchain` | Stable |
+| LlamaIndex | llama-index-core 0.10+ | `llamaindex` | Stable |
+| AutoGen | 0.2+ | `autogen` | Stable |
+| CrewAI | 0.80+ | `crewai` | Stable |
+| DSPy | 2.4+ | `dspy` | Stable |
+| PydanticAI | 0.0.13+ | `pydantic-ai` | Stable |
+| Haystack | haystack-ai 2.0+ | `haystack` | Stable |
+| Semantic Kernel | 1.0+ | `semantic_kernel` | Stable |
+| gRPC | grpcio 1.60+ | `grpc` | Stable |
+| Kafka | confluent-kafka 2.3+ | `kafka` | Stable |
+| Kubernetes (webhook) | FastAPI 0.100+ | `k8s` | Stable |
 
 **Installation extras:**
 
 ```bash
-pip install 'pramanix[fastapi]'    # includes starlette
-pip install 'pramanix[langchain]'  # includes langchain-core
-pip install 'pramanix[all]'        # all integrations
+pip install 'pramanix[fastapi]'          # includes starlette
+pip install 'pramanix[langchain]'        # includes langchain-core
+pip install 'pramanix[crewai]'           # CrewAI multi-agent
+pip install 'pramanix[dspy]'             # DSPy pipeline
+pip install 'pramanix[haystack]'         # Haystack pipeline
+pip install 'pramanix[semantic_kernel]'  # Microsoft Semantic Kernel
+pip install 'pramanix[grpc]'             # gRPC server interceptor
+pip install 'pramanix[kafka]'            # Kafka consumer guard
+pip install 'pramanix[k8s]'              # Kubernetes admission webhook
+pip install 'pramanix[all]'              # all integrations
 ```

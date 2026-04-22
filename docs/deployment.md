@@ -1,6 +1,6 @@
 # Pramanix -- Operations and Deployment Guide
 
-> **Version:** v0.9.0
+> **Version:** v1.0.0
 > **Audience:** Platform engineers deploying and operating Pramanix in production.
 > **Prerequisite:** Read [architecture.md](architecture.md) for the pipeline overview.
 
@@ -37,6 +37,19 @@ All variables are prefixed `PRAMANIX_`.
 |----------|---------|------|-------------|
 | `PRAMANIX_SOLVER_RLIMIT` | `10000000` | int | Z3 operation cap per solve call. Prevents non-linear logic bombs. `0` = disabled. |
 | `PRAMANIX_MAX_INPUT_BYTES` | `65536` | int | Serialized intent + state size cap in bytes (64 KiB). Rejects before Z3. `0` = disabled. |
+
+### v1.0 Additional Variables
+
+| Variable | Default | Type | Description |
+| -------- | ------- | ---- | ----------- |
+| `PRAMANIX_SKIP_MUSL_CHECK` | `""` | string | Set to `"1"` to skip Alpine/musl detection at import (tests only -- never in production). |
+| `PRAMANIX_MAX_TRANSLATOR_INPUT_CHARS` | `4096` | int | Max characters accepted by Phase 1 translators before `InputTooLongError`. |
+| `PRAMANIX_INJECTION_THRESHOLD` | `0.5` | float | Post-consensus injection confidence threshold; raise for high-security (e.g. `0.3`). |
+| `PRAMANIX_MERKLE_MAX_ACTIVE` | `10000` | int | `MerkleArchiver` max active entries before auto-archival. |
+| `PRAMANIX_MERKLE_SEGMENT_DAYS` | `7` | int | `MerkleArchiver` segment age in days before entries are eligible for archival. |
+| `PRAMANIX_PERF_P50_MS` | `25` | float (ms) | Perf test P50 latency threshold (override for slower CI machines). |
+| `PRAMANIX_PERF_P95_MS` | `75` | float (ms) | Perf test P95 latency threshold. |
+| `PRAMANIX_PERF_P99_MS` | `200` | float (ms) | Perf test P99 latency threshold. |
 
 **Note:** `min_response_ms`, `redact_violations`, and `expected_policy_hash` are constructor-only arguments -- no env var equivalent. Set them in code.
 
@@ -80,15 +93,19 @@ PRAMANIX_MAX_INPUT_BYTES=32768
 - These failures are non-deterministic -- they may not reproduce in unit tests but manifest under load in production.
 - There is no practical workaround short of recompiling Z3 from source against musl, which is unsupported by the Z3 project.
 
+**Runtime enforcement (v1.0+):** `import pramanix` now calls `check_platform()` at module load time. On any host where `glob.glob("/lib/ld-musl-*.so.1")` returns a match, a `ConfigurationError` is raised immediately — before any policy compiles or any Z3 context opens. This prevents silent misconfiguration. Bypass with `PRAMANIX_SKIP_MUSL_CHECK=1` if running inside a musl container for unit tests that do not exercise Z3.
+
 **Required base image:**
 ```dockerfile
-# CORRECT
-FROM python:3.13-slim          # Debian bookworm slim -- glibc, ~45 MB over Alpine
+# CORRECT — Debian bookworm slim, glibc, ~45 MB over Alpine
+FROM python:3.13-slim-bookworm
 
-# BANNED
-FROM python:3.13-alpine        # musl libc -- segfaults and 3-10x performance degradation
-FROM alpine:3.x                # same problem
+# BANNED — musl libc, segfaults and 3-10x performance degradation
+FROM python:3.13-alpine
+FROM alpine:3.x
 ```
+
+See `Dockerfile.slim` in the project root for a production-ready template.
 
 ### Development Dockerfile (`Dockerfile.dev`)
 

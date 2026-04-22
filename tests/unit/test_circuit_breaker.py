@@ -208,21 +208,27 @@ class TestCircuitBreakerOpen:
     @pytest.mark.asyncio
     async def test_open_transitions_to_half_open_after_recovery(self) -> None:
         """After recovery_seconds elapses, the first call enters HALF_OPEN and
-        succeeds (real Z3 solve is fast) → transitions to CLOSED."""
+        succeeds (real Z3 solve is fast) → transitions to CLOSED.
+
+        pressure_threshold_ms=500 is intentionally high so that a real Z3 solve
+        on any machine (including Windows under full-suite load) never accidentally
+        exceeds the threshold and causes HALF_OPEN → OPEN instead of CLOSED.
+        The fake pressure uses solve_ms=600 to stay above the threshold.
+        """
         config = CircuitBreakerConfig(
-            pressure_threshold_ms=40.0,
+            pressure_threshold_ms=500.0,
             consecutive_pressure_count=2,
             recovery_seconds=0.05,  # 50 ms — only real wall-clock wait in this file
         )
         breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD, config=config)
 
-        await _inject_pressure(breaker, count=2, solve_ms=55.0)
+        await _inject_pressure(breaker, count=2, solve_ms=600.0)
         assert breaker.state == CircuitState.OPEN
 
         # Wait for the real recovery period
         await asyncio.sleep(0.1)
 
-        # Real guard runs a fast Z3 solve → probe succeeds → CLOSED
+        # Real guard runs a real Z3 solve — well below 500 ms → probe succeeds → CLOSED
         await breaker.verify_async(intent=_ALLOW_INTENT, state=_STATE)
         assert breaker.state == CircuitState.CLOSED
 

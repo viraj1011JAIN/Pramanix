@@ -111,14 +111,21 @@ def test_memory_stability_1m_decisions() -> None:
 
 
 def test_latency_percentiles_10k_decisions() -> None:
-    """P50 < 25 ms, P95 < 75 ms, P99 < 200 ms over 10 000 decisions.
+    """P50 / P95 / P99 latency bounds over 10 000 decisions.
 
-    Thresholds include 2.5x margin over the expected 5-10 ms steady-state
-    to tolerate CI machine variance and Z3 JIT warm-up differences across
-    operating systems.  Decisions below the threshold indicate that the
-    per-request overhead of Guard.verify() is dominated by Z3, not by
-    Python overhead introduced by Pramanix.
+    Default thresholds provide 2.5x margin over expected 5-10 ms steady-state.
+    Override via env vars for slower machines or full-suite contention:
+
+        PRAMANIX_PERF_P50_MS  (default 25)
+        PRAMANIX_PERF_P95_MS  (default 75)
+        PRAMANIX_PERF_P99_MS  (default 200)
     """
+    import os
+
+    p50_limit = float(os.environ.get("PRAMANIX_PERF_P50_MS", "25"))
+    p95_limit = float(os.environ.get("PRAMANIX_PERF_P95_MS", "75"))
+    p99_limit = float(os.environ.get("PRAMANIX_PERF_P99_MS", "200"))
+
     # Warm-up: allow Z3 JIT to stabilise before timing starts.
     # Cold-start decisions (300-400 ms on first import) inflate percentiles
     # when this test runs first in the suite.  200 warm-up calls are enough
@@ -138,9 +145,9 @@ def test_latency_percentiles_10k_decisions() -> None:
     p95 = latencies_ms[int(len(latencies_ms) * 0.95)]
     p99 = latencies_ms[int(len(latencies_ms) * 0.99)]
 
-    assert p50 < 25, f"P50 latency {p50:.2f} ms exceeds 25 ms threshold"
-    assert p95 < 75, f"P95 latency {p95:.2f} ms exceeds 75 ms threshold"
-    assert p99 < 200, f"P99 latency {p99:.2f} ms exceeds 200 ms threshold"
+    assert p50 < p50_limit, f"P50 latency {p50:.2f} ms exceeds {p50_limit} ms threshold"
+    assert p95 < p95_limit, f"P95 latency {p95:.2f} ms exceeds {p95_limit} ms threshold"
+    assert p99 < p99_limit, f"P99 latency {p99:.2f} ms exceeds {p99_limit} ms threshold"
 
 
 def test_latency_mixed_sat_unsat() -> None:

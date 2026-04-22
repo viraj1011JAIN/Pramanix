@@ -62,7 +62,7 @@ d.to_dict()  # now contains 'policy_hash'
 succeeded silently may now raise:
 
 | Field | Constraint |
-|-------|-----------|
+| ------- | ----------- |
 | `solver_rlimit` | Must be `>= 0` |
 | `max_input_bytes` | Must be `>= 0` |
 | `min_response_ms` | Must be `>= 0.0` |
@@ -88,7 +88,7 @@ with warnings.catch_warnings():
 
 Or install the extra to make the warning disappear:
 
-```
+```bash
 pip install 'pramanix[otel]'
 ```
 
@@ -98,7 +98,7 @@ These `GuardConfig` fields are new in v0.9.x. They default to backwards-compatib
 require no changes to existing configurations:
 
 | Field | Default | Purpose |
-|-------|---------|---------|
+| ------- | ------- | ------- |
 | `solver_rlimit` | `10_000_000` | Z3 resource limit per solve call |
 | `max_input_bytes` | `65_536` | Max serialised intent+state size |
 | `min_response_ms` | `0.0` (disabled) | Timing side-channel mitigation |
@@ -110,7 +110,7 @@ require no changes to existing configurations:
 
 ## v0.7.x → v0.8.x
 
-### Breaking changes
+### Breaking changes (v0.7.x → v0.8.x)
 
 #### `guard_config._resolver_registry` is now the module singleton
 
@@ -143,17 +143,49 @@ note that it is now an iterative algorithm — behaviour is identical, stack usa
 
 ---
 
-## v0.x → v1.0 (planned)
+## v0.9.x → v1.0.x
 
-### Expected breaking changes
+### Breaking changes (v0.9.x → v1.0.x)
 
-- `pramanix.__all__` will be frozen. Any name not in the v0.9.x `__all__` will not be importable
-  from the top-level package without a full deprecation notice.
-- `Decision` fields flagged as deprecated in v0.9.x will be removed.
-- `GuardConfig.execution_mode` values not in `{"sync", "async-thread", "async-process"}` will
-  be rejected at construction time (currently rejected via `ConfigurationError` in v0.9.x already).
-- Python 3.11 and 3.12 support is **not** planned for v1.0. The minimum supported version will
-  remain Python 3.13 as specified in `pyproject.toml`.
+#### musl/Alpine now rejected at import time (C-1)
+
+`import pramanix` on an Alpine Linux host now raises `ConfigurationError` immediately. If you
+are running in a musl libc environment for testing only, set `PRAMANIX_SKIP_MUSL_CHECK=1` before
+importing. For production, switch your base image to `python:3.13-slim-bookworm` (Debian glibc).
+See `Dockerfile.slim` in the project root for a ready-to-use template.
+
+#### `pramanix.__all__` is now frozen at v1.0 surface
+
+The public API is locked. Adding a name to `__all__` is now a minor-version change, not a patch.
+Removing or renaming a name requires a major version bump. The exact locked set is tested in
+`tests/unit/test_api_contract.py`.
+
+#### `Policy.Meta.semver` validation (B-4)
+
+If you add `class Meta: semver = (...)` to a Policy and the tuple is not exactly three
+non-negative integers, `Guard.__init__` now raises `ConfigurationError` before the first request.
+Previously, an invalid tuple would raise `IndexError` or `ValueError` deep inside `meta_version()`
+at an unpredictable call site.
+
+### New APIs (no migration required, additive only)
+
+The following were added in v1.0 and are immediately available without any code changes:
+
+- **`PolicyMigration`** — dataclass for schema evolution. `migrate(state)` returns a new dict
+  with renamed/removed fields applied. `can_migrate(state)` checks compatibility without mutating.
+- **`MerkleArchiver`** — use instead of unbounded `MerkleAnchor` in long-running deployments.
+  Drop-in: replace `MerkleAnchor()` with `MerkleArchiver(max_active_entries=10_000)`.
+- **Execution token backends** — `InMemoryExecutionTokenVerifier` (in-process), `SQLiteExecutionTokenVerifier`
+  (single-host persistent), `PostgresExecutionTokenVerifier` (multi-server). All implement the
+  same `consume(token, expected_state_version)` protocol as the existing `ExecutionTokenVerifier`.
+- **Audit sinks** — pass `GuardConfig(audit_sink=StdoutAuditSink())` (or Datadog/Kafka/S3/Splunk)
+  to route every decision to an external observability system.
+- **Framework adapters** — `pramanix.integrations.crewai`, `.dspy`, `.pydantic_ai`, `.haystack`,
+  `.semantic_kernel`, `.grpc`, `.kafka`, `.k8s` — all optional; install the matching extra.
+- **Translator backends** — `GeminiTranslator`, `CohereTranslator`, `MistralTranslator`,
+  `LlamaCppTranslator` in `pramanix.translator.*`; same `Translator` protocol as `OllamaTranslator`.
+- **CLI subcommands** — `pramanix policy migrate`, `pramanix policy dry-run`,
+  `pramanix schema export`, `pramanix calibrate-injection`.
 
 ### Stable API guarantees (v1.0+)
 
@@ -165,9 +197,11 @@ and deprecation cycle:
 - `SolverStatus` enum members and their string values
 - `PramanixError` and its subclasses
 - `VerificationResult` — all fields (including `policy_hash`, `issued_at`)
-- `MerkleAnchor` and `PersistentMerkleAnchor` — public methods only
+- `MerkleAnchor`, `PersistentMerkleAnchor`, `MerkleArchiver` — public methods only
 - `DecisionSigner` / `DecisionVerifier` — JWS token format
-- CLI command structure: `pramanix verify-proof` and `pramanix audit verify`
+- `ExecutionToken`, `ExecutionTokenSigner`, `ExecutionTokenVerifier` and all backend subclasses
+- CLI command structure: `pramanix verify-proof`, `pramanix audit verify`, `pramanix policy *`,
+  `pramanix schema export`
 
 ### Not stable (v1.0+)
 

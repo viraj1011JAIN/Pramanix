@@ -227,23 +227,24 @@ class TestStage3SerializationFailure:
     def test_safe_dump_raises_on_intent_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RuntimeError in safe_dump() during intent serialization → ERROR (fail-safe)."""
+        """RuntimeError in flatten_model() during intent serialization → ERROR (fail-safe)."""
         guard = _make_guard()
         def _raise(*a, **kw): raise RuntimeError("model_dump() failed — circular reference")
-        monkeypatch.setattr(_guard_mod, "safe_dump", _raise)
-        # Pass Pydantic model objects so safe_dump() is actually invoked.
+        # guard.py imports flatten_model (not safe_dump) from helpers.serialization
+        monkeypatch.setattr(_guard_mod, "flatten_model", _raise)
+        # Pass Pydantic model objects so flatten_model() is actually invoked.
         intent_model = _TestIntent(amount=Decimal("100.00"))
         state_model = _TestState(balance=Decimal("1000.00"), state_version="1.0")
         decision = guard.verify(intent=intent_model, state=state_model)
-        _assert_fail_safe(decision, "safe_dump RuntimeError on intent model")
+        _assert_fail_safe(decision, "flatten_model RuntimeError on intent model")
         assert decision.status is SolverStatus.ERROR
 
     def test_safe_dump_raises_on_state_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RuntimeError in safe_dump() on the second call (state model) → ERROR (fail-safe).
+        """RuntimeError in flatten_model() on the second call (state model) → ERROR (fail-safe).
 
-        Patches safe_dump to succeed on the first call (intent) and raise on
+        Patches flatten_model to succeed on the first call (intent) and raise on
         the second call (state), isolating the state-serialization path.
         """
         guard = _make_guard()
@@ -253,14 +254,15 @@ class TestStage3SerializationFailure:
             _call_count["n"] += 1
             if _call_count["n"] == 2:
                 raise RuntimeError("model_dump() failed on state — unexpected attribute")
-            from pramanix.helpers.serialization import safe_dump as _real
+            from pramanix.helpers.serialization import flatten_model as _real
             return _real(obj)
 
-        monkeypatch.setattr(_guard_mod, "safe_dump", _side_effect)
+        # guard.py imports flatten_model (not safe_dump) from helpers.serialization
+        monkeypatch.setattr(_guard_mod, "flatten_model", _side_effect)
         intent_model = _TestIntent(amount=Decimal("100.00"))
         state_model = _TestState(balance=Decimal("1000.00"), state_version="1.0")
         decision = guard.verify(intent=intent_model, state=state_model)
-        _assert_fail_safe(decision, "safe_dump RuntimeError on state model")
+        _assert_fail_safe(decision, "flatten_model RuntimeError on state model")
         assert decision.status is SolverStatus.ERROR
 
 

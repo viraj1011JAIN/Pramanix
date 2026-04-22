@@ -1,6 +1,6 @@
 # Pramanix -- Architecture Reference
 
-> **Version:** v0.9.0
+> **Version:** v1.0.0
 > **For the complete design specification see** [Blueprint.md](Blueprint.md).
 > **Audience:** Engineers integrating Pramanix, contributors, and reviewers doing a security evaluation.
 
@@ -150,7 +150,13 @@ Audit log  (structlog JSON line)
 | ResolverRegistry | `resolvers.py` | Async field resolver cache with thread-local isolation |
 | MerkleAnchor | `audit/` | SHA-256 rolling hash chain + checkpoint tree |
 | CLI | `cli.py` | `pramanix audit verify` offline verification subcommand |
-| CircuitBreaker | `circuit_breaker.py` | Adaptive load shedding, four-state FSM |
+| CircuitBreaker | `circuit_breaker.py` | Adaptive load shedding, four-state FSM (CLOSED/OPEN/HALF_OPEN/ISOLATED); sync and async modes |
+| DistributedCircuitBreaker | `circuit_breaker.py` | Cross-replica circuit state via pluggable backends (`InMemoryDistributedBackend`, `RedisDistributedBackend`) |
+| MerkleArchiver | `audit/archiver.py` | Segment-based archival of Merkle chain; checkpoint leaf binding; `verify_archive()` offline integrity |
+| AuditSink | `audit_sink.py` | Pluggable decision routing: `StdoutAuditSink`, `InMemoryAuditSink`, `DatadogAuditSink`, `KafkaAuditSink`, `S3AuditSink`, `SplunkHecAuditSink` |
+| PolicyMigration | `migration.py` | Schema-evolution helper: `migrate(state)`, `can_migrate(state)`, field renames, removed fields |
+| Platform check | `_platform.py` | musl/Alpine detection at import; `ConfigurationError` on glibc incompatibility |
+| InvariantASTCache | `transpiler.py` | Z3 AST cache keyed by policy hash; eliminates redundant transpilation across requests |
 | FastPath | `fast_path.py` | O(1) pre-Z3 screening, up to 5 rules |
 | Decorator | `decorator.py` | `@guard` function wrapper |
 
@@ -410,9 +416,10 @@ Understanding these boundaries is important for correct deployment in regulated 
 - For string-heavy policies, prefer integer-encoded enumerations and `.is_in()` membership checks.
 - Tune `solver_timeout_ms` accordingly if string constraints are necessary.
 
-**Merkle anchor persistence:**
+**Merkle anchor persistence and growth:**
 - `MerkleAnchor` is process-scoped. If the process terminates without exporting `root_hash`, the chain is lost.
 - Use `PersistentMerkleAnchor` with a `checkpoint_callback` that writes to an append-only store (database, object storage, transparency log) at every checkpoint.
+- For long-running deployments, use `MerkleArchiver` to prevent unbounded growth. Old segments are flushed to `.merkle.archive.YYYYMMDD` files and replaced by a single checkpoint leaf that cryptographically binds the archived root into the ongoing chain. Use `MerkleArchiver.verify_archive(path)` for offline integrity checks.
 - Individual Ed25519-signed decisions remain independently verifiable even without the Merkle chain.
 - **Iterative root computation:** `_build_root` uses an iterative `while len(level) > 1:` loop instead of recursion, eliminating Python's default 1,000-frame stack limit for large production logs.
 
