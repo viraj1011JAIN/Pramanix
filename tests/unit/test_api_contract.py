@@ -136,6 +136,30 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "ResolverRegistry",
         # Decorator
         "guard",
+        # Execution token verifiers (v1.0.0)
+        "InMemoryExecutionTokenVerifier",
+        "PostgresExecutionTokenVerifier",
+        "SQLiteExecutionTokenVerifier",
+        # Audit sinks (v1.0.0 additions)
+        "DatadogAuditSink",
+        "KafkaAuditSink",
+        "S3AuditSink",
+        "SplunkHecAuditSink",
+        # Merkle archiver (v1.0.0)
+        "MerkleArchiver",
+        # Injection scoring (v1.0.0)
+        "BuiltinScorer",
+        "CalibratedScorer",
+        "InjectionScorer",
+        # Distributed circuit breaker backend (v1.0.0)
+        "RedisDistributedBackend",
+        # Policy migration / versioning (v1.0.0)
+        "PolicyMigration",
+        # AST cache (v1.0.0)
+        "InvariantASTCache",
+        # Utility helpers (v1.0.0)
+        "invariant_mixin",
+        "model_dump_z3",
     }
 )
 

@@ -4,7 +4,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.13-blue)
 ![License AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-green)
 ![Version 1.0.0](https://img.shields.io/badge/Version-1.0.0-blue)
-![Tests 2360 passed](https://img.shields.io/badge/Tests-2360%20passed-brightgreen)
+![Tests 2393 passed](https://img.shields.io/badge/Tests-2393%20passed-brightgreen)
 ![Coverage 97%](https://img.shields.io/badge/Coverage-97%25-brightgreen)
 ![SLSA Level 3 Ready](https://img.shields.io/badge/SLSA-Level%203%20Ready-blueviolet)
 
@@ -151,21 +151,39 @@ These are real constraints of the current design, not caveats added for legal co
 
 ### TOCTOU (Time-of-Check vs Time-of-Use)
 
+*Status: Fully closed (v1.0.0).* The gap is eliminated at the database transaction level — not merely detected after the fact.
+
 Pramanix verifies state at the moment `verify()` is called. In concurrent systems, two requests can both pass verification and then both execute against the same shared resource before either write completes.
 
-*Mitigation:* Bind the state version to the `ExecutionToken` at verify time. If state changes before execution, `consume()` detects the mismatch and returns `False`:
+**Preferred fix — `consume_within()` (atomic, TOCTOU-proof):**
+
+Pass your existing open database connection to `consume_within()`. The token INSERT and your business write share the same transaction. If the transaction rolls back (due to a conflict, error, or concurrent write), the token is automatically un-consumed and the replay slot is reclaimed. State version mismatch is checked inside the same transaction before the INSERT.
 
 ```python
-# At verify time — capture state version (ETag, DB row version, Redis version, etc.)
+from pramanix import SQLiteExecutionTokenVerifier
+
+# At verify time — mint a token bound to the current state version
 token = signer.mint(decision, state_version=account_row.etag)
 
-# At execute time — re-fetch state and pass current version
-if verifier.consume(token, expected_state_version=current_etag):
-    execute_transfer()
-# Returns False if the account was modified between verify() and execute()
+# At execute time — inside your own transaction
+with conn:  # your application's open SQLite connection
+    if verifier.consume_within(conn, token, expected_state_version=current_etag):
+        conn.execute("UPDATE accounts SET balance = balance - ? WHERE id = ?", (amount, acct_id))
+    # If the UPDATE or consume_within fails, the whole transaction rolls back.
+    # The token is NOT consumed. Replay is impossible.
 ```
 
-The `state_version` is embedded in the HMAC body — stripping or modifying it invalidates the token. Use `SQLiteExecutionTokenVerifier` (single-host persistence), `PostgresExecutionTokenVerifier` (Postgres deployments), or `RedisExecutionTokenVerifier` (multi-server cross-node replay prevention).
+`consume_within()` does NOT commit or close the connection — your code owns the transaction boundary. The same pattern applies to `PostgresExecutionTokenVerifier.consume_within(conn, token)` for asyncpg connections.
+
+**Alternative — `consume()` (verify-then-mark):** Suitable when you cannot share a connection. Checks state version and marks the token consumed in Pramanix's own transaction. The business write is separate — a crash between the two remains a theoretical (if brief) window. Use `consume_within()` where atomicity matters.
+
+```python
+# At execute time — independent transaction (no shared conn required)
+if verifier.consume(token, expected_state_version=current_etag):
+    execute_transfer()  # separate operation
+```
+
+The `state_version` is embedded in the HMAC body — stripping or modifying it invalidates the token. Use `SQLiteExecutionTokenVerifier` (single-host), `PostgresExecutionTokenVerifier` (Postgres), or `RedisExecutionTokenVerifier` (multi-server).
 
 ### Z3 encoding scope
 
@@ -185,9 +203,18 @@ PolicyAuditor.audit(BankingPolicy, raise_on_uncovered=True)
 
 # Inspect only:
 uncovered = PolicyAuditor.uncovered_fields(BankingPolicy)  # → ['currency_code']
+
+# Generate SAT/UNSAT boundary witnesses per invariant — useful for policy review:
+witnesses = PolicyAuditor.boundary_examples(BankingPolicy)
+# Returns: {'sufficient_funds': {'sat': {'amount': Decimal('0'), 'balance': Decimal('1')},
+#                                 'unsat': {'amount': Decimal('2'), 'balance': Decimal('1')}},
+#           ...}
+# 'sat' — a concrete example that satisfies the invariant.
+# 'unsat' — a concrete example that violates it.
+# Both are Z3 model witnesses, typed as Decimal/int/bool/str.
 ```
 
-Structural coverage catches unused fields. Correctness of the invariants themselves still requires domain-expert review before production deployment in regulated environments.
+Structural coverage catches unused fields. `boundary_examples()` generates Z3-witnessed concrete examples that make it easier to review whether invariants are doing what you intend. Correctness of the invariants themselves still requires domain-expert review before production deployment in regulated environments.
 
 ### Z3 native process crashes
 
@@ -206,9 +233,33 @@ GuardConfig(execution_mode="async-process") # worker crash → fail-safe BLOCK
 
 ### Z3 string theory performance
 
+*Status: Auto-mitigated for the common case (v1.0.0).* String fields used only in `==` or `is_in()` are automatically promoted to `Int` by the transpiler with no API change. Fields mixed with `starts_with()`, `ends_with()`, or other string operations stay in full sequence theory.
+
 Z3's `String` sort uses sequence theory, which is decidable but slower than linear-integer arithmetic.
 
-*Mitigation:* Use `StringEnumField` to map fixed string enumerations to `Int`-backed fields. Authoring is identical; Z3 solves with linear-integer arithmetic instead of sequence theory:
+**Automatic String→Int promotion (no code change needed):**
+
+If every use of a `Field("role", str, "String")` across all invariants is an equality (`==`) or membership (`is_in()`), the transpiler detects this at startup and re-encodes the field as a Z3 `Int` variable with alphabetically-sorted integer codes. Your policy DSL is unchanged; the optimisation is transparent:
+
+```python
+class RolePolicy(Policy):
+    role   = Field("role",   str,     "String")  # auto-promoted to Int — no change needed
+    amount = Field("amount", Decimal, "Real")
+
+    @classmethod
+    def invariants(cls):
+        return [
+            E(cls.role).is_in(["admin", "manager"]).named("valid_role"),  # → Int disjunction
+            (E(cls.amount) <= 1000).named("within_limit"),
+        ]
+
+# Call site identical — the string value is encoded internally by the solver:
+guard.verify({"role": "admin", "amount": 500}, {})
+```
+
+**Explicit `StringEnumField` (for non-promotable patterns or explicit control):**
+
+Use `StringEnumField` when a string field mixes `is_in()` with `starts_with()`, `ends_with()`, or other operations — those fields cannot be auto-promoted:
 
 ```python
 from pramanix import StringEnumField
@@ -216,7 +267,7 @@ from pramanix import StringEnumField
 _status = StringEnumField("status", ["CLEAR", "PENDING", "BLOCKED"])
 
 class AccountPolicy(Policy):
-    status = _status.field   # Int field — no sequence theory
+    status = _status.field   # explicit Int field
 
     @classmethod
     def invariants(cls):
@@ -225,12 +276,11 @@ class AccountPolicy(Policy):
             _status.is_allowed_constraint(cls.status, ["CLEAR"]),
         ]
 
-# Encode at call time, decode for logging:
 guard.verify(intent={"status": _status.encode("CLEAR")}, state=...)
 _status.decode(0)  # → "CLEAR"
 ```
 
-Benchmark on development hardware (Windows 11, Python 3.13, z3-solver 4.16.0): 5-invariant policy with one string field — ~12 ms P50 with `"String"` sort, ~5 ms P50 with `StringEnumField`.
+Benchmark on development hardware (Windows 11, Python 3.13, z3-solver 4.16.0): 5-invariant policy with one string field — ~12 ms P50 with full `"String"` sequence theory, ~5 ms P50 with auto-promotion or `StringEnumField` (identical performance, both use Int arithmetic).
 
 ### Merkle anchor unbounded growth
 
@@ -1030,7 +1080,7 @@ Four backend options — all implement the same interface, swap by changing one 
 | `ExecutionTokenVerifier` | Single-process (in-memory, backward-compatible) |
 | `InMemoryExecutionTokenVerifier` | Single-process (explicit named alias) |
 | `SQLiteExecutionTokenVerifier` | Small production deployments — WAL-mode, thread-safe, survives restarts |
-| `PostgresExecutionTokenVerifier` | Postgres deployments — advisory locking for atomicity |
+| `PostgresExecutionTokenVerifier` | Postgres deployments — asyncpg, advisory locking for atomicity |
 | `RedisExecutionTokenVerifier` | Multi-process / multi-server — Redis SETNX cross-node replay prevention |
 
 ```python
@@ -1040,8 +1090,18 @@ verifier = SQLiteExecutionTokenVerifier(
     secret_key=secret,
     db_path="/var/lib/pramanix/tokens.db",  # persists across restarts
 )
+
+# Standard consume — marks token used in Pramanix's own transaction:
 if verifier.consume(token, expected_state_version=current_etag):
     execute_transfer()
+
+# consume_within — atomic: shares YOUR open connection/transaction.
+# If your business write rolls back, the token is automatically un-consumed.
+# This is the correct pattern when TOCTOU atomicity matters:
+with conn:  # your open sqlite3.Connection
+    if verifier.consume_within(conn, token, expected_state_version=current_etag):
+        conn.execute("UPDATE accounts SET balance = balance - ? WHERE id = ?", (amount, acct_id))
+    # Commit or rollback is YOUR responsibility — consume_within does not commit.
 ```
 
 ---
@@ -1522,7 +1582,7 @@ pytest tests/unit/test_solver.py::TestSolveTimeout -v
 
 ## Test Suite
 
-2,360 passed, 1 skipped, 0 failures. Coverage: 97% (threshold: 95%).
+2,393 passed, 1 skipped, 0 failures. Coverage: 97% (threshold: 95%).
 
 Full suite: `pytest tests/` (all suites). Badge count covers unit + integration.
 
@@ -1530,12 +1590,12 @@ Full suite: `pytest tests/` (all suites). Badge count covers unit + integration.
 
 | Suite | Tests | Files | What it covers |
 | ------- | ------- | ------- | ---------------- |
-| Unit | ~2,050 | 65+ | All modules, every public method, edge cases, DSL, HMAC IPC, CLI, new backends |
+| Unit | 2,357 | 68+ | All modules, every public method, edge cases, DSL, HMAC IPC, CLI, new backends |
 | Integration | 175 | 12 | Full verify() pipeline, all 3 execution modes, JWT + Redis zero-trust |
 | Adversarial | 151 | 8 | Prompt injection, HMAC IPC tampering, field overflow, TOCTOU, Z3 context isolation |
 | Property | 34 | 3 | Hypothesis-based DSL/transpiler round-trips, fintech invariant properties |
 | Perf | 8 | 2 | Latency targets, 1M-decision memory stability, worker recycle RSS |
-| **Total (badge)** | **2,360** | | |
+| **Total (badge)** | **2,393** | | |
 
 ### Coverage by Module
 
@@ -1583,7 +1643,7 @@ async def test_caller_cannot_inject_own_state(self, redis_client):
 
 ## Project Status
 
-v1.0.0 — 75+ source files, 97% coverage, 2,360 tests (unit + integration + adversarial + property).
+v1.0.0 — 75+ source files, 97% coverage, 2,393 tests (unit + integration + adversarial + property).
 
 | Milestone | Status |
 | ----------- | -------- |
