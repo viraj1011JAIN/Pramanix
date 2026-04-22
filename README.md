@@ -515,6 +515,18 @@ spawn (not fork) → warmup (8-pattern Z3 solve) → serve decisions
 
 Workers are spawned, never forked — avoids inheriting parent process file descriptors and state. The warmup solve eliminates Z3 cold-start JIT latency before the first real request.
 
+**Pickling pre-flight (v1.0):** In `async-process` mode, `Guard.verify()` runs `pickle.dumps(values)` before dispatching to the worker pool. Unpicklable inputs (custom objects, lambda fields) return `Decision.error(reason="unpicklable_intent: ...")` instead of crashing the worker process. Use `Guard.assert_process_safe(intent, state)` at startup to detect unpicklable fields early:
+
+```python
+guard = Guard(BankingPolicy, GuardConfig(execution_mode="async-process"))
+
+# Raises ValueError listing the unpicklable field names if any field is not picklable
+guard.assert_process_safe(
+    intent={"amount": Decimal("100")},
+    state={"balance": Decimal("1000")},
+)
+```
+
 ---
 
 ## Neuro-Symbolic Mode (Phase 1 + Phase 2)
@@ -1139,6 +1151,67 @@ category = classify_compliance_event(
 # Returns: "CRITICAL_PREVENTION" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL"
 ```
 
+### Audit Sinks
+
+Route every decision to an external observability system without touching your application code. Configure once in `GuardConfig`, all decisions flow automatically:
+
+```python
+from pramanix import (
+    GuardConfig,
+    StdoutAuditSink,
+    InMemoryAuditSink,
+    DatadogAuditSink,
+    KafkaAuditSink,
+    S3AuditSink,
+    SplunkHecAuditSink,
+)
+
+# Development — print every decision to stdout
+config = GuardConfig(audit_sink=StdoutAuditSink())
+
+# Test — collect decisions in memory for assertions
+sink = InMemoryAuditSink()
+config = GuardConfig(audit_sink=sink)
+# ... after test:
+assert len(sink.decisions) == 2
+
+# Production — send to Datadog Events API
+config = GuardConfig(
+    audit_sink=DatadogAuditSink(
+        api_key=os.environ["DD_API_KEY"],
+        service="banking-guard",
+        env="prod",
+    ),
+)
+
+# Production — send to Kafka topic
+config = GuardConfig(
+    audit_sink=KafkaAuditSink(
+        bootstrap_servers="kafka:9092",
+        topic="pramanix.decisions",
+    ),
+)
+
+# Production — batch to S3
+config = GuardConfig(
+    audit_sink=S3AuditSink(
+        bucket="audit-decisions",
+        prefix="pramanix/",
+        batch_size=500,
+    ),
+)
+
+# Production — Splunk HTTP Event Collector
+config = GuardConfig(
+    audit_sink=SplunkHecAuditSink(
+        hec_url="https://splunk.internal:8088/services/collector",
+        hec_token=os.environ["SPLUNK_HEC_TOKEN"],
+    ),
+)
+```
+
+All sinks are fire-and-forget — a sink write failure never blocks or fails the `verify()` call. The decision is returned to the caller regardless of sink availability.
+
 ---
 
 ## Resilience
@@ -1166,6 +1239,34 @@ breaker = AdaptiveCircuitBreaker(
 decision = await breaker.verify_async(intent=intent, state=state)
 breaker.reset()  # reset from ISOLATED
 ```
+
+### Distributed Circuit Breaker
+
+Run multiple guard replicas with shared circuit state — one overloaded node trips the breaker across the whole fleet:
+
+```python
+from pramanix import DistributedCircuitBreaker, CircuitBreakerConfig, RedisDistributedBackend
+import redis.asyncio as aioredis
+
+redis_client = aioredis.from_url("redis://redis:6379")
+
+breaker = DistributedCircuitBreaker(
+    guard=guard,
+    config=CircuitBreakerConfig(
+        namespace="banking_guard",
+        pressure_threshold_ms=40.0,
+        consecutive_pressure_count=5,
+        recovery_seconds=30.0,
+    ),
+    backend=RedisDistributedBackend(redis_client=redis_client),
+)
+
+decision = await breaker.verify_async(intent=intent, state=state)
+```
+
+All replicas share the same circuit state via Redis. A single slow replica can trip the breaker for the entire fleet — intentional: solver pressure is a signal that the underlying system (Z3 or its inputs) is degraded, not a per-replica coincidence.
+
+For testing without Redis, use `InMemoryDistributedBackend` — same interface, in-process storage.
 
 ### Fast-Path Evaluator
 
