@@ -183,6 +183,23 @@ def main() -> int:
         help="Minimum labelled examples required (default: 200).",
     )
 
+    # doctor subcommand
+    doctor_cmd = sub.add_parser(
+        "doctor",
+        help="Validate environment, dependencies, key config, and platform compatibility.",
+    )
+    doctor_cmd.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output results as JSON instead of human-readable text.",
+    )
+    doctor_cmd.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 if any WARNING is found (not just errors).",
+    )
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -202,6 +219,9 @@ def main() -> int:
 
     if args.command == "calibrate-injection":
         return _cmd_calibrate_injection(args)
+
+    if args.command == "doctor":
+        return _cmd_doctor(args)
 
     parser.print_help()
     return 2
@@ -874,4 +894,253 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
         f"({positives} injection, {negatives} benign) "
         f"and saved to {output_path}"
     )
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# pramanix doctor — environment validation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Validate the Pramanix deployment environment.
+
+    Checks Python version, platform compatibility, core imports, Z3 solver
+    functionality, optional extras, signing key configuration, and Redis
+    reachability when configured.
+
+    Exit codes:
+        0 — all checks passed (warnings only if --strict not set)
+        1 — one or more ERROR checks failed, or WARNING with --strict
+        2 — usage error
+    """
+    import importlib
+    import importlib.util
+    import platform
+    import struct
+    import sys as _sys
+    from typing import Literal
+
+    CheckLevel = Literal["OK", "WARN", "ERROR", "SKIP"]
+
+    checks: list[dict[str, object]] = []
+
+    def _check(
+        name: str,
+        level: CheckLevel,
+        detail: str,
+        hint: str = "",
+    ) -> None:
+        checks.append({"name": name, "level": level, "detail": detail, "hint": hint})
+
+    def _has(modname: str) -> bool:
+        try:
+            return importlib.util.find_spec(modname) is not None
+        except (ModuleNotFoundError, ValueError):
+            return False
+
+    # ── 1. Python version ─────────────────────────────────────────────────────
+    vi = _sys.version_info
+    if (vi.major, vi.minor) >= (3, 13):
+        _check("python-version", "OK", f"Python {vi.major}.{vi.minor}.{vi.micro}")
+    else:
+        _check(
+            "python-version",
+            "ERROR",
+            f"Python {vi.major}.{vi.minor}.{vi.micro} — minimum required is 3.13",
+            hint="Upgrade to Python 3.13+.",
+        )
+
+    # ── 2. Platform / libc (musl vs glibc) ───────────────────────────────────
+    plat = platform.system()
+    if plat == "Linux":
+        import ctypes
+        try:
+            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            gnu_get_libc_version = getattr(libc, "gnu_get_libc_version", None)
+            if gnu_get_libc_version is not None:
+                gnu_get_libc_version.restype = ctypes.c_char_p
+                glibc_ver = gnu_get_libc_version().decode()
+                _check("platform-libc", "OK", f"glibc {glibc_ver} (Linux/{platform.machine()})")
+            else:
+                _check(
+                    "platform-libc",
+                    "ERROR",
+                    "gnu_get_libc_version not found — possible musl/Alpine libc",
+                    hint="Use a glibc-based image (e.g. python:3.13-slim-bookworm). "
+                         "musl breaks z3-solver native extensions.",
+                )
+        except OSError:
+            _check(
+                "platform-libc",
+                "ERROR",
+                "Cannot load libc.so.6 — likely musl/Alpine",
+                hint="Use a glibc-based image (e.g. python:3.13-slim-bookworm). "
+                     "musl breaks z3-solver native extensions.",
+            )
+    else:
+        _check("platform-libc", "OK", f"{plat}/{platform.machine()} (non-Linux; glibc check skipped)")
+
+    # ── 3. Pointer width ──────────────────────────────────────────────────────
+    bits = struct.calcsize("P") * 8
+    if bits == 64:
+        _check("platform-bits", "OK", "64-bit process")
+    else:
+        _check("platform-bits", "WARN", f"{bits}-bit process — 32-bit is unsupported",
+               hint="Run on a 64-bit platform.")
+
+    # ── 4. Core pramanix import ───────────────────────────────────────────────
+    try:
+        import pramanix as _px
+        ver = getattr(_px, "__version__", "unknown")
+        _check("pramanix-import", "OK", f"pramanix {ver}")
+    except Exception as exc:
+        _check("pramanix-import", "ERROR", f"Import failed: {exc}",
+               hint="Run 'pip install pramanix' or reinstall from source.")
+
+    # ── 5. Z3 solver ─────────────────────────────────────────────────────────
+    try:
+        import z3  # type: ignore[import-untyped]
+        s = z3.Solver()
+        s.add(z3.Bool("x") == True)  # noqa: E712
+        res = str(s.check())
+        if res == "sat":
+            _check("z3-solver", "OK", f"z3 {z3.get_version_string()} — solver functional")
+        else:
+            _check("z3-solver", "ERROR", f"z3.Solver().check() returned {res!r} — unexpected",
+                   hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.")
+    except ImportError:
+        _check("z3-solver", "ERROR", "z3-solver not installed",
+               hint="pip install 'z3-solver>=4.12'")
+    except Exception as exc:
+        _check("z3-solver", "ERROR", f"z3 functional check failed: {exc}",
+               hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.")
+
+    # ── 6. Pydantic ───────────────────────────────────────────────────────────
+    try:
+        import pydantic
+        pv = pydantic.VERSION
+        major = int(pv.split(".")[0])
+        if major >= 2:
+            _check("pydantic", "OK", f"pydantic {pv}")
+        else:
+            _check("pydantic", "ERROR", f"pydantic {pv} — v2.x required",
+                   hint="pip install 'pydantic>=2.5'")
+    except ImportError:
+        _check("pydantic", "ERROR", "pydantic not installed",
+               hint="pip install 'pydantic>=2.5'")
+
+    # ── 7. Signing key configuration ─────────────────────────────────────────
+    signing_key = os.environ.get("PRAMANIX_SIGNING_KEY", "")
+    if signing_key:
+        _check("signing-key", "OK", "PRAMANIX_SIGNING_KEY is set")
+    else:
+        _check(
+            "signing-key",
+            "WARN",
+            "PRAMANIX_SIGNING_KEY not set — decision proofs will be unsigned",
+            hint="Set PRAMANIX_SIGNING_KEY to a 32-byte hex secret, or use "
+                 "GuardConfig(signing_key=...) at runtime.",
+        )
+
+    # ── 8. Cryptography package (required for PramanixSigner / Ed25519) ───────
+    if _has("cryptography"):
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: F401
+            _check("cryptography", "OK", "cryptography — Ed25519 available")
+        except ImportError as exc:
+            _check("cryptography", "WARN", f"cryptography import partial: {exc}",
+                   hint="Reinstall: pip install 'pramanix[crypto]'")
+    else:
+        _check(
+            "cryptography",
+            "WARN",
+            "cryptography not installed — Ed25519 signing unavailable",
+            hint="pip install 'pramanix[crypto]'",
+        )
+
+    # ── 9. Optional extras ────────────────────────────────────────────────────
+    OPTIONAL_CHECKS: list[tuple[str, str, str]] = [
+        ("otel", "opentelemetry.sdk", "pip install 'pramanix[otel]'"),
+        ("translator-httpx", "httpx", "pip install 'pramanix[translator]'"),
+        ("fastapi", "fastapi", "pip install 'pramanix[fastapi]'"),
+        ("langchain", "langchain_core", "pip install 'pramanix[langchain]'"),
+        ("llamaindex", "llama_index.core", "pip install 'pramanix[llamaindex]'"),
+        ("redis", "redis", "pip install 'pramanix[identity]'"),
+        ("pdf", "fpdf", "pip install 'pramanix[pdf]'"),
+        ("aws-boto3", "boto3", "pip install 'pramanix[aws]'"),
+        ("azure-identity", "azure.identity", "pip install 'pramanix[azure]'"),
+        ("gcp-secretmgr", "google.cloud.secretmanager", "pip install 'pramanix[gcp]'"),
+        ("vault-hvac", "hvac", "pip install 'pramanix[vault]'"),
+        ("kafka", "confluent_kafka", "pip install 'pramanix[kafka]'"),
+        ("datadog", "datadog_api_client", "pip install 'pramanix[datadog]'"),
+    ]
+
+    for label, modname, install_hint in OPTIONAL_CHECKS:
+        if _has(modname):
+            _check(f"extra:{label}", "OK", f"{modname} installed")
+        else:
+            _check(f"extra:{label}", "SKIP", f"{modname} not installed (optional)", hint=install_hint)
+
+    # ── 10. Redis reachability (only if PRAMANIX_REDIS_URL is configured) ─────
+    redis_url = os.environ.get("PRAMANIX_REDIS_URL", "")
+    if redis_url:
+        if _has("redis"):
+            try:
+                import redis as _redis
+                client = _redis.from_url(redis_url, socket_connect_timeout=3)
+                client.ping()
+                _check("redis-ping", "OK", f"Redis reachable at {redis_url}")
+                client.close()
+            except Exception as exc:
+                _check(
+                    "redis-ping",
+                    "ERROR",
+                    f"Redis unreachable at {redis_url}: {exc}",
+                    hint="Check PRAMANIX_REDIS_URL and that Redis is running.",
+                )
+        else:
+            _check("redis-ping", "SKIP", "redis package not installed; skipping ping",
+                   hint="pip install 'pramanix[identity]'")
+
+    # ── Render results ────────────────────────────────────────────────────────
+    has_error = any(c["level"] == "ERROR" for c in checks)
+    has_warn = any(c["level"] == "WARN" for c in checks)
+
+    if getattr(args, "as_json", False):
+        import json as _json_mod
+        summary = {
+            "passed": not has_error,
+            "errors": sum(1 for c in checks if c["level"] == "ERROR"),
+            "warnings": sum(1 for c in checks if c["level"] == "WARN"),
+            "checks": checks,
+        }
+        print(_json_mod.dumps(summary, indent=2))
+    else:
+        _ICONS = {"OK": "OK  ", "WARN": "WARN", "ERROR": "ERR ", "SKIP": "SKIP"}
+        for c in checks:
+            icon = _ICONS.get(str(c["level"]), "    ")
+            line = f"  [{icon}] {c['name']}: {c['detail']}"
+            print(line)
+            if c.get("hint") and c["level"] in ("WARN", "ERROR"):
+                print(f"         → {c['hint']}")
+        print()
+        ok_count = sum(1 for c in checks if c["level"] == "OK")
+        skip_count = sum(1 for c in checks if c["level"] == "SKIP")
+        warn_count = sum(1 for c in checks if c["level"] == "WARN")
+        err_count = sum(1 for c in checks if c["level"] == "ERROR")
+        print(f"  {ok_count} OK  {warn_count} WARN  {err_count} ERROR  {skip_count} SKIP")
+        print()
+        if has_error:
+            print("pramanix doctor: FAIL — fix ERROR items before deploying.")
+        elif has_warn and getattr(args, "strict", False):
+            print("pramanix doctor: FAIL — warnings present (--strict mode).")
+        elif has_warn:
+            print("pramanix doctor: PASS with warnings.")
+        else:
+            print("pramanix doctor: PASS — environment looks good.")
+
+    if has_error:
+        return 1
+    if has_warn and getattr(args, "strict", False):
+        return 1
     return 0

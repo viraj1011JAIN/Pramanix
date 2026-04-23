@@ -69,13 +69,7 @@ release-notes.md
 
 # ── Benchmarks & spikes (not production code) ────────────────────────────────
 benchmarks/
-transpiler_spike.py
-radar_test.py
-pramanix_hardened.py
-pramanix_llm_hardened.py
-pramanix_telemetry.py
-test_integrity.py
-test_llm_hardening.py
+spikes/
 
 # ── Lock files (deps pinned inside the venv; lock file not needed in image) ──
 poetry.lock

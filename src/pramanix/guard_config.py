@@ -421,3 +421,43 @@ class GuardConfig:
                 UserWarning,
                 stacklevel=2,
             )
+        # ── Production safety: unsigned audit trail ────────────────────────────
+        _is_prod = os.environ.get("PRAMANIX_ENV", "").lower() == "production"
+        if _is_prod and self.signer is None:
+            warnings.warn(
+                "GuardConfig(signer=None) in production (PRAMANIX_ENV=production): "
+                "decisions are NOT cryptographically signed. An attacker who can write "
+                "to your audit log cannot be detected. "
+                "Configure a PramanixSigner with a real Ed25519 key.",
+                UserWarning,
+                stacklevel=2,
+            )
+        # ── Production safety: no audit sinks configured ──────────────────────
+        if _is_prod and not self.audit_sinks:
+            warnings.warn(
+                "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
+                "no audit sinks configured — decisions are not persisted. "
+                "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink) "
+                "to maintain a durable audit trail.",
+                UserWarning,
+                stacklevel=2,
+            )
+        # ── Production safety: resource limits disabled ────────────────────────
+        if _is_prod and self.solver_rlimit == 0:
+            warnings.warn(
+                "GuardConfig(solver_rlimit=0) in production (PRAMANIX_ENV=production): "
+                "the Z3 resource limit is disabled. Adversarially crafted policies or "
+                "intent payloads can trigger near-infinite solver loops. "
+                "Set solver_rlimit to a positive value (default: 10_000_000).",
+                UserWarning,
+                stacklevel=2,
+            )
+        if _is_prod and self.max_input_bytes == 0:
+            warnings.warn(
+                "GuardConfig(max_input_bytes=0) in production (PRAMANIX_ENV=production): "
+                "the input size limit is disabled. Large payloads can exhaust memory "
+                "before reaching the solver. "
+                "Set max_input_bytes to a positive value (default: 65536).",
+                UserWarning,
+                stacklevel=2,
+            )

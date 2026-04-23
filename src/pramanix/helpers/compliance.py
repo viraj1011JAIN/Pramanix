@@ -169,33 +169,93 @@ class ComplianceReport:
     def to_pdf(self) -> bytes:
         """Generate a PDF compliance report.
 
-        Phase 12 deliverable. Returns UTF-8 structured text until Phase 12.
+        Returns a PDF binary suitable for regulatory submissions, legal
+        discovery responses, and compliance dashboards.
+
+        Requires:
+            ``pip install 'pramanix[pdf]'`` (``fpdf2 >= 2.7``).
+
+        Raises:
+            ImportError: If ``fpdf2`` is not installed.
         """
-        lines = [
-            "PRAMANIX COMPLIANCE REPORT",
-            "=" * 40,
-            f"Decision ID:   {self.decision_id}",
-            f"Hash:          {self.decision_hash}",
-            f"Timestamp:     {self.timestamp}",
-            f"Verdict:       {self.verdict}",
-            f"Severity:      {self.severity}",
-            f"Policy:        {self.policy_name} v{self.policy_version}",
-            "",
-            "VIOLATED RULES:",
-        ]
-        for rule in self.violated_rules:
-            lines.append(f"  - {rule}")
-        lines.append("")
-        lines.append("COMPLIANCE RATIONALE:")
-        for rationale in self.compliance_rationale:
-            lines.append(f"  - {rationale}")
-        lines.append("")
-        lines.append("REGULATORY REFERENCES:")
-        for ref in self.regulatory_refs:
-            lines.append(f"  - {ref}")
-        lines.append("")
-        lines.append(f"EXPLANATION: {self.explanation}")
-        return "\n".join(lines).encode("utf-8")
+        try:
+            from fpdf import FPDF  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "ComplianceReport.to_pdf() requires 'fpdf2'. "
+                "Install it: pip install 'pramanix[pdf]'"
+            ) from exc
+
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf.add_page()
+
+        # ── Title ────────────────────────────────────────────────────────────
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(
+            0, 12, "PRAMANIX COMPLIANCE REPORT",
+            new_x="LMARGIN", new_y="NEXT", align="C",
+        )
+        pdf.set_line_width(0.5)
+        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+        pdf.ln(5)
+
+        def _section(title: str) -> None:
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(0, 8, title, new_x="LMARGIN", new_y="NEXT", fill=True)
+            pdf.ln(1)
+            pdf.set_font("Helvetica", "", 10)
+
+        def _kv(key: str, value: str) -> None:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(55, 7, key + ":", new_x="RIGHT", new_y="LAST")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 7, value, new_x="LMARGIN", new_y="NEXT")
+
+        def _bullet(text: str) -> None:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(8, 7, "\u2022", new_x="RIGHT", new_y="LAST")
+            pdf.multi_cell(0, 7, text, new_x="LMARGIN", new_y="NEXT")
+
+        # ── Decision summary ─────────────────────────────────────────────────
+        _section("Decision Summary")
+        _kv("Decision ID", self.decision_id)
+        _kv("Hash", self.decision_hash)
+        _kv("Timestamp", self.timestamp or "N/A")
+        _kv("Verdict", self.verdict)
+        _kv("Severity", self.severity)
+        _kv("Policy", f"{self.policy_name}  v{self.policy_version}")
+        pdf.ln(4)
+
+        # ── Violated rules ───────────────────────────────────────────────────
+        if self.violated_rules:
+            _section("Violated Rules")
+            for rule in self.violated_rules:
+                _bullet(rule)
+            pdf.ln(4)
+
+        # ── Compliance rationale ─────────────────────────────────────────────
+        if self.compliance_rationale:
+            _section("Compliance Rationale")
+            for rationale in self.compliance_rationale:
+                _bullet(rationale)
+            pdf.ln(4)
+
+        # ── Regulatory references ────────────────────────────────────────────
+        if self.regulatory_refs:
+            _section("Regulatory References")
+            for ref in self.regulatory_refs:
+                _bullet(ref)
+            pdf.ln(4)
+
+        # ── Explanation ──────────────────────────────────────────────────────
+        if self.explanation:
+            _section("Explanation")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 7, self.explanation, new_x="LMARGIN", new_y="NEXT")
+
+        return bytes(pdf.output())
 
 
 # ── Reporter ──────────────────────────────────────────────────────────────────

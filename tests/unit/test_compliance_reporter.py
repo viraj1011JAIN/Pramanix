@@ -200,12 +200,30 @@ class TestComplianceReportSerialization:
             assert f in parsed, f"Missing field: {f}"
 
     def test_to_pdf_returns_bytes(self):
+        fpdf = pytest.importorskip("fpdf", reason="fpdf2 not installed; pip install 'pramanix[pdf]'")
         reporter = ComplianceReporter()
         d = _block(("sufficient_balance",))
         report = reporter.generate(d)
         pdf = report.to_pdf()
         assert isinstance(pdf, bytes)
-        assert len(pdf) > 0
+        assert pdf[:4] == b"%PDF", "to_pdf() must return a valid PDF binary"
+
+    def test_to_pdf_raises_without_fpdf2(self, monkeypatch):
+        """to_pdf() raises ImportError with a helpful message when fpdf2 is absent."""
+        import builtins
+        real_import = builtins.__import__
+
+        def _block_fpdf(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if name == "fpdf":
+                raise ModuleNotFoundError("No module named 'fpdf'")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_fpdf)
+        reporter = ComplianceReporter()
+        d = _block(("sufficient_balance",))
+        report = reporter.generate(d)
+        with pytest.raises(ImportError, match="fpdf2"):
+            report.to_pdf()
 
     def test_report_is_frozen(self):
         reporter = ComplianceReporter()

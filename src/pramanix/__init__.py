@@ -9,6 +9,26 @@ All other internal modules may change without notice.
 
 __version__ = "1.0.0"
 
+# Module stability contract — which public surfaces are safe to build on.
+# "stable"       — public API, semver-protected; no breaking changes without a major bump.
+# "beta"         — available but may change in minor versions with a deprecation notice.
+# "experimental" — subject to change without notice; not for production use.
+__stability__: dict[str, str] = {
+    "core": "stable",           # Guard, Policy, Field, E, Decision, GuardConfig
+    "audit": "stable",          # DecisionSigner, DecisionVerifier, MerkleAnchor
+    "crypto": "stable",         # PramanixSigner, PramanixVerifier
+    "circuit_breaker": "stable",
+    "execution_token": "stable",
+    "key_provider": "stable",   # PemKeyProvider, EnvKeyProvider, FileKeyProvider, cloud providers
+    "compliance": "stable",     # ComplianceReporter, ComplianceReport, to_pdf()
+    "audit_sinks": "stable",    # KafkaAuditSink, S3AuditSink, SplunkHecAuditSink, DatadogAuditSink
+    "worker": "stable",         # async-process execution backend
+    "primitives": "stable",     # fintech, healthcare, finance, rbac, time, infra
+    "translator": "beta",       # LLM translation stack (httpx/openai/anthropic)
+    "integrations": "beta",     # LangChain, LlamaIndex, AutoGen, FastAPI adapters
+    "fast_path": "beta",        # fast-path cache (GuardConfig.fast_path_enabled)
+}
+
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
 from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, MerkleArchiver, PersistentMerkleAnchor

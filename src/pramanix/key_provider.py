@@ -3,28 +3,33 @@
 """KeyProvider — pluggable Ed25519 key sourcing for PramanixSigner.
 
 Phase E-3: abstracts key management from PramanixSigner so institutional
-deployments can source keys from HSMs, cloud KMS services, or secret vaults
+deployments can source keys from HSMs, cloud secret stores, or secret vaults
 without changing application code.
 
-Built-in providers
-------------------
+Built-in providers (no extra deps)
+-----------------------------------
 - :class:`PemKeyProvider`  — inline PEM bytes/str (original behaviour)
 - :class:`EnvKeyProvider`  — reads PEM from an environment variable
 - :class:`FileKeyProvider` — reads PEM from a file path on disk
 
-Cloud KMS stubs (raise ImportError if SDK not installed)
----------------------------------------------------------
-- :class:`AwsKmsKeyProvider`         — requires ``boto3``
-- :class:`AzureKeyVaultKeyProvider`  — requires ``azure-keyvault-keys``
-- :class:`GcpKmsKeyProvider`         — requires ``google-cloud-kms``
-- :class:`HashiCorpVaultKeyProvider` — requires ``hvac``
+Cloud secret-store providers (require optional extras)
+------------------------------------------------------
+- :class:`AwsKmsKeyProvider`         — AWS Secrets Manager; requires ``pip install 'pramanix[aws]'``
+- :class:`AzureKeyVaultKeyProvider`  — Azure Key Vault Secrets; requires ``pip install 'pramanix[azure]'``
+- :class:`GcpKmsKeyProvider`         — GCP Secret Manager; requires ``pip install 'pramanix[gcp]'``
+- :class:`HashiCorpVaultKeyProvider` — HashiCorp Vault KV v2; requires ``pip install 'pramanix[vault]'``
 
 Usage::
 
-    from pramanix.key_provider import FileKeyProvider
+    from pramanix.key_provider import FileKeyProvider, AwsKmsKeyProvider
     from pramanix.crypto import PramanixSigner
 
+    # Local file
     provider = FileKeyProvider("/run/secrets/pramanix-ed25519.pem")
+    signer = PramanixSigner.from_provider(provider)
+
+    # AWS Secrets Manager (requires pip install 'pramanix[aws]')
+    provider = AwsKmsKeyProvider("arn:aws:secretsmanager:us-east-1:123:secret:pramanix-key")
     signer = PramanixSigner.from_provider(provider)
 """
 from __future__ import annotations
@@ -213,40 +218,282 @@ class FileKeyProvider:
         )
 
 
-# ── Cloud KMS stubs ──────────────────────────────────────────────────────────
+# ── Cloud secret-store providers ─────────────────────────────────────────────
 
 
-def _cloud_stub(provider_name: str, package: str) -> type:
-    """Factory for cloud KMS stub classes that raise ImportError."""
+class AwsKmsKeyProvider:
+    """Fetch an Ed25519 private key PEM from AWS Secrets Manager.
 
-    class _Stub:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+    The private key PEM must be stored as a plaintext secret
+    (``SecretString``) or binary secret (``SecretBinary``) in AWS Secrets
+    Manager.  This provider retrieves it on each call to
+    :meth:`private_key_pem`.
+
+    Args:
+        secret_arn:    ARN or name of the Secrets Manager secret that
+                       contains the PEM-encoded Ed25519 private key.
+        region_name:   AWS region (default ``"us-east-1"``).
+        version_stage: Secret version stage label (default
+                       ``"AWSCURRENT"``).
+        version:       Opaque version label for :meth:`key_version`.
+                       If ``None``, the Secrets Manager ``VersionId`` is
+                       used.
+        _client:       Pre-built boto3 ``secretsmanager`` client.
+                       Injected for testing; not part of the public API.
+
+    Requires:
+        ``pip install 'pramanix[aws]'`` (``boto3 >= 1.34``).
+    """
+
+    def __init__(
+        self,
+        secret_arn: str,
+        *,
+        region_name: str = "us-east-1",
+        version_stage: str = "AWSCURRENT",
+        version: str | None = None,
+        _client: Any = None,
+    ) -> None:
+        try:
+            import boto3  # noqa: PLC0415
+        except ImportError as exc:
             raise ImportError(
-                f"{provider_name} requires the '{package}' package. "
-                f"Install it: pip install '{package}'"
-            )
+                "AwsKmsKeyProvider requires 'boto3'. "
+                "Install it: pip install 'pramanix[aws]'"
+            ) from exc
+        self._secret_arn = secret_arn
+        self._version_stage = version_stage
+        self._explicit_version = version
+        self._client = _client or boto3.client(
+            "secretsmanager", region_name=region_name
+        )
 
-        def private_key_pem(self) -> bytes:  # pragma: no cover
-            raise NotImplementedError
+    def private_key_pem(self) -> bytes:
+        resp = self._client.get_secret_value(
+            SecretId=self._secret_arn,
+            VersionStage=self._version_stage,
+        )
+        value: str | bytes = resp.get("SecretString") or resp.get("SecretBinary", b"")
+        return value.encode() if isinstance(value, str) else value
 
-        def public_key_pem(self) -> bytes:  # pragma: no cover
-            raise NotImplementedError
+    def public_key_pem(self) -> bytes:
+        return _derive_public_pem(self.private_key_pem())
 
-        def key_version(self) -> str:  # pragma: no cover
-            raise NotImplementedError
+    def key_version(self) -> str:
+        if self._explicit_version:
+            return self._explicit_version
+        resp = self._client.describe_secret(SecretId=self._secret_arn)
+        for vid, stages in resp.get("VersionIdsToStages", {}).items():
+            if self._version_stage in stages:
+                return str(vid)
+        return "aws-unknown"
 
-        def rotate_key(self) -> None:  # pragma: no cover
-            raise NotImplementedError
-
-    _Stub.__name__ = provider_name
-    _Stub.__qualname__ = provider_name
-    return _Stub
+    def rotate_key(self) -> None:
+        """Trigger automatic rotation of the Secrets Manager secret."""
+        self._client.rotate_secret(SecretId=self._secret_arn)
 
 
-AwsKmsKeyProvider: type = _cloud_stub("AwsKmsKeyProvider", "boto3")
-AzureKeyVaultKeyProvider: type = _cloud_stub("AzureKeyVaultKeyProvider", "azure-keyvault-keys")
-GcpKmsKeyProvider: type = _cloud_stub("GcpKmsKeyProvider", "google-cloud-kms")
-HashiCorpVaultKeyProvider: type = _cloud_stub("HashiCorpVaultKeyProvider", "hvac")
+class AzureKeyVaultKeyProvider:
+    """Fetch an Ed25519 private key PEM from Azure Key Vault Secrets.
+
+    The private key PEM must be stored as a Key Vault Secret value.  This
+    provider retrieves it on each call to :meth:`private_key_pem`.
+
+    Args:
+        vault_url:      Full URL of the Key Vault, e.g.
+                        ``"https://my-vault.vault.azure.net"``.
+        secret_name:    Name of the Key Vault Secret that contains the PEM.
+        secret_version: Specific secret version (default: latest).
+        credential:     Azure credential object (default:
+                        ``DefaultAzureCredential()``).
+        _client:        Pre-built ``SecretClient`` instance.
+                        Injected for testing; not part of the public API.
+
+    Requires:
+        ``pip install 'pramanix[azure]'``
+        (``azure-keyvault-secrets >= 4.7``, ``azure-identity >= 1.15``).
+    """
+
+    def __init__(
+        self,
+        vault_url: str,
+        secret_name: str,
+        *,
+        secret_version: str | None = None,
+        credential: Any = None,
+        _client: Any = None,
+    ) -> None:
+        try:
+            from azure.identity import DefaultAzureCredential      # noqa: PLC0415
+            from azure.keyvault.secrets import SecretClient         # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "AzureKeyVaultKeyProvider requires 'azure-keyvault-secrets' and "
+                "'azure-identity'. Install them: pip install 'pramanix[azure]'"
+            ) from exc
+        self._secret_name = secret_name
+        self._secret_version = secret_version
+        self._client = _client or SecretClient(
+            vault_url=vault_url,
+            credential=credential or DefaultAzureCredential(),
+        )
+
+    def private_key_pem(self) -> bytes:
+        secret = self._client.get_secret(
+            self._secret_name, version=self._secret_version
+        )
+        value: str | bytes = secret.value or ""
+        return value.encode() if isinstance(value, str) else value
+
+    def public_key_pem(self) -> bytes:
+        return _derive_public_pem(self.private_key_pem())
+
+    def key_version(self) -> str:
+        secret = self._client.get_secret(
+            self._secret_name, version=self._secret_version
+        )
+        return str(secret.properties.version or "azure-unknown")
+
+    def rotate_key(self) -> None:
+        raise NotImplementedError(
+            "AzureKeyVaultKeyProvider does not support automatic rotation. "
+            "Upload a new secret version via the Azure portal or CLI, then "
+            "create a new AzureKeyVaultKeyProvider pointing at the new version."
+        )
+
+
+class GcpKmsKeyProvider:
+    """Fetch an Ed25519 private key PEM from GCP Secret Manager.
+
+    The private key PEM must be stored as a Secret Manager secret.  This
+    provider retrieves it on each call to :meth:`private_key_pem`.
+
+    Args:
+        project_id:  GCP project ID.
+        secret_id:   ID of the Secret Manager secret containing the PEM.
+        version_id:  Secret version (default ``"latest"``).
+        _client:     Pre-built ``SecretManagerServiceClient`` instance.
+                     Injected for testing; not part of the public API.
+
+    Requires:
+        ``pip install 'pramanix[gcp]'``
+        (``google-cloud-secret-manager >= 2.16``).
+    """
+
+    def __init__(
+        self,
+        project_id: str,
+        secret_id: str,
+        *,
+        version_id: str = "latest",
+        _client: Any = None,
+    ) -> None:
+        try:
+            from google.cloud import secretmanager  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "GcpKmsKeyProvider requires 'google-cloud-secret-manager'. "
+                "Install it: pip install 'pramanix[gcp]'"
+            ) from exc
+        self._project_id = project_id
+        self._secret_id = secret_id
+        self._version_id = version_id
+        self._client = _client or secretmanager.SecretManagerServiceClient()
+
+    def _version_name(self) -> str:
+        return (
+            f"projects/{self._project_id}/secrets/{self._secret_id}"
+            f"/versions/{self._version_id}"
+        )
+
+    def private_key_pem(self) -> bytes:
+        response = self._client.access_secret_version(name=self._version_name())
+        payload: bytes | str = response.payload.data
+        return payload if isinstance(payload, bytes) else payload.encode()
+
+    def public_key_pem(self) -> bytes:
+        return _derive_public_pem(self.private_key_pem())
+
+    def key_version(self) -> str:
+        return self._version_id
+
+    def rotate_key(self) -> None:
+        raise NotImplementedError(
+            "GcpKmsKeyProvider does not support automatic rotation. "
+            "Add a new secret version via the GCP console or gcloud CLI, then "
+            "create a new GcpKmsKeyProvider pointing at the new version."
+        )
+
+
+class HashiCorpVaultKeyProvider:
+    """Fetch an Ed25519 private key PEM from HashiCorp Vault KV v2.
+
+    The private key PEM must be stored as a field in a Vault KV v2 secret.
+    This provider retrieves it on each call to :meth:`private_key_pem`.
+
+    Args:
+        url:          Vault server URL, e.g.
+                      ``"https://vault.example.com:8200"``.
+        secret_path:  Path to the KV v2 secret (relative to ``mount_point``),
+                      e.g. ``"pramanix/signing-key"``.
+        field:        Field name within the secret data (default
+                      ``"private_key_pem"``).
+        token:        Vault token for authentication.  If ``None``, hvac
+                      reads ``VAULT_TOKEN`` from the environment.
+        mount_point:  KV v2 mount point (default ``"secret"``).
+        _client:      Pre-built ``hvac.Client`` instance.
+                      Injected for testing; not part of the public API.
+
+    Requires:
+        ``pip install 'pramanix[vault]'`` (``hvac >= 2.0``).
+    """
+
+    def __init__(
+        self,
+        url: str,
+        secret_path: str,
+        *,
+        field: str = "private_key_pem",
+        token: str | None = None,
+        mount_point: str = "secret",
+        _client: Any = None,
+    ) -> None:
+        try:
+            import hvac  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "HashiCorpVaultKeyProvider requires 'hvac'. "
+                "Install it: pip install 'pramanix[vault]'"
+            ) from exc
+        self._secret_path = secret_path
+        self._field = field
+        self._mount_point = mount_point
+        self._client = _client or hvac.Client(url=url, token=token)
+
+    def private_key_pem(self) -> bytes:
+        resp = self._client.secrets.kv.v2.read_secret_version(
+            path=self._secret_path,
+            mount_point=self._mount_point,
+        )
+        value: str | bytes = resp["data"]["data"][self._field]
+        return value.encode() if isinstance(value, str) else value
+
+    def public_key_pem(self) -> bytes:
+        return _derive_public_pem(self.private_key_pem())
+
+    def key_version(self) -> str:
+        resp = self._client.secrets.kv.v2.read_secret_version(
+            path=self._secret_path,
+            mount_point=self._mount_point,
+        )
+        return str(resp["data"]["metadata"]["version"])
+
+    def rotate_key(self) -> None:
+        raise NotImplementedError(
+            "HashiCorpVaultKeyProvider does not support automatic rotation. "
+            "Write a new secret version via the vault CLI or API, then "
+            "create a new HashiCorpVaultKeyProvider pointing at the latest version."
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

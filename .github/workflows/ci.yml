@@ -302,7 +302,7 @@ jobs:
         run: |
           pip install poetry
           poetry config virtualenvs.create false
-          poetry install --with dev --extras translator --extras otel
+          poetry install --with dev --extras all
 
       - name: "Step 1/5 — Unit tests"
         run: pytest tests/unit/ -x --tb=short
@@ -394,7 +394,7 @@ jobs:
   trivy:
     name: "Container scan (Trivy)"
     runs-on: ubuntu-latest
-    needs: wheel-smoke
+    needs: extras-smoke
     steps:
       - uses: actions/checkout@v4
 
@@ -632,7 +632,100 @@ jobs:
             "import pramanix; print('sdist smoke passed', pramanix.__version__)"
 
   # ──────────────────────────────────────────────────────────────────────────
-  # JOB 9 — Nightly Latency Benchmark
+  # JOB 9 — Extras install smoke
+  # Installs the wheel with each advertised extras combination and verifies
+  # that the key modules are importable.  Catches broken extras before any
+  # PyPI publish.  Runs after wheel-smoke so the wheel is already validated.
+  # ──────────────────────────────────────────────────────────────────────────
+  extras-smoke:
+    name: "Extras install smoke (all advertised extras)"
+    runs-on: ubuntu-latest
+    needs: wheel-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel
+        run: |
+          pip install poetry
+          poetry build
+
+      - name: Smoke-test every advertised extra
+        # Creates an isolated venv per extra, installs the wheel with that
+        # extra, then verifies the key modules are importable.
+        # Failures are collected and reported together so you can see all
+        # broken extras in one run instead of stopping at the first one.
+        run: |
+          python - <<'PYEOF'
+          import glob, os, subprocess, sys, tempfile, venv as _venv
+
+          wheel = glob.glob("dist/pramanix-*.whl")[0]
+
+          # Map: extra name -> list of Python import paths to verify
+          EXTRAS: dict[str, list[str]] = {
+              "translator":  ["httpx", "openai", "anthropic", "tenacity"],
+              "otel":        ["opentelemetry.sdk", "opentelemetry.exporter.otlp.proto.grpc"],
+              "fastapi":     ["fastapi", "starlette"],
+              "langchain":   ["langchain_core"],
+              "identity":    ["redis"],
+              "audit":       ["fpdf"],
+              "crypto":      ["cryptography"],
+              "aws":         ["boto3"],
+              "azure":       ["azure.identity", "azure.keyvault.secrets"],
+              "gcp":         ["google.cloud.secretmanager"],
+              "vault":       ["hvac"],
+              "kafka":       ["confluent_kafka"],
+              "datadog":     ["datadog_api_client"],
+              "splunk":      ["httpx"],
+              "pdf":         ["fpdf"],
+          }
+
+          failures: list[str] = []
+
+          for extra, modules in EXTRAS.items():
+              venv_dir = tempfile.mkdtemp(prefix=f"pramanix-smoke-{extra}-")
+              _venv.create(venv_dir, with_pip=True)
+              pip = os.path.join(venv_dir, "bin", "pip")
+              python = os.path.join(venv_dir, "bin", "python")
+
+              install = subprocess.run(
+                  [pip, "install", "--no-cache-dir", "--quiet", f"{wheel}[{extra}]"],
+                  capture_output=True,
+                  text=True,
+              )
+              if install.returncode != 0:
+                  failures.append(
+                      f"[{extra}] INSTALL FAILED:\n{install.stderr[-800:]}"
+                  )
+                  continue
+
+              for mod in modules:
+                  chk = subprocess.run(
+                      [python, "-c", f"import {mod}"],
+                      capture_output=True,
+                      text=True,
+                  )
+                  if chk.returncode != 0:
+                      failures.append(
+                          f"[{extra}] IMPORT FAILED — {mod}:\n{chk.stderr[-400:]}"
+                      )
+                  else:
+                      print(f"  OK  [{extra}] {mod}")
+
+          if failures:
+              print("\n::error::Extras smoke failures detected:")
+              for msg in failures:
+                  print(f"\n  {msg}")
+              sys.exit(1)
+
+          print(f"\n✓ All {len(EXTRAS)} extras passed import smoke ({sum(len(v) for v in EXTRAS.values())} module checks).")
+          PYEOF
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 10 — Nightly Latency Benchmark
   # Runs only on the schedule trigger (02:00 UTC daily).
   # Enforces P99 < 15ms gate — fails the job if the target is missed.
   # ──────────────────────────────────────────────────────────────────────────
