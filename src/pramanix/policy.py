@@ -83,10 +83,13 @@ unique before verification begins.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyCompilationError, PolicyError
 from pramanix.expressions import ConstraintExpr, Field, Z3Type
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 __all__ = ["Policy", "invariant_mixin", "model_dump_z3"]
 

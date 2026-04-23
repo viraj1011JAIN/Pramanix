@@ -89,7 +89,7 @@ class PramanixKafkaConsumer:
         self._consumer: Any = None
 
         if _KAFKA_AVAILABLE:
-            self._consumer = _KafkaConsumer(kafka_config)
+            self._consumer = _KafkaConsumer(kafka_config)  # type: ignore[call-arg]
             self._consumer.subscribe(topics)
 
     def safe_poll(

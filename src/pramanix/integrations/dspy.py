@@ -42,7 +42,7 @@ try:
     import dspy as _dspy  # type: ignore[import-untyped]
 
     _DSPY_AVAILABLE = True
-    _ModuleBase = _dspy.Module
+    _ModuleBase = _dspy.Module  # type: ignore[attr-defined]
 except ImportError:
     _DSPY_AVAILABLE = False
     _ModuleBase = object  # type: ignore[assignment]

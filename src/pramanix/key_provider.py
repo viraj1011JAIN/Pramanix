@@ -389,7 +389,7 @@ class GcpKmsKeyProvider:
         _client: Any = None,
     ) -> None:
         try:
-            from google.cloud import secretmanager  # noqa: PLC0415
+            from google.cloud import secretmanager  # noqa: PLC0415  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
                 "GcpKmsKeyProvider requires 'google-cloud-secret-manager'. "

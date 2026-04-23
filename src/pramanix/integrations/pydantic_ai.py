@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from pramanix.decision import Decision
 from pramanix.exceptions import ConfigurationError, GuardViolationError
 
 if TYPE_CHECKING:
@@ -81,7 +82,7 @@ class PramanixPydanticAIValidator:
         self,
         intent: dict[str, Any],
         state: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Decision:
         """Synchronous guard check.
 
         Args:
@@ -91,9 +92,11 @@ class PramanixPydanticAIValidator:
         Raises:
             GuardViolationError: If the Guard blocks the intent.
         """
-        if state is None:
-            state = self._state_fn() if self._state_fn is not None else {}
-        decision = self._guard.verify(intent=intent, state=state)
+        resolved: dict[str, Any] = (
+            state if state is not None
+            else (self._state_fn() if self._state_fn is not None else {})
+        )
+        decision = self._guard.verify(intent=intent, state=resolved)
         if not decision.allowed:
             raise GuardViolationError(decision)
         return decision
@@ -102,7 +105,7 @@ class PramanixPydanticAIValidator:
         self,
         intent: dict[str, Any],
         state: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> Decision:
         """Asynchronous guard check.
 
         Args:
@@ -112,9 +115,11 @@ class PramanixPydanticAIValidator:
         Raises:
             GuardViolationError: If the Guard blocks the intent.
         """
-        if state is None:
-            state = self._state_fn() if self._state_fn is not None else {}
-        decision = await self._guard.verify_async(intent=intent, state=state)
+        resolved: dict[str, Any] = (
+            state if state is not None
+            else (self._state_fn() if self._state_fn is not None else {})
+        )
+        decision = await self._guard.verify_async(intent=intent, state=resolved)
         if not decision.allowed:
             raise GuardViolationError(decision)
         return decision

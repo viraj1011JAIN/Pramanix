@@ -920,13 +920,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     import sys as _sys
     from typing import Literal
 
-    CheckLevel = Literal["OK", "WARN", "ERROR", "SKIP"]
-
     checks: list[dict[str, object]] = []
 
     def _check(
         name: str,
-        level: CheckLevel,
+        level: Literal["OK", "WARN", "ERROR", "SKIP"],
         detail: str,
         hint: str = "",
     ) -> None:

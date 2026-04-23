@@ -105,9 +105,9 @@ class CohereTranslator:
         # Cohere SDK v5 raises these on transient server errors.
         try:
             _retryable: tuple[type[Exception], ...] = (
-                cohere.errors.TooManyRequestsError,
-                cohere.errors.ServiceUnavailableError,
-                cohere.errors.GatewayTimeoutError,
+                cohere.errors.TooManyRequestsError,       # type: ignore[attr-defined]
+                cohere.errors.ServiceUnavailableError,    # type: ignore[attr-defined]
+                cohere.errors.GatewayTimeoutError,        # type: ignore[attr-defined]
             )
         except AttributeError:
             # Older SDK or attribute layout changed — catch generic base.
