@@ -10,7 +10,6 @@ import pytest
 
 from pramanix.cli import main
 
-
 try:
     import sklearn  # noqa: F401
     HAS_SKLEARN = True
@@ -24,7 +23,7 @@ def _run_cli(args: list[str], capsys: pytest.CaptureFixture) -> tuple[int, str, 
     """Run main() with given argv; return (exit_code, stdout, stderr)."""
     try:
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sys, "argv", ["pramanix"] + args)
+            mp.setattr(sys, "argv", ["pramanix", *args])
             exit_code = main()
     except SystemExit as exc:
         exit_code = exc.code if isinstance(exc.code, int) else 1
@@ -49,7 +48,7 @@ def test_calibrate_injection_produces_model_file(
     _write_dataset(dataset, n_safe=150, n_inj=150)
     output = tmp_path / "scorer.pkl"
 
-    exit_code, stdout, stderr = _run_cli(
+    exit_code, _stdout, stderr = _run_cli(
         [
             "calibrate-injection",
             "--dataset",

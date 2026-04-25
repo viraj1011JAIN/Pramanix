@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from pramanix._platform import check_platform
 from pramanix.decision import Decision
 from pramanix.exceptions import (
     ConfigurationError,
@@ -107,7 +108,6 @@ from pramanix.guard_pipeline import (
     _fmt,
     _semantic_post_consensus_check,
 )
-from pramanix._platform import check_platform
 from pramanix.helpers.serialization import flatten_model
 from pramanix.solver import _SolveResult, solve
 from pramanix.validator import validate_intent, validate_state
@@ -122,7 +122,7 @@ __all__ = ["Guard", "GuardConfig"]
 check_platform()
 
 
-def _Guard_is_picklable(obj: Any) -> bool:
+def _is_picklable(obj: Any) -> bool:
     """Return True if *obj* can be round-tripped through pickle."""
     import pickle as _p
 
@@ -287,13 +287,13 @@ class Guard:
         return decision
 
     @staticmethod
-    def _validate_semver(policy: type) -> "tuple[int, int, int] | None":
+    def _validate_semver(policy: type) -> tuple[int, int, int] | None:
         """Validate Meta.semver and return it, or None if not declared.
 
         Raises:
             ConfigurationError: If Meta.semver is declared but malformed.
         """
-        semver = policy.meta_semver()
+        semver = getattr(policy, "meta_semver", lambda: None)()
         if semver is None:
             return None
         if (
@@ -306,7 +306,7 @@ class Guard:
                 f"non-negative ints, e.g. (1, 2, 0). Got {semver!r}. "
                 "Fix Meta.semver or use Meta.version for plain-string versioning."
             )
-        return semver  # type: ignore[return-value]
+        return (semver[0], semver[1], semver[2])
 
     def _emit_to_sinks(self, decision: Decision) -> None:
         """Emit decision to all configured audit sinks. Never raises."""
@@ -413,8 +413,43 @@ class Guard:
                             "Request rejected before reaching the solver."
                         )
                     )
-            except Exception:
-                pass  # size check is best-effort; never block on serialisation error
+            except Exception as _json_exc:
+                # JSON serialisation failed (e.g. circular reference).
+                # Fall back to repr() for a conservative size estimate — we must
+                # never silently skip the size guard on a potentially oversized payload.
+                import logging as _size_log
+
+                _size_log.getLogger(__name__).warning(
+                    "guard.verify: JSON serialisation failed for size check (%s); "
+                    "falling back to repr() estimate",
+                    _json_exc,
+                )
+                try:
+                    _payload_size = len(
+                        repr({"i": intent, "s": state}).encode()
+                    )
+                    if _payload_size > self._config.max_input_bytes:
+                        return Decision.error(
+                            reason=(
+                                f"Input payload size (repr estimate: {_payload_size} bytes) "
+                                f"exceeds max_input_bytes limit ({self._config.max_input_bytes}). "
+                                "Request rejected before reaching the solver."
+                            )
+                        )
+                except Exception as _repr_exc:
+                    # repr() also failed — the safest action is to block so the
+                    # solver never receives a payload of unknown size.
+                    _size_log.getLogger(__name__).error(
+                        "guard.verify: repr() serialisation also failed (%s); "
+                        "blocking request to enforce max_input_bytes safety",
+                        _repr_exc,
+                    )
+                    return Decision.error(
+                        reason=(
+                            "Input payload could not be size-checked (serialisation error). "
+                            f"Request rejected (max_input_bytes={self._config.max_input_bytes})."
+                        )
+                    )
 
         decision_id = str(uuid.uuid4())
         _t0 = time.perf_counter()
@@ -799,23 +834,23 @@ class Guard:
             return await _timed(self._sign_decision(decision))
 
         if mode == "async-process":
+            # C-3: Pre-flight picklability check. The values dict crosses the
+            # process boundary via pickle. Catch non-picklable objects here so
+            # the caller gets a clean Decision instead of a cryptic PicklingError.
+            import pickle as _pickle
+
             from pramanix.worker import (
                 _RESULT_SEAL_KEY,
                 _unseal_decision,
                 _worker_solve_sealed,
             )
 
-            # C-3: Pre-flight picklability check. The values dict crosses the
-            # process boundary via pickle. Catch non-picklable objects here so
-            # the caller gets a clean Decision instead of a cryptic PicklingError.
-            import pickle as _pickle
-
             try:
                 _pickle.dumps(values)
             except Exception as _pickle_exc:
                 _non_picklable = [
                     k for k, v in values.items()
-                    if not _Guard_is_picklable(v)
+                    if not _is_picklable(v)
                 ]
                 return await _timed(
                     self._sign_decision(
@@ -1031,7 +1066,7 @@ class Guard:
             )
             values = {**values, **state_vals}
 
-        bad: list[str] = [k for k, v in values.items() if not _Guard_is_picklable(v)]
+        bad: list[str] = [k for k, v in values.items() if not _is_picklable(v)]
         if bad:
             raise ValueError(
                 f"assert_process_safe: the following fields cannot be pickled and "

@@ -78,7 +78,7 @@ def _raw_strings_agree(text_a: str, text_b: str) -> bool:
     return text_a.strip() == text_b.strip()
 
 
-class ConsensusStrictness(str, enum.Enum):
+class ConsensusStrictness(enum.StrEnum):
     """Controls how individual field *values* are compared during consensus.
 
     ``STRICT``

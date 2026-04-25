@@ -25,7 +25,8 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from pramanix.integrations._feedback import format_block_feedback
 
@@ -38,12 +39,12 @@ _SAFE_FAILURE_PREFIX = "[PRAMANIX_BLOCKED]"
 
 
 try:
-    from crewai.tools import BaseTool as _CrewAIBase  # type: ignore[import-untyped]
+    from crewai.tools import BaseTool as _CrewAIBase
 
     _CREWAI_AVAILABLE = True
 except ImportError:
     _CREWAI_AVAILABLE = False
-    _CrewAIBase = object  # type: ignore[assignment, misc]
+    _CrewAIBase = object
 
 
 class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type: ignore[misc]
@@ -126,9 +127,9 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
     def _execute(self, tool_input: dict[str, Any]) -> str:
         """Run the guard check and, if allowed, the underlying tool."""
         guard: Guard = object.__getattribute__(self, "_guard")
-        intent_builder: Callable = object.__getattribute__(self, "_intent_builder")
-        state_provider: Callable = object.__getattribute__(self, "_state_provider")
-        underlying_fn: Callable | None = object.__getattribute__(self, "_underlying_fn")
+        intent_builder: Callable[..., Any] = object.__getattribute__(self, "_intent_builder")
+        state_provider: Callable[..., Any] = object.__getattribute__(self, "_state_provider")
+        underlying_fn: Callable[..., str] | None = object.__getattribute__(self, "_underlying_fn")
         block_message: str | None = object.__getattribute__(self, "_block_message")
 
         try:
@@ -150,6 +151,6 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
             )
 
         if underlying_fn is not None:
-            return underlying_fn(tool_input)
+            return str(underlying_fn(tool_input))
 
         return f"Action '{self.name}' allowed by Pramanix guard. No underlying function configured."

@@ -14,10 +14,9 @@ from decimal import Decimal
 
 import pytest
 
-from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyError
+from pramanix.exceptions import ConfigurationError, InvariantLabelError
 from pramanix.expressions import ConstraintExpr, E, Field
-from pramanix.policy import Policy, _DYNAMIC_POLICY_CACHE
-
+from pramanix.policy import Policy
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -27,10 +27,11 @@ Design notes
 """
 from __future__ import annotations
 
+import contextlib
 import enum
 from dataclasses import dataclass as _dataclass
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import z3
 
@@ -254,7 +255,7 @@ def analyze_string_promotions(
     Promotion replaces the Z3 ``String`` sort with ``Int`` and encodes each
     distinct string literal as a stable integer (alphabetical index).  This
     eliminates Z3 sequence-theory overhead for enumeration-style fields, which
-    typically cuts P50 latency by 5–10× on affected invariants.
+    typically cuts P50 latency by 5-10x on affected invariants.
 
     The promotion is **transparent**: callers still pass string values to
     ``Guard.verify()``; encoding happens internally before the Z3 call.
@@ -291,14 +292,18 @@ def analyze_string_promotions(
                 _walk(l)
                 _walk(r)
                 # Collect string literals from eq/ne comparisons with String fields.
-                if isinstance(l, _FieldRef) and l.field.z3_type == "String":
-                    if isinstance(r, _Literal) and isinstance(r.value, str):
-                        if l.field.name not in disqualified:
-                            eligible.setdefault(l.field.name, set()).add(r.value)
-                if isinstance(r, _FieldRef) and r.field.z3_type == "String":
-                    if isinstance(l, _Literal) and isinstance(l.value, str):
-                        if r.field.name not in disqualified:
-                            eligible.setdefault(r.field.name, set()).add(l.value)
+                if (
+                    isinstance(l, _FieldRef) and l.field.z3_type == "String"
+                    and isinstance(r, _Literal) and isinstance(r.value, str)
+                    and l.field.name not in disqualified
+                ):
+                    eligible.setdefault(l.field.name, set()).add(r.value)
+                if (
+                    isinstance(r, _FieldRef) and r.field.z3_type == "String"
+                    and isinstance(l, _Literal) and isinstance(l.value, str)
+                    and r.field.name not in disqualified
+                ):
+                    eligible.setdefault(r.field.name, set()).add(l.value)
 
             case _InOp(left=l, values=vs):
                 if isinstance(l, _FieldRef) and l.field.z3_type == "String":
@@ -475,7 +480,7 @@ def transpile(
                             lz.ctx_ref(),
                             lz.as_ast(),
                             (
-                                z3.IntVal(promotions[l.field.name].get(v.value, -1), ctx)  # type: ignore[union-attr]
+                                z3.IntVal((promotions or {})[l.field.name].get(v.value, -1), ctx)
                                 if _promoted_field and isinstance(v, _Literal) and isinstance(v.value, str)
                                 else transpile(v, ctx, promotions)
                             ).as_ast(),
@@ -785,8 +790,8 @@ class InvariantASTCache:
 
     import threading as _threading
 
-    _cache: dict[tuple[int, str], list[InvariantMeta]] = {}
-    _access_order: list[tuple[int, str]] = []  # ordered by last access
+    _cache: ClassVar[dict[tuple[int, str], list[InvariantMeta]]] = {}
+    _access_order: ClassVar[list[tuple[int, str]]] = []  # ordered by last access
     _max_size: int = 512
     _lock: Any = _threading.Lock()
 
@@ -811,10 +816,8 @@ class InvariantASTCache:
             entry = cls._cache.get(key)
             if entry is not None:
                 # Move to most-recently-used position.
-                try:
+                with contextlib.suppress(ValueError):
                     cls._access_order.remove(key)
-                except ValueError:
-                    pass
                 cls._access_order.append(key)
             return entry
 
@@ -839,10 +842,8 @@ class InvariantASTCache:
         with cls._lock:
             if key in cls._cache:
                 # Update in place; refresh access order.
-                try:
+                with contextlib.suppress(ValueError):
                     cls._access_order.remove(key)
-                except ValueError:
-                    pass
                 cls._access_order.append(key)
                 cls._cache[key] = meta
                 return
@@ -872,10 +873,8 @@ class InvariantASTCache:
                 keys_to_remove = [k for k in cls._cache if k[0] == target_id]
                 for k in keys_to_remove:
                     del cls._cache[k]
-                    try:
+                    with contextlib.suppress(ValueError):
                         cls._access_order.remove(k)
-                    except ValueError:
-                        pass
 
     @classmethod
     def size(cls) -> int:

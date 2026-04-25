@@ -37,9 +37,9 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
-    "InjectionScorer",
     "BuiltinScorer",
     "CalibratedScorer",
+    "InjectionScorer",
 ]
 
 
@@ -118,9 +118,11 @@ class CalibratedScorer:
 
     def __init__(self) -> None:
         try:
-            from sklearn.linear_model import LogisticRegression  # type: ignore[import-untyped]
-            from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore[import-untyped]
-            from sklearn.pipeline import Pipeline  # type: ignore[import-untyped]
+            from sklearn.feature_extraction.text import (
+                TfidfVectorizer,
+            )
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.pipeline import Pipeline
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -221,7 +223,7 @@ class CalibratedScorer:
             pickle.dump(self._pipeline, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     @classmethod
-    def load(cls, path: Path) -> "CalibratedScorer":
+    def load(cls, path: Path) -> CalibratedScorer:
         """Restore a saved scorer from *path*.
 
         Args:
@@ -239,6 +241,6 @@ class CalibratedScorer:
         instance.__init__()  # type: ignore[misc]
         path = Path(path)
         with path.open("rb") as f:
-            instance._pipeline = pickle.load(f)  # noqa: S301 — trusted model file
+            instance._pipeline = pickle.load(f)  # — trusted model file
         instance._is_fitted = True
         return instance

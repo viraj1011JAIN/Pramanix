@@ -2,14 +2,12 @@
 """Tests for MistralTranslator and LlamaCppTranslator (D-2)."""
 from __future__ import annotations
 
-import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pramanix.exceptions import ConfigurationError
-
 
 # ── MistralTranslator ─────────────────────────────────────────────────────────
 
@@ -22,7 +20,7 @@ def test_mistral_raises_config_error_without_package(monkeypatch: pytest.MonkeyP
     if "pramanix.translator.mistral" in sys.modules:
         del sys.modules["pramanix.translator.mistral"]
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[mistral\\]'"):
-        from pramanix.translator.mistral import MistralTranslator  # noqa: F401
+        from pramanix.translator.mistral import MistralTranslator
         MistralTranslator("mistral-small")
 
 
@@ -35,7 +33,7 @@ def test_mistral_translator_init_with_mock() -> None:
     with patch.dict(sys.modules, {"mistralai": mock_mistral_pkg, "mistralai.async_client": mock_mistral_pkg}):
         if "pramanix.translator.mistral" in sys.modules:
             del sys.modules["pramanix.translator.mistral"]
-        from pramanix.translator.mistral import MistralTranslator  # noqa: PLC0415
+        from pramanix.translator.mistral import MistralTranslator
 
         translator = MistralTranslator("mistral-small", api_key="test-key")
         assert translator.model == "mistral-small"
@@ -44,10 +42,11 @@ def test_mistral_translator_init_with_mock() -> None:
 @pytest.mark.asyncio
 async def test_mistral_extract_calls_single_call() -> None:
     """extract() delegates to _single_call and returns a parsed dict."""
-    from pydantic import BaseModel as _BM
     from unittest.mock import patch as _patch
 
-    class _Schema(_BM):
+    from pydantic import BaseModel as _BaseModel
+
+    class _Schema(_BaseModel):
         amount: int
 
     mock_pkg = MagicMock()
@@ -56,7 +55,7 @@ async def test_mistral_extract_calls_single_call() -> None:
     with patch.dict(sys.modules, {"mistralai": mock_pkg, "mistralai.async_client": mock_pkg}):
         if "pramanix.translator.mistral" in sys.modules:
             del sys.modules["pramanix.translator.mistral"]
-        from pramanix.translator.mistral import MistralTranslator  # noqa: PLC0415
+        from pramanix.translator.mistral import MistralTranslator
 
         translator = MistralTranslator("mistral-small", api_key="test-key")
         with _patch.object(translator, "_single_call", new=AsyncMock(return_value='{"amount": 100}')):
@@ -73,7 +72,7 @@ def test_llamacpp_raises_config_error_without_package(monkeypatch: pytest.Monkey
     if "pramanix.translator.llamacpp" in sys.modules:
         del sys.modules["pramanix.translator.llamacpp"]
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[llamacpp\\]'"):
-        from pramanix.translator.llamacpp import LlamaCppTranslator  # noqa: F401
+        from pramanix.translator.llamacpp import LlamaCppTranslator
         LlamaCppTranslator("/models/test.gguf")
 
 
@@ -87,7 +86,7 @@ def test_llamacpp_translator_model_property() -> None:
     with patch.dict(sys.modules, {"llama_cpp": mock_llama_pkg}):
         if "pramanix.translator.llamacpp" in sys.modules:
             del sys.modules["pramanix.translator.llamacpp"]
-        from pramanix.translator.llamacpp import LlamaCppTranslator  # noqa: PLC0415
+        from pramanix.translator.llamacpp import LlamaCppTranslator
 
         t = LlamaCppTranslator("/models/my.gguf")
         assert t.model == "llama-cpp:/models/my.gguf"
@@ -96,10 +95,11 @@ def test_llamacpp_translator_model_property() -> None:
 @pytest.mark.asyncio
 async def test_llamacpp_extract_calls_inference() -> None:
     """extract() wraps sync _inference call in an executor and returns dict."""
-    from pydantic import BaseModel as _BM
     from unittest.mock import patch as _patch
 
-    class _Schema(_BM):
+    from pydantic import BaseModel as _BaseModel
+
+    class _Schema(_BaseModel):
         amount: int
 
     mock_llama_pkg = MagicMock()
@@ -109,7 +109,7 @@ async def test_llamacpp_extract_calls_inference() -> None:
     with patch.dict(sys.modules, {"llama_cpp": mock_llama_pkg}):
         if "pramanix.translator.llamacpp" in sys.modules:
             del sys.modules["pramanix.translator.llamacpp"]
-        from pramanix.translator.llamacpp import LlamaCppTranslator  # noqa: PLC0415
+        from pramanix.translator.llamacpp import LlamaCppTranslator
 
         t = LlamaCppTranslator("/models/my.gguf")
         with _patch.object(t, "_inference", return_value='{"amount": 50}'):
@@ -127,7 +127,7 @@ def test_create_translator_mistral_prefix(monkeypatch: pytest.MonkeyPatch) -> No
     with patch.dict(sys.modules, {"mistralai": mock_pkg, "mistralai.async_client": mock_pkg}):
         if "pramanix.translator.mistral" in sys.modules:
             del sys.modules["pramanix.translator.mistral"]
-        from pramanix.translator.redundant import create_translator  # noqa: PLC0415
+        from pramanix.translator.redundant import create_translator
         t = create_translator("mistral:mistral-small", api_key="key")
         assert t.model == "mistral-small"
 
@@ -138,6 +138,6 @@ def test_create_translator_llama_prefix(monkeypatch: pytest.MonkeyPatch) -> None
     with patch.dict(sys.modules, {"llama_cpp": mock_pkg}):
         if "pramanix.translator.llamacpp" in sys.modules:
             del sys.modules["pramanix.translator.llamacpp"]
-        from pramanix.translator.redundant import create_translator  # noqa: PLC0415
+        from pramanix.translator.redundant import create_translator
         t = create_translator("llama:/some/model.gguf")
         assert t.model.startswith("llama-cpp:")

@@ -655,13 +655,13 @@ def _cmd_policy_migrate(args: argparse.Namespace) -> int:
             parts = tuple(int(p) for p in s.strip().split("."))
             if len(parts) != 3:
                 raise ValueError
-            return parts  # type: ignore[return-value]
+            return parts
         except ValueError:
             print(
                 f"ERROR: {flag} must be a semver string like '1.2.0', got {s!r}.",
                 file=sys.stderr,
             )
-            raise SystemExit(2)
+            raise SystemExit(2) from None
 
     from_ver = _parse_semver(args.from_version, "--from-version")
     to_ver = _parse_semver(args.to_version, "--to-version")
@@ -997,7 +997,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # ── 5. Z3 solver ─────────────────────────────────────────────────────────
     try:
-        import z3  # type: ignore[import-untyped]
+        import z3
         s = z3.Solver()
         s.add(z3.Bool("x") == True)  # noqa: E712
         res = str(s.check())
@@ -1043,7 +1043,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # ── 8. Cryptography package (required for PramanixSigner / Ed25519) ───────
     if _has("cryptography"):
         try:
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: F401
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PrivateKey,  # noqa: F401
+            )
             _check("cryptography", "OK", "cryptography — Ed25519 available")
         except ImportError as exc:
             _check("cryptography", "WARN", f"cryptography import partial: {exc}",
@@ -1057,7 +1059,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
 
     # ── 9. Optional extras ────────────────────────────────────────────────────
-    OPTIONAL_CHECKS: list[tuple[str, str, str]] = [
+    _optional_checks: list[tuple[str, str, str]] = [
         ("otel", "opentelemetry.sdk", "pip install 'pramanix[otel]'"),
         ("translator-httpx", "httpx", "pip install 'pramanix[translator]'"),
         ("fastapi", "fastapi", "pip install 'pramanix[fastapi]'"),
@@ -1073,7 +1075,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         ("datadog", "datadog_api_client", "pip install 'pramanix[datadog]'"),
     ]
 
-    for label, modname, install_hint in OPTIONAL_CHECKS:
+    for label, modname, install_hint in _optional_checks:
         if _has(modname):
             _check(f"extra:{label}", "OK", f"{modname} installed")
         else:
@@ -1114,9 +1116,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         }
         print(_json_mod.dumps(summary, indent=2))
     else:
-        _ICONS = {"OK": "OK  ", "WARN": "WARN", "ERROR": "ERR ", "SKIP": "SKIP"}
+        _icons = {"OK": "OK  ", "WARN": "WARN", "ERROR": "ERR ", "SKIP": "SKIP"}
         for c in checks:
-            icon = _ICONS.get(str(c["level"]), "    ")
+            icon = _icons.get(str(c["level"]), "    ")
             line = f"  [{icon}] {c['name']}: {c['detail']}"
             print(line)
             if c.get("hint") and c["level"] in ("WARN", "ERROR"):

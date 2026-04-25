@@ -104,6 +104,7 @@ respx = "^0.21"
 [tool.mypy]
 strict = true
 python_version = "3.13"
+incremental = false
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -176,6 +177,38 @@ module = [
     "datadog_api_client.*",
     "fpdf",
     "fpdf.*",
+    "asyncpg",
+    "asyncpg.*",
+    "llama_cpp",
+    "llama_cpp.*",
+    "cohere",
+    "cohere.*",
+    "mistralai",
+    "mistralai.*",
+    "dspy",
+    "dspy.*",
+    "crewai",
+    "crewai.*",
+    "haystack",
+    "haystack.*",
+    "pydantic_ai",
+    "pydantic_ai.*",
+    "semantic_kernel",
+    "semantic_kernel.*",
+    "grpc",
+    "grpc.*",
+    "grpcio",
+    "grpcio.*",
+    "sklearn",
+    "sklearn.*",
+    "google.generativeai",
+    "google.generativeai.*",
+    "google",
+    "google.*",
+    "google.api_core",
+    "google.api_core.*",
+    "kafka",
+    "kafka.*",
 ]
 ignore_missing_imports = true
 

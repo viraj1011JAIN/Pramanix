@@ -23,11 +23,14 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import logging
 import os
 import time
 import unicodedata
 from threading import Lock
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 def _normalize_key(text: str) -> str:
@@ -126,7 +129,12 @@ class _RedisCache:
             if raw is None:
                 return None
             return dict(json.loads(raw))
-        except Exception:
+        except Exception as exc:
+            _log.debug(
+                "pramanix.cache: Redis GET failed for key=%r — treating as cache miss: %s",
+                key,
+                exc,
+            )
             return None  # Redis failure → cache miss (safe)
 
     def set(self, key: str, value: dict[str, Any]) -> None:
@@ -138,8 +146,12 @@ class _RedisCache:
                 self._ttl,
                 json.dumps(value, default=str),
             )
-        except Exception:
-            pass  # Redis failure → silent (cache is best-effort)
+        except Exception as exc:
+            _log.debug(
+                "pramanix.cache: Redis SET failed for key=%r — continuing without caching: %s",
+                key,
+                exc,
+            )  # Redis failure → silent (cache is best-effort)
 
     def invalidate(self, key: str) -> None:
         with contextlib.suppress(Exception):

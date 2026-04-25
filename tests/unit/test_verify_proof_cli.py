@@ -88,7 +88,7 @@ class TestVerifyProofArgParsing:
 
     def test_whitespace_only_stdin_returns_2(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
-        code, _, err = _run_cli(
+        code, _, _err = _run_cli(
             ["pramanix", "verify-proof", "--stdin"], stdin_data="   \n\t  "
         )
         assert code == 2

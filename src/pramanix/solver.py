@@ -222,7 +222,7 @@ def _preprocess_invariants(
         raw = values.get(af_name)
         if raw is None:
             raw = []
-        if not isinstance(raw, (list, tuple)):
+        if not isinstance(raw, list | tuple):
             raise ValidationError(
                 f"ArrayField '{af_name}' expects a list or tuple in values; "
                 f"got {type(raw).__name__!r}."
@@ -248,7 +248,7 @@ def _preprocess_invariants(
 
 def _collect_array_fields_in_node(node: Any, result: dict[str, ArrayField]) -> None:
     """Walk the expression tree and collect all referenced ArrayField objects."""
-    if isinstance(node, _ForAllOp) or isinstance(node, _ExistsOp):
+    if isinstance(node, _ForAllOp | _ExistsOp):
         af = node.array_field
         result[af.name] = af
     elif isinstance(node, _BoolOp):
@@ -397,7 +397,7 @@ def solve(
     try:
         # Analyse String fields eligible for Int promotion (enumeration-style
         # fields used only in == / is_in comparisons).  Promotion eliminates
-        # Z3 sequence-theory overhead for these fields, yielding a ~5× latency
+        # Z3 sequence-theory overhead for these fields, yielding a ~5x latency
         # reduction.  The encoding is alphabetically stable across restarts.
         promotions = analyze_string_promotions(invariants)
 

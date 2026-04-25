@@ -149,7 +149,7 @@ class KafkaAuditSink:
         max_queue_size: int = 10_000,
     ) -> None:
         try:
-            from confluent_kafka import Producer  # type: ignore[import-untyped]
+            from confluent_kafka import Producer
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -204,10 +204,10 @@ class KafkaAuditSink:
 def _increment_overflow_metric() -> None:
     """Increment pramanix_audit_sink_overflow_total Prometheus counter."""
     try:
-        import prometheus_client as _prom  # type: ignore[import-untyped]
+        import prometheus_client as _prom
 
         # Use a module-level singleton counter (registered once).
-        global _OVERFLOW_COUNTER  # noqa: PLW0603
+        global _OVERFLOW_COUNTER
         if _OVERFLOW_COUNTER is None:
             try:
                 _OVERFLOW_COUNTER = _prom.Counter(
@@ -222,8 +222,12 @@ def _increment_overflow_metric() -> None:
                 )
         if _OVERFLOW_COUNTER is not None:
             _OVERFLOW_COUNTER.inc()
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning(
+            "pramanix.audit_sink: failed to increment overflow metric "
+            "(pramanix_audit_sink_overflow_total); operator alert suppressed: %s",
+            exc,
+        )
 
 
 _OVERFLOW_COUNTER: Any = None
@@ -254,7 +258,7 @@ class S3AuditSink:
         **boto3_kwargs: Any,
     ) -> None:
         try:
-            import boto3  # type: ignore[import-untyped]
+            import boto3
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -371,7 +375,7 @@ class DatadogAuditSink:
         tags: str = "",
     ) -> None:
         try:
-            import datadog_api_client  # type: ignore[import-untyped]  # noqa: F401
+            import datadog_api_client  # noqa: F401
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -390,10 +394,12 @@ class DatadogAuditSink:
 
     def emit(self, decision: Decision) -> None:
         try:
-            from datadog_api_client import ApiClient, Configuration  # type: ignore[import-untyped]
-            from datadog_api_client.v2.api.logs_api import LogsApi  # type: ignore[import-untyped]
-            from datadog_api_client.v2.model.http_log import HTTPLog  # type: ignore[import-untyped]
-            from datadog_api_client.v2.model.http_log_item import HTTPLogItem  # type: ignore[import-untyped]
+            from datadog_api_client import ApiClient, Configuration
+            from datadog_api_client.v2.api.logs_api import LogsApi
+            from datadog_api_client.v2.model.http_log import HTTPLog
+            from datadog_api_client.v2.model.http_log_item import (
+                HTTPLogItem,
+            )
 
             configuration = Configuration()
             configuration.api_key["apiKeyAuth"] = self._api_key

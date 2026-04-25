@@ -76,7 +76,7 @@ class TestSanitiseUserInputLengthEnforcement:
 
     def test_short_input_not_affected(self) -> None:
         """Short inputs pass through normally."""
-        cleaned, warnings = sanitise_user_input("hello", max_length=512)
+        cleaned, _warnings = sanitise_user_input("hello", max_length=512)
         assert cleaned == "hello"
 
     def test_length_checked_after_nfkc_normalisation(self) -> None:
@@ -90,7 +90,7 @@ class TestSanitiseUserInputLengthEnforcement:
     def test_no_truncated_warning_in_returned_warnings(self) -> None:
         """The old 'input_truncated_to_N_chars' warning no longer appears."""
         # Input at exactly the limit should not produce a truncation warning
-        cleaned, warnings = sanitise_user_input("x" * 100, max_length=100)
+        _cleaned, warnings = sanitise_user_input("x" * 100, max_length=100)
         assert not any("truncated" in w for w in warnings)
 
 

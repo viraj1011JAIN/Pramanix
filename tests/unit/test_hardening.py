@@ -658,7 +658,7 @@ class TestSilentPolicyDrift:
         from pramanix.exceptions import ConfigurationError
 
         p = _make_policy()
-        with pytest.raises(ConfigurationError, match="[Pp]olicy"):
+        with pytest.raises(ConfigurationError, match=r"[Pp]olicy"):
             Guard(
                 p,
                 GuardConfig(

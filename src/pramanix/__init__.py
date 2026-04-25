@@ -31,7 +31,13 @@ __stability__: dict[str, str] = {
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
 
-from pramanix.audit import DecisionSigner, DecisionVerifier, MerkleAnchor, MerkleArchiver, PersistentMerkleAnchor
+from pramanix.audit import (
+    DecisionSigner,
+    DecisionVerifier,
+    MerkleAnchor,
+    MerkleArchiver,
+    PersistentMerkleAnchor,
+)
 from pramanix.audit_sink import (
     AuditSink,
     DatadogAuditSink,
@@ -105,120 +111,120 @@ from pramanix.key_provider import (
 )
 from pramanix.migration import PolicyMigration
 from pramanix.policy import Policy, invariant_mixin, model_dump_z3
-from pramanix.translator.injection_scorer import BuiltinScorer, CalibratedScorer, InjectionScorer
-from pramanix.transpiler import InvariantASTCache
 from pramanix.resolvers import ResolverRegistry
+from pramanix.translator.injection_scorer import BuiltinScorer, CalibratedScorer, InjectionScorer
 from pramanix.translator.redundant import ConsensusStrictness
+from pramanix.transpiler import InvariantASTCache
 
 __all__ = [
     # Phase 9 — Pillar 4: Adaptive circuit breaker
     "AdaptiveCircuitBreaker",
-    "CircuitBreakerConfig",
-    # C-5: Distributed circuit breaker
-    "DistributedCircuitBreaker",
-    "InMemoryDistributedBackend",
-    "RedisDistributedBackend",
-    # E-4: Audit sinks
-    "AuditSink",
-    "DatadogAuditSink",
-    "InMemoryAuditSink",
-    "KafkaAuditSink",
-    "S3AuditSink",
-    "SplunkHecAuditSink",
-    "StdoutAuditSink",
-    # E-3: KMS/HSM key providers
-    "KeyProvider",
-    "PemKeyProvider",
-    "EnvKeyProvider",
-    "FileKeyProvider",
     # A-3: Array field quantifiers
     "ArrayField",
-    # A-4: Datetime field
-    "DatetimeField",
-    # B-1: Nested model descriptor chaining
-    "NestedField",
+    # E-4: Audit sinks
+    "AuditSink",
+    "BuiltinScorer",
+    "CalibratedScorer",
+    "CircuitBreakerConfig",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
-    # Limitations overrides: static policy coverage analysis
-    "PolicyAuditor",
-    # Limitations overrides: string→int enum helper
-    "StringEnumField",
     "ConfigurationError",
+    # Phase D-1 — Consensus strictness control
+    "ConsensusStrictness",
     "ConstraintExpr",
+    "DatadogAuditSink",
+    # A-4: Datetime field
+    "DatetimeField",
     # Core result
     "Decision",
     # Phase 9 — Pillar 1: Cryptographic audit
     "DecisionSigner",
     "DecisionVerifier",
+    # C-5: Distributed circuit breaker
+    "DistributedCircuitBreaker",
     "E",
-    "Exists",
+    "EnvKeyProvider",
     # Phase 12 — Hardening: sealed execution token (TOCTOU gap)
     "ExecutionToken",
     "ExecutionTokenSigner",
     "ExecutionTokenVerifier",
-    # E-1: Redis-free token backends
-    "InMemoryExecutionTokenVerifier",
-    "PostgresExecutionTokenVerifier",
-    "SQLiteExecutionTokenVerifier",
+    "Exists",
     # Exceptions — translator (Phase 4)
     "ExtractionFailureError",
     "ExtractionMismatchError",
-    # Phase D-3 — input length guard
-    "InputTooLongError",
     # DSL
     "Field",
     "FieldTypeError",
+    "FileKeyProvider",
     "ForAll",
     # Guard
     "Guard",
     "GuardConfig",
     "GuardError",
     "GuardViolationError",
+    "InMemoryAuditSink",
+    "InMemoryDistributedBackend",
+    # E-1: Redis-free token backends
+    "InMemoryExecutionTokenVerifier",
     "InjectionBlockedError",
+    # D-4: Injection scorer
+    "InjectionScorer",
+    # Phase D-3 — input length guard
+    "InputTooLongError",
+    # C-2: Invariant AST cache
+    "InvariantASTCache",
     "InvariantLabelError",
     # Phase 9 — Pillar 3: Zero-trust identity
     "JWTIdentityLinker",
+    "KafkaAuditSink",
+    # E-3: KMS/HSM key providers
+    "KeyProvider",
     "LLMTimeoutError",
     "MerkleAnchor",
     # E-2: Merkle pruning and archival
     "MerkleArchiver",
+    # B-1: Nested model descriptor chaining
+    "NestedField",
+    "PemKeyProvider",
     # Phase 12 — Hardening: persistent Merkle anchoring
     "PersistentMerkleAnchor",
     # Policy
     "Policy",
-    "PolicyMigration",
-    "invariant_mixin",
-    "model_dump_z3",
-    # C-2: Invariant AST cache
-    "InvariantASTCache",
-    # D-4: Injection scorer
-    "InjectionScorer",
-    "BuiltinScorer",
-    "CalibratedScorer",
+    # Limitations overrides: static policy coverage analysis
+    "PolicyAuditor",
     "PolicyCompilationError",
     "PolicyError",
+    "PolicyMigration",
+    "PostgresExecutionTokenVerifier",
     # Exceptions — core
     "PramanixError",
     # Phase 11 — Pillar 2: Ed25519 cryptographic signing
     "PramanixSigner",
     "PramanixVerifier",
+    "RedisDistributedBackend",
     # Phase 13 — Enterprise: distributed Redis token store
     "RedisExecutionTokenVerifier",
     # Resolver cache (data-bleed guard) — singleton excluded intentionally:
     # interact with the registry through Guard configuration, not directly.
     "ResolverRegistry",
+    "S3AuditSink",
+    "SQLiteExecutionTokenVerifier",
     # Exceptions — hardening (Phase 4)
     "SemanticPolicyViolation",
     "SolverError",
     "SolverStatus",
     "SolverTimeoutError",
+    "SplunkHecAuditSink",
     "StateValidationError",
+    "StdoutAuditSink",
+    # Limitations overrides: string→int enum helper
+    "StringEnumField",
     "TranspileError",
     "ValidationError",
     "WorkerError",
     # Decorator
     "guard",
-    # Phase D-1 — Consensus strictness control
-    "ConsensusStrictness",
+    "invariant_mixin",
+    "model_dump_z3",
 ]

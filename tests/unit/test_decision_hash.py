@@ -108,7 +108,7 @@ class TestDecisionHashDeterminism:
             allow_infinity=False,
         )
     )
-    @settings(max_examples=500)
+    @settings(max_examples=500, database=None)
     def test_hypothesis_hash_determinism(self, amount):
         """Property: same Decision always hashes to same value."""
         d1 = Decision.safe(

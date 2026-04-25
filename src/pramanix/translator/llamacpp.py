@@ -56,7 +56,7 @@ class LlamaCppTranslator:
         max_tokens: int = _DEFAULT_MAX_TOKENS,
     ) -> None:
         try:
-            from llama_cpp import Llama  # type: ignore[import-untyped]
+            from llama_cpp import Llama
         except ImportError as exc:
             raise ConfigurationError(
                 "llama-cpp-python is required for LlamaCppTranslator. "

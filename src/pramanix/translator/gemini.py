@@ -114,14 +114,14 @@ class GeminiTranslator:
         # and google.api_core.exceptions.ServiceUnavailable for transient errors.
         # We catch the generic Exception base from google.api_core for robustness.
         try:
-            import google.api_core.exceptions as _gapi_exc  # type: ignore[import-untyped]
+            import google.api_core.exceptions as _gapi_exc
             _retryable: tuple[type[Exception], ...] = (
                 _gapi_exc.DeadlineExceeded,
                 _gapi_exc.ServiceUnavailable,
                 _gapi_exc.InternalServerError,
             )
         except ImportError:
-            _retryable = (Exception,)  # type: ignore[assignment]
+            _retryable = (Exception,)
 
         attempts = 0
         try:

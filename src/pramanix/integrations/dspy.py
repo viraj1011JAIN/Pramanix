@@ -31,7 +31,8 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pramanix.guard import Guard
@@ -39,13 +40,13 @@ if TYPE_CHECKING:
 __all__ = ["PramanixGuardedModule"]
 
 try:
-    import dspy as _dspy  # type: ignore[import-untyped]
+    import dspy as _dspy
 
     _DSPY_AVAILABLE = True
-    _ModuleBase = _dspy.Module  # type: ignore[attr-defined]
+    _ModuleBase: Any = _dspy.Module
 except ImportError:
     _DSPY_AVAILABLE = False
-    _ModuleBase = object  # type: ignore[assignment]
+    _ModuleBase = object
 
 
 class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]
@@ -101,8 +102,8 @@ class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]
         from pramanix.exceptions import GuardViolationError
 
         guard: Guard = object.__getattribute__(self, "_guard")
-        intent_builder: Callable = object.__getattribute__(self, "_intent_builder")
-        state_provider: Callable = object.__getattribute__(self, "_state_provider")
+        intent_builder: Callable[..., Any] = object.__getattribute__(self, "_intent_builder")
+        state_provider: Callable[..., Any] = object.__getattribute__(self, "_state_provider")
         inner_module: Any = object.__getattribute__(self, "_inner_module")
 
         intent = intent_builder(**kwargs)

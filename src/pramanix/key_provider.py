@@ -255,7 +255,7 @@ class AwsKmsKeyProvider:
         _client: Any = None,
     ) -> None:
         try:
-            import boto3  # noqa: PLC0415
+            import boto3
         except ImportError as exc:
             raise ImportError(
                 "AwsKmsKeyProvider requires 'boto3'. "
@@ -324,8 +324,8 @@ class AzureKeyVaultKeyProvider:
         _client: Any = None,
     ) -> None:
         try:
-            from azure.identity import DefaultAzureCredential      # noqa: PLC0415
-            from azure.keyvault.secrets import SecretClient         # noqa: PLC0415
+            from azure.identity import DefaultAzureCredential
+            from azure.keyvault.secrets import SecretClient
         except ImportError as exc:
             raise ImportError(
                 "AzureKeyVaultKeyProvider requires 'azure-keyvault-secrets' and "
@@ -389,7 +389,7 @@ class GcpKmsKeyProvider:
         _client: Any = None,
     ) -> None:
         try:
-            from google.cloud import secretmanager  # noqa: PLC0415  # type: ignore[import-untyped]
+            from google.cloud import secretmanager
         except ImportError as exc:
             raise ImportError(
                 "GcpKmsKeyProvider requires 'google-cloud-secret-manager'. "
@@ -459,7 +459,7 @@ class HashiCorpVaultKeyProvider:
         _client: Any = None,
     ) -> None:
         try:
-            import hvac  # noqa: PLC0415
+            import hvac
         except ImportError as exc:
             raise ImportError(
                 "HashiCorpVaultKeyProvider requires 'hvac'. "

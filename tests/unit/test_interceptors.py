@@ -13,11 +13,11 @@ Coverage:
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import ClassVar
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pramanix.decision import Decision, SolverStatus
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
@@ -56,7 +56,6 @@ class TestPramanixGrpcInterceptor:
 
     def test_allowed_calls_original_handler(self):
         """When guard allows, the original unary handler must be called."""
-        import types
 
         mock_grpc = MagicMock()
         mock_grpc.StatusCode = MagicMock()
@@ -65,10 +64,10 @@ class TestPramanixGrpcInterceptor:
         mock_grpc.ServerInterceptor = object
 
         with patch.dict("sys.modules", {"grpc": mock_grpc}):
-            from pramanix.interceptors import grpc as grpc_mod
-
             # Reload to pick up mock
             import importlib
+
+            from pramanix.interceptors import grpc as grpc_mod
             importlib.reload(grpc_mod)
 
             original_handler = MagicMock(return_value="handler_result")
@@ -96,6 +95,7 @@ class TestPramanixGrpcInterceptor:
 
         with patch.dict("sys.modules", {"grpc": mock_grpc}):
             import importlib
+
             from pramanix.interceptors import grpc as grpc_mod
             importlib.reload(grpc_mod)
 
@@ -117,6 +117,7 @@ class TestPramanixGrpcInterceptor:
 
         with patch.dict("sys.modules", {"grpc": mock_grpc}):
             import importlib
+
             from pramanix.interceptors import grpc as grpc_mod
             importlib.reload(grpc_mod)
 
@@ -173,6 +174,7 @@ class TestPramanixKafkaConsumer:
 
         with patch.dict("sys.modules", {"confluent_kafka": mock_confluent}):
             import importlib
+
             from pramanix.interceptors import kafka as kafka_mod
             importlib.reload(kafka_mod)
 
@@ -198,6 +200,7 @@ class TestPramanixKafkaConsumer:
 
         with patch.dict("sys.modules", {"confluent_kafka": mock_confluent}):
             import importlib
+
             from pramanix.interceptors import kafka as kafka_mod
             importlib.reload(kafka_mod)
 
@@ -217,7 +220,7 @@ class TestPramanixKafkaConsumer:
 
 
 class TestAdmissionWebhook:
-    _REVIEW = {
+    _REVIEW: ClassVar[dict] = {
         "apiVersion": "admission.k8s.io/v1",
         "kind": "AdmissionReview",
         "request": {
@@ -237,6 +240,7 @@ class TestAdmissionWebhook:
 
         with patch.dict("sys.modules", {"fastapi": None, "fastapi.responses": None}):
             import importlib
+
             from pramanix.k8s import webhook as wh_mod
             importlib.reload(wh_mod)
 
@@ -252,9 +256,8 @@ class TestAdmissionWebhook:
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
 
-        import asyncio
-        import httpx
         from fastapi.testclient import TestClient
+
         from pramanix.k8s.webhook import create_admission_webhook
 
         app = create_admission_webhook(
@@ -275,6 +278,7 @@ class TestAdmissionWebhook:
         pytest.importorskip("fastapi")
 
         from fastapi.testclient import TestClient
+
         from pramanix.k8s.webhook import create_admission_webhook
 
         app = create_admission_webhook(

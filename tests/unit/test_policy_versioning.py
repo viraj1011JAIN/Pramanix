@@ -18,7 +18,6 @@ import pytest
 from pramanix import E, Field, Guard, GuardConfig, Policy, PolicyMigration
 from pramanix.exceptions import ConfigurationError
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -326,8 +325,9 @@ class TestCliPolicyMigrate:
         state_file.write_text(json.dumps(state))
         out_file = tmp_path / "out.json"
 
-        from pramanix.cli import main as cli_main
         import sys
+
+        from pramanix.cli import main as cli_main
 
         argv_backup = sys.argv
         try:
@@ -356,8 +356,9 @@ class TestCliPolicyMigrate:
         state_file = tmp_path / "state.json"
         state_file.write_text(json.dumps(state))
 
-        from pramanix.cli import main as cli_main
         import sys
+
+        from pramanix.cli import main as cli_main
 
         argv_backup = sys.argv
         try:

@@ -58,7 +58,8 @@ def test_consume_within_second_call_returns_false(signer, verifier) -> None:
 
 def test_consume_within_different_conns_second_fails(signer, verifier) -> None:
     """Two separate connections that share underlying DB — second must fail."""
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -92,8 +93,10 @@ def test_consume_within_rejects_tampered_signature(signer, verifier) -> None:
 
 
 def test_consume_within_rejects_expired_token(signer, verifier) -> None:
+    import hashlib as _hashlib
+    import hmac as _hmac
     from dataclasses import replace
-    import hmac as _hmac, hashlib as _hashlib
+
     from pramanix.execution_token import _token_body  # type: ignore[attr-defined]
 
     token = signer.mint(_allowed_decision())
@@ -125,7 +128,8 @@ def test_consume_within_rejects_wrong_state_version(signer, verifier) -> None:
 
 def test_consume_within_rollback_allows_replay(signer, verifier) -> None:
     """If the caller rolls back, consume_within rollback also undoes token consumption."""
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -151,7 +155,8 @@ def test_consume_within_rollback_allows_replay(signer, verifier) -> None:
 
 def test_consume_within_commit_prevents_replay(signer, verifier) -> None:
     """After a successful commit, the same token must not be accepted again."""
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:

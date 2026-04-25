@@ -179,7 +179,7 @@ class ComplianceReport:
             ImportError: If ``fpdf2`` is not installed.
         """
         try:
-            from fpdf import FPDF  # noqa: PLC0415
+            from fpdf import FPDF
         except ImportError as exc:
             raise ImportError(
                 "ComplianceReport.to_pdf() requires 'fpdf2'. "

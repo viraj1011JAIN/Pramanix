@@ -25,7 +25,8 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pramanix.guard import Guard
@@ -68,7 +69,7 @@ class HaystackGuardedComponent:
         # Attempt Haystack component registration — graceful fallback if absent.
         self._haystack_available = False
         try:
-            from haystack import component  # type: ignore[import-untyped]
+            from haystack import component
 
             component(self.__class__)  # register as Haystack component
             self._haystack_available = True
@@ -90,7 +91,6 @@ class HaystackGuardedComponent:
             A dict with keys ``"documents"`` and ``"blocked_documents"``
             (and ``"messages"`` / ``"blocked_messages"`` if messages were given).
         """
-        import asyncio
 
         allowed_docs: list[Any] = []
         blocked_docs: list[Any] = []

@@ -2,7 +2,6 @@
 """Tests for framework adapters: Haystack, SemanticKernel, PydanticAI (F-1)."""
 from __future__ import annotations
 
-import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock
 
@@ -103,8 +102,10 @@ def test_sk_raises_config_error_without_semantic_kernel(
     monkeypatch.setitem(sys.modules, "semantic_kernel", None)
     if "pramanix.integrations.semantic_kernel" in sys.modules:
         del sys.modules["pramanix.integrations.semantic_kernel"]
-    with pytest.raises(ConfigurationError, match="semantic.kernel"):
-        from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin  # noqa: PLC0415, F401
+    with pytest.raises(ConfigurationError, match=r"semantic-kernel"):
+        from pramanix.integrations.semantic_kernel import (
+            PramanixSemanticKernelPlugin,
+        )
         PramanixSemanticKernelPlugin(_make_mock_guard())
 
 
@@ -119,7 +120,7 @@ def test_sk_plugin_verify_returns_json() -> None:
 
     import json
 
-    from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin  # noqa: PLC0415
+    from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
 
     guard = _make_mock_guard(allowed=True)
     plugin = PramanixSemanticKernelPlugin(guard)
@@ -139,7 +140,7 @@ async def test_sk_plugin_verify_async_returns_json() -> None:
     if "pramanix.integrations.semantic_kernel" in sys.modules:
         del sys.modules["pramanix.integrations.semantic_kernel"]
 
-    from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin  # noqa: PLC0415
+    from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
 
     guard = _make_mock_guard(allowed=True)
     plugin = PramanixSemanticKernelPlugin(guard)
@@ -157,8 +158,10 @@ def test_pydantic_ai_raises_config_error_without_pydantic_ai(
     monkeypatch.setitem(sys.modules, "pydantic_ai", None)
     if "pramanix.integrations.pydantic_ai" in sys.modules:
         del sys.modules["pramanix.integrations.pydantic_ai"]
-    with pytest.raises(ConfigurationError, match="pydantic.ai"):
-        from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator  # noqa: F401, PLC0415
+    with pytest.raises(ConfigurationError, match=r"pydantic-ai"):
+        from pramanix.integrations.pydantic_ai import (
+            PramanixPydanticAIValidator,
+        )
         PramanixPydanticAIValidator(_make_mock_guard())
 
 
@@ -169,7 +172,7 @@ def test_pydantic_ai_check_allowed_returns_decision() -> None:
     if "pramanix.integrations.pydantic_ai" in sys.modules:
         del sys.modules["pramanix.integrations.pydantic_ai"]
 
-    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator  # noqa: PLC0415
+    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
     guard = _make_mock_guard(allowed=True)
     validator = PramanixPydanticAIValidator(guard)
@@ -184,7 +187,7 @@ def test_pydantic_ai_check_blocked_raises_guard_violation() -> None:
     if "pramanix.integrations.pydantic_ai" in sys.modules:
         del sys.modules["pramanix.integrations.pydantic_ai"]
 
-    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator  # noqa: PLC0415
+    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
     guard = _make_mock_guard(allowed=False)
     validator = PramanixPydanticAIValidator(guard)
@@ -200,7 +203,7 @@ async def test_pydantic_ai_check_async_allowed() -> None:
     if "pramanix.integrations.pydantic_ai" in sys.modules:
         del sys.modules["pramanix.integrations.pydantic_ai"]
 
-    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator  # noqa: PLC0415
+    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
     guard = _make_mock_guard(allowed=True)
     validator = PramanixPydanticAIValidator(guard)
@@ -216,7 +219,7 @@ async def test_pydantic_ai_check_async_blocked_raises() -> None:
     if "pramanix.integrations.pydantic_ai" in sys.modules:
         del sys.modules["pramanix.integrations.pydantic_ai"]
 
-    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator  # noqa: PLC0415
+    from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
     guard = _make_mock_guard(allowed=False)
     validator = PramanixPydanticAIValidator(guard)

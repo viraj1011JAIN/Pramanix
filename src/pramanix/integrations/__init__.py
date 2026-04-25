@@ -30,25 +30,25 @@ Quick-start::
 from __future__ import annotations
 
 __all__ = [
+    # Haystack (Phase F-1)
+    "HaystackGuardedComponent",
+    # CrewAI (Phase F-1)
+    "PramanixCrewAITool",
     # LlamaIndex
     "PramanixFunctionTool",
+    # DSPy (Phase F-1)
+    "PramanixGuardedModule",
     # LangChain
     "PramanixGuardedTool",
     # FastAPI
     "PramanixMiddleware",
-    "PramanixQueryEngineTool",
-    # AutoGen
-    "PramanixToolCallback",
-    # CrewAI (Phase F-1)
-    "PramanixCrewAITool",
-    # DSPy (Phase F-1)
-    "PramanixGuardedModule",
-    # Haystack (Phase F-1)
-    "HaystackGuardedComponent",
-    # Semantic Kernel (Phase F-1)
-    "PramanixSemanticKernelPlugin",
     # PydanticAI (Phase F-1)
     "PramanixPydanticAIValidator",
+    "PramanixQueryEngineTool",
+    # Semantic Kernel (Phase F-1)
+    "PramanixSemanticKernelPlugin",
+    # AutoGen
+    "PramanixToolCallback",
     "pramanix_route",
     "wrap_tools",
 ]

@@ -16,7 +16,7 @@ def _run_cli(args: list[str], capsys: pytest.CaptureFixture) -> tuple[int, str, 
     """Run main() with given args; return (exit_code, stdout, stderr)."""
     try:
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sys, "argv", ["pramanix"] + args)
+            mp.setattr(sys, "argv", ["pramanix", *args])
             exit_code = main()
     except SystemExit as exc:
         exit_code = exc.code if isinstance(exc.code, int) else 1

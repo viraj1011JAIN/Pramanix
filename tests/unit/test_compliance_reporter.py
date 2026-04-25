@@ -200,7 +200,7 @@ class TestComplianceReportSerialization:
             assert f in parsed, f"Missing field: {f}"
 
     def test_to_pdf_returns_bytes(self):
-        fpdf = pytest.importorskip("fpdf", reason="fpdf2 not installed; pip install 'pramanix[pdf]'")
+        pytest.importorskip("fpdf", reason="fpdf2 not installed; pip install 'pramanix[pdf]'")
         reporter = ComplianceReporter()
         d = _block(("sufficient_balance",))
         report = reporter.generate(d)

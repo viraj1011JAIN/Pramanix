@@ -16,8 +16,6 @@ from decimal import Decimal
 import pytest
 
 from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.decision import SolverStatus
-
 
 # ── Test policy ──────────────────────────────────────────────────────────────
 

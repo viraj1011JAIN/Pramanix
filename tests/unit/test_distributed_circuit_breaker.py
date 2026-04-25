@@ -2,7 +2,6 @@
 """Tests for RedisDistributedBackend (C-5)."""
 from __future__ import annotations
 
-import asyncio
 import pytest
 
 from pramanix.circuit_breaker import (
@@ -12,7 +11,6 @@ from pramanix.circuit_breaker import (
     _DistributedState,
 )
 from pramanix.exceptions import ConfigurationError
-
 
 # ── RedisDistributedBackend import guard ──────────────────────────────────────
 
@@ -98,7 +96,7 @@ async def test_clear_single_namespace() -> None:
 
 
 try:
-    import fakeredis.aioredis as _fake_aioredis  # type: ignore[import-untyped]
+    import fakeredis.aioredis  # type: ignore[import-untyped]  # noqa: F401
     HAS_FAKEREDIS = True
 except ImportError:
     HAS_FAKEREDIS = False
@@ -176,16 +174,15 @@ async def test_redis_backend_conservative_merge(monkeypatch: pytest.MonkeyPatch)
 
 @needs_fakeredis
 @pytest.mark.asyncio
-async def test_redis_backend_unavailable_fails_open() -> None:
-    """Redis failures fall back to CLOSED (fail-open for availability)."""
-    import fakeredis.aioredis as fake_aioredis
+async def test_redis_backend_unavailable_fails_safe() -> None:
+    """Redis failures return OPEN (fail-safe) so unknown state blocks requests."""
 
     backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
     backend._redis_url = "redis://localhost"
     backend._sync_interval = 1.0
     backend._prefix = "pramanix:cb:"
     backend._ttl = 300
-    # Simulate Redis failure by giving a mock that always raises
+    # Simulate Redis failure by giving a client that always raises
     class _FailClient:
         async def hgetall(self, *a: object, **kw: object) -> dict:
             raise ConnectionError("Redis unavailable")
@@ -193,4 +190,7 @@ async def test_redis_backend_unavailable_fails_open() -> None:
             raise ConnectionError("Redis unavailable")
     backend._client = _FailClient()
     state = await backend.get_state("fail_ns")
-    assert state.circuit_state == CircuitState.CLOSED.value
+    # On Redis failure the circuit breaker must fail SAFE (OPEN), not fail-open
+    # (CLOSED). An unknown distributed state should block requests, not silently
+    # allow them — this is the financially-safe behaviour.
+    assert state.circuit_state == CircuitState.OPEN.value

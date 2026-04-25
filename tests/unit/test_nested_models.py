@@ -222,7 +222,7 @@ class TestNestedGuardIntegration:
 # ── B-1: model_dump_z3 ────────────────────────────────────────────────────────
 
 
-from pramanix.policy import model_dump_z3  # noqa: E402
+from pramanix.policy import model_dump_z3
 
 
 class _Addr(BaseModel):
@@ -274,7 +274,7 @@ class TestModelDumpZ3:
         assert "address.street" not in result
 
     def test_type_error_for_non_basemodel(self) -> None:
-        with pytest.raises(TypeError, match="pydantic.BaseModel"):
+        with pytest.raises(TypeError, match=r"pydantic\.BaseModel"):
             model_dump_z3({"not": "a model"})  # type: ignore[arg-type]
 
     def test_circular_type_detection(self) -> None:
@@ -282,11 +282,11 @@ class TestModelDumpZ3:
 
         class NodeA(BaseModel):
             value: str
-            child: "NodeB | None" = None
+            child: NodeB | None = None
 
         class NodeB(BaseModel):
             value: str
-            parent: "NodeA | None" = None
+            parent: NodeA | None = None
 
         NodeA.model_rebuild()
         NodeB.model_rebuild()

@@ -64,7 +64,7 @@ class TestArrayField:
             ArrayField("x", int, "Int", max_length=-5)
 
     def test_frozen(self, amounts_field: ArrayField) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(AttributeError):
             amounts_field.max_length = 99  # type: ignore[misc]
 
 
@@ -303,7 +303,7 @@ class TestSolverPreprocessing:
         plain = Field("x", int, "Int")
         inv = (E(plain) >= 0).named("non_neg")
         values = {"x": 5}
-        realized, expanded = _preprocess_invariants([inv], values)
+        _realized, expanded = _preprocess_invariants([inv], values)
         assert expanded is values  # unchanged
 
     def test_missing_array_key_treated_as_empty(self) -> None:

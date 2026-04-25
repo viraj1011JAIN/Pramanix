@@ -39,7 +39,7 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -211,7 +211,8 @@ class MerkleArchiver:
             return False
 
         computed = _build_root(leaf_hashes)
-        return computed == expected_root
+        result: bool = computed == expected_root
+        return result
 
     # ── Internal ───────────────────────────────────────────────────────────────
 
@@ -272,7 +273,7 @@ class MerkleArchiver:
             leaf_hash=hashlib.sha256(checkpoint_id.encode()).hexdigest(),
             ts=time.time(),
         )
-        self._active = [checkpoint_leaf] + remaining
+        self._active = [checkpoint_leaf, *remaining]
 
         return ArchiveResult(
             archive_path=archive_path,

@@ -586,7 +586,7 @@ class RedisDistributedBackend:
     """
 
     # Conservative severity ordering (higher = worse = takes priority).
-    _SEVERITY: dict[str, int] = {
+    _SEVERITY: ClassVar[dict[str, int]] = {
         CircuitState.CLOSED.value: 0,
         CircuitState.HALF_OPEN.value: 1,
         CircuitState.OPEN.value: 2,
@@ -620,7 +620,7 @@ class RedisDistributedBackend:
     async def _get_client(self) -> Any:
         """Lazily create and cache the async Redis client."""
         if self._client is None:
-            import redis.asyncio as aioredis  # type: ignore[import-untyped]
+            import redis.asyncio as aioredis
 
             self._client = aioredis.from_url(self._redis_url, decode_responses=True)
         return self._client
@@ -637,9 +637,17 @@ class RedisDistributedBackend:
         try:
             client = await self._get_client()
             data: dict[str, str] = await client.hgetall(self._key(namespace))
-        except Exception:
-            # If Redis is unavailable, fail open (return CLOSED).
-            return _DistributedState()
+        except Exception as exc:
+            # Redis is unavailable — fail SAFE by returning OPEN state so all
+            # replicas block requests rather than silently appearing healthy.
+            # An operator must restore Redis connectivity to resume normal operation.
+            log.error(
+                "circuit_breaker: Redis unavailable for namespace=%r — failing SAFE "
+                "(OPEN state returned). Distributed state sync is down: %s",
+                namespace,
+                exc,
+            )
+            return _DistributedState(circuit_state=CircuitState.OPEN.value)
 
         if not data:
             return _DistributedState()
@@ -695,9 +703,15 @@ class RedisDistributedBackend:
                 await pipe.hset(key, mapping=merged)
                 await pipe.expire(key, self._ttl)
                 await pipe.execute()
-        except Exception:
-            # State-sync failures are non-fatal — local state still governs.
-            pass
+        except Exception as exc:
+            # State-sync failures are non-fatal — local state still governs,
+            # but we must surface this so operators know distributed view is stale.
+            log.error(
+                "circuit_breaker: Redis state sync failed for namespace=%r; "
+                "local state still governs but distributed view may be stale: %s",
+                namespace,
+                exc,
+            )
 
     def clear(self, namespace: str | None = None) -> None:
         """Synchronously clear Redis state.

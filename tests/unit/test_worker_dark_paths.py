@@ -356,13 +356,17 @@ class TestForceKillProcesses:
         """_force_kill_processes skips processes that have already exited.
 
         A real multiprocessing.Process running a no-op target exits immediately.
-        After join(), is_alive() == False.  _force_kill_processes must not
+        After it exits, is_alive() == False.  _force_kill_processes must not
         attempt to kill it and must not raise.
         """
         proc = multiprocessing.Process(target=_noop)
         proc.start()
-        proc.join(timeout=5)
-        assert not proc.is_alive(), "No-op process did not exit"
+        # Poll until dead — more robust than a fixed join timeout under load on
+        # Windows where spawning a new Python interpreter can take several seconds.
+        deadline = time.monotonic() + 30.0
+        while proc.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proc.is_alive(), "No-op process did not exit within 30 s"
 
         container = types.SimpleNamespace(_processes={proc.pid: proc})
         _force_kill_processes(container)  # type: ignore[arg-type]  # Must not raise

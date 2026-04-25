@@ -26,9 +26,11 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pramanix.guard import Guard
 
 __all__ = ["create_admission_webhook"]
@@ -37,8 +39,7 @@ _log = logging.getLogger(__name__)
 
 # ── optional dependency guard ─────────────────────────────────────────────────
 try:
-    from fastapi import FastAPI, Request  # type: ignore[import-untyped]
-    from fastapi.responses import JSONResponse  # type: ignore[import-untyped]
+    from fastapi import FastAPI
 
     _FASTAPI_AVAILABLE = True
 except ImportError:
@@ -82,12 +83,12 @@ def create_admission_webhook(
     import fastapi as _fastapi
     import fastapi.responses as _fastapi_responses
 
-    _JSONResponse = _fastapi_responses.JSONResponse
-
     app = _fastapi.FastAPI(title="Pramanix Admission Webhook")
 
-    @app.post(path, response_class=_JSONResponse)
-    async def validate(body: dict = _fastapi.Body(...)):  # type: ignore[return]  # noqa: F811
+    @app.post(path, response_class=_fastapi_responses.JSONResponse)
+    async def validate(
+        body: dict[str, Any] = _fastapi.Body(...),  # noqa: B008
+    ) -> _fastapi_responses.JSONResponse:
         """Process a Kubernetes AdmissionReview request."""
         uid: str = ""
         try:
@@ -98,7 +99,7 @@ def create_admission_webhook(
             decision = guard.verify(intent=intent, state=state)
         except Exception as exc:
             _log.exception("pramanix.k8s.webhook_error uid=%s: %s", uid, exc)
-            return _JSONResponse(
+            return _fastapi_responses.JSONResponse(
                 content={
                     "apiVersion": "admission.k8s.io/v1",
                     "kind": "AdmissionReview",
@@ -115,7 +116,7 @@ def create_admission_webhook(
             )
 
         if decision.allowed:
-            return _JSONResponse(
+            return _fastapi_responses.JSONResponse(
                 content={
                     "apiVersion": "admission.k8s.io/v1",
                     "kind": "AdmissionReview",
@@ -133,7 +134,7 @@ def create_admission_webhook(
             f"Reason: {decision.explanation or 'policy violation'}"
         )
         _log.warning("pramanix.k8s.blocked uid=%s violated=[%s]", uid, violated)
-        return _JSONResponse(
+        return _fastapi_responses.JSONResponse(
             content={
                 "apiVersion": "admission.k8s.io/v1",
                 "kind": "AdmissionReview",

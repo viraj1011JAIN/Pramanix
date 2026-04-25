@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from pramanix.audit.archiver import MerkleArchiver, _build_root
+from pramanix.audit.archiver import MerkleArchiver
 
 
 class TestMerkleArchiverBasic:
@@ -65,7 +65,7 @@ class TestAutoArchivalOnThreshold:
         max_entries = 50
         a = MerkleArchiver(base_path=tmp_path, max_active_entries=max_entries)
         archive_result = None
-        for i in range(max_entries + 1):
+        for _i in range(max_entries + 1):
             r = a.add(str(uuid.uuid4()))
             if r is not None:
                 archive_result = r
@@ -74,7 +74,7 @@ class TestAutoArchivalOnThreshold:
     def test_active_count_drops_after_auto_archive(self, tmp_path: Path) -> None:
         max_entries = 50
         a = MerkleArchiver(base_path=tmp_path, max_active_entries=max_entries)
-        for i in range(max_entries + 1):
+        for _i in range(max_entries + 1):
             a.add(str(uuid.uuid4()))
         assert a.active_count() < max_entries + 1
 
@@ -82,14 +82,14 @@ class TestAutoArchivalOnThreshold:
         """Gate: 200,000 entries must leave <= 100,000 active after archival."""
         max_entries = 100
         a = MerkleArchiver(base_path=tmp_path, max_active_entries=max_entries)
-        for i in range(200):
+        for _i in range(200):
             a.add(str(uuid.uuid4()))
         assert a.active_count() <= max_entries
 
     def test_checkpoint_leaf_appears_in_active_chain(self, tmp_path: Path) -> None:
         max_entries = 10
         a = MerkleArchiver(base_path=tmp_path, max_active_entries=max_entries)
-        for i in range(max_entries + 1):
+        for _i in range(max_entries + 1):
             a.add(str(uuid.uuid4()))
         leaves = a.active_leaves()
         checkpoint_leaves = [lf for lf in leaves if lf.decision_id.startswith("__checkpoint__")]
@@ -166,8 +166,8 @@ class TestArchiveFileIntegrity:
         result = a.archive()
         assert result is not None
         content = result.archive_path.read_text(encoding="utf-8")
-        lines = [l for l in content.splitlines() if l.strip()]
-        leaf_lines = [l for l in lines if '"type":"leaf"' in l]
+        lines = [line for line in content.splitlines() if line.strip()]
+        leaf_lines = [line for line in lines if '"type":"leaf"' in line]
         header = json.loads(lines[0])
         assert header["entry_count"] == len(leaf_lines)
 
@@ -200,7 +200,7 @@ class TestMerkleArchiverEdgeCases:
         max_entries = 5
         a = MerkleArchiver(base_path=tmp_path, max_active_entries=max_entries)
         last_result = None
-        for i in range(max_entries):
+        for _i in range(max_entries):
             r = a.add(str(uuid.uuid4()))
             if r is not None:
                 last_result = r

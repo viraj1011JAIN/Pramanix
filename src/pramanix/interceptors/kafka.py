@@ -28,9 +28,11 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Generator
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
+
     from pramanix.guard import Guard
 
 __all__ = ["PramanixKafkaConsumer"]
@@ -38,14 +40,14 @@ __all__ = ["PramanixKafkaConsumer"]
 _log = logging.getLogger(__name__)
 
 try:
-    from confluent_kafka import Consumer as _KafkaConsumer  # type: ignore[import-untyped]
-    from confluent_kafka import KafkaException  # type: ignore[import-untyped]
+    from confluent_kafka import Consumer as _KafkaConsumer
+    from confluent_kafka import KafkaException
 
     _KAFKA_AVAILABLE = True
 except ImportError:
     _KAFKA_AVAILABLE = False
-    _KafkaConsumer = object  # type: ignore[assignment]
-    KafkaException = Exception  # type: ignore[assignment, misc]
+    _KafkaConsumer = object
+    KafkaException = Exception
 
 
 class PramanixKafkaConsumer:
@@ -89,7 +91,7 @@ class PramanixKafkaConsumer:
         self._consumer: Any = None
 
         if _KAFKA_AVAILABLE:
-            self._consumer = _KafkaConsumer(kafka_config)  # type: ignore[call-arg]
+            self._consumer = _KafkaConsumer(kafka_config)
             self._consumer.subscribe(topics)
 
     def safe_poll(

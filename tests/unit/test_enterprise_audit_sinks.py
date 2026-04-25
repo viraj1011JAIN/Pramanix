@@ -2,9 +2,8 @@
 """Tests for enterprise audit sinks: Kafka, S3, Splunk, Datadog (E-4)."""
 from __future__ import annotations
 
-import json
 import sys
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -160,7 +159,6 @@ def test_s3_sink_failure_does_not_propagate() -> None:
 
 def test_splunk_sink_records_sends_http(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import patch as _patch
-    import urllib.request
 
     responses = []
 
@@ -199,7 +197,6 @@ def test_splunk_sink_accepts_bare_token() -> None:
 
 def test_splunk_sink_failure_does_not_propagate() -> None:
     from unittest.mock import patch as _patch
-    import urllib.request
 
     with _patch("urllib.request.urlopen", side_effect=Exception("network error")):
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "tok")

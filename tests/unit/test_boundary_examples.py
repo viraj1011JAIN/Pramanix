@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from pramanix.expressions import E, Field
 from pramanix.helpers.policy_auditor import PolicyAuditor
 from pramanix.policy import Policy
-
 
 # ── Minimal test policies ─────────────────────────────────────────────────────
 

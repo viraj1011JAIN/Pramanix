@@ -2,13 +2,10 @@
 """Tests for transparent String→Int promotion in transpiler and solver."""
 from __future__ import annotations
 
-import pytest
-
 from pramanix import Guard, GuardConfig
 from pramanix.expressions import E, Field
 from pramanix.policy import Policy
 from pramanix.transpiler import analyze_string_promotions
-
 
 # ── Minimal policies ──────────────────────────────────────────────────────────
 

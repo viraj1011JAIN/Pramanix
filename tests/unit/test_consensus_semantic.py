@@ -87,7 +87,7 @@ class TestSemanticEqual:
     def test_numeric_string_variants_agree(self) -> None:
         a = {"amount": "500", "currency": "USD"}
         b = {"amount": "500.0", "currency": "USD"}
-        all_equal, disagreeing = _semantic_equal(a, b, TransferIntent)
+        all_equal, _disagreeing = _semantic_equal(a, b, TransferIntent)
         assert all_equal is True
 
     def test_disagreeing_fields_listed(self) -> None:

@@ -19,7 +19,7 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pramanix.exceptions import ConfigurationError
 
@@ -57,7 +57,7 @@ class PramanixSemanticKernelPlugin:
         # Validate presence of semantic-kernel — warn but don't hard-fail
         # so tests can mock this without installing the full package.
         try:
-            import semantic_kernel  # type: ignore[import-untyped]  # noqa: F401
+            import semantic_kernel  # noqa: F401
         except ImportError as exc:
             raise ConfigurationError(
                 "semantic-kernel is required for PramanixSemanticKernelPlugin. "

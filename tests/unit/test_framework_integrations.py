@@ -13,11 +13,10 @@ Coverage:
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from pramanix.decision import Decision
 from pramanix.exceptions import GuardViolationError
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
@@ -47,7 +46,7 @@ def _make_guard() -> Guard:
 class TestPramanixCrewAIToolBlocked:
     def test_returns_blocked_string_on_violation(self):
         """When guard blocks, _execute must return a [PRAMANIX_BLOCKED] string."""
-        from pramanix.integrations.crewai import PramanixCrewAITool, _SAFE_FAILURE_PREFIX
+        from pramanix.integrations.crewai import _SAFE_FAILURE_PREFIX, PramanixCrewAITool
 
         guard = _make_guard()
         underlying = MagicMock(return_value="success")
@@ -86,7 +85,7 @@ class TestPramanixCrewAIToolBlocked:
 
     def test_call_dunder_delegates_to_execute(self):
         """__call__ should work as an alias for _execute."""
-        from pramanix.integrations.crewai import PramanixCrewAITool, _SAFE_FAILURE_PREFIX
+        from pramanix.integrations.crewai import _SAFE_FAILURE_PREFIX, PramanixCrewAITool
 
         guard = _make_guard()
         tool = PramanixCrewAITool(

@@ -28,9 +28,11 @@ Usage::
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pramanix.guard import Guard
 
 __all__ = ["PramanixGrpcInterceptor"]
@@ -38,13 +40,13 @@ __all__ = ["PramanixGrpcInterceptor"]
 _log = logging.getLogger(__name__)
 
 try:
-    import grpc  # type: ignore[import-untyped]
+    import grpc
 
     _GRPC_AVAILABLE = True
-    _InterceptorBase = grpc.ServerInterceptor
+    _InterceptorBase: Any = grpc.ServerInterceptor
 except ImportError:
     _GRPC_AVAILABLE = False
-    _InterceptorBase = object  # type: ignore[assignment]
+    _InterceptorBase = object
 
 
 class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
@@ -86,7 +88,7 @@ class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
 
     # ── grpc.ServerInterceptor protocol ──────────────────────────────────────
 
-    def intercept_service(self, continuation: Callable, handler_call_details: Any) -> Any:
+    def intercept_service(self, continuation: Callable[..., Any], handler_call_details: Any) -> Any:
         """Intercept the service-handler lookup.
 
         This is the grpc.ServerInterceptor entry-point.  We wrap the returned

@@ -15,7 +15,7 @@ from pramanix.cli import main
 def _run_cli(args: list[str], capsys: pytest.CaptureFixture) -> tuple[int, str, str]:
     try:
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(sys, "argv", ["pramanix"] + args)
+            mp.setattr(sys, "argv", ["pramanix", *args])
             exit_code = main()
     except SystemExit as exc:
         exit_code = exc.code if isinstance(exc.code, int) else 1
@@ -164,7 +164,7 @@ class TestDoctorStrictFlag:
         """With --strict, any WARN should cause exit code 1."""
         # Ensure signing key is unset so we always have at least one WARN.
         monkeypatch.delenv("PRAMANIX_SIGNING_KEY", raising=False)
-        exit_code, stdout, _ = _run_cli(["doctor", "--strict"], capsys)
+        _exit_code, _stdout, _ = _run_cli(["doctor", "--strict"], capsys)
         data_exit, data_stdout, _ = _run_cli(["doctor", "--strict", "--json"], capsys)
         checks = json.loads(data_stdout)
         has_warn = any(c["level"] == "WARN" for c in checks["checks"])

@@ -40,7 +40,7 @@ def test_postgres_verifier_raises_config_error_without_asyncpg(
     if "pramanix.execution_token" in sys.modules:
         del sys.modules["pramanix.execution_token"]
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[postgres\\]'"):
-        from pramanix.execution_token import PostgresExecutionTokenVerifier  # noqa: F401, PLC0415
+        from pramanix.execution_token import PostgresExecutionTokenVerifier
         PostgresExecutionTokenVerifier(_SECRET, _DSN)
 
 
@@ -55,7 +55,7 @@ def test_postgres_verifier_init(monkeypatch: pytest.MonkeyPatch) -> None:
     with patch.dict(sys.modules, {"asyncpg": mock_pkg}):
         if "pramanix.execution_token" in sys.modules:
             del sys.modules["pramanix.execution_token"]
-        from pramanix.execution_token import PostgresExecutionTokenVerifier  # noqa: PLC0415
+        from pramanix.execution_token import PostgresExecutionTokenVerifier
 
         v = PostgresExecutionTokenVerifier(_SECRET, _DSN)
         assert v._key == _SECRET
@@ -69,7 +69,7 @@ def test_postgres_verifier_consume_bad_signature(monkeypatch: pytest.MonkeyPatch
     with patch.dict(sys.modules, {"asyncpg": mock_pkg}):
         if "pramanix.execution_token" in sys.modules:
             del sys.modules["pramanix.execution_token"]
-        from pramanix.execution_token import PostgresExecutionTokenVerifier  # noqa: PLC0415
+        from pramanix.execution_token import PostgresExecutionTokenVerifier
 
         token = ExecutionToken(
             decision_id="test-decision-id",
@@ -107,7 +107,7 @@ def test_postgres_verifier_expired_token_rejected(monkeypatch: pytest.MonkeyPatc
     with patch.dict(sys.modules, {"asyncpg": mock_pkg}):
         if "pramanix.execution_token" in sys.modules:
             del sys.modules["pramanix.execution_token"]
-        from pramanix.execution_token import PostgresExecutionTokenVerifier  # noqa: PLC0415
+        from pramanix.execution_token import PostgresExecutionTokenVerifier
 
         signer = ExecutionTokenSigner(secret_key=_SECRET, ttl_seconds=-100.0)
         decision = _allowed_decision()

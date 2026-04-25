@@ -13,8 +13,6 @@ Coverage:
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -110,6 +108,10 @@ class TestCohereTranslatorMissingDep:
                 sys.modules["cohere"] = saved
             if saved_mod is not None:
                 sys.modules["pramanix.translator.cohere"] = saved_mod
+            else:
+                # Remove the poisoned None entry so subsequent importlib.reload()
+                # calls in TestCohereTranslatorExtract find a clean slate.
+                sys.modules.pop("pramanix.translator.cohere", None)
 
 
 class TestCohereTranslatorExtract:
@@ -139,31 +141,21 @@ class TestCohereTranslatorExtract:
     def test_model_attribute(self):
         mock_cohere = self._make_mock_cohere('{"amount": 50.0, "action": "pay"}')
         with patch.dict("sys.modules", {"cohere": mock_cohere}):
-            import importlib
             import pramanix.translator.cohere as coh
 
-            importlib.reload(coh)
-            try:
-                t = coh.CohereTranslator("command-r", api_key="fake-key")
-                assert t.model == "command-r"
-            finally:
-                importlib.reload(coh)
+            t = coh.CohereTranslator("command-r", api_key="fake-key")
+            assert t.model == "command-r"
 
     def test_extract_returns_dict(self):
         payload = '{"amount": 50.0, "action": "pay"}'
         mock_cohere = self._make_mock_cohere(payload)
 
         with patch.dict("sys.modules", {"cohere": mock_cohere}):
-            import importlib
             import pramanix.translator.cohere as coh
 
-            importlib.reload(coh)
-            try:
-                t = coh.CohereTranslator("command-r", api_key="fake-key")
-                result = asyncio.get_event_loop().run_until_complete(
-                    t.extract("pay 50 USD", SimpleIntent)
-                )
-                assert isinstance(result, dict)
-                assert result["amount"] == 50.0
-            finally:
-                importlib.reload(coh)
+            t = coh.CohereTranslator("command-r", api_key="fake-key")
+            result = asyncio.get_event_loop().run_until_complete(
+                t.extract("pay 50 USD", SimpleIntent)
+            )
+            assert isinstance(result, dict)
+            assert result["amount"] == 50.0

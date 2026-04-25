@@ -44,14 +44,13 @@ __all__ = [
     "ArrayField",
     "ConstraintExpr",
     "DatetimeField",
-    "NestedField",
     "E",
     "Exists",
     "ExpressionNode",
     "Field",
     "ForAll",
+    "NestedField",
     "Z3Type",
-    "abs_expr",
     "_AbsOp",
     "_BinOp",
     "_BoolOp",
@@ -70,6 +69,7 @@ __all__ = [
     "_PowOp",
     "_RegexMatchOp",
     "_StartsWithOp",
+    "abs_expr",
 ]
 
 # ── Z3 sort tag ───────────────────────────────────────────────────────────────
@@ -172,7 +172,7 @@ class NestedField:
                 ]
     """
 
-    __slots__ = ("_prefix", "_model_type")
+    __slots__ = ("_model_type", "_prefix")
 
     def __init__(self, prefix: str, model_type: type) -> None:
         object.__setattr__(self, "_prefix", prefix)
@@ -180,7 +180,7 @@ class NestedField:
 
     def __getattr__(self, name: str) -> Field | NestedField:
         try:
-            from pydantic import BaseModel as _BM
+            from pydantic import BaseModel as _BaseModel
         except ImportError as exc:  # pragma: no cover
             raise ImportError("NestedField requires pydantic. pip install pydantic") from exc
 
@@ -199,7 +199,7 @@ class NestedField:
 
         if annotation is not None:
             try:
-                if issubclass(annotation, _BM):
+                if issubclass(annotation, _BaseModel):
                     return NestedField(full_path, annotation)
             except TypeError:
                 pass  # annotation is a generic, not a bare class
@@ -640,7 +640,7 @@ class ExpressionNode:
     def is_business_hours(self) -> ConstraintExpr:
         """Assert this :func:`DatetimeField` falls within UTC business hours.
 
-        Business hours: Monday–Friday, 09:00–16:59 UTC (inclusive).
+        Business hours: Monday-Friday, 09:00-16:59 UTC (inclusive).
 
         Uses integer arithmetic on the Unix epoch (``Int``-sorted field).
         Only valid on :func:`DatetimeField` or ``Field(..., z3_type="Int")``.

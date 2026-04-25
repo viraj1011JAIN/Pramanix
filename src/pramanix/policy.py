@@ -83,9 +83,15 @@ unique before verification begins.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, cast
 
-from pramanix.exceptions import ConfigurationError, InvariantLabelError, PolicyCompilationError, PolicyError
+from pramanix.exceptions import (
+    ConfigurationError,
+    InvariantLabelError,
+    PolicyCompilationError,
+    PolicyError,
+)
 from pramanix.expressions import ConstraintExpr, Field, Z3Type
 
 if TYPE_CHECKING:
@@ -141,7 +147,7 @@ def invariant_mixin(fn: _MixinFn) -> _MixinFn:
 
 
 # ── B-2: Dynamic policy cache — keyed by (fields_schema, invariant_ids) ──────
-_DYNAMIC_POLICY_CACHE: dict[tuple[Any, ...], type["Policy"]] = {}
+_DYNAMIC_POLICY_CACHE: dict[tuple[Any, ...], type[Policy]] = {}
 
 
 class Policy:
@@ -216,7 +222,7 @@ class Policy:
         # Snapshot THIS class's own invariants method (may be None if the
         # class body didn't override invariants).  We do NOT call it here —
         # evaluation is deferred to the first invariants() call.
-        _own_inv: classmethod | None = cls.__dict__.get("invariants")  # type: ignore[assignment]
+        _own_inv: Any = cls.__dict__.get("invariants")
 
         @classmethod  # type: ignore[misc]
         def _merged(_cls: type) -> list[ConstraintExpr]:
@@ -240,7 +246,7 @@ class Policy:
                         break
 
             # Step 2: evaluate each mixin with this class's field dict.
-            fields = _cls.fields()
+            fields = _cls.fields()  # type: ignore[attr-defined]
             extra: list[ConstraintExpr] = []
             for mixin_fn in _raw_mixins:
                 if not callable(mixin_fn):
@@ -267,7 +273,7 @@ class Policy:
 
             return own + extra
 
-        cls.invariants = _merged
+        cls.invariants = _merged  # type: ignore[method-assign, assignment]
 
     # ── Field discovery ───────────────────────────────────────────────────────
 
@@ -345,7 +351,7 @@ class Policy:
     # ── G-3: JSON Schema export ───────────────────────────────────────────────
 
     @classmethod
-    def export_json_schema(cls) -> "dict[str, Any]":
+    def export_json_schema(cls) -> dict[str, Any]:
         """Export a JSON Schema draft-07 representation of this policy's fields.
 
         Returns:
@@ -370,7 +376,7 @@ class Policy:
         """
         from decimal import Decimal as _Decimal
 
-        _TYPE_MAP: "dict[type, str]" = {
+        _type_map: dict[type, str] = {
             int: "integer",
             float: "number",
             str: "string",
@@ -378,11 +384,11 @@ class Policy:
             _Decimal: "number",
         }
 
-        properties: "dict[str, Any]" = {}
-        required: "list[str]" = []
+        properties: dict[str, Any] = {}
+        required: list[str] = []
 
         for field_name, field in cls.fields().items():
-            json_type = _TYPE_MAP.get(field.python_type, "string")
+            json_type = _type_map.get(field.python_type, "string")
             properties[field_name] = {"type": json_type}
             required.append(field_name)
 
@@ -401,8 +407,8 @@ class Policy:
     def from_config(
         cls,
         fields: dict[str, tuple[str, type]],
-        invariants: list[Callable[[dict[str, Field]], "ConstraintExpr | list[ConstraintExpr]"]],
-    ) -> "type[Policy]":
+        invariants: list[Callable[[dict[str, Field]], ConstraintExpr | list[ConstraintExpr]]],
+    ) -> type[Policy]:
         """Create a sealed :class:`Policy` subclass from a runtime field configuration.
 
         Useful for multi-tenant deployments where each tenant has a distinct field
@@ -427,7 +433,7 @@ class Policy:
             ConfigurationError: If *fields* is empty, any field spec is malformed,
                 an unsupported ``z3_type`` is used, or any invariant lambda raises.
         """
-        _VALID_Z3 = {"Bool", "Int", "Real", "String"}
+        _valid_z3 = {"Bool", "Int", "Real", "String"}
 
         if not fields:
             raise ConfigurationError("Policy.from_config: 'fields' must be a non-empty dict.")
@@ -443,12 +449,12 @@ class Policy:
                     f"(z3_type, python_type), got {spec!r}."
                 )
             z3_type, python_type = spec
-            if z3_type not in _VALID_Z3:
+            if z3_type not in _valid_z3:
                 raise ConfigurationError(
                     f"Policy.from_config: field '{name}' z3_type must be one of "
-                    f"{sorted(_VALID_Z3)}, got {z3_type!r}."
+                    f"{sorted(_valid_z3)}, got {z3_type!r}."
                 )
-            field_instances[name] = Field(name, python_type, cast(Z3Type, z3_type))
+            field_instances[name] = Field(name, python_type, cast("Z3Type", z3_type))
 
         # ── Check cache before evaluating lambdas ────────────────────────────
         fields_key = tuple(
@@ -547,12 +553,12 @@ class Policy:
 
 
 def model_dump_z3(
-    model: "BaseModel",
+    model: BaseModel,
     prefix: str = "",
     *,
     max_nesting_depth: int = 5,
-    _seen: "frozenset[type] | None" = None,
-) -> "dict[str, Any]":
+    _seen: frozenset[type] | None = None,
+) -> dict[str, Any]:
     """Recursively flatten a nested Pydantic model to dotted-path keys.
 
     Converts a Pydantic ``BaseModel`` instance (potentially with nested

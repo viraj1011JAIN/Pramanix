@@ -84,7 +84,7 @@ class TestInvariantMixinDecorator:
         assert result[0].label == "pos"
 
     def test_importable_from_top_level_package(self) -> None:
-        from pramanix import invariant_mixin as _im  # noqa: F401
+        from pramanix import invariant_mixin as _im
 
         assert callable(_im)
 

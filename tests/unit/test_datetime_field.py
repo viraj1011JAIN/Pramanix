@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from pramanix.exceptions import FieldTypeError
+from pramanix.exceptions import FieldTypeError, PolicyCompilationError
 from pramanix.expressions import (
     ConstraintExpr,
     DatetimeField,
@@ -82,7 +82,7 @@ class TestWithinSeconds:
 
     def test_non_int_raises(self) -> None:
         f = DatetimeField("ts")
-        with pytest.raises(Exception):
+        with pytest.raises(PolicyCompilationError, match="non-negative integer"):
             E(f).within_seconds(1.5)  # type: ignore[arg-type]
 
     def test_zero_duration_valid(self) -> None:

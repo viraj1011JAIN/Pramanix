@@ -82,12 +82,15 @@ class MistralTranslator:
             ConfigurationError:     ``mistralai`` not installed.
         """
         try:
-            from mistralai import Mistral  # type: ignore[import-untyped]
-        except ImportError as exc:
-            raise ConfigurationError(
-                "mistralai is required for MistralTranslator. "
-                "Install it with: pip install 'pramanix[mistral]'"
-            ) from exc
+            from mistralai.client import Mistral  # v2+
+        except ImportError:
+            try:
+                from mistralai import Mistral  # type: ignore[no-redef,assignment]  # v1 fallback
+            except ImportError as exc:
+                raise ConfigurationError(
+                    "mistralai is required for MistralTranslator. "
+                    "Install it with: pip install 'pramanix[mistral]'"
+                ) from exc
 
         try:
             from tenacity import (
@@ -125,7 +128,7 @@ class MistralTranslator:
                         system_prompt=system_prompt,
                         user_content=user_content,
                         timeout=self._timeout,
-                        Mistral=Mistral,
+                        mistral_cls=Mistral,
                     )
         except Exception as exc:
             last_exc = exc
@@ -155,12 +158,12 @@ class MistralTranslator:
         system_prompt: str,
         user_content: str,
         timeout: float,
-        Mistral: Any,
+        mistral_cls: Any,
     ) -> str:
         """Execute one Mistral API call.  Returns the raw response text."""
         import asyncio
 
-        client = Mistral(api_key=api_key or "")
+        client = mistral_cls(api_key=api_key or "")
         response = await asyncio.wait_for(
             client.chat.complete_async(
                 model=model,

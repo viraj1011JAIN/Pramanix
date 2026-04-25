@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
-
 from pramanix.expressions import E, Field
 from pramanix.policy import Policy
 

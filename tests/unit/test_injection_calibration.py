@@ -2,20 +2,18 @@
 """Tests for InjectionScorer, BuiltinScorer, CalibratedScorer (D-4)."""
 from __future__ import annotations
 
-import pickle
 import sys
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 import pytest
 
+from pramanix.exceptions import ConfigurationError
 from pramanix.translator.injection_scorer import (
     BuiltinScorer,
     CalibratedScorer,
     InjectionScorer,
 )
-from pramanix.exceptions import ConfigurationError
-
 
 # ── Protocol compliance ───────────────────────────────────────────────────────
 
@@ -69,8 +67,10 @@ def test_calibrated_scorer_raises_without_sklearn(monkeypatch: pytest.MonkeyPatc
     if "pramanix.translator.injection_scorer" in sys.modules:
         del sys.modules["pramanix.translator.injection_scorer"]
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[sklearn\\]'"):
-        from pramanix.translator.injection_scorer import CalibratedScorer as CS  # noqa: F401, PLC0415
-        cs = CS()
+        from pramanix.translator.injection_scorer import (
+            CalibratedScorer as _CalibratedScorer,
+        )
+        cs = _CalibratedScorer()
         cs.fit(["text"] * 201, [0] * 201)
 
 

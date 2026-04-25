@@ -208,8 +208,7 @@ class TestSignerFromProvider:
 # SDK is not installed.  They are skipped when the SDK *is* present.
 
 import importlib
-import sys
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 
 def _has_module(name: str) -> bool:

@@ -26,7 +26,6 @@ Usage::
 """
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from pramanix.decision import Decision
@@ -71,7 +70,7 @@ class PramanixPydanticAIValidator:
         self._state_fn = state_fn
 
         try:
-            import pydantic_ai  # type: ignore[import-untyped]  # noqa: F401
+            import pydantic_ai  # noqa: F401
         except ImportError as exc:
             raise ConfigurationError(
                 "pydantic-ai is required for PramanixPydanticAIValidator. "
@@ -149,7 +148,7 @@ class PramanixPydanticAIValidator:
         @functools.wraps(fn)
         async def _wrapper(*args: Any, **kwargs: Any) -> Any:
             intent: dict[str, Any] = kwargs.get("intent", {})
-            state: dict[str, Any] | None = kwargs.get("state", None)
+            state: dict[str, Any] | None = kwargs.get("state")
             await self.check_async(intent=intent, state=state)
             return await fn(*args, **kwargs)
 

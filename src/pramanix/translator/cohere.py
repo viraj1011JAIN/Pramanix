@@ -105,13 +105,13 @@ class CohereTranslator:
         # Cohere SDK v5 raises these on transient server errors.
         try:
             _retryable: tuple[type[Exception], ...] = (
-                cohere.errors.TooManyRequestsError,       # type: ignore[attr-defined]
-                cohere.errors.ServiceUnavailableError,    # type: ignore[attr-defined]
-                cohere.errors.GatewayTimeoutError,        # type: ignore[attr-defined]
+                cohere.errors.TooManyRequestsError,
+                cohere.errors.ServiceUnavailableError,
+                cohere.errors.GatewayTimeoutError,
             )
         except AttributeError:
             # Older SDK or attribute layout changed — catch generic base.
-            _retryable = (Exception,)  # type: ignore[assignment]
+            _retryable = (Exception,)
 
         system_prompt = build_system_prompt(intent_schema)
         attempts = 0

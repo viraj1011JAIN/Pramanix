@@ -36,9 +36,14 @@ __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 # ── Optional LlamaIndex dependency ────────────────────────────────────────────
 
 
+# Internal placeholder types used only when llama_index is not installed.
+# They are intentionally NOT part of the public API and exist solely so
+# this module can be imported without llama_index present.  Any attempt to
+# *instantiate* PramanixFunctionTool or PramanixQueryEngineTool without
+# llama_index installed will raise ConfigurationError at __init__ time.
 @dataclass
 class ToolMetadata:  # pragma: no cover
-    """Fallback stub — replaced by llama_index import when available."""
+    """Internal placeholder — the real class is imported from llama_index when available."""
 
     name: str = ""
     description: str = ""
@@ -46,7 +51,7 @@ class ToolMetadata:  # pragma: no cover
 
 @dataclass
 class ToolOutput:  # pragma: no cover
-    """Fallback stub — replaced by llama_index import when available."""
+    """Internal placeholder — the real class is imported from llama_index when available."""
 
     content: str = ""
     tool_name: str = ""
@@ -105,6 +110,13 @@ class PramanixFunctionTool:
         name: str = "",
         description: str = "",
     ) -> None:
+        if not _LLAMA_AVAILABLE:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "llama_index is not installed. "
+                "Run: pip install 'pramanix[llamaindex]'"
+            )
         self._fn = fn
         self._guard = guard
         self._intent_schema = intent_schema
@@ -319,6 +331,13 @@ class PramanixQueryEngineTool:
         name: str = "",
         description: str = "",
     ) -> None:
+        if not _LLAMA_AVAILABLE:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "llama_index is not installed. "
+                "Run: pip install 'pramanix[llamaindex]'"
+            )
         self._engine = query_engine
         self._guard = guard
         self._intent_schema = intent_schema

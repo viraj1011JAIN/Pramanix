@@ -451,7 +451,6 @@ class SQLiteExecutionTokenVerifier:
         self._init_db()
 
     def _init_db(self) -> None:
-        import sqlite3
 
         with self._lock:
             cur = self._conn.cursor()
@@ -895,7 +894,6 @@ class PostgresExecutionTokenVerifier:
             if loop.is_running():
                 # We are inside an async context (e.g., running under pytest-asyncio).
                 # Use a new thread with its own event loop to avoid nesting.
-                import concurrent.futures
                 import threading
 
                 result: list[Any] = []
@@ -939,7 +937,7 @@ class PostgresExecutionTokenVerifier:
         token: ExecutionToken,
         expected_state_version: str | None,
     ) -> bool:
-        import asyncpg  # type: ignore[import-untyped]
+        import asyncpg
 
         # ── 1. Signature check ────────────────────────────────────────────────
         unsigned = ExecutionToken(
@@ -996,10 +994,10 @@ class PostgresExecutionTokenVerifier:
             ``False`` if the token is invalid, expired, state-version-mismatched,
             or has already been consumed.
         """
-        return self._run(self._async_consume(token, expected_state_version))
+        return bool(self._run(self._async_consume(token, expected_state_version)))
 
     async def _async_evict_expired(self) -> int:
-        import asyncpg  # type: ignore[import-untyped]
+        import asyncpg
 
         conn: Any = await asyncpg.connect(self._dsn)
         try:
@@ -1020,10 +1018,10 @@ class PostgresExecutionTokenVerifier:
         Returns:
             Number of rows deleted.
         """
-        return self._run(self._async_evict_expired())
+        return int(self._run(self._async_evict_expired()))
 
     async def _async_consumed_count(self) -> int:
-        import asyncpg  # type: ignore[import-untyped]
+        import asyncpg
 
         conn: Any = await asyncpg.connect(self._dsn)
         try:
@@ -1042,7 +1040,7 @@ class PostgresExecutionTokenVerifier:
         Returns:
             Number of active (not yet expired) consumed token entries.
         """
-        return self._run(self._async_consumed_count())
+        return int(self._run(self._async_consumed_count()))
 
     async def consume_within(
         self,
@@ -1077,7 +1075,7 @@ class PostgresExecutionTokenVerifier:
         Returns:
             ``True`` iff all four checks pass and the INSERT succeeded.
         """
-        import asyncpg  # type: ignore[import-untyped]
+        import asyncpg
 
         # ── 1. Signature check ────────────────────────────────────────────────
         unsigned = ExecutionToken(
