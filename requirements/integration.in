@@ -1,0 +1,30 @@
+# integration.in — top-level integration test dependencies
+#
+# Install with:
+#   pip install -r requirements/integration.txt
+#
+# Regenerate with:
+#   pip-compile --generate-hashes --output-file=requirements/integration.txt requirements/integration.in
+
+# ── Container orchestration ───────────────────────────────────────────────────
+testcontainers[kafka,postgres,redis,localstack]>=4.0
+
+# ── HTTP transport interception (no-mock real-HTTP testing) ───────────────────
+respx>=0.21
+
+# ── Real backends under test ──────────────────────────────────────────────────
+asyncpg>=0.29
+confluent-kafka>=2.3
+boto3>=1.34
+hvac>=2.0
+
+# ── LLM translators ───────────────────────────────────────────────────────────
+cohere>=5.0
+google-generativeai>=0.7
+
+# ── Azure KeyVault (live-gated tests) ─────────────────────────────────────────
+azure-keyvault-secrets>=4.7
+azure-identity>=1.15
+
+# ── SDK core ──────────────────────────────────────────────────────────────────
+pramanix[all]
