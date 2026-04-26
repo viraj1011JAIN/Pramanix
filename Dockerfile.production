@@ -55,9 +55,17 @@ RUN pip install --upgrade pip setuptools wheel
 ARG VERSION
 RUN test -n "${VERSION}" || (echo "ERROR: --build-arg VERSION=<x.y.z> is required" && exit 1)
 
-# Install pramanix[all] into the venv
-# --no-cache-dir keeps the layer lean (no ~/.cache/pip in final image)
-RUN pip install --no-cache-dir "pramanix[all]==${VERSION}"
+# Copy the pre-generated hashed requirements lockfile.
+# Regenerate with: pip-compile --generate-hashes requirements/production.in
+# Every transitive dependency is pinned + hash-verified — reproducible builds.
+COPY requirements/production.txt /tmp/requirements.txt
+
+# Install pramanix[all] from the hashed lockfile.
+# --require-hashes: pip verifies each package against its sha256/sha512 hash;
+#   a supply-chain attack that replaces a package on PyPI will abort the build.
+# --no-cache-dir: keeps the layer lean (no ~/.cache/pip in final image)
+RUN pip install --require-hashes --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Strip __pycache__ directories left by pip (test-dep .pyc files)
 # This eliminates stale bytecode from the venv before copy to runner

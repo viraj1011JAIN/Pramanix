@@ -20,7 +20,10 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
-__all__ = ["PolicyMigration"]
+__all__ = ["PolicyMigration", "MigrationError"]
+
+# Re-export so callers can do: from pramanix.migration import MigrationError
+from pramanix.exceptions import MigrationError as MigrationError  # noqa: F401
 
 
 @dataclasses.dataclass
@@ -76,23 +79,43 @@ class PolicyMigration:
     def to_version_str(self) -> str:
         return "{}.{}.{}".format(*self.to_version)
 
-    def migrate(self, state: dict[str, Any]) -> dict[str, Any]:
+    def migrate(
+        self, state: dict[str, Any], *, strict: bool = False
+    ) -> dict[str, Any]:
         """Apply this migration to a state dict.
 
         Renames fields, removes deprecated fields, and updates
         ``state_version`` to :attr:`to_version_str`.
 
         Args:
-            state: A state dict whose ``state_version`` matches
-                :attr:`from_version_str`.  A copy is returned — the
-                original is never mutated.
+            state:  A state dict whose ``state_version`` matches
+                    :attr:`from_version_str`.  A copy is returned — the
+                    original is never mutated.
+            strict: When ``True``, raise :exc:`~pramanix.exceptions.MigrationError`
+                    if any key declared in :attr:`field_renames` is absent
+                    from *state*.  When ``False`` (default), missing keys are
+                    silently skipped for backwards-compatible migrations.
 
         Returns:
             A new state dict upgraded to :attr:`to_version`.
+
+        Raises:
+            MigrationError: If ``strict=True`` and a ``field_renames`` key is
+                missing from *state*.
         """
         result = dict(state)
         for old_name, new_name in self.field_renames.items():
-            if old_name in result:
+            if old_name not in result:
+                if strict:
+                    raise MigrationError(
+                        f"Migration {self.from_version_str!r} → {self.to_version_str!r}: "
+                        f"field {old_name!r} not found in state. "
+                        "Pass strict=False to skip missing keys silently.",
+                        missing_key=old_name,
+                        from_version=self.from_version_str,
+                        to_version=self.to_version_str,
+                    )
+            else:
                 result[new_name] = result.pop(old_name)
         for field_name in self.removed_fields:
             result.pop(field_name, None)

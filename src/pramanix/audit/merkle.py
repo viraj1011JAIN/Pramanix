@@ -82,7 +82,12 @@ class MerkleAnchor:
                 "Each decision_id must be unique within a single audit batch."
             )
         self._ids.add(decision_id)
-        self._leaves.append(hashlib.sha256(decision_id.encode()).hexdigest())
+        # H-07: prefix real leaf nodes with \x00 to distinguish them from
+        # duplicated padding nodes (which use \x01 prefix).  This prevents
+        # the Bitcoin-CVE-2012-style second-preimage attack where two distinct
+        # odd-length leaf sequences can produce the same Merkle root.
+        leaf_hash = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
+        self._leaves.append(leaf_hash)
 
     def root(self) -> str | None:
         if not self._leaves:
@@ -102,13 +107,18 @@ class MerkleAnchor:
 
         while len(current_level) > 1:
             if len(current_level) % 2 == 1:
-                current_level.append(current_level[-1])
+                # H-07: pad with \x01-prefixed copy of the last node, not a
+                # plain duplicate, so odd-length sequences produce distinct roots.
+                padded = hashlib.sha256(b"\x01" + current_level[-1].encode()).hexdigest()
+                current_level.append(padded)
             if current_idx % 2 == 0:
                 proof_path.append((current_level[current_idx + 1], "right"))
             else:
                 proof_path.append((current_level[current_idx - 1], "left"))
             next_level = [
-                hashlib.sha256((current_level[i] + current_level[i + 1]).encode()).hexdigest()
+                hashlib.sha256(
+                    b"\x01" + (current_level[i] + current_level[i + 1]).encode()
+                ).hexdigest()
                 for i in range(0, len(current_level), 2)
             ]
             current_idx //= 2
@@ -121,15 +131,18 @@ class MerkleAnchor:
         )
 
     def _build_root(self, leaves: list[str]) -> str:
-        # Iterative implementation avoids Python's default recursion limit
-        # (1000 frames) which would be breached with ~2^1000 leaves.  Logs
-        # grow to thousands of entries in long-running production deployments.
+        # Iterative implementation avoids Python's default recursion limit.
+        # H-07: use \x01 prefix for all internal (parent) nodes, distinguishing
+        # them from the \x00-prefixed leaf nodes to prevent the duplication attack.
         level = leaves[:]
         while len(level) > 1:
             if len(level) % 2 == 1:
-                level.append(level[-1])
+                padded = hashlib.sha256(b"\x01" + level[-1].encode()).hexdigest()
+                level.append(padded)
             level = [
-                hashlib.sha256((level[i] + level[i + 1]).encode()).hexdigest()
+                hashlib.sha256(
+                    b"\x01" + (level[i] + level[i + 1]).encode()
+                ).hexdigest()
                 for i in range(0, len(level), 2)
             ]
         return level[0]

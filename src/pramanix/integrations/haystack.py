@@ -25,6 +25,7 @@ Usage::
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,18 @@ if TYPE_CHECKING:
     from pramanix.guard import Guard
 
 __all__ = ["HaystackGuardedComponent"]
+
+_log = logging.getLogger(__name__)
+
+# M-21: register the class as a Haystack component at definition time,
+# not per-instance in __init__.
+try:
+    from haystack import component as _haystack_component  # type: ignore[import-untyped]
+
+    _HAYSTACK_AVAILABLE = True
+except ImportError:
+    _HAYSTACK_AVAILABLE = False
+    _haystack_component = None
 
 
 class HaystackGuardedComponent:
@@ -65,16 +78,7 @@ class HaystackGuardedComponent:
         self._intent_extractor = intent_extractor
         self._state_provider = state_provider
         self._block_on_error = block_on_error
-
-        # Attempt Haystack component registration — graceful fallback if absent.
-        self._haystack_available = False
-        try:
-            from haystack import component
-
-            component(self.__class__)  # register as Haystack component
-            self._haystack_available = True
-        except ImportError:
-            pass
+        self._haystack_available = _HAYSTACK_AVAILABLE
 
     def run(
         self,
@@ -108,7 +112,8 @@ class HaystackGuardedComponent:
         for item, kind in items_and_targets:
             try:
                 intent = self._intent_extractor(item)
-            except Exception:
+            except Exception as exc:
+                _log.error("pramanix.haystack.intent_extraction_error: %s", exc, exc_info=True)
                 if self._block_on_error:
                     (blocked_docs if kind == "doc" else blocked_msgs).append(item)
                 else:
@@ -118,7 +123,8 @@ class HaystackGuardedComponent:
             try:
                 # Use sync verify for synchronous pipeline components.
                 decision = self._guard.verify(intent=intent, state=state)
-            except Exception:
+            except Exception as exc:
+                _log.error("pramanix.haystack.guard_error: %s", exc, exc_info=True)
                 if self._block_on_error:
                     (blocked_docs if kind == "doc" else blocked_msgs).append(item)
                 else:
@@ -161,7 +167,8 @@ class HaystackGuardedComponent:
         for item, kind in items_and_targets:
             try:
                 intent = self._intent_extractor(item)
-            except Exception:
+            except Exception as exc:
+                _log.error("pramanix.haystack.intent_extraction_error: %s", exc, exc_info=True)
                 if self._block_on_error:
                     (blocked_docs if kind == "doc" else blocked_msgs).append(item)
                 else:
@@ -170,7 +177,8 @@ class HaystackGuardedComponent:
 
             try:
                 decision = await self._guard.verify_async(intent=intent, state=state)
-            except Exception:
+            except Exception as exc:
+                _log.error("pramanix.haystack.guard_error: %s", exc, exc_info=True)
                 if self._block_on_error:
                     (blocked_docs if kind == "doc" else blocked_msgs).append(item)
                 else:
@@ -190,3 +198,11 @@ class HaystackGuardedComponent:
             result["messages"] = allowed_msgs
             result["blocked_messages"] = blocked_msgs
         return result
+
+
+# M-21: register at class-definition time, not per-instance.
+if _HAYSTACK_AVAILABLE and _haystack_component is not None:
+    try:
+        _haystack_component(HaystackGuardedComponent)
+    except Exception:
+        pass

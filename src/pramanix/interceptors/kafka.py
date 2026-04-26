@@ -156,16 +156,27 @@ class PramanixKafkaConsumer:
                 headers=headers,
             )
             self._dlq_producer.flush()
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             _log.exception("pramanix.kafka.dlq_produce_error: %s", exc)
 
     def _commit(self, msg: Any) -> None:
         try:
             self._consumer.commit(message=msg, asynchronous=False)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             _log.warning("pramanix.kafka.commit_error: %s", exc)
 
     def close(self) -> None:
         """Close the underlying Kafka consumer."""
         if self._consumer is not None:
             self._consumer.close()
+
+    def __del__(self) -> None:
+        if getattr(self, "_consumer", None) is not None:
+            _log.warning(
+                "PramanixKafkaConsumer GC'd without explicit close() — "
+                "call close() explicitly to release the Kafka consumer cleanly."
+            )
+            try:
+                self.close()
+            except Exception:
+                pass

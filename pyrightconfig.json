@@ -1,10 +1,12 @@
 {
     "include": ["src", "tests", "examples"],
     "exclude": ["benchmarks", "spikes", ".venv"],
-    "typeCheckingMode": "basic",
+    "typeCheckingMode": "strict",
     "pythonVersion": "3.13",
     "venvPath": ".",
     "venv": ".venv",
+    "reportMissingModuleSource": "none",
+    "reportMissingImports": "none",
     "reportUnknownMemberType": "none",
     "reportUnknownVariableType": "none",
     "reportUnknownArgumentType": "none",
@@ -12,14 +14,6 @@
     "reportPrivateImportUsage": "none",
     "reportPrivateUsage": "none",
     "reportUnsupportedDunderAll": "none",
-    "reportMissingModuleSource": "none",
-    "reportMissingImports": "none",
-    "reportAttributeAccessIssue": "warning",
-    "reportOperatorIssue": "warning",
-    "reportOptionalSubscript": "warning",
-    "reportOptionalMemberAccess": "warning",
-    "reportArgumentType": "warning",
-    "reportAssignmentType": "warning",
     "executionEnvironments": [
         {
             "root": "src",

@@ -25,6 +25,7 @@ Usage::
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = ["PramanixCrewAITool"]
 
+_log = logging.getLogger(__name__)
 _SAFE_FAILURE_PREFIX = "[PRAMANIX_BLOCKED]"
 
 
@@ -136,9 +138,10 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
             intent = intent_builder(tool_input)
             state = state_provider()
             decision = guard.verify(intent=intent, state=state)
-        except Exception as exc:  # pragma: no cover — guard internal error
+        except Exception as exc:
+            _log.error("pramanix.crewai.guard_error: %s", exc, exc_info=True)
             return (
-                f"{_SAFE_FAILURE_PREFIX} Guard error during verification: {exc}. "
+                f"{_SAFE_FAILURE_PREFIX} Guard error during verification. "
                 "Action blocked as a precaution."
             )
 

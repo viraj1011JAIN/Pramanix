@@ -8,6 +8,7 @@ If the package is not installed, instantiation raises
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,10 @@ __all__ = ["GeminiTranslator"]
 
 # Temperature 0 ≡ deterministic mode — critical for reproducible consensus.
 _TEMPERATURE = 0.0
+
+# M-12: serialises genai.configure() calls for older SDK versions that only
+# support global key configuration (not per-instance clients).
+_GEMINI_CONFIGURE_LOCK = asyncio.Lock()
 
 
 class GeminiTranslator:
@@ -61,6 +66,20 @@ class GeminiTranslator:
         self.model = model
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY") or None
         self._timeout = timeout
+        # M-12: build a per-instance genai client so two Guard instances with
+        # different keys don't overwrite each other via genai.configure().
+        import google.generativeai as _genai
+        self._genai = _genai
+        if self._api_key:
+            # genai v0.8+ supports Client(api_key=...) per-instance.
+            # Older versions only have global configure(); we use it under a lock
+            # (see _single_call) to serialise multi-tenant access.
+            _client_cls = getattr(_genai, "Client", None)
+            self._client: Any = (
+                _client_cls(api_key=self._api_key) if _client_cls is not None else None
+            )
+        else:
+            self._client = None
 
     async def extract(
         self,
@@ -104,9 +123,6 @@ class GeminiTranslator:
                 "Install it with: pip install 'pramanix[gemini]'"
             ) from exc
 
-        if self._api_key:
-            genai.configure(api_key=self._api_key)
-
         system_prompt = build_system_prompt(intent_schema)
         full_prompt = f"{system_prompt}\n\nUser input:\n{text}"
 
@@ -133,7 +149,7 @@ class GeminiTranslator:
             ):
                 with attempt:
                     attempts += 1
-                    raw = await self._single_call(genai=genai, prompt=full_prompt)
+                    raw = await self._single_call(prompt=full_prompt)
                     return parse_llm_response(raw, model_name=self.model)
 
         except _retryable as exc:
@@ -145,28 +161,50 @@ class GeminiTranslator:
 
         raise AssertionError("unreachable")  # pragma: no cover
 
-    async def _single_call(self, *, genai: Any, prompt: str) -> str:
+    async def _single_call(self, *, prompt: str) -> str:
         """Make a single GenerateContent call and return the raw text."""
-        import asyncio
+        genai = self._genai
 
-        client = genai.GenerativeModel(
-            model_name=self.model,
-            generation_config=genai.GenerationConfig(
-                temperature=_TEMPERATURE,
-                response_mime_type="application/json",
-            ),
-        )
-        # google-generativeai's Python SDK exposes both sync and async APIs.
-        # Use generate_content_async when available; fallback to thread executor.
-        if hasattr(client, "generate_content_async"):
-            response = await client.generate_content_async(prompt)
+        # M-12: use the per-instance client if SDK supports it; otherwise fall
+        # back to the global configure() path under a module-level lock so
+        # concurrent Guard instances with different keys don't race.
+        if self._client is not None and hasattr(self._client, "aio"):
+            response = await self._client.aio.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={"temperature": _TEMPERATURE, "response_mime_type": "application/json"},
+            )
+            raw_text: str = response.text
         else:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, client.generate_content, prompt)
+            if self._api_key:
+                async with _GEMINI_CONFIGURE_LOCK:
+                    genai.configure(api_key=self._api_key)
+                    model_client = genai.GenerativeModel(
+                        model_name=self.model,
+                        generation_config=genai.GenerationConfig(
+                            temperature=_TEMPERATURE,
+                            response_mime_type="application/json",
+                        ),
+                    )
+            else:
+                model_client = genai.GenerativeModel(
+                    model_name=self.model,
+                    generation_config=genai.GenerationConfig(
+                        temperature=_TEMPERATURE,
+                        response_mime_type="application/json",
+                    ),
+                )
+            if hasattr(model_client, "generate_content_async"):
+                response = await model_client.generate_content_async(prompt)
+            else:
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None, model_client.generate_content, prompt
+                )
+            raw_text = response.text
 
-        raw: str = response.text
-        if not raw or not raw.strip():
+        if not raw_text or not raw_text.strip():
             raise ExtractionFailureError(
                 f"[{self.model}] Gemini returned an empty response."
             )
-        return raw
+        return raw_text

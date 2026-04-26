@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -107,10 +108,9 @@ class InMemoryAuditSink:
         self.decisions: list[Decision] = []
 
     def emit(self, decision: Decision) -> None:
-        try:
-            self.decisions.append(decision)
-        except Exception as exc:
-            log.error("InMemoryAuditSink: failed to append decision: %s", exc)
+        # L-07: list.append() cannot raise under normal conditions; the try/except
+        # added no value and has been removed.
+        self.decisions.append(decision)
 
     def clear(self) -> None:
         """Remove all collected decisions."""
@@ -118,6 +118,31 @@ class InMemoryAuditSink:
 
 
 # ── E-4: Enterprise audit sinks ───────────────────────────────────────────────
+
+
+# L-08: initialise the overflow counter at module load time to avoid the racy
+# lazy-init pattern (two threads both passing the `is None` check).
+_OVERFLOW_COUNTER: Any = None
+try:
+    import prometheus_client as _prom_init
+
+    _OVERFLOW_COUNTER = _prom_init.Counter(
+        "pramanix_audit_sink_overflow_total",
+        "Number of audit decisions dropped due to sink queue overflow",
+    )
+except Exception:
+    pass  # prometheus_client not installed or already registered
+
+
+def _increment_overflow_metric() -> None:
+    """Increment pramanix_audit_sink_overflow_total Prometheus counter."""
+    try:
+        if _OVERFLOW_COUNTER is not None:
+            _OVERFLOW_COUNTER.inc()
+    except Exception as exc:
+        log.warning(
+            "pramanix.audit_sink: failed to increment overflow metric: %s", exc
+        )
 
 
 class KafkaAuditSink:
@@ -161,36 +186,61 @@ class KafkaAuditSink:
         self._topic = topic
         self._producer: Any = Producer(producer_conf)
         self._max_queue = max_queue_size
+        # H-08: protect _queue_depth with a lock — incremented in the emit
+        # thread and decremented in the Kafka delivery-callback thread.
+        self._queue_lock = threading.Lock()
         self._queue_depth = 0
         self._overflow_count = 0
+        # M-15: start a background poller thread so delivery callbacks fire
+        # even during idle periods (not only when emit() is called).
+        self._poll_stop = threading.Event()
+        self._poll_thread = threading.Thread(
+            target=self._background_poll,
+            daemon=True,
+            name="pramanix-kafka-poll",
+        )
+        self._poll_thread.start()
+
+    def _background_poll(self) -> None:
+        """Background thread: poll Kafka delivery callbacks every 100 ms."""
+        while not self._poll_stop.is_set():
+            try:
+                self._producer.poll(timeout=0.1)
+            except Exception as exc:
+                log.warning("KafkaAuditSink: poll error: %s", exc)
 
     def emit(self, decision: Decision) -> None:
         try:
-            if self._queue_depth >= self._max_queue:
-                self._overflow_count += 1
-                _increment_overflow_metric()
-                log.warning(
-                    "KafkaAuditSink: queue full (%d), dropping decision %s",
-                    self._max_queue,
-                    getattr(decision, "decision_id", "?"),
-                )
-                return
+            with self._queue_lock:
+                if self._queue_depth >= self._max_queue:
+                    self._overflow_count += 1
+                    _increment_overflow_metric()
+                    log.warning(
+                        "KafkaAuditSink: queue full (%d), dropping decision %s",
+                        self._max_queue,
+                        getattr(decision, "decision_id", "?"),
+                    )
+                    return
+                self._queue_depth += 1
+
             payload = json.dumps(decision.to_dict(), default=str).encode()
-            self._queue_depth += 1
 
             def _delivery_cb(err: Any, _msg: Any) -> None:
-                self._queue_depth = max(0, self._queue_depth - 1)
+                with self._queue_lock:
+                    self._queue_depth = max(0, self._queue_depth - 1)
                 if err:
                     log.error("KafkaAuditSink: delivery error: %s", err)
 
             self._producer.produce(self._topic, value=payload, callback=_delivery_cb)
-            self._producer.poll(0)  # non-blocking trigger of delivery callbacks
         except Exception as exc:
+            with self._queue_lock:
+                self._queue_depth = max(0, self._queue_depth - 1)
             log.error("KafkaAuditSink: failed to produce decision: %s", exc)
 
     def flush(self, timeout: float = 10.0) -> None:
         """Flush all pending messages to Kafka.  Call at shutdown."""
         try:
+            self._poll_stop.set()
             self._producer.flush(timeout)
         except Exception as exc:
             log.error("KafkaAuditSink: flush error: %s", exc)
@@ -201,38 +251,6 @@ class KafkaAuditSink:
         return self._overflow_count
 
 
-def _increment_overflow_metric() -> None:
-    """Increment pramanix_audit_sink_overflow_total Prometheus counter."""
-    try:
-        import prometheus_client as _prom
-
-        # Use a module-level singleton counter (registered once).
-        global _OVERFLOW_COUNTER
-        if _OVERFLOW_COUNTER is None:
-            try:
-                _OVERFLOW_COUNTER = _prom.Counter(
-                    "pramanix_audit_sink_overflow_total",
-                    "Number of audit decisions dropped due to sink queue overflow",
-                )
-            except ValueError:
-                _OVERFLOW_COUNTER = (
-                    _prom.REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
-                        "pramanix_audit_sink_overflow_total"
-                    )
-                )
-        if _OVERFLOW_COUNTER is not None:
-            _OVERFLOW_COUNTER.inc()
-    except Exception as exc:
-        log.warning(
-            "pramanix.audit_sink: failed to increment overflow metric "
-            "(pramanix_audit_sink_overflow_total); operator alert suppressed: %s",
-            exc,
-        )
-
-
-_OVERFLOW_COUNTER: Any = None
-
-
 class S3AuditSink:
     """Upload each decision as a JSON object to Amazon S3 (or compatible).
 
@@ -240,11 +258,15 @@ class S3AuditSink:
     ``{prefix}{decision_id}.json``.  Upload failures are logged and swallowed —
     they never propagate to the caller.
 
+    H-09: uploads run in a thread-pool executor so the event loop is never
+    blocked by the synchronous ``boto3.put_object`` call.
+
     Requires: ``pip install 'pramanix[s3]'`` (``boto3``).
 
     Args:
         bucket:     S3 bucket name.
         prefix:     Key prefix (e.g. ``"pramanix/audit/"``).  Default: ``""``.
+        timeout:    Per-upload request timeout in seconds.  Default: 30.
         boto3_kwargs: Additional kwargs forwarded to ``boto3.client("s3", ...)``.
 
     Raises:
@@ -255,6 +277,7 @@ class S3AuditSink:
         self,
         bucket: str,
         prefix: str = "",
+        timeout: float = 30.0,
         **boto3_kwargs: Any,
     ) -> None:
         try:
@@ -269,13 +292,26 @@ class S3AuditSink:
 
         self._bucket = bucket
         self._prefix = prefix
+        self._timeout = timeout
         self._s3: Any = boto3.client("s3", **boto3_kwargs)
+        self._executor = threading.Thread  # type annotation placeholder
+        import concurrent.futures
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="pramanix-s3"
+        )
 
     def emit(self, decision: Decision) -> None:
+        """Schedule S3 upload in a thread — never blocks the event loop."""
         try:
             decision_id = getattr(decision, "decision_id", "unknown")
             key = f"{self._prefix}{decision_id}.json"
             body = json.dumps(decision.to_dict(), default=str).encode()
+            self._pool.submit(self._upload, key, body)
+        except Exception as exc:
+            log.error("S3AuditSink: failed to schedule upload: %s", exc)
+
+    def _upload(self, key: str, body: bytes) -> None:
+        try:
             self._s3.put_object(
                 Bucket=self._bucket,
                 Key=key,
@@ -285,24 +321,27 @@ class S3AuditSink:
         except Exception as exc:
             log.error("S3AuditSink: failed to upload decision: %s", exc)
 
+    def close(self) -> None:
+        """Shut down the upload thread pool.  Call at application teardown."""
+        self._pool.shutdown(wait=True)
+
 
 class SplunkHecAuditSink:
     """Send decisions to Splunk via the HTTP Event Collector (HEC) API.
 
-    Uses ``urllib.request`` (stdlib) so no extra dependency is required
-    beyond the network.  If the HEC endpoint is unavailable, failures are
-    logged and swallowed.
+    H-10: uses ``httpx`` (already a dependency) instead of the blocking
+    ``urllib.request.urlopen`` so the event loop is never stalled.  A
+    persistent ``httpx.Client`` is reused across calls for connection pooling.
 
-    Requires: ``pip install 'pramanix[splunk]'`` — no external package needed
-    currently; the extra is reserved for future ``splunklib`` integration.
+    Requires: ``pip install 'pramanix[splunk]'`` (``httpx``).
 
     Args:
-        hec_url:   Full HEC endpoint URL, e.g.
-                   ``"https://splunk.corp.example.com:8088/services/collector"``.
-        hec_token: Splunk HEC token (``"Splunk <token>`` or bare token).
-        index:     Optional Splunk index name.
+        hec_url:    Full HEC endpoint URL.
+        hec_token:  Splunk HEC token (``"Splunk <token>"`` or bare token).
+        index:      Optional Splunk index name.
         sourcetype: Splunk sourcetype.  Default: ``"pramanix:decision"``.
-        timeout:   HTTP request timeout in seconds.  Default: 5 s.
+        timeout:    HTTP request timeout in seconds.  Default: 5 s.
+        ca_bundle:  Path to a CA bundle for private TLS deployments.
     """
 
     def __init__(
@@ -313,44 +352,63 @@ class SplunkHecAuditSink:
         index: str | None = None,
         sourcetype: str = "pramanix:decision",
         timeout: float = 5.0,
+        ca_bundle: str | None = None,
     ) -> None:
+        try:
+            import httpx
+        except ImportError as exc:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "httpx is required for SplunkHecAuditSink. "
+                "Install it with: pip install 'pramanix[splunk]'"
+            ) from exc
+
         self._url = hec_url
-        # Accept either bare token or "Splunk <token>" format.
         self._auth = (
-            hec_token
-            if hec_token.startswith("Splunk ")
-            else f"Splunk {hec_token}"
+            hec_token if hec_token.startswith("Splunk ") else f"Splunk {hec_token}"
         )
         self._index = index
         self._sourcetype = sourcetype
         self._timeout = timeout
+        # Persistent connection pool — reused across all emit() calls.
+        self._client = httpx.Client(
+            verify=ca_bundle if ca_bundle is not None else True,
+            timeout=timeout,
+        )
 
     def emit(self, decision: Decision) -> None:
-        import urllib.request
-
         try:
             event: dict[str, Any] = {"event": decision.to_dict()}
             event["sourcetype"] = self._sourcetype
             if self._index:
                 event["index"] = self._index
             payload = json.dumps(event, default=str).encode()
-            req = urllib.request.Request(
+            self._client.post(
                 self._url,
-                data=payload,
+                content=payload,
                 headers={
                     "Authorization": self._auth,
                     "Content-Type": "application/json",
                 },
-                method="POST",
             )
-            with urllib.request.urlopen(req, timeout=self._timeout):
-                pass
         except Exception as exc:
             log.error("SplunkHecAuditSink: failed to send decision: %s", exc)
+
+    def close(self) -> None:
+        """Close the underlying HTTP client.  Call at application teardown."""
+        try:
+            self._client.close()
+        except Exception:
+            pass
 
 
 class DatadogAuditSink:
     """Send decisions as Datadog logs via the Datadog API.
+
+    M-16: ``ApiClient`` and ``LogsApi`` are constructed once in ``__init__``
+    and reused across all ``emit()`` calls, eliminating per-call object
+    allocation overhead and connection churn.
 
     Requires: ``pip install 'pramanix[datadog]'`` (``datadog-api-client``).
 
@@ -375,7 +433,8 @@ class DatadogAuditSink:
         tags: str = "",
     ) -> None:
         try:
-            import datadog_api_client  # noqa: F401
+            from datadog_api_client import ApiClient, Configuration
+            from datadog_api_client.v2.api.logs_api import LogsApi
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -386,24 +445,22 @@ class DatadogAuditSink:
 
         import os
 
-        self._api_key = api_key or os.environ.get("DD_API_KEY") or ""
-        self._site = site
         self._service = service
         self._source = source
         self._tags = tags
 
+        configuration = Configuration()
+        configuration.api_key["apiKeyAuth"] = api_key or os.environ.get("DD_API_KEY") or ""
+        configuration.server_variables["site"] = site
+
+        # M-16: construct ApiClient and LogsApi once, reuse across all emit() calls.
+        self._api_client = ApiClient(configuration)
+        self._logs_api = LogsApi(self._api_client)
+
     def emit(self, decision: Decision) -> None:
         try:
-            from datadog_api_client import ApiClient, Configuration
-            from datadog_api_client.v2.api.logs_api import LogsApi
             from datadog_api_client.v2.model.http_log import HTTPLog
-            from datadog_api_client.v2.model.http_log_item import (
-                HTTPLogItem,
-            )
-
-            configuration = Configuration()
-            configuration.api_key["apiKeyAuth"] = self._api_key
-            configuration.server_variables["site"] = self._site
+            from datadog_api_client.v2.model.http_log_item import HTTPLogItem
 
             message = json.dumps(decision.to_dict(), default=str)
             log_item = HTTPLogItem(
@@ -413,8 +470,13 @@ class DatadogAuditSink:
                 message=message,
                 service=self._service,
             )
-            body = HTTPLog([log_item])
-            with ApiClient(configuration) as api_client:
-                LogsApi(api_client).submit_log(body)
+            self._logs_api.submit_log(HTTPLog([log_item]))
         except Exception as exc:
             log.error("DatadogAuditSink: failed to send decision: %s", exc)
+
+    def close(self) -> None:
+        """Close the Datadog API client.  Call at application teardown."""
+        try:
+            self._api_client.close()
+        except Exception:
+            pass

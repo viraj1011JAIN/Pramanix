@@ -48,10 +48,23 @@ class OpenAICompatTranslator:
         base_url: str | None = None,
         timeout: float = 30.0,
     ) -> None:
+        try:
+            import openai
+        except ImportError as exc:
+            raise ImportError(
+                "openai package is required for OpenAICompatTranslator. "
+                "Install it with: pip install 'pramanix[translator]'"
+            ) from exc
+
         self.model = model
-        self._api_key = api_key
-        self._base_url = base_url
         self._timeout = timeout
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key or os.environ.get("OPENAI_API_KEY") or None,
+            base_url=base_url,
+            timeout=timeout,
+        )
+        self._retryable = (openai.APITimeoutError, openai.APIConnectionError)
+        self._api_status_error = openai.APIStatusError
 
     async def extract(
         self,
@@ -75,14 +88,6 @@ class OpenAICompatTranslator:
             LLMTimeoutError:        All retry attempts exhausted.
         """
         try:
-            import openai
-        except ImportError as exc:
-            raise ImportError(
-                "openai package is required for OpenAICompatTranslator. "
-                "Install it with: pip install 'pramanix[translator]'"
-            ) from exc
-
-        try:
             from tenacity import (
                 AsyncRetrying,
                 retry_if_exception_type,
@@ -96,61 +101,56 @@ class OpenAICompatTranslator:
             ) from exc
 
         system_prompt = build_system_prompt(intent_schema)
-        client = openai.AsyncOpenAI(
-            api_key=self._api_key or os.environ.get("OPENAI_API_KEY") or None,
-            base_url=self._base_url,
-            timeout=self._timeout,
-        )
-
-        # Transient errors that warrant an automatic retry
-        retryable = (openai.APITimeoutError, openai.APIConnectionError)
         attempts = 0
 
         try:
             async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
-                retry=retry_if_exception_type(retryable),
+                retry=retry_if_exception_type(self._retryable),
                 reraise=True,
             ):
                 with attempt:
                     attempts += 1
                     raw = await self._single_call(
-                        client=client,
                         system_prompt=system_prompt,
                         text=text,
                     )
                     return parse_llm_response(raw, model_name=self.model)
 
-        except retryable as exc:
+        except self._retryable as exc:
             raise LLMTimeoutError(
-                f"OpenAI model '{self.model}' unreachable after " f"{attempts} attempt(s): {exc}",
+                f"OpenAI model '{self.model}' unreachable after {attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
 
-        except openai.APIStatusError as exc:
+        except self._api_status_error as exc:
             raise ExtractionFailureError(
                 f"[{self.model}] OpenAI API error {exc.status_code}: {exc.message}"
             ) from exc
 
         raise AssertionError("unreachable")  # pragma: no cover
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client and release connection pool resources."""
+        await self._client.aclose()
+
+    async def __aenter__(self) -> OpenAICompatTranslator:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()
+
     async def _single_call(
         self,
         *,
-        client: Any,
         system_prompt: str,
         text: str,
     ) -> str:
         """Make a single chat-completion call and return the raw content string."""
         try:
-            import openai
-        except ImportError:  # pragma: no cover
-            raise
-
-        try:
-            response = await client.chat.completions.create(
+            response = await self._client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -159,7 +159,7 @@ class OpenAICompatTranslator:
                 response_format={"type": "json_object"},
                 temperature=0,
             )
-        except openai.APIStatusError:
+        except self._api_status_error:
             raise  # let extract() handle API errors
         except Exception:
             raise  # let tenacity handle retryable network errors

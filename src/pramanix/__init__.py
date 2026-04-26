@@ -109,6 +109,24 @@ from pramanix.key_provider import (
     KeyProvider,
     PemKeyProvider,
 )
+from pramanix.exceptions import MigrationError, ResolverConflictError
+from pramanix.fast_path import FastPathRule, SemanticFastPath
+from pramanix.identity.linker import (
+    IdentityClaims,
+    JWTExpiredError,
+    JWTVerificationError,
+    StateLoadError,
+    StateLoader,
+)
+from pramanix.identity.redis_loader import RedisStateLoader
+from pramanix.integrations.autogen import PramanixToolCallback
+from pramanix.integrations.crewai import PramanixCrewAITool
+from pramanix.integrations.dspy import PramanixGuardedModule
+from pramanix.integrations.haystack import HaystackGuardedComponent
+from pramanix.integrations.langchain import PramanixGuardedTool
+from pramanix.integrations.llamaindex import PramanixFunctionTool, PramanixQueryEngineTool
+from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
+from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
 from pramanix.migration import PolicyMigration
 from pramanix.policy import Policy, invariant_mixin, model_dump_z3
 from pramanix.resolvers import ResolverRegistry
@@ -154,6 +172,7 @@ __all__ = [
     "ExtractionFailureError",
     "ExtractionMismatchError",
     # DSL
+    "FastPathRule",
     "Field",
     "FieldTypeError",
     "FileKeyProvider",
@@ -163,6 +182,10 @@ __all__ = [
     "GuardConfig",
     "GuardError",
     "GuardViolationError",
+    # Integrations — beta
+    "HaystackGuardedComponent",
+    # Identity claims
+    "IdentityClaims",
     "InMemoryAuditSink",
     "InMemoryDistributedBackend",
     # E-1: Redis-free token backends
@@ -176,7 +199,9 @@ __all__ = [
     "InvariantASTCache",
     "InvariantLabelError",
     # Phase 9 — Pillar 3: Zero-trust identity
+    "JWTExpiredError",
     "JWTIdentityLinker",
+    "JWTVerificationError",
     "KafkaAuditSink",
     # E-3: KMS/HSM key providers
     "KeyProvider",
@@ -184,6 +209,8 @@ __all__ = [
     "MerkleAnchor",
     # E-2: Merkle pruning and archival
     "MerkleArchiver",
+    # Policy migration error
+    "MigrationError",
     # B-1: Nested model descriptor chaining
     "NestedField",
     "PemKeyProvider",
@@ -197,25 +224,43 @@ __all__ = [
     "PolicyError",
     "PolicyMigration",
     "PostgresExecutionTokenVerifier",
+    # Integrations — beta
+    "PramanixCrewAITool",
     # Exceptions — core
     "PramanixError",
+    # Integrations — beta
+    "PramanixFunctionTool",
+    "PramanixGuardedModule",
+    "PramanixGuardedTool",
+    "PramanixPydanticAIValidator",
+    "PramanixQueryEngineTool",
+    "PramanixSemanticKernelPlugin",
     # Phase 11 — Pillar 2: Ed25519 cryptographic signing
     "PramanixSigner",
+    # Integrations — beta
+    "PramanixToolCallback",
     "PramanixVerifier",
     "RedisDistributedBackend",
     # Phase 13 — Enterprise: distributed Redis token store
     "RedisExecutionTokenVerifier",
+    "RedisStateLoader",
+    # Resolver conflict exception
+    "ResolverConflictError",
     # Resolver cache (data-bleed guard) — singleton excluded intentionally:
     # interact with the registry through Guard configuration, not directly.
     "ResolverRegistry",
     "S3AuditSink",
     "SQLiteExecutionTokenVerifier",
+    # Fast-path cache
+    "SemanticFastPath",
     # Exceptions — hardening (Phase 4)
     "SemanticPolicyViolation",
     "SolverError",
     "SolverStatus",
     "SolverTimeoutError",
     "SplunkHecAuditSink",
+    "StateLoadError",
+    "StateLoader",
     "StateValidationError",
     "StdoutAuditSink",
     # Limitations overrides: string→int enum helper

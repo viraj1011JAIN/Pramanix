@@ -782,13 +782,10 @@ class RedisExecutionTokenVerifier:
         # ── 4. Atomic SETNX with TTL = remaining token lifetime ───────────────
         # max(1, ...) ensures the key gets at least 1 second TTL even if the
         # token is about to expire — so Redis doesn't reject the SET.
-        # Fail-safe: any Redis error → deny (False), never allow.
+        # M-17: let redis.RedisError propagate — callers must treat it as BLOCK.
         remaining_s = max(1, int(token.expires_at - time.time()))
         redis_key = f"{self._prefix}{token.token_id}"
-        try:
-            result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
-        except Exception:
-            return False
+        result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
         return bool(result)
 
     def consumed_count(self) -> int:
@@ -869,6 +866,9 @@ class PostgresExecutionTokenVerifier:
         dsn: str,
         key_prefix: str = "pramanix:token:",
     ) -> None:
+        import asyncio
+        import threading
+
         try:
             import asyncpg  # noqa: F401
         except ImportError as exc:
@@ -885,39 +885,52 @@ class PostgresExecutionTokenVerifier:
         self._dsn = dsn
         self._prefix = key_prefix  # for API symmetry only
 
+        # H-11 + M-18: one dedicated event loop thread owns the asyncpg pool.
+        # All _run() calls use run_coroutine_threadsafe — zero unbounded threads,
+        # no deprecated asyncio.get_event_loop() usage.
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(
+            target=self._loop.run_forever,
+            daemon=True,
+            name="pramanix-postgres",
+        )
+        self._loop_thread.start()
+        # Create pool during __init__; fail-fast if Postgres is unreachable.
+        self._pool: Any = asyncio.run_coroutine_threadsafe(
+            self._init_pool(), self._loop
+        ).result(timeout=30.0)
+
+    async def _init_pool(self) -> Any:
+        """Create the asyncpg connection pool and ensure the schema exists."""
+        import asyncpg
+
+        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+        async with pool.acquire() as conn:
+            await self._ensure_table(conn)
+        return pool
+
     def _run(self, coro: Any) -> Any:
-        """Run *coro* synchronously, creating an event loop if necessary."""
+        """Submit *coro* to the dedicated event loop and block until complete.
+
+        Uses run_coroutine_threadsafe — one bounded background thread, no
+        nested loops, no deprecated asyncio.get_event_loop() calls.
+        """
+        import asyncio
+
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+    def close(self) -> None:
+        """Close the connection pool and stop the background event loop."""
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We are inside an async context (e.g., running under pytest-asyncio).
-                # Use a new thread with its own event loop to avoid nesting.
-                import threading
-
-                result: list[Any] = []
-                exc_container: list[BaseException] = []
-
-                def _run_in_thread() -> None:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        result.append(new_loop.run_until_complete(coro))
-                    except BaseException as e:
-                        exc_container.append(e)
-                    finally:
-                        new_loop.close()
-
-                t = threading.Thread(target=_run_in_thread)
-                t.start()
-                t.join()
-                if exc_container:
-                    raise exc_container[0]
-                return result[0]
-            return loop.run_until_complete(coro)
-        except RuntimeError:
-            return asyncio.run(coro)
+            asyncio.run_coroutine_threadsafe(
+                self._pool.close(), self._loop
+            ).result(timeout=10.0)
+        except Exception:
+            pass
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._loop_thread.join(timeout=10.0)
 
     async def _ensure_table(self, conn: Any) -> None:
         """Create the consumed_tokens table if it does not exist."""
@@ -937,8 +950,6 @@ class PostgresExecutionTokenVerifier:
         token: ExecutionToken,
         expected_state_version: str | None,
     ) -> bool:
-        import asyncpg
-
         # ── 1. Signature check ────────────────────────────────────────────────
         unsigned = ExecutionToken(
             decision_id=token.decision_id,
@@ -965,9 +976,9 @@ class PostgresExecutionTokenVerifier:
             return False
 
         # ── 4. Atomic INSERT with UNIQUE constraint ───────────────────────────
-        conn: Any = await asyncpg.connect(self._dsn)
-        try:
-            await self._ensure_table(conn)
+        import asyncpg
+
+        async with self._pool.acquire() as conn:
             try:
                 await conn.execute(
                     "INSERT INTO consumed_tokens (token_id, expires_at) VALUES ($1, $2)",
@@ -978,8 +989,6 @@ class PostgresExecutionTokenVerifier:
             except asyncpg.UniqueViolationError:
                 # Token already consumed — single-use enforced.
                 return False
-        finally:
-            await conn.close()
 
     def consume(
         self,
@@ -997,11 +1006,7 @@ class PostgresExecutionTokenVerifier:
         return bool(self._run(self._async_consume(token, expected_state_version)))
 
     async def _async_evict_expired(self) -> int:
-        import asyncpg
-
-        conn: Any = await asyncpg.connect(self._dsn)
-        try:
-            await self._ensure_table(conn)
+        async with self._pool.acquire() as conn:
             result = await conn.execute(
                 "DELETE FROM consumed_tokens WHERE expires_at < $1",
                 time.time(),
@@ -1009,8 +1014,6 @@ class PostgresExecutionTokenVerifier:
             # asyncpg returns "DELETE N" as a string.
             parts = result.split()
             return int(parts[1]) if len(parts) == 2 else 0
-        finally:
-            await conn.close()
 
     def evict_expired(self) -> int:
         """Delete expired token records from Postgres.
@@ -1021,18 +1024,12 @@ class PostgresExecutionTokenVerifier:
         return int(self._run(self._async_evict_expired()))
 
     async def _async_consumed_count(self) -> int:
-        import asyncpg
-
-        conn: Any = await asyncpg.connect(self._dsn)
-        try:
-            await self._ensure_table(conn)
+        async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT COUNT(*) AS n FROM consumed_tokens WHERE expires_at >= $1",
                 time.time(),
             )
             return row["n"] if row else 0
-        finally:
-            await conn.close()
 
     def consumed_count(self) -> int:
         """Count non-expired consumed tokens in Postgres.

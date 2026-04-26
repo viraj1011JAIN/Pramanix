@@ -124,13 +124,79 @@ check_platform()
 
 def _is_picklable(obj: Any) -> bool:
     """Return True if *obj* can be round-tripped through pickle."""
+    import logging as _log_pickle
     import pickle as _p
+    import pickle as _pickle_mod
 
     try:
         _p.dumps(obj)
         return True
+    except _pickle_mod.PicklingError as e:
+        _log_pickle.getLogger(__name__).warning("Not picklable: %s", e)
+        return False
     except Exception:
         return False
+
+
+# ── Translator metric helper ──────────────────────────────────────────────────
+
+def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[str]) -> None:
+    """Emit a Prometheus counter for LLM extraction / consensus failures (M-46).
+
+    Counter names:
+      pramanix_extraction_failure_total{model="<name>"}
+      pramanix_consensus_failure_total{model="<name>"}
+
+    Silently no-ops when prometheus_client is not installed.
+    """
+    try:
+        from prometheus_client import Counter
+
+        counter_name = (
+            "pramanix_extraction_failure_total"
+            if failure_type == "extraction_failure"
+            else "pramanix_consensus_failure_total"
+        )
+        description = (
+            "Total LLM extraction failures by model"
+            if failure_type == "extraction_failure"
+            else "Total dual-model consensus failures by model pair"
+        )
+        try:
+            _c = Counter(counter_name, description, ["model"])
+        except ValueError:
+            from prometheus_client import REGISTRY
+            _c = REGISTRY._names_to_collectors.get(counter_name)  # type: ignore[union-attr]
+            if _c is None:
+                return
+        for model in models:
+            _c.labels(model=model).inc()
+    except Exception:
+        pass
+
+
+# ── _CBWrappedTranslator ──────────────────────────────────────────────────────
+
+
+class _CBWrappedTranslator:
+    """Thin shim that routes a translator's ``extract()`` through a circuit breaker.
+
+    Used internally by :meth:`Guard.parse_and_verify` (M-45).  All other
+    attributes are forwarded transparently to the underlying translator so
+    that ``extract_with_consensus`` can read ``translator.model`` etc.
+    """
+
+    def __init__(self, translator: Any, breaker: Any) -> None:
+        self._translator = translator
+        self._breaker = breaker
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._translator, name)
+
+    async def extract(self, text: str, intent_schema: Any, context: Any = None) -> Any:
+        return await self._breaker.call(
+            lambda: self._translator.extract(text, intent_schema, context)
+        )
 
 
 # ── Guard ─────────────────────────────────────────────────────────────────────
@@ -215,26 +281,46 @@ class Guard:
         else:
             self._fast_path = None
 
+        # M-45: per-model circuit breakers for translator calls.
+        # Keyed by model name string; created lazily on first use so Guard
+        # construction has zero cost when parse_and_verify is never called.
+        self._translator_breakers: dict[str, Any] = {}
+        # M-02: translator instances cached by model name so their HTTP
+        # connection pool is reused across calls and closed in shutdown().
+        self._translators: dict[str, Any] = {}
+
         # ── Phase 10.1: Pre-compile expression tree metadata ──────────────
+        import hashlib as _hashlib
+        import json as _json
         import logging as _logging
 
+        from pramanix.transpiler import InvariantASTCache as _InvariantASTCache
         from pramanix.transpiler import compile_policy as _compile_policy
 
         _ph10_log = _logging.getLogger(__name__)
-        try:
-            self._compiled_meta: list[Any] = _compile_policy(self._policy.invariants())
-            _ph10_log.debug(
-                "Policy compiled",
-                extra={
-                    "policy": getattr(self._policy, "__name__", str(self._policy)),
-                    "invariant_count": len(self._compiled_meta),
-                    "field_count": len(
-                        {f for meta in self._compiled_meta for f in meta.field_refs}
-                    ),
-                },
-            )
-        except Exception:
-            raise  # compile_policy failures are fatal at init time
+        # M-09: consult InvariantASTCache before recompiling; key on the policy
+        # class's JSON schema so the cache invalidates when fields change.
+        _schema_hash = _hashlib.sha256(
+            _json.dumps(
+                self._policy.export_json_schema(), sort_keys=True
+            ).encode()
+        ).hexdigest()
+        _cached = _InvariantASTCache.get(self._policy, _schema_hash)
+        if _cached is not None:
+            self._compiled_meta: list[Any] = _cached
+        else:
+            self._compiled_meta = _compile_policy(self._policy.invariants())
+            _InvariantASTCache.put(self._policy, _schema_hash, self._compiled_meta)
+        _ph10_log.debug(
+            "Policy compiled",
+            extra={
+                "policy": getattr(self._policy, "__name__", str(self._policy)),
+                "invariant_count": len(self._compiled_meta),
+                "field_count": len(
+                    {f for meta in self._compiled_meta for f in meta.field_refs}
+                ),
+            },
+        )
 
     # ── verify ────────────────────────────────────────────────────────────────
 
@@ -342,7 +428,7 @@ class Guard:
                 _left = _deadline - time.perf_counter()
                 if _left <= 0.0:
                     break
-                with contextlib.suppress(InterruptedError, OSError):
+                with contextlib.suppress(InterruptedError):
                     time.sleep(_left)
         self._emit_to_sinks(decision)
         return decision
@@ -415,41 +501,21 @@ class Guard:
                     )
             except Exception as _json_exc:
                 # JSON serialisation failed (e.g. circular reference).
-                # Fall back to repr() for a conservative size estimate — we must
-                # never silently skip the size guard on a potentially oversized payload.
+                # Safest action is to block — solver must never receive a payload
+                # of unknown size.
                 import logging as _size_log
 
-                _size_log.getLogger(__name__).warning(
+                _size_log.getLogger(__name__).error(
                     "guard.verify: JSON serialisation failed for size check (%s); "
-                    "falling back to repr() estimate",
+                    "blocking request to enforce max_input_bytes safety",
                     _json_exc,
                 )
-                try:
-                    _payload_size = len(
-                        repr({"i": intent, "s": state}).encode()
+                return Decision.error(
+                    reason=(
+                        "Input payload could not be size-checked (serialisation error). "
+                        f"Request rejected (max_input_bytes={self._config.max_input_bytes})."
                     )
-                    if _payload_size > self._config.max_input_bytes:
-                        return Decision.error(
-                            reason=(
-                                f"Input payload size (repr estimate: {_payload_size} bytes) "
-                                f"exceeds max_input_bytes limit ({self._config.max_input_bytes}). "
-                                "Request rejected before reaching the solver."
-                            )
-                        )
-                except Exception as _repr_exc:
-                    # repr() also failed — the safest action is to block so the
-                    # solver never receives a payload of unknown size.
-                    _size_log.getLogger(__name__).error(
-                        "guard.verify: repr() serialisation also failed (%s); "
-                        "blocking request to enforce max_input_bytes safety",
-                        _repr_exc,
-                    )
-                    return Decision.error(
-                        reason=(
-                            "Input payload could not be size-checked (serialisation error). "
-                            f"Request rejected (max_input_bytes={self._config.max_input_bytes})."
-                        )
-                    )
+                )
 
         decision_id = str(uuid.uuid4())
         _t0 = time.perf_counter()
@@ -619,7 +685,9 @@ class Guard:
                 return decision_unsafe
 
         except ValidationError as exc:
-            decision = Decision.validation_failure(reason=str(exc))
+            _verbose = str(exc)
+            _public = "validation_error" if self._config.redact_violations else _verbose
+            decision = Decision.validation_failure(reason=_public)
             _metric_status = decision.status.value
             _log.warning(
                 "pramanix.guard.decision",
@@ -627,11 +695,13 @@ class Guard:
                 policy=self._policy.__name__,
                 allowed=False,
                 status=decision.status.value,
-                reason=str(exc),
+                reason=_verbose,
             )
             return decision
         except StateValidationError as exc:
-            decision = Decision.validation_failure(reason=str(exc))
+            _verbose = str(exc)
+            _public = "validation_error" if self._config.redact_violations else _verbose
+            decision = Decision.validation_failure(reason=_public)
             _metric_status = decision.status.value
             _log.warning(
                 "pramanix.guard.decision",
@@ -639,7 +709,7 @@ class Guard:
                 policy=self._policy.__name__,
                 allowed=False,
                 status=decision.status.value,
-                reason=str(exc),
+                reason=_verbose,
             )
             return decision
         except SolverTimeoutError as exc:
@@ -655,7 +725,9 @@ class Guard:
             )
             return decision
         except PramanixError as exc:
-            decision = Decision.error(reason=str(exc))
+            _verbose = str(exc)
+            _public = "verification_error" if self._config.redact_violations else _verbose
+            decision = Decision.error(reason=_public)
             _metric_status = decision.status.value
             _log.error(
                 "pramanix.guard.decision",
@@ -663,13 +735,23 @@ class Guard:
                 policy=self._policy.__name__,
                 allowed=False,
                 status=decision.status.value,
-                reason=str(exc),
+                reason=_verbose,
             )
             return decision
         except Exception as exc:  # — intentional fail-safe catch-all
-            decision = Decision.error(
-                reason=f"Unexpected internal error ({type(exc).__name__}): {exc}"
+            _verbose_reason = f"Unexpected internal error ({type(exc).__name__}): {exc}"
+            _public_reason = (
+                "verification_error"
+                if self._config.redact_violations
+                else _verbose_reason
             )
+            import logging as _exc_log
+            if self._config.redact_violations:
+                _exc_log.getLogger(__name__).error(
+                    "pramanix.guard.decision: internal error (redacted from caller): %s",
+                    _verbose_reason,
+                )
+            decision = Decision.error(reason=_public_reason)
             _metric_status = decision.status.value
             _log.error(
                 "pramanix.guard.decision",
@@ -729,7 +811,7 @@ class Guard:
         _t0_async = time.perf_counter()
 
         async def _timed(d: Decision) -> Decision:
-            """Apply min_response_ms timing pad and return decision.
+            """Apply min_response_ms timing pad, emit sinks, and return decision.
 
             Uses a deadline loop: asyncio.sleep() can return early if the event
             loop is under heavy load; the loop re-sleeps for any remaining time
@@ -742,11 +824,44 @@ class Guard:
                     if _left <= 0.0:
                         break
                     await asyncio.sleep(_left)
+            # H-02: emit to audit sinks for ALL async modes — mirrors sync path.
+            self._emit_to_sinks(d)
             return d
 
         # Sync mode: delegate entirely to sync verify() in a thread.
+        # verify() handles its own sink emission and resolver-cache clearing.
         if mode == "sync":
             return await asyncio.to_thread(self.verify, intent, state)
+
+        # ── H-01: max_input_bytes DoS pre-check (mirrors _verify_core) ────────
+        if self._config.max_input_bytes > 0:
+            try:
+                import json as _json_size_async
+
+                _raw_intent_async: dict[str, Any] = (
+                    intent if isinstance(intent, dict) else intent.model_dump()
+                )
+                _raw_state_async: dict[str, Any] = (
+                    state if isinstance(state, dict) else state.model_dump()
+                )
+                _payload_size_async = len(
+                    _json_size_async.dumps(
+                        {"i": _raw_intent_async, "s": _raw_state_async}, default=str
+                    ).encode()
+                )
+                if _payload_size_async > self._config.max_input_bytes:
+                    _d = self._sign_decision(
+                        Decision.error(
+                            reason=(
+                                f"Input payload size ({_payload_size_async} bytes) exceeds "
+                                f"max_input_bytes limit ({self._config.max_input_bytes}). "
+                                "Request rejected before reaching the solver."
+                            )
+                        )
+                    )
+                    return await _timed(_d)
+            except Exception:
+                pass  # size-check failure is non-fatal; proceed to validation
 
         # Steps 1-4: validation and version check run on the caller's thread.
         try:
@@ -765,26 +880,24 @@ class Guard:
             if self._policy_version is not None:
                 actual_version = state_values.get("state_version")
                 if actual_version is None:
-                    return await _timed(
-                        self._sign_decision(
-                            Decision.validation_failure(
-                                reason=(
-                                    "state_version is missing from state data. "
-                                    f"Policy '{self._policy.__name__}' requires "
-                                    f"version='{self._policy_version}'."
-                                )
+                    _d = self._sign_decision(
+                        Decision.validation_failure(
+                            reason=(
+                                "state_version is missing from state data. "
+                                f"Policy '{self._policy.__name__}' requires "
+                                f"version='{self._policy_version}'."
                             )
                         )
                     )
+                    return await _timed(_d)
                 if str(actual_version) != self._policy_version:
-                    return await _timed(
-                        self._sign_decision(
-                            Decision.stale_state(
-                                expected=self._policy_version,
-                                actual=str(actual_version),
-                            )
+                    _d = self._sign_decision(
+                        Decision.stale_state(
+                            expected=self._policy_version,
+                            actual=str(actual_version),
                         )
                     )
+                    return await _timed(_d)
 
             conflicting = intent_values.keys() & state_values.keys()
             if conflicting:
@@ -793,6 +906,37 @@ class Guard:
                     "Each key must appear in exactly one of intent or state."
                 )
             values: dict[str, Any] = {**intent_values, **state_values}
+
+            # ── H-01: field-presence / fast-path pre-screen (mirrors _verify_core) ──
+            _combined_keys_async = set(values.keys())
+            _missing_fields_async = []
+            for _meta in self._compiled_meta:
+                _absent = _meta.field_refs - _combined_keys_async
+                if _absent:
+                    _missing_fields_async.append((_meta.label, _absent))
+
+            if _missing_fields_async:
+                _missing_str = "; ".join(
+                    f"'{_lbl}' needs {sorted(_flds)}"
+                    for _lbl, _flds in _missing_fields_async
+                )
+                _d = self._sign_decision(
+                    Decision.error(reason=f"Missing required fields: {_missing_str}")
+                )
+                return await _timed(_d)
+
+            if self._fast_path is not None:
+                _fp = self._fast_path.evaluate(intent_values, state_values)
+                if _fp.blocked:
+                    _d = self._sign_decision(
+                        Decision.unsafe(
+                            violated_invariants=(_fp.rule_name or "fast_path_block",),
+                            explanation=_fp.reason,
+                            intent_dump=intent_values,
+                            state_dump=state_values,
+                        )
+                    )
+                    return await _timed(_d)
 
         except (ValidationError, StateValidationError) as exc:
             return await _timed(
@@ -810,6 +954,11 @@ class Guard:
                     )
                 )
             )
+        finally:
+            # C-01: clear resolver cache after every verify_async call,
+            # mirroring the sync _verify_core finally block.  Prevents User A's
+            # resolved field values from bleeding into User B's next async call.
+            _resolver_registry.clear_cache()
 
         # Steps 5-6: dispatch to worker pool.
         pool = self._pool
@@ -964,15 +1113,38 @@ class Guard:
             )
         """
         try:
+            from pramanix.circuit_breaker import TranslatorCircuitBreaker
             from pramanix.translator.redundant import create_translator, extract_with_consensus
 
-            translator_a = create_translator(models[0])
-            translator_b = create_translator(models[1])
+            # M-02: reuse cached translator instances so their HTTP connection
+            # pool survives across calls; closed in Guard.shutdown().
+            for m in models:
+                if m not in self._translators:
+                    self._translators[m] = create_translator(m)
+            translator_a = self._translators[models[0]]
+            translator_b = self._translators[models[1]]
+
+            # M-45: lazy-create per-model circuit breakers; wrap each translator.
+            # CircuitBreaker state is stored on the Guard instance so it
+            # accumulates across calls and actually trips open under sustained failure.
+            cb_cfg = self._config.translator_circuit_breaker_config
+            for model_name in models:
+                if model_name not in self._translator_breakers:
+                    kwargs: dict[str, Any] = {}
+                    if cb_cfg is not None:
+                        kwargs["failure_threshold"] = cb_cfg.failure_threshold
+                        kwargs["recovery_seconds"] = cb_cfg.recovery_seconds
+                    self._translator_breakers[model_name] = TranslatorCircuitBreaker(
+                        model_name, **kwargs
+                    )
 
             intent_dict = await extract_with_consensus(
                 prompt,
                 intent_schema,
-                (translator_a, translator_b),
+                (
+                    _CBWrappedTranslator(translator_a, self._translator_breakers[models[0]]),
+                    _CBWrappedTranslator(translator_b, self._translator_breakers[models[1]]),
+                ),
                 context,
                 injection_threshold=self._config.injection_threshold,
                 max_input_chars=self._config.max_input_chars,
@@ -995,22 +1167,28 @@ class Guard:
             # Deliberate, expected outcome: the two LLMs disagreed on intent.
             # Use consensus_failure(), not error() — these are operationally
             # distinct signals (adversarial/ambiguous input vs. internal fault).
+            _emit_translator_metric("consensus_failure", models)
             return Decision.consensus_failure(reason=str(exc))
         except (
             ExtractionFailureError,
             LLMTimeoutError,
+        ) as exc:
+            _emit_translator_metric("extraction_failure", models)
+            return Decision.error(reason=str(exc))
+        except (
             InjectionBlockedError,
             InputTooLongError,
             SemanticPolicyViolation,
         ) as exc:
             return Decision.error(reason=str(exc))
         except Exception as exc:
+            _emit_translator_metric("extraction_failure", models)
             return Decision.error(reason=f"Translator error ({type(exc).__name__}): {exc}")
 
     # ── shutdown ────────────────────────────────────────────────────────────────────
 
     async def shutdown(self) -> None:
-        """Gracefully shut down the worker pool (async-aware).
+        """Gracefully shut down the worker pool and close translator clients.
 
         Safe to call regardless of ``execution_mode``; no-op when the pool
         was not created.  Should be awaited at application teardown.
@@ -1023,6 +1201,12 @@ class Guard:
         """
         if self._pool is not None:
             await asyncio.to_thread(self._pool.shutdown)
+        # M-02: close cached translator HTTP clients to prevent FD/socket leaks.
+        for translator in self._translators.values():
+            _aclose = getattr(translator, "aclose", None)
+            if _aclose is not None:
+                await _aclose()
+        self._translators.clear()
 
     # ── Accessors ───────────────────────────────────────────────────────────────────
 

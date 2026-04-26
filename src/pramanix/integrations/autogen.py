@@ -123,7 +123,7 @@ class PramanixToolCallback:
             # ── Step 1: Validate kwargs against intent schema ─────────────────
             try:
                 intent: dict[str, Any] = intent_schema.model_validate(
-                    kwargs, strict=False
+                    kwargs, strict=True
                 ).model_dump()
             except Exception as exc:
                 # Return a safe rejection string — never raise.

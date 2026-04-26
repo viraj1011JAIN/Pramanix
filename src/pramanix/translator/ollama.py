@@ -67,6 +67,14 @@ class OllamaTranslator:
         timeout: float = 60.0,
         temperature: float = 0.0,
     ) -> None:
+        try:
+            import httpx
+        except ImportError as exc:
+            raise ImportError(
+                "httpx is required for OllamaTranslator. "
+                "Install it with: pip install 'pramanix[translator]'"
+            ) from exc
+
         self.model = model
         resolved_url = (
             base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
@@ -74,6 +82,8 @@ class OllamaTranslator:
         self._base_url = resolved_url.rstrip("/")
         self._timeout = timeout
         self._temperature = temperature
+        self._client = httpx.AsyncClient(timeout=timeout)
+        self._httpx = httpx
 
     async def extract(
         self,
@@ -100,14 +110,6 @@ class OllamaTranslator:
                 or the server returned a non-2xx response.
             LLMTimeoutError: Request timed out.
         """
-        try:
-            import httpx
-        except ImportError as exc:
-            raise ImportError(
-                "httpx is required for OllamaTranslator. "
-                "Install it with: pip install 'pramanix[translator]'"
-            ) from exc
-
         system_prompt = build_system_prompt(intent_schema)
         url = f"{self._base_url}/api/chat"
         payload: dict[str, Any] = {
@@ -122,16 +124,15 @@ class OllamaTranslator:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(url, json=payload)
-        except httpx.TimeoutException as exc:
+            response = await self._client.post(url, json=payload)
+        except self._httpx.TimeoutException as exc:
             raise LLMTimeoutError(
                 f"Ollama model '{self.model}' timed out after "
                 f"{self._timeout}s: {exc}",
                 model=self.model,
                 attempts=1,
             ) from exc
-        except httpx.RequestError as exc:
+        except self._httpx.RequestError as exc:
             raise LLMTimeoutError(
                 f"Ollama model '{self.model}' connection failed: {exc}",
                 model=self.model,
@@ -162,3 +163,13 @@ class OllamaTranslator:
             ) from exc
 
         return parse_llm_response(raw_content, model_name=self.model)
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client and release connection pool resources."""
+        await self._client.aclose()
+
+    async def __aenter__(self) -> OllamaTranslator:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()

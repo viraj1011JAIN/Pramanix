@@ -108,20 +108,17 @@ class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
         import grpc as _grpc
 
         interceptor = self
-        original_unary = handler.unary_unary
 
-        def _guarded_unary(request: Any, context: Any) -> Any:
+        def _check_guard(request: Any, context: Any) -> bool:
+            """Run the guard; abort the RPC and return False if blocked."""
             try:
                 intent = interceptor._intent_extractor(handler_call_details, request)
                 state = interceptor._state_provider()
                 decision = interceptor._guard.verify(intent=intent, state=state)
             except Exception as exc:
                 _log.exception("pramanix.grpc.guard_error: %s", exc)
-                context.abort(
-                    _grpc.StatusCode.INTERNAL,
-                    f"Pramanix guard error: {exc}",
-                )
-                return None
+                context.abort(_grpc.StatusCode.INTERNAL, "Pramanix guard error")
+                return False
 
             if not decision.allowed:
                 violated = ", ".join(decision.violated_invariants or [])
@@ -130,10 +127,52 @@ class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
                     f"Pramanix guard blocked RPC. Violated: [{violated}]. "
                     f"Reason: {decision.explanation or 'policy violation'}",
                 )
+                return False
+            return True
+
+        # ── unary_unary ───────────────────────────────────────────────────────
+        def _guarded_unary_unary(request: Any, context: Any) -> Any:
+            if not _check_guard(request, context):
                 return None
+            return handler.unary_unary(request, context)
 
-            return original_unary(request, context)
+        # ── unary_stream ──────────────────────────────────────────────────────
+        def _guarded_unary_stream(request: Any, context: Any) -> Any:
+            if not _check_guard(request, context):
+                return
+            yield from handler.unary_stream(request, context)
 
-        # Return a new handler descriptor with only unary_unary patched.
-        # For stream handlers, callers should subclass and override.
-        return handler._replace(unary_unary=_guarded_unary)
+        # ── stream_unary ──────────────────────────────────────────────────────
+        def _guarded_stream_unary(request_iterator: Any, context: Any) -> Any:
+            # Peek at the first message for intent extraction; feed the rest
+            # through a reconstructed iterator so the handler sees all messages.
+            import itertools
+
+            try:
+                first = next(request_iterator)
+            except StopIteration:
+                return None
+            combined = itertools.chain([first], request_iterator)
+            if not _check_guard(first, context):
+                return None
+            return handler.stream_unary(combined, context)
+
+        # ── stream_stream ─────────────────────────────────────────────────────
+        def _guarded_stream_stream(request_iterator: Any, context: Any) -> Any:
+            import itertools
+
+            try:
+                first = next(request_iterator)
+            except StopIteration:
+                return
+            combined = itertools.chain([first], request_iterator)
+            if not _check_guard(first, context):
+                return
+            yield from handler.stream_stream(combined, context)
+
+        return handler._replace(
+            unary_unary=_guarded_unary_unary,
+            unary_stream=_guarded_unary_stream,
+            stream_unary=_guarded_stream_unary,
+            stream_stream=_guarded_stream_stream,
+        )

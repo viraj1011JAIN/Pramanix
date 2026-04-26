@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -262,7 +263,26 @@ class MerkleArchiver:
                 )
             )
         self._base_path.mkdir(parents=True, exist_ok=True)
-        archive_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        # H-06: atomic write — write to temp file, fsync, then os.replace().
+        # A crash mid-write produces an orphaned .tmp file, never a corrupt
+        # archive.  os.replace() is atomic on POSIX; on Windows it is atomic
+        # if src and dst are on the same filesystem (they always are here).
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=self._base_path, prefix=".merkle.tmp.", suffix=".partial"
+        )
+        try:
+            content = "\n".join(lines) + "\n"
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        os.replace(tmp_path, archive_path)
 
         # Replace archived entries with a checkpoint leaf in the active chain.
         archived_ids = {leaf.decision_id for leaf in to_archive}
@@ -284,13 +304,16 @@ class MerkleArchiver:
 
 
 def _build_root(leaf_hashes: list[str]) -> str:
-    """Compute Merkle root of a list of pre-computed leaf hashes."""
+    """Compute Merkle root using \x01-prefixed internal nodes (H-07 safe)."""
     level = leaf_hashes[:]
     while len(level) > 1:
         if len(level) % 2 == 1:
-            level.append(level[-1])
+            padded = hashlib.sha256(b"\x01" + level[-1].encode()).hexdigest()
+            level.append(padded)
         level = [
-            hashlib.sha256((level[i] + level[i + 1]).encode()).hexdigest()
+            hashlib.sha256(
+                b"\x01" + (level[i] + level[i + 1]).encode()
+            ).hexdigest()
             for i in range(0, len(level), 2)
         ]
     return level[0]

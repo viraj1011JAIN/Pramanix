@@ -25,9 +25,17 @@ if TYPE_CHECKING:
 
 __all__ = ["LlamaCppTranslator"]
 
+import threading
+
 _TEMPERATURE = 0.0
 _DEFAULT_MAX_TOKENS = 512
 _DEFAULT_N_CTX = 4096
+
+# L-13: module-level model cache keyed by (model_path, n_ctx, n_gpu_layers).
+# Multiple Guard instances sharing the same GGUF model path reuse one loaded
+# copy instead of each allocating 4+ GB of RAM independently.
+_MODEL_CACHE: dict[tuple[str, int, int], Any] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
 
 
 class LlamaCppTranslator:
@@ -37,11 +45,16 @@ class LlamaCppTranslator:
     with CUDA/Metal support).  All inference is synchronous under the hood;
     this class wraps it in an asyncio executor to avoid blocking the event loop.
 
+    The GGUF model is loaded lazily on the first :meth:`extract` call, not at
+    ``__init__`` time, so that Guard construction does not block the main thread
+    during a 4+ GB file load.  Multiple instances sharing the same *model_path*,
+    *n_ctx*, and *n_gpu_layers* share one loaded model object (module-level cache).
+
     Args:
-        model_path:  Absolute path to a ``.gguf`` model file.
-        n_ctx:       Context window in tokens.  Default: 4096.
+        model_path:   Absolute path to a ``.gguf`` model file.
+        n_ctx:        Context window in tokens.  Default: 4096.
         n_gpu_layers: Number of layers to offload to GPU.  0 = CPU only.
-        max_tokens:  Maximum tokens to generate in one call.  Default: 512.
+        max_tokens:   Maximum tokens to generate in one call.  Default: 512.
 
     Raises:
         ConfigurationError: If ``llama-cpp-python`` is not installed.
@@ -56,7 +69,7 @@ class LlamaCppTranslator:
         max_tokens: int = _DEFAULT_MAX_TOKENS,
     ) -> None:
         try:
-            from llama_cpp import Llama
+            import llama_cpp as _llama_cpp_check  # noqa: F401
         except ImportError as exc:
             raise ConfigurationError(
                 "llama-cpp-python is required for LlamaCppTranslator. "
@@ -68,12 +81,21 @@ class LlamaCppTranslator:
         self._n_ctx = n_ctx
         self._n_gpu_layers = n_gpu_layers
         self._max_tokens = max_tokens
-        self._llm: Any = Llama(
-            model_path=model_path,
-            n_ctx=n_ctx,
-            n_gpu_layers=n_gpu_layers,
-            verbose=False,
-        )
+        self._llm: Any = None  # lazy — loaded on first extract() call
+
+    def _get_llm(self) -> Any:
+        """Return the loaded Llama model, loading it on first call (thread-safe)."""
+        cache_key = (self._model_path, self._n_ctx, self._n_gpu_layers)
+        with _MODEL_CACHE_LOCK:
+            if cache_key not in _MODEL_CACHE:
+                from llama_cpp import Llama
+                _MODEL_CACHE[cache_key] = Llama(
+                    model_path=self._model_path,
+                    n_ctx=self._n_ctx,
+                    n_gpu_layers=self._n_gpu_layers,
+                    verbose=False,
+                )
+            return _MODEL_CACHE[cache_key]
 
     async def extract(
         self,
@@ -107,16 +129,12 @@ class LlamaCppTranslator:
 
         # llama-cpp-python's create_chat_completion is synchronous — run in executor
         # to avoid blocking the asyncio event loop on CPU-bound inference.
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             raw = await loop.run_in_executor(
                 None,
                 lambda: self._inference(system_prompt, user_content),
             )
-        except TimeoutError as exc:
-            raise LLMTimeoutError(
-                f"LlamaCppTranslator: inference timed out for model {self._model_path!r}."
-            ) from exc
         except Exception as exc:
             raise ExtractionFailureError(
                 f"LlamaCppTranslator: inference failed: {exc!r}"
@@ -134,7 +152,7 @@ class LlamaCppTranslator:
 
     def _inference(self, system_prompt: str, user_content: str) -> str:
         """Run synchronous inference.  Returns raw response text."""
-        response = self._llm.create_chat_completion(
+        response = self._get_llm().create_chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},

@@ -108,7 +108,7 @@ def create_admission_webhook(
                         "allowed": False,
                         "status": {
                             "code": 500,
-                            "message": f"Pramanix webhook error: {exc}",
+                            "message": "Pramanix guard error — request denied as a precaution",
                         },
                     },
                 },

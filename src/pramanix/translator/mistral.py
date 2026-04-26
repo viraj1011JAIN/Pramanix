@@ -49,16 +49,21 @@ class MistralTranslator:
         timeout: float = 30.0,
     ) -> None:
         try:
-            import mistralai  # noqa: F401
-        except ImportError as exc:
-            raise ConfigurationError(
-                "mistralai is required for MistralTranslator. "
-                "Install it with: pip install 'pramanix[mistral]'"
-            ) from exc
+            from mistralai.client import Mistral as _Mistral  # v2+
+        except ImportError:
+            try:
+                from mistralai import Mistral as _Mistral  # type: ignore[no-redef]  # v1
+            except ImportError as exc:
+                raise ConfigurationError(
+                    "mistralai is required for MistralTranslator. "
+                    "Install it with: pip install 'pramanix[mistral]'"
+                ) from exc
 
         self.model = model
         self._api_key = api_key or os.environ.get("MISTRAL_API_KEY") or None
         self._timeout = timeout
+        # M-14: create the client once; reuse across all calls and retries.
+        self._client: Any = _Mistral(api_key=self._api_key or "")
 
     async def extract(
         self,
@@ -82,17 +87,6 @@ class MistralTranslator:
             ConfigurationError:     ``mistralai`` not installed.
         """
         try:
-            from mistralai.client import Mistral  # v2+
-        except ImportError:
-            try:
-                from mistralai import Mistral  # type: ignore[no-redef,assignment]  # v1 fallback
-            except ImportError as exc:
-                raise ConfigurationError(
-                    "mistralai is required for MistralTranslator. "
-                    "Install it with: pip install 'pramanix[mistral]'"
-                ) from exc
-
-        try:
             from tenacity import (
                 AsyncRetrying,
                 retry_if_exception_type,
@@ -105,6 +99,13 @@ class MistralTranslator:
                 "Install it with: pip install 'pramanix[mistral]'"
             ) from exc
 
+        # M-13: only retry genuine Mistral transport errors, not programmer errors.
+        try:
+            from mistralai.models import SDKError as _MistralError
+            _retryable: tuple[type[Exception], ...] = (_MistralError, TimeoutError, OSError)
+        except ImportError:
+            _retryable = (TimeoutError, OSError)
+
         system_prompt = build_system_prompt(intent_schema)
         user_content = text
         if context is not None:
@@ -112,33 +113,25 @@ class MistralTranslator:
             if extra:
                 user_content = f"{text}\n\nContext: {extra}"
 
-        last_exc: Exception | None = None
-
+        attempts = 0
         try:
             async for attempt in AsyncRetrying(
-                retry=retry_if_exception_type(Exception),
+                retry=retry_if_exception_type(_retryable),
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
-                reraise=False,
+                reraise=True,
             ):
                 with attempt:
+                    attempts += 1
                     raw = await self._single_call(
-                        model=self.model,
-                        api_key=self._api_key,
                         system_prompt=system_prompt,
                         user_content=user_content,
-                        timeout=self._timeout,
-                        mistral_cls=Mistral,
                     )
-        except Exception as exc:
-            last_exc = exc
-            raw = None
-
-        if raw is None:
+        except _retryable as exc:
             raise LLMTimeoutError(
-                f"MistralTranslator: all retry attempts exhausted for model {self.model!r}. "
-                f"Last error: {last_exc}"
-            )
+                f"MistralTranslator: all retry attempts exhausted for model {self.model!r} "
+                f"after {attempts} attempt(s): {exc}",
+            ) from exc
 
         try:
             return parse_llm_response(raw, model_name=self.model)
@@ -153,26 +146,21 @@ class MistralTranslator:
     async def _single_call(
         self,
         *,
-        model: str,
-        api_key: str | None,
         system_prompt: str,
         user_content: str,
-        timeout: float,
-        mistral_cls: Any,
     ) -> str:
-        """Execute one Mistral API call.  Returns the raw response text."""
+        """Execute one Mistral API call using the shared client instance."""
         import asyncio
 
-        client = mistral_cls(api_key=api_key or "")
         response = await asyncio.wait_for(
-            client.chat.complete_async(
-                model=model,
+            self._client.chat.complete_async(
+                model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
                 temperature=_TEMPERATURE,
             ),
-            timeout=timeout,
+            timeout=self._timeout,
         )
         return response.choices[0].message.content or ""

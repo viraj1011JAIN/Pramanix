@@ -241,8 +241,22 @@ class Policy:
                                 own = ancestor_inv.__func__(_cls)
                             else:
                                 own = ancestor_inv(_cls)
-                        except NotImplementedError:
-                            own = []
+                        except NotImplementedError as exc:
+                            import logging as _logging
+                            _logging.getLogger(__name__).warning(
+                                "policy '%s': ancestor '%s' raised NotImplementedError "
+                                "from invariants() — this policy will have zero inherited "
+                                "invariants, which may silently disable the guard. "
+                                "Fix the parent class. Error: %s",
+                                _cls.__name__,
+                                ancestor.__name__,
+                                exc,
+                            )
+                            raise PolicyCompilationError(
+                                f"Policy '{_cls.__name__}': ancestor '{ancestor.__name__}' "
+                                f"raised NotImplementedError from invariants(). "
+                                "Define invariants() properly in every policy ancestor."
+                            ) from exc
                         break
 
             # Step 2: evaluate each mixin with this class's field dict.

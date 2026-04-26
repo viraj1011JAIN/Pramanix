@@ -42,7 +42,7 @@ structlog = "^23.2"
 prometheus-client = "^0.19"
 httpx = {version = "^0.27", optional = true}
 openai = {version = "^1.10", optional = true}
-anthropic = {version = "^0.25", optional = true}
+anthropic = {version = "^0.97", optional = true}
 tenacity = {version = "^8.2", optional = true}
 opentelemetry-sdk = {version = "^1.20", optional = true}
 opentelemetry-exporter-otlp-proto-grpc = {version = "^1.20", optional = true}
@@ -62,6 +62,16 @@ hvac = {version = ">=2.0", optional = true}
 confluent-kafka = {version = ">=2.3", optional = true}
 datadog-api-client = {version = ">=2.20", optional = true}
 fpdf2 = {version = ">=2.7", optional = true}
+cohere = {version = ">=5.0", optional = true}
+mistralai = {version = ">=1.0", optional = true}
+google-generativeai = {version = ">=0.7", optional = true}
+llama-cpp-python = {version = ">=0.2", optional = true}
+asyncpg = {version = ">=0.29", optional = true}
+dspy-ai = {version = ">=2.4", optional = true}
+crewai = {version = ">=0.55", optional = true}
+pydantic-ai = {version = ">=0.0.9", optional = true}
+semantic-kernel = {version = ">=1.0", optional = true}
+haystack-ai = {version = ">=2.0", optional = true}
 
 [tool.poetry.extras]
 translator = ["httpx", "openai", "anthropic", "tenacity"]
@@ -84,7 +94,17 @@ s3 = ["boto3"]
 datadog = ["datadog-api-client"]
 splunk = ["httpx"]
 pdf = ["fpdf2"]
-all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2"]
+cohere = ["cohere"]
+mistral = ["mistralai"]
+gemini = ["google-generativeai"]
+llamacpp = ["llama-cpp-python"]
+postgres = ["asyncpg"]
+dspy = ["dspy-ai"]
+crewai = ["crewai"]
+pydantic-ai = ["pydantic-ai"]
+semantic-kernel = ["semantic-kernel"]
+haystack = ["haystack-ai"]
+all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2", "cohere", "mistralai", "google-generativeai", "llama-cpp-python", "asyncpg", "dspy-ai", "crewai", "pydantic-ai", "semantic-kernel", "haystack-ai"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -94,7 +114,7 @@ hypothesis = "^6.100"
 mypy = "^1.11"
 ruff = ">=0.6"
 httpx = "^0.27"
-anthropic = "^0.25"
+anthropic = "^0.97"
 tenacity = "^8.2"
 openai = "^1.10"
 fakeredis = {version = ">=2.21", extras = ["lua"]}
@@ -214,25 +234,31 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "N",    # pep8-naming
-    "UP",   # pyupgrade
-    "B",    # flake8-bugbear
-    "SIM",  # flake8-simplify
-    "T20",  # flake8-print (no print statements in library code)
-    "TCH",  # flake8-type-checking
-    "RUF",  # ruff-specific rules
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "T20",   # flake8-print (no print statements in library code)
+    "TCH",   # flake8-type-checking
+    "RUF",   # ruff-specific rules
+    "S",     # flake8-bandit (security)
+    "ASYNC", # flake8-async (async anti-patterns)
 ]
 ignore = [
     "E501",    # line length — handled by formatter
+    "S101",    # assert used — acceptable in tests and warmup
+    "S110",    # try-except-pass — used deliberately in fail-safe paths
+    "S603",    # subprocess without shell — intentional in drain/kill paths
+    "S607",    # partial path subprocess — intentional in drain/kill paths
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -299,7 +325,6 @@ markers = [
 source = ["src/pramanix"]
 branch = true
 omit = [
-    "src/pramanix/translator/openai_compat.py",
     # Optional-extra integration modules — require packages not installed in the
     # base dev environment (langchain, fastapi, autogen, llama-index, pyautogen).
     # Covered by integration tests when extras are installed; excluded from the
@@ -308,13 +333,13 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 95
+fail_under = 98
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.",
     "@overload",
-    "raise NotImplementedError",
+    "pragma: abstract",
     "\\.\\.\\.",
 ]

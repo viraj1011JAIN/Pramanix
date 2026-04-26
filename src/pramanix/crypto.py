@@ -47,6 +47,31 @@ log = logging.getLogger(__name__)
 _ENV_KEY_PEM = "PRAMANIX_SIGNING_KEY_PEM"
 
 
+def _increment_signing_failure_counter() -> None:
+    """Increment pramanix_signing_failure_total Prometheus counter (M-49).
+
+    Silent no-op when prometheus_client is not installed.
+    """
+    try:
+        from prometheus_client import Counter
+
+        try:
+            _c = Counter(
+                "pramanix_signing_failure_total",
+                "Total decision signing failures",
+            )
+        except ValueError:
+            from prometheus_client import REGISTRY
+            _c = REGISTRY._names_to_collectors.get(  # type: ignore[union-attr]
+                "pramanix_signing_failure_total"
+            )
+            if _c is None:
+                return
+        _c.inc()
+    except Exception:
+        pass
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -239,9 +264,10 @@ class PramanixSigner:
                 decision.decision_hash.encode("utf-8")
             )
             return _b64url(sig_bytes)
-        except Exception as e:  # pragma: no cover
-            log.error("Decision signing failed: %s", e)  # pragma: no cover
-            return ""  # pragma: no cover
+        except Exception as e:
+            log.error("Decision signing failed: %s", e, exc_info=True)
+            _increment_signing_failure_counter()
+            return ""
 
     def public_key_pem(self) -> bytes:
         """Return public key in PEM format. Safe to log and publish."""

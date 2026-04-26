@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 from pramanix.exceptions import ConfigurationError
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from pramanix.guard import Guard
 
 __all__ = ["PramanixSemanticKernelPlugin"]
+
+_log = logging.getLogger(__name__)
 
 
 class PramanixSemanticKernelPlugin:
@@ -86,12 +89,14 @@ class PramanixSemanticKernelPlugin:
             intent = json.loads(intent_json)
             state = json.loads(state_json)
         except json.JSONDecodeError as exc:
-            return json.dumps({"error": f"Invalid JSON: {exc}", "allowed": False})
+            _log.error("pramanix.sk.json_parse_error: %s", exc, exc_info=True)
+            return json.dumps({"error": "Invalid JSON input.", "allowed": False})
 
         try:
             decision = self._guard.verify(intent=intent, state=state)
         except Exception as exc:
-            return json.dumps({"error": str(exc), "allowed": False})
+            _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
+            return json.dumps({"error": "Guard error — action blocked", "allowed": False})
 
         return json.dumps({
             "allowed": decision.allowed,
@@ -113,12 +118,14 @@ class PramanixSemanticKernelPlugin:
             intent = json.loads(intent_json)
             state = json.loads(state_json)
         except json.JSONDecodeError as exc:
-            return json.dumps({"error": f"Invalid JSON: {exc}", "allowed": False})
+            _log.error("pramanix.sk.json_parse_error: %s", exc, exc_info=True)
+            return json.dumps({"error": "Invalid JSON input.", "allowed": False})
 
         try:
             decision = await self._guard.verify_async(intent=intent, state=state)
         except Exception as exc:
-            return json.dumps({"error": str(exc), "allowed": False})
+            _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
+            return json.dumps({"error": "Guard error — action blocked", "allowed": False})
 
         return json.dumps({
             "allowed": decision.allowed,

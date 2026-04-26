@@ -60,6 +60,11 @@ _log = logging.getLogger(__name__)
 # Grace period before force-killing stalled processes during recycle.
 _RECYCLE_GRACE_S: float = 10.0
 
+# Sentinel latency used when a worker dispatch fails and no real latency is
+# available.  Set high so the adaptive shedder's P99 window reflects the
+# failure as if it were an extremely slow solve.
+_FAILED_DISPATCH_PENALTY_MS: float = 9999.0
+
 
 # ── Phase 10.4: Adaptive Concurrency Limiter ──────────────────────────────────
 
@@ -231,15 +236,37 @@ def _ppid_watchdog() -> None:
     if use_getppid:
         initial_ppid = os.getppid()
     else:  # pragma: no cover
-        # Windows: remember the parent PID by reading /proc or using ctypes
+        # Windows fallback: pass the parent PID in explicitly via os.getpid()
+        # called in the *parent* process before spawn, or use ctypes to call
+        # the Windows NtQueryInformationProcess API for the parent PID.
+        # os.getppid() is available on Python 3.8+ on Windows, so the else
+        # branch is only reached on exotic runtimes.
         initial_ppid = None  # pragma: no cover
         try:  # pragma: no cover
             import ctypes  # pragma: no cover
+            import ctypes.wintypes  # pragma: no cover
 
-            kernel32 = ctypes.windll.kernel32  # pragma: no cover
-            initial_ppid = int(  # pragma: no cover
-                ctypes.c_ulong(kernel32.GetCurrentProcessId()).value
+            class _PROCESS_BASIC_INFORMATION(ctypes.Structure):  # pragma: no cover
+                _fields_ = [  # pragma: no cover
+                    ("ExitStatus", ctypes.c_ulong),
+                    ("PebBaseAddress", ctypes.c_void_p),
+                    ("AffinityMask", ctypes.c_ulong),
+                    ("BasePriority", ctypes.c_ulong),
+                    ("UniqueProcessId", ctypes.c_ulong),
+                    ("InheritedFromUniqueProcessId", ctypes.c_ulong),
+                ]
+
+            ntdll = ctypes.windll.ntdll  # pragma: no cover
+            pbi = _PROCESS_BASIC_INFORMATION()  # pragma: no cover
+            ret = ntdll.NtQueryInformationProcess(  # pragma: no cover
+                ctypes.windll.kernel32.GetCurrentProcess(),
+                0,  # ProcessBasicInformation
+                ctypes.byref(pbi),
+                ctypes.sizeof(pbi),
+                None,
             )
+            if ret == 0:  # pragma: no cover
+                initial_ppid = int(pbi.InheritedFromUniqueProcessId)
         except Exception:  # pragma: no cover
             return  # cannot determine PPID on this platform — skip watchdog
 
@@ -349,8 +376,21 @@ def _warmup_worker() -> None:
         assert res == z3.unsat
         del s
 
-    except Exception:  # pragma: no cover
-        pass  # warmup failures must never prevent the worker from starting
+    except Exception as _warmup_exc:
+        _log.error(
+            "Z3 warmup failed — worker will start cold (JIT spike possible): %s",
+            _warmup_exc,
+            exc_info=True,
+        )
+        try:
+            from prometheus_client import Counter as _PCounter
+            _wc = _PCounter(
+                "pramanix_worker_warmup_failures_total",
+                "Number of Z3 worker warmup failures",
+            )
+            _wc.inc()
+        except Exception:
+            pass
     finally:
         del ctx
 
@@ -552,7 +592,6 @@ class WorkerPool:
     # Internals — not in constructor parameters.
     _executor: Executor = field(init=False, repr=False)
     _counter: int = field(init=False, default=0, repr=False)
-    _lock: threading.Lock = field(init=False, default_factory=threading.Lock, repr=False)
     _alive: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -601,6 +640,17 @@ class WorkerPool:
             self._executor.shutdown(wait=wait)
         except Exception as exc:
             _log.error("WorkerPool.shutdown error: %s", exc)
+
+    def __del__(self) -> None:
+        if getattr(self, "_alive", False):
+            _log.warning(
+                "WorkerPool GC'd without explicit shutdown() — calling shutdown(wait=False). "
+                "Call WorkerPool.shutdown() explicitly to avoid this warning."
+            )
+            try:
+                self.shutdown(wait=False)
+            except Exception:
+                pass
 
     # ── Public solve interface ─────────────────────────────────────────────────
 
@@ -666,14 +716,14 @@ class WorkerPool:
                 result_dict = future.result()
                 decision = self._dict_to_decision(result_dict)
         except WorkerError:
-            self._shed_limiter.release(9999.0)
+            self._shed_limiter.release(_FAILED_DISPATCH_PENALTY_MS)
             raise
         except Exception as exc:
             _log.error("WorkerPool.submit_solve error: %s", exc)
             decision = Decision.error(
                 reason=(f"Worker dispatch failed ({type(exc).__name__}): {exc}")
             )
-            self._shed_limiter.release(9999.0)
+            self._shed_limiter.release(_FAILED_DISPATCH_PENALTY_MS)
         else:
             self._shed_limiter.release((_time_module.monotonic() - _t0_shed) * 1000)
 
@@ -716,7 +766,7 @@ class WorkerPool:
         """
         _log.info(
             "WorkerPool.recycle: counter=%d >= max_decisions_per_worker=%d — recycling.",
-            self.max_decisions_per_worker,
+            self._counter,
             self.max_decisions_per_worker,
         )
         with self._lock:
@@ -744,7 +794,13 @@ class WorkerPool:
 
     @staticmethod
     def _dict_to_decision(d: dict[str, Any]) -> Decision:
-        """Reconstruct a :class:`Decision` from its ``to_dict()`` representation."""
+        """Reconstruct a :class:`Decision` from its ``to_dict()`` representation.
+
+        Preserves ALL fields returned by the worker process, including the five
+        audit-trail fields that were previously silently discarded:
+        ``intent_dump``, ``state_dump``, ``decision_hash``, ``signature``,
+        and ``policy_hash``.
+        """
         from pramanix.decision import SolverStatus
 
         return Decision(
@@ -754,6 +810,11 @@ class WorkerPool:
             explanation=d.get("explanation", ""),
             solver_time_ms=d.get("solver_time_ms", 0.0),
             metadata=d.get("metadata", {}),
+            intent_dump=d.get("intent_dump", {}),
+            state_dump=d.get("state_dump", {}),
+            decision_hash=d.get("decision_hash", ""),
+            signature=d.get("signature"),
+            policy_hash=d.get("policy_hash"),
         )
 
     # ── Accessor ──────────────────────────────────────────────────────────────

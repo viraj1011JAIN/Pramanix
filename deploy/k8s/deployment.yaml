@@ -31,7 +31,7 @@ metadata:
   namespace: pramanix
   labels:
     app.kubernetes.io/name: pramanix
-    app.kubernetes.io/version: "0.8.0"
+    app.kubernetes.io/version: "{{ .Values.image.tag }}"
     app.kubernetes.io/component: guardrail-engine
     app.kubernetes.io/managed-by: kubectl
   annotations:
@@ -61,7 +61,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: pramanix
-        app.kubernetes.io/version: "0.8.0"
+        app.kubernetes.io/version: "{{ .Values.image.tag }}"
       annotations:
         # Force pod restart on ConfigMap change when using Kustomize/Helm rollout
         checksum/config: "placeholder-replaced-by-helm-or-kustomize"
@@ -100,21 +100,40 @@ spec:
       # This prevents the readiness probe from succeeding before the pool is warm.
       initContainers:
         - name: warmup
-          image: pramanix:0.8.0
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: IfNotPresent
           command:
             - python
             - -c
             - |
-              from pramanix import Guard, Policy, Field, E, Decision
-              from pramanix.guard import GuardConfig
-              g = Guard(
-                  policy=Policy(name='warmup', invariants=lambda f: [E(f.x) >= 0]),
-                  config=GuardConfig(execution_mode='sync', worker_warmup=True),
+              from decimal import Decimal
+              from pydantic import BaseModel
+              from pramanix import Guard, Policy, Field, E
+              from pramanix.guard_config import GuardConfig
+
+              class _WarmupIntent(BaseModel):
+                  x: Decimal
+
+              class _WarmupState(BaseModel):
+                  state_version: str
+
+              class _WarmupPolicy(Policy):
+                  class Meta:
+                      version = "1.0"
+                      intent_model = _WarmupIntent
+                      state_model = _WarmupState
+                  x = Field("x", Decimal, "Real")
+                  @classmethod
+                  def invariants(cls):
+                      return [(E(cls.x) >= 0).named("non_negative")]
+
+              g = Guard(_WarmupPolicy, GuardConfig(execution_mode="sync", worker_warmup=True))
+              d = g.verify(
+                  intent={"x": Decimal("1")},
+                  state={"state_version": "1.0"},
               )
-              d = g.verify({'x': 1})
-              assert d.outcome in ('ALLOW', 'BLOCK'), f'Unexpected: {d}'
-              print('warmup OK')
+              assert d.allowed, f"Warmup BLOCK unexpected: {d}"
+              print("warmup OK")
           resources:
             requests:
               cpu: 100m
@@ -130,7 +149,7 @@ spec:
 
       containers:
         - name: pramanix
-          image: pramanix:0.8.0
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: IfNotPresent
 
           # ── Container-level security context ────────────────────────────────

@@ -35,8 +35,12 @@ Usage::
 from __future__ import annotations
 
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+_DEFAULT_KEY_CACHE_TTL: float = 300.0
 
 __all__ = [
     "AwsKmsKeyProvider",
@@ -75,11 +79,17 @@ class KeyProvider(Protocol):
         """
         ...
 
+    @property
+    def supports_rotation(self) -> bool:
+        """Return ``True`` if this provider supports :meth:`rotate_key`."""
+        ...
+
     def rotate_key(self) -> None:
         """Rotate to a new key.
 
         Raises:
             NotImplementedError: If the provider does not support rotation.
+                                 Check :attr:`supports_rotation` first.
         """
         ...
 
@@ -119,6 +129,10 @@ class PemKeyProvider:
 
     def key_version(self) -> str:
         return self._version
+
+    @property
+    def supports_rotation(self) -> bool:
+        return False
 
     def rotate_key(self) -> None:
         raise NotImplementedError(
@@ -163,6 +177,10 @@ class EnvKeyProvider:
 
     def key_version(self) -> str:
         return self._version
+
+    @property
+    def supports_rotation(self) -> bool:
+        return False
 
     def rotate_key(self) -> None:
         raise NotImplementedError(
@@ -210,6 +228,10 @@ class FileKeyProvider:
             return f"file-mtime-{mtime:.0f}"
         except OSError:
             return "file-unknown"
+
+    @property
+    def supports_rotation(self) -> bool:
+        return False
 
     def rotate_key(self) -> None:
         raise NotImplementedError(
@@ -267,30 +289,53 @@ class AwsKmsKeyProvider:
         self._client = _client or boto3.client(
             "secretsmanager", region_name=region_name
         )
+        # H-12: cache fetched key PEM and version to avoid redundant API calls.
+        self._cache_lock = threading.Lock()
+        self._cached_pem: bytes | None = None
+        self._cached_version: str | None = None
+        self._cache_expires: float = 0.0
 
-    def private_key_pem(self) -> bytes:
+    def _cache_valid(self) -> bool:
+        return time.monotonic() < self._cache_expires
+
+    def _refresh_cache(self) -> None:
         resp = self._client.get_secret_value(
             SecretId=self._secret_arn,
             VersionStage=self._version_stage,
         )
         value: str | bytes = resp.get("SecretString") or resp.get("SecretBinary", b"")
-        return value.encode() if isinstance(value, str) else value
+        self._cached_pem = value.encode() if isinstance(value, str) else value
+        if self._explicit_version:
+            self._cached_version = self._explicit_version
+        else:
+            version_id: str = resp.get("VersionId", "aws-unknown")
+            self._cached_version = version_id
+        self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
+
+    def private_key_pem(self) -> bytes:
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
-        if self._explicit_version:
-            return self._explicit_version
-        resp = self._client.describe_secret(SecretId=self._secret_arn)
-        for vid, stages in resp.get("VersionIdsToStages", {}).items():
-            if self._version_stage in stages:
-                return str(vid)
-        return "aws-unknown"
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_version or "aws-unknown"
+
+    @property
+    def supports_rotation(self) -> bool:
+        return True
 
     def rotate_key(self) -> None:
         """Trigger automatic rotation of the Secrets Manager secret."""
         self._client.rotate_secret(SecretId=self._secret_arn)
+        with self._cache_lock:
+            self._cache_expires = 0.0  # invalidate cache after rotation
 
 
 class AzureKeyVaultKeyProvider:
@@ -337,22 +382,42 @@ class AzureKeyVaultKeyProvider:
             vault_url=vault_url,
             credential=credential or DefaultAzureCredential(),
         )
+        # H-12: cache fetched key PEM and version to avoid redundant API calls.
+        self._cache_lock = threading.Lock()
+        self._cached_pem: bytes | None = None
+        self._cached_version: str | None = None
+        self._cache_expires: float = 0.0
 
-    def private_key_pem(self) -> bytes:
+    def _cache_valid(self) -> bool:
+        return time.monotonic() < self._cache_expires
+
+    def _refresh_cache(self) -> None:
         secret = self._client.get_secret(
             self._secret_name, version=self._secret_version
         )
         value: str | bytes = secret.value or ""
-        return value.encode() if isinstance(value, str) else value
+        self._cached_pem = value.encode() if isinstance(value, str) else value
+        self._cached_version = str(secret.properties.version or "azure-unknown")
+        self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
+
+    def private_key_pem(self) -> bytes:
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
-        secret = self._client.get_secret(
-            self._secret_name, version=self._secret_version
-        )
-        return str(secret.properties.version or "azure-unknown")
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_version or "azure-unknown"
+
+    @property
+    def supports_rotation(self) -> bool:
+        return False
 
     def rotate_key(self) -> None:
         raise NotImplementedError(
@@ -399,6 +464,10 @@ class GcpKmsKeyProvider:
         self._secret_id = secret_id
         self._version_id = version_id
         self._client = _client or secretmanager.SecretManagerServiceClient()
+        # H-12: cache fetched key PEM to avoid redundant API calls.
+        self._cache_lock = threading.Lock()
+        self._cached_pem: bytes | None = None
+        self._cache_expires: float = 0.0
 
     def _version_name(self) -> str:
         return (
@@ -406,16 +475,30 @@ class GcpKmsKeyProvider:
             f"/versions/{self._version_id}"
         )
 
-    def private_key_pem(self) -> bytes:
+    def _cache_valid(self) -> bool:
+        return time.monotonic() < self._cache_expires
+
+    def _refresh_cache(self) -> None:
         response = self._client.access_secret_version(name=self._version_name())
         payload: bytes | str = response.payload.data
-        return payload if isinstance(payload, bytes) else payload.encode()
+        self._cached_pem = payload if isinstance(payload, bytes) else payload.encode()
+        self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
+
+    def private_key_pem(self) -> bytes:
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
         return self._version_id
+
+    @property
+    def supports_rotation(self) -> bool:
+        return False
 
     def rotate_key(self) -> None:
         raise NotImplementedError(
@@ -469,24 +552,43 @@ class HashiCorpVaultKeyProvider:
         self._field = field
         self._mount_point = mount_point
         self._client = _client or hvac.Client(url=url, token=token)
+        # H-12: cache fetched key PEM and version to avoid redundant API calls.
+        self._cache_lock = threading.Lock()
+        self._cached_pem: bytes | None = None
+        self._cached_version: str | None = None
+        self._cache_expires: float = 0.0
 
-    def private_key_pem(self) -> bytes:
+    def _cache_valid(self) -> bool:
+        return time.monotonic() < self._cache_expires
+
+    def _refresh_cache(self) -> None:
         resp = self._client.secrets.kv.v2.read_secret_version(
             path=self._secret_path,
             mount_point=self._mount_point,
         )
         value: str | bytes = resp["data"]["data"][self._field]
-        return value.encode() if isinstance(value, str) else value
+        self._cached_pem = value.encode() if isinstance(value, str) else value
+        self._cached_version = str(resp["data"]["metadata"]["version"])
+        self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
+
+    def private_key_pem(self) -> bytes:
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
-        resp = self._client.secrets.kv.v2.read_secret_version(
-            path=self._secret_path,
-            mount_point=self._mount_point,
-        )
-        return str(resp["data"]["metadata"]["version"])
+        with self._cache_lock:
+            if not self._cache_valid():
+                self._refresh_cache()
+            return self._cached_version or "vault-unknown"
+
+    @property
+    def supports_rotation(self) -> bool:
+        return False
 
     def rotate_key(self) -> None:
         raise NotImplementedError(

@@ -29,9 +29,12 @@ import asyncio
 import functools
 import inspect
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
+
+_log = logging.getLogger(__name__)
 
 from pramanix.audit.signer import DecisionSigner
 from pramanix.exceptions import GuardViolationError, PolicyCompilationError
@@ -155,21 +158,23 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
 
         # ── 4. Intent validation ──────────────────────────────────────────────
         try:
-            intent_obj = self._intent_model.model_validate(raw, strict=False)
+            intent_obj = self._intent_model.model_validate(raw, strict=True)
             intent_dict: dict[str, Any] = intent_obj.model_dump()
         except Exception as exc:
+            _log.warning("pramanix.fastapi.intent_validation_error: %s", exc, exc_info=True)
             return JSONResponse(
                 status_code=422,
-                content={"detail": f"Intent validation failed: {exc}"},
+                content={"detail": "Intent validation failed."},
             )
 
         # ── 5. State loading ──────────────────────────────────────────────────
         try:
             state = await self._state_loader(request)
         except Exception as exc:
+            _log.error("pramanix.fastapi.state_loader_error: %s", exc, exc_info=True)
             return JSONResponse(
                 status_code=500,
-                content={"detail": f"State loader error: {exc}"},
+                content={"detail": "State loader error — request denied."},
             )
 
         # ── 6. Verify ─────────────────────────────────────────────────────────

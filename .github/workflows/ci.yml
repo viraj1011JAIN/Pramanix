@@ -59,7 +59,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Upgrade pip first — pip 25.3 has CVE-2026-1703 (fixed in 26.0).
+      # Always use the latest pip for security patches.
       # This must run before pip-audit so the scanner sees a clean pip.
       - name: Upgrade pip
         run: pip install --upgrade pip
@@ -88,7 +88,7 @@ jobs:
         # add --ignore-vuln VULN-ID to the command below and document the
         # rationale in a comment.  Example (do not uncomment without a real CVE):
         #   --ignore-vuln GHSA-0000-0000-0000  # Accepted: only affects feature X we don't use
-        run: pip-audit --skip-editable --format=json --output pip-audit-report.json
+        run: pip-audit --format=json --output pip-audit-report.json
 
       - name: Upload pip-audit report
         if: always()

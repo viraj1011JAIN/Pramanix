@@ -35,6 +35,7 @@ from decimal import Decimal
 from typing import Any
 
 from pramanix.exceptions import InputTooLongError
+from pramanix.translator._injection_patterns import INJECTION_PATTERNS
 
 __all__ = [
     "injection_confidence_score",
@@ -42,36 +43,10 @@ __all__ = [
 ]
 
 # ── Injection pattern registry ────────────────────────────────────────────────
-#
-# Covers known jailbreak / steering patterns for GPT-*, Claude, Llama-2/3,
-# Mistral, and generic adversarial prompt-injection payloads.
-#
+# Built from the canonical INJECTION_PATTERNS list (L-11) so _sanitise.py and
+# injection_filter.py share exactly the same pattern definitions without drift.
 _INJECTION_RE = re.compile(
-    # Classic overrides
-    r"ignore\s+(previous|above|all)\s+(instructions?|prompts?|rules?|context)"
-    r"|ignore\s+all"
-    r"|jailbreak"
-    r"|developer\s+mode"
-    # Instruction tokens used by open-source model families
-    r"|\[INST\]"  # Llama 2
-    r"|\<\<SYS\>\>"  # Llama 2 system block
-    r"|<\|im_start\|>"  # ChatML (Mistral/OpenChat)
-    r"|<\|eot_id\|>"  # Llama 3
-    r"|<\|begin_of_text\|>"  # Llama 3 BOS
-    # Fake system-message injection
-    r"|system\s*:\s*(?=[A-Za-z])"  # "SYSTEM: do X"
-    r"|\{\s*[\"']role[\"']\s*:\s*[\"']system[\"']"  # embedded JSON role
-    # Persona / override phrases
-    r"|override\s+safety"
-    r"|pretend\s+you\s+are"
-    r"|you\s+are\s+now"
-    r"|act\s+as\s+an?\s+(admin|root|superuser|god|oracle|unrestricted)"
-    r"|unlock.{0,20}mode"
-    # Markdown-fenced / structured instruction injection
-    r"|\\n\\n\s*###\s*(instruction|system|prompt)"
-    # RL/RLHF gaming
-    r"|reward\s+hack"
-    r"|prompt\s+injection",
+    "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS),
     re.IGNORECASE,
 )
 
@@ -205,9 +180,12 @@ def injection_confidence_score(
     except Exception:
         score += 0.4  # unparseable amount is itself a suspicious anomaly
 
-    # Non-alphanumeric recipient IDs may be path-traversal / code-injection
+    # Non-word recipient IDs may be path-traversal / code-injection.
+    # M-29: use \w with re.UNICODE so Unicode names (André, 김민준) are not
+    # incorrectly flagged.  Only ASCII control characters and shell metacharacters
+    # are genuinely suspicious in an ID field.
     rid = str(extracted_intent.get("recipient_id", ""))
-    if rid and re.search(r"[^a-zA-Z0-9_\-]", rid):
+    if rid and re.search(r"[^\w\-@.]", rid, flags=re.UNICODE):
         score += 0.3
 
     # High-entropy token — possible base64, hex or encoded payload embedded

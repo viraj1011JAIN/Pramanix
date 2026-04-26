@@ -207,6 +207,15 @@ class CalibratedScorer:
     def save(self, path: Path) -> None:
         """Serialise the fitted scorer to *path* using pickle.
 
+        .. warning::
+            The saved file uses Python's ``pickle`` format.  **Never load a
+            ``.pkl`` file from an untrusted or attacker-controlled source** —
+            doing so is equivalent to remote code execution.  Sign the artifact
+            (e.g. with :func:`hmac.new`) before distributing it and verify the
+            signature in :meth:`load` before calling ``pickle.load``.  Consider
+            migrating to a safe serialisation format (JSON + feature weights)
+            for deployments that transfer scorer files across trust boundaries.
+
         Args:
             path: Destination file path (e.g. ``Path("./scorer.pkl")``).
 
@@ -225,6 +234,13 @@ class CalibratedScorer:
     @classmethod
     def load(cls, path: Path) -> CalibratedScorer:
         """Restore a saved scorer from *path*.
+
+        .. warning::
+            **Only load ``.pkl`` files from trusted sources you control.**
+            Python's ``pickle`` format allows arbitrary code execution on load.
+            Before loading a scorer received from an external source, verify its
+            integrity with an HMAC signature or a content hash checked against a
+            known-good value.
 
         Args:
             path: Path to a previously saved ``.pkl`` file.

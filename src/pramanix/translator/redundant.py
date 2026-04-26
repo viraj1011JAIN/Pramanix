@@ -54,30 +54,6 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 
-def _raw_strings_agree(text_a: str, text_b: str) -> bool:
-    """Return True if two raw LLM response strings represent equivalent JSON.
-
-    Resolution order:
-    1. If both parse as JSON dicts → compare via normalised dict equality
-       (key ordering irrelevant, whitespace irrelevant).
-    2. If either fails to parse → fall back to ``strip()`` string equality.
-
-    This is the D-1 consensus robustness fix: prevents false-positive blocks
-    caused by LLMs that produce identical semantics but different whitespace,
-    key ordering, or float formatting (e.g. ``1.0`` vs ``1``).
-    """
-    try:
-        dict_a = json.loads(text_a)
-        dict_b = json.loads(text_b)
-        if isinstance(dict_a, dict) and isinstance(dict_b, dict):
-            # Canonical JSON comparison — sort_keys ensures order-independence.
-            return json.dumps(dict_a, sort_keys=True) == json.dumps(dict_b, sort_keys=True)
-    except (json.JSONDecodeError, ValueError):
-        pass
-    # Graceful fallback: whitespace-normalised string equality.
-    return text_a.strip() == text_b.strip()
-
-
 class ConsensusStrictness(enum.StrEnum):
     """Controls how individual field *values* are compared during consensus.
 
@@ -290,18 +266,24 @@ async def extract_with_consensus(
     from pramanix.translator.injection_filter import InjectionFilter
 
     # ── Resolve injection scorer (built-in or custom) ─────────────────────────
+    # H-16: custom scorers are loaded via importlib entry-points, not exec_module.
+    # exec_module allows arbitrary code execution if an attacker controls the path.
+    # Callers who need a custom scorer should register it as an entry-point:
+    #   [project.entry-points."pramanix.injection_scorers"]
+    #   my_scorer = "my_package.scorers:injection_scorer"
+    # and pass the entry-point name as injection_scorer_path.
     _scorer_fn = injection_confidence_score
     if injection_scorer_path is not None:
-        import importlib.util as _ilu
+        import importlib.metadata as _meta
 
-        _spec = _ilu.spec_from_file_location("_custom_injection_scorer", injection_scorer_path)
-        if _spec is None or _spec.loader is None:
+        _eps = _meta.entry_points(group="pramanix.injection_scorers")
+        _ep = next((e for e in _eps if e.name == injection_scorer_path), None)
+        if _ep is None:
             raise ValueError(
-                f"Cannot load custom injection scorer from {injection_scorer_path!r}"
+                f"No registered injection scorer named {injection_scorer_path!r}. "
+                "Register it via the 'pramanix.injection_scorers' entry-point group."
             )
-        _mod = _ilu.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        _scorer_fn = _mod.injection_scorer
+        _scorer_fn = _ep.load()
 
     # ── Step 0: System 1 fast-path injection filter ───────────────────────────
     # Runs before any LLM call.  Sub-millisecond regex scan; kills obviously
@@ -364,10 +346,7 @@ async def extract_with_consensus(
         ) from result_b_raw
 
     # ── Step 4: Schema validation ─────────────────────────────────────────────
-    try:
-        from pydantic import ValidationError as PydanticValidationError
-    except ImportError as exc:  # pragma: no cover
-        raise ImportError("pydantic is required") from exc
+    from pydantic import ValidationError as PydanticValidationError
 
     try:
         instance_a = intent_schema.model_validate(result_a_raw)
@@ -545,7 +524,11 @@ def _enforce_consensus(
                 mismatches=critical_mismatches,
             )
 
-    # Unknown modes are a programmer error caught at type-checking time via Literal.
+    else:
+        raise ValueError(
+            f"Unknown agreement_mode {agreement_mode!r}. "
+            "Valid values: 'strict_keys', 'lenient', 'unanimous'."
+        )
 
 
 def create_translator(

@@ -176,20 +176,23 @@ class AdaptiveCircuitBreaker:
         HALF_OPEN: one probe, success → CLOSED, failure → OPEN
         ISOLATED:  always BLOCK, requires manual reset()
         """
+        # M-05: acquire the lock for the full state-check + routing decision so
+        # two coroutines cannot simultaneously read CLOSED and both proceed into
+        # the guard when one of them should have triggered the transition to OPEN.
         async with self._lock:
             current_state = self._state
 
-        if current_state == CircuitState.ISOLATED:
-            return self._make_isolated_decision()
+            if current_state == CircuitState.ISOLATED:
+                return self._make_isolated_decision()
 
-        if current_state == CircuitState.OPEN:
-            elapsed = time.monotonic() - self._last_transition
-            if elapsed >= self._config.recovery_seconds:
-                async with self._lock:
-                    if self._state == CircuitState.OPEN:
-                        self._transition(CircuitState.HALF_OPEN)
-            else:
-                return self._make_open_decision()
+            if current_state == CircuitState.OPEN:
+                elapsed = time.monotonic() - self._last_transition
+                if elapsed >= self._config.recovery_seconds:
+                    self._transition(CircuitState.HALF_OPEN)
+                else:
+                    return self._make_open_decision()
+            # Lock released before the blocking verify_async call so other
+            # coroutines can check/update state concurrently during the solve.
 
         t0 = time.monotonic()
         decision = await self._guard.verify_async(intent=intent, state=state)
@@ -452,6 +455,11 @@ class DistributedCircuitBreaker:
         self._local_failure_count = 0
         self._last_transition = time.monotonic()
         self._lock = asyncio.Lock()
+        # M-04: Prometheus metrics — same set as AdaptiveCircuitBreaker.
+        self._metrics_available = False
+        self._state_gauge: Any = None
+        self._pressure_counter: Any = None
+        self._register_metrics()
 
     @property
     def state(self) -> CircuitState:
@@ -463,7 +471,17 @@ class DistributedCircuitBreaker:
         try:
             synced = CircuitState(agg.circuit_state)
         except ValueError:
-            synced = CircuitState.CLOSED
+            # H-04: unknown/corrupted state → fail-safe OPEN, never CLOSED.
+            # Mapping an unknown value to CLOSED would allow traffic through
+            # a potentially broken circuit.  Operators must restore Redis
+            # connectivity to resume normal operation.
+            log.warning(
+                "DistributedCircuitBreaker: unknown circuit state %r for "
+                "namespace=%r — failing SAFE (OPEN). Restore backend to resume.",
+                agg.circuit_state,
+                self._config.namespace,
+            )
+            synced = CircuitState.OPEN
         self._local_state = synced
         self._local_failure_count = agg.failure_count
         return synced
@@ -554,6 +572,55 @@ class DistributedCircuitBreaker:
             )
         )
 
+    def _register_metrics(self) -> None:
+        """Register Prometheus metrics (same set as AdaptiveCircuitBreaker)."""
+        try:
+            from prometheus_client import Counter, Gauge
+
+            self._state_gauge = Gauge(
+                "pramanix_distributed_circuit_state",
+                "Distributed circuit breaker state (1=active for this state)",
+                ["namespace", "state"],
+            )
+            self._pressure_counter = Counter(
+                "pramanix_distributed_circuit_pressure_events_total",
+                "Distributed Z3 pressure events (solve_ms > threshold)",
+                ["namespace"],
+            )
+            self._metrics_available = True
+            self._update_prometheus()
+        except ImportError:  # pragma: no cover
+            self._metrics_available = False
+        except ValueError:
+            try:
+                from prometheus_client import REGISTRY
+
+                self._state_gauge = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
+                    "pramanix_distributed_circuit_state"
+                )
+                self._pressure_counter = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
+                    "pramanix_distributed_circuit_pressure_events_total"
+                )
+                self._metrics_available = (
+                    self._state_gauge is not None and self._pressure_counter is not None
+                )
+                if self._metrics_available:
+                    self._update_prometheus()
+            except Exception:
+                self._metrics_available = False
+
+    def _update_prometheus(self) -> None:
+        if not self._metrics_available:
+            return  # pragma: no cover
+        try:
+            for s in CircuitState:
+                self._state_gauge.labels(
+                    namespace=self._config.namespace,
+                    state=s.value,
+                ).set(1 if self._local_state == s else 0)
+        except Exception:
+            pass
+
 
 # ── C-5: Redis distributed backend ───────────────────────────────────────────
 
@@ -624,6 +691,22 @@ class RedisDistributedBackend:
 
             self._client = aioredis.from_url(self._redis_url, decode_responses=True)
         return self._client
+
+    async def close(self) -> None:
+        """Close the underlying Redis connection."""
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
+            self._client = None
+
+    def __del__(self) -> None:
+        if self._client is not None:
+            log.warning(
+                "RedisDistributedBackend GC'd with an open Redis connection — "
+                "call close() explicitly to release the connection cleanly."
+            )
 
     def _key(self, namespace: str) -> str:
         return f"{self._prefix}{namespace}"
@@ -713,21 +796,34 @@ class RedisDistributedBackend:
                 exc,
             )
 
+    async def clear_async(self, namespace: str | None = None) -> None:
+        """Async-native clear — preferred in async contexts (tests, FastAPI)."""
+        await self._async_clear(namespace)
+
     def clear(self, namespace: str | None = None) -> None:
         """Synchronously clear Redis state.
 
-        This is a best-effort fire-and-forget operation used in tests.
-        For production teardown, prefer an async variant.
+        Safe to call from both sync and async contexts.  In async contexts,
+        prefer :meth:`clear_async` to avoid potential event-loop conflicts.
         """
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
+            # If there is already a running loop (e.g. inside pytest-asyncio,
+            # FastAPI, or any async framework), run_until_complete would raise
+            # RuntimeError.  Use asyncio.run() which always creates a fresh loop.
+            asyncio.get_running_loop()
+            # We ARE inside a running loop — schedule as a fire-and-forget task.
+            # The caller in async code should use await clear_async() instead.
+            log.warning(
+                "RedisDistributedBackend.clear() called from within a running "
+                "event loop.  Use 'await clear_async()' in async code to avoid "
+                "scheduling issues.  Scheduling as background task."
+            )
+            asyncio.ensure_future(self._async_clear(namespace))
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        loop.run_until_complete(self._async_clear(namespace))
+            # No running loop — safe to use asyncio.run().
+            asyncio.run(self._async_clear(namespace))
 
     async def _async_clear(self, namespace: str | None) -> None:
         try:
@@ -741,3 +837,120 @@ class RedisDistributedBackend:
                 await client.delete(self._key(namespace))
         except Exception:
             pass
+
+
+# ── TranslatorCircuitBreaker ──────────────────────────────────────────────────
+
+
+class TranslatorCircuitBreaker:
+    """Lightweight circuit breaker for individual LLM translator calls.
+
+    Unlike :class:`AdaptiveCircuitBreaker` which wraps a full Guard for Z3
+    pressure management, this class wraps a single translator's ``extract()``
+    call and trips open on consecutive ``ExtractionFailureError`` /
+    ``LLMTimeoutError`` failures.
+
+    State machine:
+        CLOSED → OPEN (after *failure_threshold* consecutive failures)
+        OPEN   → HALF_OPEN (after *recovery_seconds*)
+        HALF_OPEN → CLOSED (probe succeeds) or OPEN (probe fails)
+
+    Args:
+        model:             Translator model name — used for logging and metrics.
+        failure_threshold: Consecutive failures before tripping open.
+        recovery_seconds:  Seconds before allowing a probe from OPEN state.
+
+    Thread / async safety: all state is guarded by an :class:`asyncio.Lock`.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        failure_threshold: int = 5,
+        recovery_seconds: float = 30.0,
+    ) -> None:
+        self.model = model
+        self._failure_threshold = failure_threshold
+        self._recovery_seconds = recovery_seconds
+        self._state = CircuitState.CLOSED
+        self._consecutive_failures = 0
+        self._opened_at: float | None = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def state(self) -> CircuitState:
+        return self._state
+
+    async def call(
+        self,
+        coro_factory: Any,
+    ) -> Any:
+        """Execute *coro_factory()* (a coroutine) through circuit breaker logic.
+
+        Args:
+            coro_factory: Zero-argument callable that returns a coroutine —
+                          typically ``lambda: translator.extract(...)``.
+
+        Returns:
+            The coroutine's result on success.
+
+        Raises:
+            ExtractionFailureError: If the circuit is OPEN (model is degraded).
+            Any exception raised by the coroutine.
+        """
+        from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
+
+        async with self._lock:
+            if self._state == CircuitState.OPEN:
+                elapsed = time.monotonic() - (self._opened_at or 0.0)
+                if elapsed < self._recovery_seconds:
+                    raise ExtractionFailureError(
+                        f"Translator circuit breaker OPEN for model {self.model!r}. "
+                        f"Retry in {self._recovery_seconds - elapsed:.1f}s."
+                    )
+                # Probe window — transition to HALF_OPEN
+                self._state = CircuitState.HALF_OPEN
+                log.info(
+                    "pramanix.translator_cb.half_open: model=%r probing after %.1fs",
+                    self.model,
+                    elapsed,
+                )
+
+        try:
+            result = await coro_factory()
+        except (ExtractionFailureError, LLMTimeoutError) as exc:
+            async with self._lock:
+                self._consecutive_failures += 1
+                if self._state == CircuitState.HALF_OPEN or (
+                    self._consecutive_failures >= self._failure_threshold
+                ):
+                    self._state = CircuitState.OPEN
+                    self._opened_at = time.monotonic()
+                    log.warning(
+                        "pramanix.translator_cb.opened: model=%r failures=%d",
+                        self.model,
+                        self._consecutive_failures,
+                    )
+            raise
+        except Exception:
+            raise
+        else:
+            async with self._lock:
+                if self._consecutive_failures > 0 or self._state != CircuitState.CLOSED:
+                    log.info(
+                        "pramanix.translator_cb.recovered: model=%r state=%s→closed",
+                        self.model,
+                        self._state,
+                    )
+                self._consecutive_failures = 0
+                self._opened_at = None
+                self._state = CircuitState.CLOSED
+            return result
+
+    def reset(self) -> None:
+        """Manually reset the circuit to CLOSED (operator use)."""
+        self._state = CircuitState.CLOSED
+        self._consecutive_failures = 0
+        self._opened_at = None
+        log.info("pramanix.translator_cb.reset: model=%r", self.model)

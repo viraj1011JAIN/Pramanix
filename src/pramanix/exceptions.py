@@ -42,9 +42,11 @@ __all__ = [
     "InputTooLongError",
     "InvariantLabelError",
     "LLMTimeoutError",
+    "MigrationError",
     "PolicyCompilationError",
     "PolicyError",
     "PramanixError",
+    "ResolverConflictError",
     # Hardening exceptions (Phase 4)
     "SemanticPolicyViolation",
     "SolverError",
@@ -346,3 +348,39 @@ class InjectionBlockedError(GuardError):
     Always causes ``Guard.parse_and_verify()`` to return ``Decision.error()``
     (fail-safe: injection block → BLOCK).
     """
+
+
+class ResolverConflictError(PramanixError):
+    """A resolver name collision was detected during registration.
+
+    Raised by :meth:`~pramanix.resolvers.ResolverRegistry.register` when a
+    name is already registered and ``force=False`` (the default).  Pass
+    ``force=True`` to overwrite the existing resolver with a warning.
+    """
+
+
+class MigrationError(PramanixError):
+    """A :class:`~pramanix.migration.PolicyMigration` could not be applied.
+
+    Raised by :meth:`~pramanix.migration.PolicyMigration.migrate` when
+    ``strict=True`` and a key declared in ``field_renames`` is absent from
+    the state dict being migrated.
+
+    Attributes:
+        missing_key:    The ``field_renames`` key that was not found.
+        from_version:   Version string of the migration source.
+        to_version:     Version string of the migration target.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        missing_key: str = "",
+        from_version: str = "",
+        to_version: str = "",
+    ) -> None:
+        self.missing_key = missing_key
+        self.from_version = from_version
+        self.to_version = to_version
+        super().__init__(message)

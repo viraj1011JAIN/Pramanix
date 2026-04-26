@@ -17,41 +17,24 @@ __all__: list[str] = []
 
 
 def _extract_first_json(s: str) -> str | None:
-    """Return the first balanced JSON object ``{…}`` or array ``[…]`` in *s*.
+    """Return the first valid JSON object ``{…}`` or array ``[…}`` in *s*.
 
-    Correctly handles nesting and quoted strings (including escaped quotes).
+    Uses :meth:`json.JSONDecoder.raw_decode` to locate and parse the first
+    JSON value starting from the earliest ``{`` or ``[`` in the string.
+    This is faster and more correct than a manual character walk.
 
     Returns ``None`` if no complete JSON object or array is found.
     """
-    openers = {"{": "}", "[": "]"}
-    in_string = False
-    escape_next = False
-    depth = 0
-    start: int | None = None
-
+    decoder = json.JSONDecoder()
     for i, ch in enumerate(s):
-        if escape_next:
-            escape_next = False
+        if ch not in ("{", "["):
             continue
-        if ch == "\\" and in_string:
-            escape_next = True
+        try:
+            value, end = decoder.raw_decode(s, i)
+            if isinstance(value, (dict, list)):
+                return s[i:end]
+        except json.JSONDecodeError:
             continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-
-        if ch in openers:
-            if start is None:
-                start = i
-            depth += 1
-        elif ch in ("}", "]"):
-            if depth > 0:
-                depth -= 1
-                if depth == 0 and start is not None:
-                    return s[start : i + 1]
-
     return None
 
 

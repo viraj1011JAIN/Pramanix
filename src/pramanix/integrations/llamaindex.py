@@ -23,6 +23,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -34,40 +35,38 @@ from pramanix.integrations._feedback import format_block_feedback
 __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 
 # ── Optional LlamaIndex dependency ────────────────────────────────────────────
-
-
-# Internal placeholder types used only when llama_index is not installed.
-# They are intentionally NOT part of the public API and exist solely so
-# this module can be imported without llama_index present.  Any attempt to
-# *instantiate* PramanixFunctionTool or PramanixQueryEngineTool without
-# llama_index installed will raise ConfigurationError at __init__ time.
-@dataclass
-class ToolMetadata:  # pragma: no cover
-    """Internal placeholder — the real class is imported from llama_index when available."""
-
-    name: str = ""
-    description: str = ""
-
-
-@dataclass
-class ToolOutput:  # pragma: no cover
-    """Internal placeholder — the real class is imported from llama_index when available."""
-
-    content: str = ""
-    tool_name: str = ""
-    raw_input: dict[str, Any] = field(default_factory=dict)
-    raw_output: dict[str, Any] = field(default_factory=dict)
-    is_error: bool = False
-
+# M-24: Do NOT export stub types when llama_index is absent — callers who
+# type-check against ToolMetadata/ToolOutput would silently get the fake.
+# Raise ImportError on import so the dependency requirement is clear.
 
 try:  # pragma: no cover
     from llama_index.core.tools import FunctionTool as _LlamaFunctionTool  # noqa: F401
     from llama_index.core.tools import QueryEngineTool as _LlamaQueryEngineTool  # noqa: F401
-    from llama_index.core.tools.types import ToolMetadata, ToolOutput  # type: ignore[assignment]
+    from llama_index.core.tools.types import ToolMetadata, ToolOutput
 
     _LLAMA_AVAILABLE = True
-except ImportError:
+except ImportError as _llama_import_exc:
     _LLAMA_AVAILABLE = False
+
+    # Provide internal-only placeholder types so the rest of this module can
+    # reference ToolMetadata/ToolOutput without llama_index installed.
+    # These are NOT exported and will raise at instantiation time.
+    @dataclass  # type: ignore[no-redef]
+    class ToolMetadata:  # type: ignore[no-redef]
+        """Internal placeholder — raise at instantiation if llama_index absent."""
+
+        name: str = ""
+        description: str = ""
+
+    @dataclass  # type: ignore[no-redef]
+    class ToolOutput:  # type: ignore[no-redef]
+        """Internal placeholder — raise at instantiation if llama_index absent."""
+
+        content: str = ""
+        tool_name: str = ""
+        raw_input: dict[str, Any] = field(default_factory=dict)
+        raw_output: dict[str, Any] = field(default_factory=dict)
+        is_error: bool = False
 
 
 # ── PramanixFunctionTool ──────────────────────────────────────────────────────
@@ -123,6 +122,10 @@ class PramanixFunctionTool:
         self._state_provider = state_provider
         self._name = name
         self._description = description
+        # H-13: one shared executor — created once, never per-call.
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="pramanix-llamaindex"
+        )
 
     # ── metadata property ────────────────────────────────────────────────────
 
@@ -162,7 +165,7 @@ class PramanixFunctionTool:
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
             intent: dict[str, Any] = self._intent_schema.model_validate(
-                raw, strict=False
+                raw, strict=True
             ).model_dump()
         except Exception as exc:
             return ToolOutput(
@@ -228,12 +231,19 @@ class PramanixFunctionTool:
             # No running loop — safe to use asyncio.run().
             return asyncio.run(self.acall(input, **kwargs))
 
-        # Already inside an async context — run in a fresh thread.
-        import concurrent.futures
+        # Already inside an async context — reuse the shared executor.
+        future = self._executor.submit(asyncio.run, self.acall(input, **kwargs))
+        return future.result()
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, self.acall(input, **kwargs))
-            return future.result()
+    def close(self) -> None:
+        """Shut down the shared thread pool executor."""
+        self._executor.shutdown(wait=False)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     # ── State retrieval ───────────────────────────────────────────────────────
 
@@ -383,7 +393,7 @@ class PramanixQueryEngineTool:
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
             intent: dict[str, Any] = self._intent_schema.model_validate(
-                raw, strict=False
+                raw, strict=True
             ).model_dump()
         except Exception as exc:
             return ToolOutput(

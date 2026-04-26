@@ -274,6 +274,13 @@ class Decision:
         if not self.decision_hash:
             object.__setattr__(self, "decision_hash", self._compute_hash())
 
+    # ── Python hash (for use in sets/dicts) ──────────────────────────────────
+
+    def __hash__(self) -> int:
+        # M-47: auto-generated __hash__ includes unhashable dict fields.
+        # Hash only the stable, hashable identity fields.
+        return hash((self.decision_id, self.decision_hash, self.status, self.allowed))
+
     # ── Hash computation ──────────────────────────────────────────────────────
 
     def _compute_hash(self) -> str:
@@ -283,9 +290,8 @@ class Decision:
         that the CLI audit verifier shares the exact same canonical-dict
         construction logic — single source of truth, no drift risk.
         """
-        policy = str(
-            self.metadata.get("policy", "") if self.metadata else ""
-        )
+        # M-50: use self.policy_hash directly — not metadata.get("policy").
+        policy = str(self.policy_hash or "")
         status = str(
             self.status.value
             if hasattr(self.status, "value")
@@ -557,6 +563,45 @@ class Decision:
             status=SolverStatus.CONSENSUS_FAILURE,
             explanation=reason,
             metadata=dict(metadata) if metadata is not None else {},
+        )
+
+    # ── Factory: CACHE_HIT ───────────────────────────────────────────────────
+
+    @classmethod
+    def cache_hit(
+        cls,
+        *,
+        base: Decision,
+    ) -> Decision:
+        """Return a copy of *base* decorated with the ``CACHE_HIT`` observability tag.
+
+        M-30: ``SolverStatus.CACHE_HIT`` is an *observability decorator* — it
+        signals that the input was served from cache before Z3 ran.  The
+        underlying ``allowed`` and ``status`` values are preserved from *base*;
+        CACHE_HIT is recorded in ``metadata["_solver_status_tag"]`` so dashboards
+        can distinguish cache-path from cold-path decisions without changing
+        policy-outcome semantics.
+
+        Args:
+            base: The original :class:`Decision` produced by Z3.
+        """
+        return cls(
+            allowed=base.allowed,
+            status=base.status,
+            violated_invariants=base.violated_invariants,
+            explanation=base.explanation,
+            metadata={
+                **base.metadata,
+                "_solver_status_tag": SolverStatus.CACHE_HIT.value,
+            },
+            solver_time_ms=base.solver_time_ms,
+            decision_id=base.decision_id,
+            intent_dump=dict(base.intent_dump),
+            state_dump=dict(base.state_dump),
+            decision_hash=base.decision_hash,
+            signature=base.signature,
+            public_key_id=base.public_key_id,
+            policy_hash=base.policy_hash,
         )
 
     # ── Deserialisation ────────────────────────────────────────────────────────

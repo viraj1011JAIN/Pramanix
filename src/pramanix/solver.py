@@ -293,7 +293,7 @@ def _fast_check(
         s.add(transpile(inv.node, ctx, promotions))
     with _span("pramanix.z3_solve"):
         result = s.check()
-    del s  # prompt Z3 memory release
+    s.reset()  # explicit Z3 native memory release (more reliable than del + GC)
     if result == z3.unknown:
         raise SolverTimeoutError("<all-invariants>", timeout_ms)
     return result
@@ -342,7 +342,7 @@ def _attribute_violations(
         s.assert_and_track(transpile(inv.node, ctx, promotions), z3.Bool(label, ctx))
         with _span("pramanix.z3_solve"):
             result = s.check()
-        del s  # prompt Z3 memory release
+        s.reset()  # explicit Z3 native memory release (more reliable than del + GC)
         if result == z3.unknown:
             raise SolverTimeoutError(label, timeout_ms)  # pragma: no cover
         if result == z3.unsat:

@@ -11,6 +11,37 @@ from __future__ import annotations
 import glob as _glob
 
 
+def is_musl() -> bool:
+    """Return ``True`` if the current process is running on musl libc.
+
+    Uses two complementary heuristics so both detection paths are consistent
+    (L-18):
+
+    1. ``/lib/ld-musl-*.so.1`` dynamic linker glob (fast, filesystem-based).
+    2. ``ctypes.CDLL("libc.so.6")`` load failure — musl does not ship
+       ``libc.so.6``; failing to load it confirms musl.
+
+    Returns ``False`` on non-Linux systems or when either check is
+    inconclusive.
+    """
+    import sys
+
+    if sys.platform != "linux":
+        return False
+
+    if _glob.glob("/lib/ld-musl-*.so.1"):
+        return True
+
+    try:
+        import ctypes
+
+        ctypes.CDLL("libc.so.6")
+    except OSError:
+        return True
+
+    return False
+
+
 def _check_musl() -> None:
     """Raise ConfigurationError if running on musl libc (Alpine Linux)."""
     musl_loaders = _glob.glob("/lib/ld-musl-*.so.1")

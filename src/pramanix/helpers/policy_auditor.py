@@ -165,8 +165,16 @@ class PolicyAuditor:
         """
         try:
             invariants = policy_cls.invariants()
-        except Exception:
-            return set()
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).error(
+                "PolicyAuditor: invariants() raised on %s — "
+                "coverage report will be empty: %s",
+                policy_cls.__name__,
+                exc,
+                exc_info=True,
+            )
+            raise
         referenced: set[str] = set()
         for inv in invariants:
             if isinstance(inv, ConstraintExpr):

@@ -72,7 +72,9 @@ class ResolverRegistry:
 
     # ── Registration ─────────────────────────────────────────────────────────
 
-    def register(self, name: str, resolver: Callable[..., Any]) -> None:
+    def register(
+        self, name: str, resolver: Callable[..., Any], *, force: bool = False
+    ) -> None:
         """Register a named resolver callable.
 
         Args:
@@ -80,16 +82,28 @@ class ResolverRegistry:
             resolver: Any callable that accepts positional/keyword arguments
                       and returns the field value.  Called at most once per
                       ``verify()`` invocation (results are memoised).
+            force:    If ``True``, silently overwrite an existing resolver with
+                      a warning.  If ``False`` (default), raise
+                      :exc:`ResolverConflictError` when *name* is already
+                      registered.
 
         Raises:
-            TypeError: If *resolver* is not callable.
+            TypeError:            If *resolver* is not callable.
+            ResolverConflictError: If *name* is already registered and
+                                   ``force=False``.
         """
         if not callable(resolver):
             raise TypeError(f"resolver for '{name}' must be callable, got {type(resolver)!r}")
         if name in self._resolvers:
+            if not force:
+                from pramanix.exceptions import ResolverConflictError
+
+                raise ResolverConflictError(
+                    f"ResolverRegistry: '{name}' is already registered. "
+                    "Pass force=True to overwrite it intentionally."
+                )
             _log.warning(
-                "ResolverRegistry: overwriting existing resolver for %r. "
-                "This may indicate a misconfigured startup sequence or duplicate import.",
+                "ResolverRegistry: overwriting existing resolver for %r (force=True).",
                 name,
             )
         self._resolvers[name] = resolver

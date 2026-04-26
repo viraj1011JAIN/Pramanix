@@ -45,9 +45,22 @@ class AnthropicTranslator:
         api_key: str | None = None,
         timeout: float = 30.0,
     ) -> None:
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise ImportError(
+                "anthropic package is required for AnthropicTranslator. "
+                "Install it with: pip install 'pramanix[translator]'"
+            ) from exc
+
         self.model = model
-        self._api_key = api_key
         self._timeout = timeout
+        self._client = anthropic.AsyncAnthropic(
+            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY") or None,
+            timeout=timeout,
+        )
+        self._retryable = (anthropic.APITimeoutError, anthropic.APIConnectionError)
+        self._api_status_error = anthropic.APIStatusError
 
     async def extract(
         self,
@@ -71,14 +84,6 @@ class AnthropicTranslator:
             LLMTimeoutError:        All retry attempts exhausted.
         """
         try:
-            import anthropic
-        except ImportError as exc:
-            raise ImportError(
-                "anthropic package is required for AnthropicTranslator. "
-                "Install it with: pip install 'pramanix[translator]'"
-            ) from exc
-
-        try:
             from tenacity import (
                 AsyncRetrying,
                 retry_if_exception_type,
@@ -92,35 +97,24 @@ class AnthropicTranslator:
             ) from exc
 
         system_prompt = build_system_prompt(intent_schema)
-        client = anthropic.AsyncAnthropic(
-            api_key=self._api_key or os.environ.get("ANTHROPIC_API_KEY") or None,
-            timeout=self._timeout,
-        )
-
-        # Transient errors that warrant an automatic retry
-        retryable = (
-            anthropic.APITimeoutError,
-            anthropic.APIConnectionError,
-        )
         attempts = 0
 
         try:
             async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
-                retry=retry_if_exception_type(retryable),
+                retry=retry_if_exception_type(self._retryable),
                 reraise=True,
             ):
                 with attempt:
                     attempts += 1
                     raw = await self._single_call(
-                        client=client,
                         system_prompt=system_prompt,
                         text=text,
                     )
                     return parse_llm_response(raw, model_name=self.model)
 
-        except retryable as exc:
+        except self._retryable as exc:
             raise LLMTimeoutError(
                 f"Anthropic model '{self.model}' unreachable after "
                 f"{attempts} attempt(s): {exc}",
@@ -128,17 +122,26 @@ class AnthropicTranslator:
                 attempts=attempts,
             ) from exc
 
-        except anthropic.APIStatusError as exc:
+        except self._api_status_error as exc:
             raise ExtractionFailureError(
                 f"[{self.model}] Anthropic API error {exc.status_code}: {exc.message}"
             ) from exc
 
         raise AssertionError("unreachable")  # pragma: no cover
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client and release connection pool resources."""
+        await self._client.aclose()
+
+    async def __aenter__(self) -> AnthropicTranslator:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()
+
     async def _single_call(
         self,
         *,
-        client: Any,
         system_prompt: str,
         text: str,
     ) -> str:
@@ -148,18 +151,13 @@ class AnthropicTranslator:
         returned which ``parse_llm_response`` then extracts JSON from.
         """
         try:
-            import anthropic
-        except ImportError:  # pragma: no cover
-            raise
-
-        try:
-            response = await client.messages.create(
+            response = await self._client.messages.create(
                 model=self.model,
                 max_tokens=1024,
                 system=system_prompt,
                 messages=[{"role": "user", "content": text}],
             )
-        except anthropic.APIStatusError:
+        except self._api_status_error:
             raise  # let extract() handle
         except Exception:
             raise  # let tenacity handle retryable errors

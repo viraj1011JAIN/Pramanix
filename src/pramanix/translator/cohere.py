@@ -49,7 +49,7 @@ class CohereTranslator:
         timeout: float = 30.0,
     ) -> None:
         try:
-            import cohere  # noqa: F401
+            import cohere
         except ImportError as exc:
             raise ConfigurationError(
                 "cohere is required for CohereTranslator. "
@@ -59,6 +59,24 @@ class CohereTranslator:
         self.model = model
         self._api_key = api_key or os.environ.get("COHERE_API_KEY") or None
         self._timeout = timeout
+        self._client: Any = (
+            cohere.AsyncClientV2(api_key=self._api_key)
+            if hasattr(cohere, "AsyncClientV2")
+            else cohere.AsyncClient(api_key=self._api_key)
+        )
+        self._cohere = cohere
+        try:
+            self._retryable: tuple[type[Exception], ...] = (
+                cohere.errors.TooManyRequestsError,
+                cohere.errors.ServiceUnavailableError,
+                cohere.errors.GatewayTimeoutError,
+            )
+        except AttributeError:
+            try:
+                self._retryable = (cohere.core.api_error.ApiError,)
+            except AttributeError:
+                _base = getattr(cohere, "CohereError", None)
+                self._retryable = (_base,) if _base is not None else (OSError,)
 
     async def extract(
         self,
@@ -82,14 +100,6 @@ class CohereTranslator:
             ConfigurationError:     ``cohere`` not installed.
         """
         try:
-            import cohere
-        except ImportError as exc:  # pragma: no cover
-            raise ConfigurationError(
-                "cohere is required for CohereTranslator. "
-                "Install it with: pip install 'pramanix[cohere]'"
-            ) from exc
-
-        try:
             from tenacity import (
                 AsyncRetrying,
                 retry_if_exception_type,
@@ -102,17 +112,6 @@ class CohereTranslator:
                 "Install it with: pip install 'pramanix[cohere]'"
             ) from exc
 
-        # Cohere SDK v5 raises these on transient server errors.
-        try:
-            _retryable: tuple[type[Exception], ...] = (
-                cohere.errors.TooManyRequestsError,
-                cohere.errors.ServiceUnavailableError,
-                cohere.errors.GatewayTimeoutError,
-            )
-        except AttributeError:
-            # Older SDK or attribute layout changed — catch generic base.
-            _retryable = (Exception,)
-
         system_prompt = build_system_prompt(intent_schema)
         attempts = 0
 
@@ -120,40 +119,50 @@ class CohereTranslator:
             async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
-                retry=retry_if_exception_type(_retryable),
+                retry=retry_if_exception_type(self._retryable),
                 reraise=True,
             ):
                 with attempt:
                     attempts += 1
                     raw = await self._single_call(
-                        cohere=cohere,
                         system_prompt=system_prompt,
                         text=text,
                     )
                     return parse_llm_response(raw, model_name=self.model)
 
-        except _retryable as exc:
+        except self._retryable as exc:
             raise LLMTimeoutError(
-                f"Cohere model '{self.model}' unreachable after {attempts} attempt(s): {exc}",
+                f"Cohere model '{self.model}' unreachable after "
+                f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
 
         raise AssertionError("unreachable")  # pragma: no cover
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client and release connection pool resources."""
+        import inspect
+        _close = getattr(self._client, "aclose", None) or getattr(self._client, "close", None)
+        if _close is not None:
+            result = _close()
+            if inspect.isawaitable(result):
+                await result
+
+    async def __aenter__(self) -> CohereTranslator:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()
+
     async def _single_call(
         self,
         *,
-        cohere: Any,
         system_prompt: str,
         text: str,
     ) -> str:
         """Make a single Cohere chat call and return the raw text."""
         import asyncio
-
-        api_key = self._api_key
-        client = cohere.AsyncClientV2(api_key=api_key) if hasattr(cohere, "AsyncClientV2") \
-            else cohere.AsyncClient(api_key=api_key)
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -161,7 +170,7 @@ class CohereTranslator:
         ]
 
         try:
-            response = await client.chat(
+            response = await self._client.chat(
                 model=self.model,
                 messages=messages,
                 temperature=_TEMPERATURE,
@@ -169,10 +178,11 @@ class CohereTranslator:
             )
         except TypeError:
             # Older Cohere SDK does not accept response_format kwarg.
-            loop = asyncio.get_event_loop()
+            # M-10: use asyncio.get_running_loop() + run_in_executor, not get_event_loop().
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
-                lambda: cohere.Client(api_key=self._api_key).chat(
+                lambda: self._cohere.Client(api_key=self._api_key).chat(
                     model=self.model,
                     message=f"{system_prompt}\n\nUser input:\n{text}",
                     temperature=_TEMPERATURE,

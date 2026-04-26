@@ -79,16 +79,35 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         object.__setattr__(self, "_pramanix_schema", intent_schema)
         object.__setattr__(self, "_pramanix_state", state_provider)
         object.__setattr__(self, "_pramanix_execute", execute_fn or (lambda i: "OK"))
+        # H-13: one shared executor — created once, never per-call.
+        object.__setattr__(
+            self,
+            "_pramanix_executor",
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="pramanix-langchain"
+            ),
+        )
 
     def _run(self, tool_input: str, **kwargs: Any) -> str:
-        """Sync path — wraps async logic in a new event loop."""
+        """Sync path — wraps async logic in a dedicated thread pool."""
         try:
             asyncio.get_running_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(asyncio.run, self._arun(tool_input, **kwargs))
-                return future.result(timeout=30)
+            executor = object.__getattribute__(self, "_pramanix_executor")
+            future = executor.submit(asyncio.run, self._arun(tool_input, **kwargs))
+            return future.result(timeout=30)
         except RuntimeError:
             return asyncio.run(self._arun(tool_input, **kwargs))
+
+    def close(self) -> None:
+        """Shut down the shared thread pool executor."""
+        executor = object.__getattribute__(self, "_pramanix_executor")
+        executor.shutdown(wait=False)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     async def _arun(self, tool_input: str, **kwargs: Any) -> str:
         guard = object.__getattribute__(self, "_pramanix_guard")
@@ -102,7 +121,7 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
             raise ValueError(f"Pramanix: tool_input must be valid JSON: {e}") from e
 
         try:
-            intent = schema.model_validate(raw, strict=False).model_dump()
+            intent = schema.model_validate(raw, strict=True).model_dump()
         except Exception as e:
             raise ValueError(f"Pramanix: intent validation failed: {e}") from e
 

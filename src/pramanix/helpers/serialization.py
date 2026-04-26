@@ -153,14 +153,14 @@ def safe_dump(model: BaseModel) -> dict[str, Any]:
     # ── Guard: no nested Pydantic models ──────────────────────────────────────
     _assert_no_nested_models(result)
 
-    # ── Guard: picklability (debug builds only) ────────────────────────────────
-    if __debug__:
-        try:
-            pickle.dumps(result)
-        except Exception as exc:  # broad catch: pickle raises many error types
-            raise TypeError(
-                f"safe_dump: model_dump() result is not picklable. "
-                f"Exception type: {type(exc).__name__}: {exc}"
-            ) from exc
+    # ── Guard: picklability — always checked, not only in debug builds ─────────
+    # M-27: __debug__ is False in production (-O flag), so we always run this.
+    try:
+        pickle.dumps(result)
+    except Exception as exc:  # broad catch: pickle raises many error types
+        raise TypeError(
+            f"safe_dump: model_dump() result is not picklable. "
+            f"Exception type: {type(exc).__name__}: {exc}"
+        ) from exc
 
     return result
