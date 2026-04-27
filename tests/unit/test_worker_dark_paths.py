@@ -661,6 +661,54 @@ class TestWorkerPoolRecycle:
         pool.mode = "async-thread"
         pool.shutdown()
 
+    def test_recycle_concurrent_double_trigger_only_recycles_once(self) -> None:
+        """Two threads both call _recycle() concurrently; only one does the swap.
+
+        The guard `if self._counter < max_decisions_per_worker: return` inside
+        the lock must ensure the second thread finds a reset counter and bails
+        without swapping the executor a second time.
+        """
+        import threading
+
+        pool = WorkerPool(
+            mode="async-thread",
+            max_workers=1,
+            max_decisions_per_worker=5,
+            warmup=False,
+        )
+        pool.spawn()
+        pool._counter = 5  # Both threads will see threshold met
+
+        recycle_calls: list[int] = []
+        original_make_executor = pool._make_executor
+
+        def _counting_make_executor() -> object:
+            recycle_calls.append(1)
+            return original_make_executor()
+
+        pool._make_executor = _counting_make_executor  # type: ignore[method-assign]
+
+        barrier = threading.Barrier(2)
+
+        def _thread_recycle() -> None:
+            barrier.wait()  # Both threads start simultaneously
+            pool._recycle()
+
+        t1 = threading.Thread(target=_thread_recycle)
+        t2 = threading.Thread(target=_thread_recycle)
+        t1.start()
+        t2.start()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        # Exactly one recycle must have executed
+        assert len(recycle_calls) == 1, (
+            f"Expected 1 recycle, got {len(recycle_calls)} — "
+            "double-recycle race condition detected"
+        )
+        assert pool._counter == 0  # Counter was reset by the winner
+        pool.shutdown()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # WorkerPool.executor property

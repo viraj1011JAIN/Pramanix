@@ -102,9 +102,22 @@ class MistralTranslator:
         # M-13: only retry genuine Mistral transport errors, not programmer errors.
         try:
             from mistralai.models import SDKError as _MistralError
-            _retryable: tuple[type[Exception], ...] = (_MistralError, TimeoutError, OSError)
+            _retryable_base: tuple[type[Exception], ...] = (
+                _MistralError, TimeoutError, OSError
+            )
         except ImportError:
-            _retryable = (TimeoutError, OSError)
+            _retryable_base = (TimeoutError, OSError)
+
+        try:
+            import httpx as _httpx
+            _http_errors: tuple[type[Exception], ...] = (
+                _httpx.ConnectError,
+                _httpx.TimeoutException,
+                _httpx.ReadTimeout,
+            )
+        except ImportError:
+            _http_errors = ()
+        _retryable: tuple[type[Exception], ...] = (*_retryable_base, *_http_errors)
 
         system_prompt = build_system_prompt(intent_schema)
         user_content = text

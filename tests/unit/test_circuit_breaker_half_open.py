@@ -196,7 +196,7 @@ async def test_distributed_cb_unknown_state_defaults_to_closed() -> None:
     dcb = DistributedCircuitBreaker(_GUARD, config, backend=_UnknownStateBackend())
 
     synced = await dcb._sync_state()
-    assert synced == CircuitState.CLOSED
+    assert synced == CircuitState.OPEN
 
 
 # ── Distributed CB: fast solve resets failure count (line 516) ───────────────

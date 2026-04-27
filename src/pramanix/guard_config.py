@@ -21,7 +21,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path  # noqa: F401 — re-exported for backward compatibility
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -276,17 +276,25 @@ class GuardConfig:
 
     Default: 512 chars.  Env var: ``PRAMANIX_MAX_INPUT_CHARS``.
     """
-    injection_scorer_path: Path | None = field(
-        default_factory=lambda: (
-            Path(_env_str("INJECTION_SCORER_PATH", ""))
-            if _env_str("INJECTION_SCORER_PATH", "")
-            else None
-        )
+    injection_scorer_path: str | None = field(
+        default_factory=lambda: _env_str("INJECTION_SCORER_PATH", "") or None
     )
-    """Optional path to a Python module that exports a custom injection scorer.
+    """Entry-point name of a custom injection scorer registered in the
+    ``pramanix.injection_scorers`` entry-point group.
 
-    When set, the module at this path is imported and its ``injection_scorer``
-    callable is used in place of the built-in :func:`~pramanix.translator._sanitise.injection_confidence_score`.
+    **Trusted-operator-only.** This value is used to look up a callable via
+    ``importlib.metadata.entry_points``, so it must match the ``name`` key of
+    a registered entry-point.  Arbitrary file paths or module strings are NOT
+    accepted — they were disallowed to prevent arbitrary-code-execution if
+    untrusted input could influence this value.
+
+    To register a custom scorer, add this to your ``pyproject.toml``::
+
+        [project.entry-points."pramanix.injection_scorers"]
+        my_scorer = "my_package.scorers:injection_scorer"
+
+    Then set ``injection_scorer_path = "my_scorer"`` (the entry-point name,
+    not a file path).
 
     The callable must match the protocol::
 
@@ -296,7 +304,8 @@ class GuardConfig:
             warnings: list[str],
         ) -> float: ...
 
-    Env var: ``PRAMANIX_INJECTION_SCORER_PATH`` (path string, or empty to disable).
+    Env var: ``PRAMANIX_INJECTION_SCORER_PATH`` (entry-point name, or empty to
+    use the built-in scorer).
     """
 
     consensus_strictness: str = field(
@@ -313,6 +322,16 @@ class GuardConfig:
     model-validated dict dump.
 
     Env var: ``PRAMANIX_CONSENSUS_STRICTNESS``.
+    """
+
+    translator_circuit_breaker_config: Any | None = field(default=None)
+    """Optional config for per-translator circuit breakers in :meth:`~pramanix.guard.Guard.parse_and_verify`.
+
+    When ``None`` (default) the circuit breaker uses its built-in defaults
+    (5 consecutive failures → OPEN; 30 s recovery window).
+
+    Pass a :class:`~pramanix.circuit_breaker.TranslatorCircuitBreakerConfig`
+    to override ``failure_threshold`` and ``recovery_seconds`` per Guard.
     """
 
     audit_sinks: tuple[Any, ...] = field(default_factory=tuple)
@@ -374,11 +393,18 @@ class GuardConfig:
                 f"GuardConfig.consensus_strictness must be one of {_valid_strictness!r}, "
                 f"got '{self.consensus_strictness}'."
             )
-        if self.injection_scorer_path is not None and not self.injection_scorer_path.is_file():
-            raise ConfigurationError(
-                f"GuardConfig.injection_scorer_path does not exist or is not a file: "
-                f"{self.injection_scorer_path!r}."
-            )
+        if self.injection_scorer_path is not None:
+            # Validate that the name looks like a valid entry-point name
+            # (non-empty, no path separators).  Full existence check happens
+            # at call time in redundant.extract_with_consensus() so that
+            # entry-points installed after GuardConfig construction are found.
+            if "/" in self.injection_scorer_path or "\\" in self.injection_scorer_path:
+                raise ConfigurationError(
+                    f"GuardConfig.injection_scorer_path must be an entry-point name, "
+                    f"not a file path. Got: {self.injection_scorer_path!r}. "
+                    "Register your scorer via the 'pramanix.injection_scorers' "
+                    "entry-point group and pass its name here."
+                )
         if not (0.0 < self.shed_worker_pct <= 100.0):
             raise ConfigurationError(
                 f"GuardConfig.shed_worker_pct must be in (0.0, 100.0], "

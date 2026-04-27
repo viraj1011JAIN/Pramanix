@@ -68,11 +68,15 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import threading
 import time
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
@@ -401,9 +405,51 @@ class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
 
     Args:
         secret_key: Must match the key used by :class:`ExecutionTokenSigner`.
+
+    .. warning::
+        **Not safe for multi-worker or multi-process deployments.**
+        Each worker process has its own independent in-memory token registry,
+        so a token consumed on worker A is unknown to worker B — enabling
+        replay attacks across workers.  Use :class:`RedisExecutionTokenVerifier`
+        or :class:`SQLiteExecutionTokenVerifier` when more than one worker
+        process serves the same application.
     """
 
-    # Inherit all methods from ExecutionTokenVerifier unchanged.
+    def __init__(self, secret_key: bytes) -> None:
+        super().__init__(secret_key)
+        import os
+
+        _multi_worker_signals = [
+            os.environ.get("WEB_CONCURRENCY", ""),
+            os.environ.get("GUNICORN_CMD_ARGS", ""),
+            os.environ.get("UVICORN_WORKERS", ""),
+            os.environ.get("HYPERCORN_WORKERS", ""),
+        ]
+        _is_likely_multi_worker = any(
+            v and v not in ("", "1") for v in _multi_worker_signals[:1]
+        ) or any(v for v in _multi_worker_signals[1:])
+
+        if _is_likely_multi_worker:
+            warnings.warn(
+                "InMemoryExecutionTokenVerifier is not safe for multi-worker "
+                "deployments. Each worker has an independent token registry — "
+                "tokens consumed on one worker are NOT tracked by other workers, "
+                "enabling replay attacks. Switch to RedisExecutionTokenVerifier "
+                "or SQLiteExecutionTokenVerifier for distributed enforcement.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                "InMemoryExecutionTokenVerifier stores consumed tokens in-process "
+                "memory only. It is safe for single-process deployments but will "
+                "silently break replay protection if multiple worker processes or "
+                "server replicas are started. For production deployments with "
+                "multiple workers, use RedisExecutionTokenVerifier or "
+                "SQLiteExecutionTokenVerifier.",
+                UserWarning,
+                stacklevel=2,
+            )
 
 
 # ── E-1: SQLiteExecutionTokenVerifier ─────────────────────────────────────────
@@ -782,10 +828,22 @@ class RedisExecutionTokenVerifier:
         # ── 4. Atomic SETNX with TTL = remaining token lifetime ───────────────
         # max(1, ...) ensures the key gets at least 1 second TTL even if the
         # token is about to expire — so Redis doesn't reject the SET.
-        # M-17: let redis.RedisError propagate — callers must treat it as BLOCK.
+        # Fail-safe: Redis errors return False (deny) rather than propagating,
+        # but are always logged so operators can distinguish "already consumed"
+        # from "Redis connectivity lost".
         remaining_s = max(1, int(token.expires_at - time.time()))
         redis_key = f"{self._prefix}{token.token_id}"
-        result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
+        try:
+            result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
+        except Exception as exc:
+            _log.error(
+                "RedisExecutionTokenVerifier: Redis error during consume() — "
+                "token %s denied (fail-safe). This is NOT the same as an already-"
+                "consumed token. Check Redis connectivity. Error: %s",
+                token.token_id,
+                exc,
+            )
+            return False
         return bool(result)
 
     def consumed_count(self) -> int:

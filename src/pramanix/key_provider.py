@@ -278,7 +278,7 @@ class AwsKmsKeyProvider:
     ) -> None:
         try:
             import boto3
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "AwsKmsKeyProvider requires 'boto3'. "
                 "Install it: pip install 'pramanix[aws]'"
@@ -371,7 +371,7 @@ class AzureKeyVaultKeyProvider:
         try:
             from azure.identity import DefaultAzureCredential
             from azure.keyvault.secrets import SecretClient
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "AzureKeyVaultKeyProvider requires 'azure-keyvault-secrets' and "
                 "'azure-identity'. Install them: pip install 'pramanix[azure]'"
@@ -455,7 +455,7 @@ class GcpKmsKeyProvider:
     ) -> None:
         try:
             from google.cloud import secretmanager
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "GcpKmsKeyProvider requires 'google-cloud-secret-manager'. "
                 "Install it: pip install 'pramanix[gcp]'"
@@ -543,7 +543,7 @@ class HashiCorpVaultKeyProvider:
     ) -> None:
         try:
             import hvac
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "HashiCorpVaultKeyProvider requires 'hvac'. "
                 "Install it: pip install 'pramanix[vault]'"

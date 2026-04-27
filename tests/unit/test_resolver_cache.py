@@ -46,7 +46,7 @@ class TestRegister:
     def test_register_overwrites_previous(self) -> None:
         reg = make_registry()
         reg.register("x", lambda: 1)
-        reg.register("x", lambda: 2)
+        reg.register("x", lambda: 2, force=True)
         assert reg.resolve("x") == 2
 
 

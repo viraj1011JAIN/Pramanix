@@ -49,6 +49,32 @@ except ImportError:
     _CrewAIBase = object
 
 
+class _PramanixState:
+    """Plain-Python container for guard state — invisible to Pydantic/CrewAI.
+
+    Storing all non-field attributes here means only a single
+    ``object.__setattr__`` bypass is needed (for the container itself),
+    rather than one per attribute.  This minimises the surface area that
+    could be affected by upstream Pydantic or CrewAI model changes.
+    """
+
+    __slots__ = ("guard", "intent_builder", "state_provider", "underlying_fn", "block_message")
+
+    def __init__(
+        self,
+        guard: Any,
+        intent_builder: Any,
+        state_provider: Any,
+        underlying_fn: Any,
+        block_message: Any,
+    ) -> None:
+        self.guard = guard
+        self.intent_builder = intent_builder
+        self.state_provider = state_provider
+        self.underlying_fn = underlying_fn
+        self.block_message = block_message
+
+
 class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type: ignore[misc]
     """CrewAI ``BaseTool`` subclass with Z3 formal verification gate.
 
@@ -98,13 +124,14 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
             self.name = name
             self.description = description
 
-        # Store guard state using object.__setattr__ to bypass Pydantic
-        # field validation (these are behavioural, not domain fields).
-        object.__setattr__(self, "_guard", guard)
-        object.__setattr__(self, "_intent_builder", intent_builder)
-        object.__setattr__(self, "_state_provider", state_provider)
-        object.__setattr__(self, "_underlying_fn", underlying_fn)
-        object.__setattr__(self, "_block_message", block_message)
+        # Store all guard state in a single plain-Python container.  One
+        # object.__setattr__ bypass is narrower than five separate ones and
+        # survives Pydantic / CrewAI upstream changes more robustly.
+        object.__setattr__(
+            self,
+            "_pramanix",
+            _PramanixState(guard, intent_builder, state_provider, underlying_fn, block_message),
+        )
 
     # ── CrewAI BaseTool protocol ──────────────────────────────────────────────
 
@@ -128,16 +155,12 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
 
     def _execute(self, tool_input: dict[str, Any]) -> str:
         """Run the guard check and, if allowed, the underlying tool."""
-        guard: Guard = object.__getattribute__(self, "_guard")
-        intent_builder: Callable[..., Any] = object.__getattribute__(self, "_intent_builder")
-        state_provider: Callable[..., Any] = object.__getattribute__(self, "_state_provider")
-        underlying_fn: Callable[..., str] | None = object.__getattribute__(self, "_underlying_fn")
-        block_message: str | None = object.__getattribute__(self, "_block_message")
+        st: _PramanixState = object.__getattribute__(self, "_pramanix")
 
         try:
-            intent = intent_builder(tool_input)
-            state = state_provider()
-            decision = guard.verify(intent=intent, state=state)
+            intent = st.intent_builder(tool_input)
+            state = st.state_provider()
+            decision = st.guard.verify(intent=intent, state=state)
         except Exception as exc:
             _log.error("pramanix.crewai.guard_error: %s", exc, exc_info=True)
             return (
@@ -146,14 +169,14 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
             )
 
         if not decision.allowed:
-            if block_message:
-                return f"{_SAFE_FAILURE_PREFIX} {block_message}"
+            if st.block_message:
+                return f"{_SAFE_FAILURE_PREFIX} {st.block_message}"
             return (
                 f"{_SAFE_FAILURE_PREFIX} "
                 + format_block_feedback(decision, {})
             )
 
-        if underlying_fn is not None:
-            return str(underlying_fn(tool_input))
+        if st.underlying_fn is not None:
+            return str(st.underlying_fn(tool_input))
 
         return f"Action '{self.name}' allowed by Pramanix guard. No underlying function configured."

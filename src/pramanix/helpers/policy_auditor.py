@@ -174,7 +174,7 @@ class PolicyAuditor:
                 exc,
                 exc_info=True,
             )
-            raise
+            return set()
         referenced: set[str] = set()
         for inv in invariants:
             if isinstance(inv, ConstraintExpr):

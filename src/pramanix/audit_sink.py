@@ -472,7 +472,13 @@ class DatadogAuditSink:
             )
             self._logs_api.submit_log(HTTPLog([log_item]))
         except Exception as exc:
-            log.error("DatadogAuditSink: failed to send decision: %s", exc)
+            # Scrub the full exception message — it may contain the Datadog
+            # API key if the client raises an ApiException with auth details.
+            log.error(
+                "DatadogAuditSink: failed to send decision: %s (%.120s)",
+                type(exc).__name__,
+                str(exc).split("\n")[0],  # first line only, truncated
+            )
 
     def close(self) -> None:
         """Close the Datadog API client.  Call at application teardown."""

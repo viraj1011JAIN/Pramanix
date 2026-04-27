@@ -1,0 +1,10 @@
+# production.in — top-level production dependencies for pramanix[all]
+#
+# Regenerate the hashed lockfile with:
+#   pip install pip-tools
+#   pip-compile --generate-hashes --output-file=requirements/production.txt requirements/production.in
+#
+# This file is the *source of truth* for Dockerfile.production.
+# Commit both this file and the generated production.txt to the repository.
+
+pramanix[all]

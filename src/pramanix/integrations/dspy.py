@@ -49,6 +49,29 @@ except ImportError:
     _ModuleBase = object
 
 
+class _PramanixState:
+    """Plain-Python container for guard state — invisible to DSPy/Pydantic.
+
+    Storing all non-field attributes here means only a single
+    ``object.__setattr__`` bypass is needed (for the container itself),
+    rather than one per attribute.
+    """
+
+    __slots__ = ("guard", "intent_builder", "state_provider", "inner_module")
+
+    def __init__(
+        self,
+        guard: Any,
+        intent_builder: Any,
+        state_provider: Any,
+        inner_module: Any,
+    ) -> None:
+        self.guard = guard
+        self.intent_builder = intent_builder
+        self.state_provider = state_provider
+        self.inner_module = inner_module
+
+
 class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]
     """DSPy ``Module`` wrapper with Z3 formal verification gate.
 
@@ -80,11 +103,14 @@ class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]
     ) -> None:
         if _DSPY_AVAILABLE:
             super().__init__()
-        # Store via object.__setattr__ to avoid DSPy / Pydantic introspection.
-        object.__setattr__(self, "_inner_module", module)
-        object.__setattr__(self, "_guard", guard)
-        object.__setattr__(self, "_intent_builder", intent_builder)
-        object.__setattr__(self, "_state_provider", state_provider)
+        # Store all guard state in a single plain-Python container.  One
+        # object.__setattr__ bypass is narrower than four separate ones and
+        # survives DSPy / Pydantic upstream changes more robustly.
+        object.__setattr__(
+            self,
+            "_pramanix",
+            _PramanixState(guard, intent_builder, state_provider, module),
+        )
 
     def forward(self, **kwargs: Any) -> Any:
         """Verify intent before delegating to the wrapped module.
@@ -101,22 +127,19 @@ class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]
         """
         from pramanix.exceptions import GuardViolationError
 
-        guard: Guard = object.__getattribute__(self, "_guard")
-        intent_builder: Callable[..., Any] = object.__getattribute__(self, "_intent_builder")
-        state_provider: Callable[..., Any] = object.__getattribute__(self, "_state_provider")
-        inner_module: Any = object.__getattribute__(self, "_inner_module")
+        st: _PramanixState = object.__getattribute__(self, "_pramanix")
 
-        intent = intent_builder(**kwargs)
-        state = state_provider()
-        decision = guard.verify(intent=intent, state=state)
+        intent = st.intent_builder(**kwargs)
+        state = st.state_provider()
+        decision = st.guard.verify(intent=intent, state=state)
 
         if not decision.allowed:
             raise GuardViolationError(decision)
 
         # Delegate to the wrapped module.
-        if hasattr(inner_module, "forward"):
-            return inner_module.forward(**kwargs)
-        return inner_module(**kwargs)
+        if hasattr(st.inner_module, "forward"):
+            return st.inner_module.forward(**kwargs)
+        return st.inner_module(**kwargs)
 
     def __call__(self, **kwargs: Any) -> Any:
         """Allow direct call syntax ``module(...)`` in addition to DSPy's protocol."""

@@ -212,19 +212,21 @@ class TestR3IterativeMerkleRoot:
 
         anchor = MerkleAnchor()
         a, b = "leaf_a", "leaf_b"
-        expected = hashlib.sha256((a + b).encode()).hexdigest()
+        # H-07: internal nodes use \x01 prefix
+        expected = hashlib.sha256(b"\x01" + (a + b).encode()).hexdigest()
         assert anchor._build_root([a, b]) == expected  # type: ignore[attr-defined]
 
     def test_odd_leaf_count_duplicates_last(self) -> None:
-        """Odd leaf count must duplicate the last leaf (Merkle padding rule)."""
+        """Odd leaf count must pad last leaf with \x01 prefix (H-07 rule)."""
         import hashlib
 
         anchor = MerkleAnchor()
         a, b, c = "l1", "l2", "l3"
-        # level 0: [l1, l2, l3, l3]  (l3 duplicated)
-        ab = hashlib.sha256((a + b).encode()).hexdigest()
-        cc = hashlib.sha256((c + c).encode()).hexdigest()
-        root = hashlib.sha256((ab + cc).encode()).hexdigest()
+        # level 0: [l1, l2, l3, pad(l3)]  where pad = sha256(\x01 + l3)
+        pad_c = hashlib.sha256(b"\x01" + c.encode()).hexdigest()
+        ab = hashlib.sha256(b"\x01" + (a + b).encode()).hexdigest()
+        cc = hashlib.sha256(b"\x01" + (c + pad_c).encode()).hexdigest()
+        root = hashlib.sha256(b"\x01" + (ab + cc).encode()).hexdigest()
         assert anchor._build_root([a, b, c]) == root  # type: ignore[attr-defined]
 
     def test_power_of_two_leaf_count(self) -> None:
@@ -233,9 +235,14 @@ class TestR3IterativeMerkleRoot:
 
         anchor = MerkleAnchor()
         leaves = ["d1", "d2", "d3", "d4"]
-        h01 = hashlib.sha256((leaves[0] + leaves[1]).encode()).hexdigest()
-        h23 = hashlib.sha256((leaves[2] + leaves[3]).encode()).hexdigest()
-        root = hashlib.sha256((h01 + h23).encode()).hexdigest()
+        # H-07: internal nodes use \x01 prefix
+        h01 = hashlib.sha256(
+            b"\x01" + (leaves[0] + leaves[1]).encode()
+        ).hexdigest()
+        h23 = hashlib.sha256(
+            b"\x01" + (leaves[2] + leaves[3]).encode()
+        ).hexdigest()
+        root = hashlib.sha256(b"\x01" + (h01 + h23).encode()).hexdigest()
         assert anchor._build_root(leaves) == root  # type: ignore[attr-defined]
 
     def test_large_batch_no_recursion_error(self) -> None:

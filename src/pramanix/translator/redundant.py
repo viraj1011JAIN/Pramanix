@@ -47,11 +47,23 @@ if TYPE_CHECKING:
 __all__ = [
     "ConsensusStrictness",
     "RedundantTranslator",
+    "_raw_strings_agree",
     "create_translator",
     "extract_with_consensus",
 ]
 
 _log = logging.getLogger(__name__)
+
+
+def _raw_strings_agree(a: str, b: str) -> bool:
+    """Return True if two JSON strings encode equivalent values, False otherwise.
+
+    Falls back to stripped string equality when either string is not valid JSON.
+    """
+    try:
+        return json.loads(a) == json.loads(b)
+    except (json.JSONDecodeError, ValueError):
+        return a.strip() == b.strip()
 
 
 class ConsensusStrictness(enum.StrEnum):
@@ -150,16 +162,20 @@ def _semantic_field_equal(
         except InvalidOperation:
             pass
 
-    # ── String comparison — try Decimal parse first, then casefold ────────────
+    # ── String comparison — try Decimal parse, JSON equivalence, then casefold ─
     # Decimal-first catches numeric-looking strings ("500" vs "500.0") even
     # when the schema annotates the field as str (e.g. a model that serialises
-    # amounts as strings).
+    # amounts as strings).  JSON equivalence (_raw_strings_agree) handles fields
+    # that embed a nested JSON object as a string value so that whitespace and
+    # key-order differences are ignored.
     if field_type is str or (isinstance(val_a, str) and isinstance(val_b, str)):
         try:
             dec_a = Decimal(str(val_a).strip())
             dec_b = Decimal(str(val_b).strip())
             return dec_a == dec_b
         except InvalidOperation:
+            if _raw_strings_agree(str(val_a), str(val_b)):
+                return True
             return str(val_a).strip().casefold() == str(val_b).strip().casefold()
 
     # ── Generic fallback — try Decimal, then exact equality ───────────────────

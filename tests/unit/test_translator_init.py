@@ -76,7 +76,7 @@ class TestCreateTranslator:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
         from pramanix.translator.redundant import create_translator
 
-        t = create_translator("gpt-4o")
+        t = create_translator("gpt-4o", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
         assert t.model == "gpt-4o"
 
@@ -84,21 +84,21 @@ class TestCreateTranslator:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
         from pramanix.translator.redundant import create_translator
 
-        t = create_translator("o1-preview")
+        t = create_translator("o1-preview", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_o3_prefix_routes_to_openai_compat(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
         from pramanix.translator.redundant import create_translator
 
-        t = create_translator("o3-mini")
+        t = create_translator("o3-mini", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_chatgpt_prefix_routes_to_openai_compat(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
         from pramanix.translator.redundant import create_translator
 
-        t = create_translator("chatgpt-4o-latest")
+        t = create_translator("chatgpt-4o-latest", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_claude_prefix_routes_to_anthropic(self) -> None:
@@ -137,7 +137,7 @@ class TestCreateTranslator:
     def test_gpt_with_custom_timeout(self) -> None:
         from pramanix.translator.redundant import create_translator
 
-        t = create_translator("gpt-4o", timeout=90.0)
+        t = create_translator("gpt-4o", api_key="sk-test", timeout=90.0)
         assert t._timeout == 90.0
 
     def test_unknown_model_prefix_raises_extraction_failure(self) -> None:
@@ -157,5 +157,5 @@ class TestCreateTranslator:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
         from pramanix.translator.redundant import create_translator
 
-        t = create_translator("text-davinci-003")
+        t = create_translator("text-davinci-003", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)

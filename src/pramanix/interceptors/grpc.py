@@ -170,9 +170,11 @@ class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
                 return
             yield from handler.stream_stream(combined, context)
 
-        return handler._replace(
-            unary_unary=_guarded_unary_unary,
-            unary_stream=_guarded_unary_stream,
-            stream_unary=_guarded_stream_unary,
-            stream_stream=_guarded_stream_stream,
-        )
+        replace_kwargs: dict[str, Any] = {"unary_unary": _guarded_unary_unary}
+        if getattr(handler, "unary_stream", None) is not None:
+            replace_kwargs["unary_stream"] = _guarded_unary_stream
+        if getattr(handler, "stream_unary", None) is not None:
+            replace_kwargs["stream_unary"] = _guarded_stream_unary
+        if getattr(handler, "stream_stream", None) is not None:
+            replace_kwargs["stream_stream"] = _guarded_stream_stream
+        return handler._replace(**replace_kwargs)

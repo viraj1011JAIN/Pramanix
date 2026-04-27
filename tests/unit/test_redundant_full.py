@@ -415,32 +415,29 @@ class TestExtractWithConsensus:
         assert result["approved"] is True  # model A wins on non-critical
 
     def test_injection_scorer_path_custom_module(self):
-        """Lines 294-304: injection_scorer_path points to a real module file."""
-        scorer_code = textwrap.dedent("""\
-            def injection_scorer(text, extracted, warnings):
-                return 0.0  # always benign
-        """)
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, prefix="scorer_"
-        ) as f:
-            f.write(scorer_code)
-            scorer_path = f.name
+        """Lines 294-304: injection_scorer_path is a registered entry-point name."""
+        import importlib.metadata as _meta
+        from unittest.mock import MagicMock, patch
+
+        def _benign_scorer(text, extracted, warnings):
+            return 0.0
+
+        fake_ep = MagicMock()
+        fake_ep.name = "benign_scorer"
+        fake_ep.load.return_value = _benign_scorer
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
-        try:
+        with patch.object(_meta, "entry_points", return_value=[fake_ep]):
             result = self._run(
                 extract_with_consensus(
                     "Pay Alice 100",
                     _Transfer,
                     (ta, tb),
-                    injection_scorer_path=scorer_path,
+                    injection_scorer_path="benign_scorer",
                 )
             )
-            assert result["recipient"] == "Alice"
-        finally:
-            import os
-            os.unlink(scorer_path)
+        assert result["recipient"] == "Alice"
 
     def test_injection_scorer_path_invalid_raises(self):
         """Line 299: injection_scorer_path with non-existent file → ValueError."""
@@ -497,52 +494,46 @@ class TestExtractWithConsensus:
         assert result["recipient"] == "Alice"
 
     def test_injection_scorer_high_confidence_blocks(self):
-        """Line 429: injection scorer returns high score → InjectionBlockedError."""
-        import tempfile
-        import textwrap
+        """Line 429: injection scorer entry-point returns 1.0 → InjectionBlockedError."""
+        import importlib.metadata as _meta
+        from unittest.mock import MagicMock, patch
 
-        scorer_code = textwrap.dedent("""\
-            def injection_scorer(text, extracted, warnings):
-                return 1.0  # always adversarial
-        """)
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False, prefix="bad_scorer_"
-        ) as f:
-            f.write(scorer_code)
-            scorer_path = f.name
+        def _adversarial_scorer(text, extracted, warnings):
+            return 1.0
+
+        fake_ep = MagicMock()
+        fake_ep.name = "adversarial_scorer"
+        fake_ep.load.return_value = _adversarial_scorer
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
-        try:
+        with patch.object(_meta, "entry_points", return_value=[fake_ep]):
             with pytest.raises(InjectionBlockedError):
                 self._run(
                     extract_with_consensus(
                         "Pay Alice 100",
                         _Transfer,
                         (ta, tb),
-                        injection_scorer_path=scorer_path,
+                        injection_scorer_path="adversarial_scorer",
                         injection_threshold=0.5,
                     )
                 )
-        finally:
-            import os
-            os.unlink(scorer_path)
 
 
 class TestEnforceConsensusUnknownMode:
-    """Line 508->exit: unknown agreement_mode → all elif conditions false → function returns."""
+    """Unknown agreement_mode raises ValueError."""
 
     def test_unknown_mode_is_noop(self):
-        """Line 508->exit: the elif for 'lenient' is not taken when mode is unknown."""
-        # No exception raised even though dicts disagree — no branch handles unknown mode
-        _enforce_consensus(
-            {"amount": "100"},
-            {"amount": "999"},
-            model_a_name="a",
-            model_b_name="b",
-            agreement_mode="unknown_mode",  # type: ignore[arg-type]
-            critical_fields=None,
-        )
+        """Unknown agreement_mode raises ValueError with the mode name."""
+        with pytest.raises(ValueError, match="unknown_mode"):
+            _enforce_consensus(
+                {"amount": "100"},
+                {"amount": "999"},
+                model_a_name="a",
+                model_b_name="b",
+                agreement_mode="unknown_mode",  # type: ignore[arg-type]
+                critical_fields=None,
+            )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -583,8 +574,9 @@ class TestCreateTranslator:
         assert isinstance(t, OllamaTranslator)
 
     def test_gemini_prefix(self):
-        with pytest.raises(ConfigurationError, match="google-generativeai"):
-            create_translator("gemini:gemini-pro", api_key="test-key")
+        from pramanix.translator.gemini import GeminiTranslator
+        t = create_translator("gemini:gemini-pro", api_key="test-key")
+        assert isinstance(t, GeminiTranslator)
 
     def test_cohere_prefix(self):
         from pramanix.translator.cohere import CohereTranslator

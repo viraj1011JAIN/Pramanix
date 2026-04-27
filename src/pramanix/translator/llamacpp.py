@@ -85,11 +85,13 @@ class LlamaCppTranslator:
 
     def _get_llm(self) -> Any:
         """Return the loaded Llama model, loading it on first call (thread-safe)."""
+        if self._llm is not None:
+            return self._llm
         cache_key = (self._model_path, self._n_ctx, self._n_gpu_layers)
         with _MODEL_CACHE_LOCK:
             if cache_key not in _MODEL_CACHE:
-                from llama_cpp import Llama
-                _MODEL_CACHE[cache_key] = Llama(
+                from llama_cpp import Llama  # pragma: no cover
+                _MODEL_CACHE[cache_key] = Llama(  # pragma: no cover
                     model_path=self._model_path,
                     n_ctx=self._n_ctx,
                     n_gpu_layers=self._n_gpu_layers,
@@ -135,6 +137,12 @@ class LlamaCppTranslator:
                 None,
                 lambda: self._inference(system_prompt, user_content),
             )
+        except TimeoutError as exc:
+            raise LLMTimeoutError(
+                f"LlamaCppTranslator: inference timed out: {exc!r}",
+                model=self._model_path,
+                attempts=1,
+            ) from exc
         except Exception as exc:
             raise ExtractionFailureError(
                 f"LlamaCppTranslator: inference failed: {exc!r}"

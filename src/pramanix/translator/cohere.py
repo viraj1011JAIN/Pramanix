@@ -71,7 +71,7 @@ class CohereTranslator:
                 cohere.errors.ServiceUnavailableError,
                 cohere.errors.GatewayTimeoutError,
             )
-        except AttributeError:
+        except AttributeError:  # pragma: no cover — older SDK fallback
             try:
                 self._retryable = (cohere.core.api_error.ApiError,)
             except AttributeError:

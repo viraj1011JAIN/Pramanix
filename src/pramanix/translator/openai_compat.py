@@ -58,9 +58,11 @@ class OpenAICompatTranslator:
 
         self.model = model
         self._timeout = timeout
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY") or None
+        self._base_url = base_url
         self._client = openai.AsyncOpenAI(
-            api_key=api_key or os.environ.get("OPENAI_API_KEY") or None,
-            base_url=base_url,
+            api_key=self._api_key,
+            base_url=self._base_url,
             timeout=timeout,
         )
         self._retryable = (openai.APITimeoutError, openai.APIConnectionError)

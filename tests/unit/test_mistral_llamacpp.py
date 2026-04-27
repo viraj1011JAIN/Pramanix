@@ -14,6 +14,7 @@ from pramanix.exceptions import ConfigurationError
 
 def test_mistral_raises_config_error_without_package(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "mistralai", None)
+    monkeypatch.setitem(sys.modules, "mistralai.client", None)  # v2 import path
     monkeypatch.setitem(sys.modules, "mistralai.async_client", None)
     monkeypatch.setitem(sys.modules, "mistralai.models.chat_completion", None)
     # Re-import to force ImportError path

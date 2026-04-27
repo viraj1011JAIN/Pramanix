@@ -72,7 +72,7 @@ class TestPolicyMROWalk:
         assert guard.verify(intent={"amount": Decimal("-1")}, state={}).allowed is False
 
     def test_derived_policy_ancestor_raises_not_implemented(self) -> None:
-        """Lines 244-245: ancestor invariants() raising NotImplementedError → own=[]."""
+        """Lines 244-245: ancestor invariants() raising NotImplementedError → PolicyCompilationError."""
         from pramanix.policy import invariant_mixin
 
         class AbstractBase(Policy):
@@ -89,10 +89,9 @@ class TestPolicyMROWalk:
         class Concrete(AbstractBase, mixins=[_noop_mixin2]):
             pass
 
-        # The MRO walk catches NotImplementedError and sets own=[].
-        # Verify directly that invariants() returns [] without raising.
-        result = Concrete.invariants()
-        assert result == []
+        # The MRO walk raises PolicyCompilationError when ancestor invariants() raises.
+        with pytest.raises(PolicyCompilationError):
+            Concrete.invariants()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

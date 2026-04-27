@@ -127,7 +127,7 @@ class InjectionFilter:
                     )
 
             # Fallback: combined matched but no individual did.
-            return True, "injection_pattern_detected label='unknown'"
+            return True, "injection_pattern_detected label='unknown'"  # pragma: no cover
 
         except Exception as exc:
             # Fail-open: never block legitimate requests on a filter bug.

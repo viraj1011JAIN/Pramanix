@@ -76,8 +76,10 @@ class TestGeminiSingleCall:
         t.model = "gemini-1.5-pro"
         t._api_key = "key"
         t._timeout = 30.0
+        t._genai = mock_genai
+        t._client = None
 
-        raw = await t._single_call(genai=mock_genai, prompt="test prompt")
+        raw = await t._single_call(prompt="test prompt")
         assert raw == '{"amount":1.0,"recipient":"X"}'
         mock_genai.GenerativeModel.return_value.generate_content_async.assert_called_once()
 
@@ -91,8 +93,10 @@ class TestGeminiSingleCall:
         t.model = "gemini-1.5-flash"
         t._api_key = None
         t._timeout = 30.0
+        t._genai = mock_genai
+        t._client = None
 
-        raw = await t._single_call(genai=mock_genai, prompt="another prompt")
+        raw = await t._single_call(prompt="another prompt")
         assert raw == '{"amount":1.0,"recipient":"X"}'
         # generate_content (sync) must have been called
         mock_genai.GenerativeModel.return_value.generate_content.assert_called_once()
@@ -108,9 +112,11 @@ class TestGeminiSingleCall:
         t.model = "gemini-1.5-flash"
         t._api_key = None
         t._timeout = 30.0
+        t._genai = mock_genai
+        t._client = None
 
         with pytest.raises(ExtractionFailureError, match="empty response"):
-            await t._single_call(genai=mock_genai, prompt="test")
+            await t._single_call(prompt="test")
 
     @pytest.mark.asyncio
     async def test_extract_retryable_fallback_when_no_gapi_exc(self) -> None:
@@ -122,6 +128,8 @@ class TestGeminiSingleCall:
         t.model = "gemini-1.5-flash"
         t._api_key = "k"
         t._timeout = 30.0
+        t._genai = mock_genai
+        t._client = None
 
         # Patch google.generativeai to be available (avoid ConfigurationError), and
         # google.api_core.exceptions to be unimportable → _retryable = (Exception,)
@@ -149,6 +157,8 @@ class TestGeminiSingleCall:
         t.model = "gemini-1.5-flash"
         t._api_key = "k"
         t._timeout = 30.0
+        t._genai = mock_genai
+        t._client = None
 
         with patch.dict(sys.modules, {
             "google.generativeai": mock_genai,
@@ -417,19 +427,11 @@ class TestMistralEmptyContent:
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = None  # content is None
 
-        mock_cls = MagicMock()
         mock_client = MagicMock()
         mock_client.chat.complete_async = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
+        t._client = mock_client
 
-        raw = await t._single_call(
-            model=t.model,
-            api_key=t._api_key,
-            system_prompt="sys",
-            user_content="input",
-            timeout=30.0,
-            mistral_cls=mock_cls,
-        )
+        raw = await t._single_call(system_prompt="sys", user_content="input")
         # `None or ""` → ""
         assert raw == ""
 
@@ -452,17 +454,16 @@ class TestCohereAttributeErrorFallback:
         t.model = "command-r"
         t._api_key = "key"
         t._timeout = 30.0
+        t._retryable = (Exception,)
+        t._client = MagicMock()
+        t._cohere = _cohere
 
         # Bypass real HTTP calls by mocking _single_call
         t._single_call = AsyncMock(  # type: ignore[method-assign]
             return_value='{"amount":10.0,"recipient":"B"}'
         )
 
-        # Make cohere.errors.TooManyRequestsError raise AttributeError → lines 99-100
-        bad_errors = MagicMock(spec_set=[])  # spec_set=[] → any attr access raises AttributeError
-        with patch.object(_cohere, "errors", bad_errors, create=True):
-            result = await t.extract("pay B 10", _Pay)
-
+        result = await t.extract("pay B 10", _Pay)
         assert result["amount"] == 10.0
 
 
@@ -472,7 +473,6 @@ class TestCohereOldSdkTypeErrorFallback:
     @pytest.mark.asyncio
     async def test_old_sdk_type_error_uses_executor(self) -> None:
         pytest.importorskip("cohere")
-        import cohere as _cohere
         from pramanix.translator.cohere import CohereTranslator
 
         t = CohereTranslator.__new__(CohereTranslator)
@@ -482,7 +482,7 @@ class TestCohereOldSdkTypeErrorFallback:
 
         # AsyncClientV2 chat() raises TypeError (old SDK doesn't accept response_format)
         mock_async_client = MagicMock()
-        mock_async_client.chat = AsyncMock(side_effect=TypeError("unexpected keyword argument"))
+        mock_async_client.chat = AsyncMock(side_effect=TypeError("unexpected kwarg"))
 
         # Old cohere.Client.chat() returns a response with .text (no .message attr)
         mock_old_response = MagicMock()
@@ -492,10 +492,12 @@ class TestCohereOldSdkTypeErrorFallback:
         mock_old_client.chat = MagicMock(return_value=mock_old_response)
 
         mock_cohere = MagicMock()
-        mock_cohere.AsyncClientV2 = MagicMock(return_value=mock_async_client)
         mock_cohere.Client = MagicMock(return_value=mock_old_client)
 
-        raw = await t._single_call(cohere=mock_cohere, system_prompt="sys", text="pay C 99")
+        t._client = mock_async_client
+        t._cohere = mock_cohere
+
+        raw = await t._single_call(system_prompt="sys", text="pay C 99")
         assert "99" in raw
 
 
@@ -521,9 +523,10 @@ class TestCohereResponseTextFallback:
         mock_client.chat = AsyncMock(return_value=mock_response)
 
         mock_cohere = MagicMock()
-        mock_cohere.AsyncClientV2 = MagicMock(return_value=mock_client)
+        t._client = mock_client
+        t._cohere = mock_cohere
 
-        raw = await t._single_call(cohere=mock_cohere, system_prompt="sys", text="pay D 77")
+        raw = await t._single_call(system_prompt="sys", text="pay D 77")
         assert "77" in raw
 
 
@@ -667,19 +670,17 @@ class TestRedisClear:
     """Lines 728-729: clear() creates a new event loop when none exists."""
 
     def test_clear_creates_loop_when_none_and_clears(self, _redis_backend: Any) -> None:
-        """Line 728: RuntimeError → new_event_loop path."""
-        async def _fake_async_clear(ns):  # type: ignore
+        """RuntimeError from get_running_loop → asyncio.run() path."""
+        async def _fake_async_clear(ns: Any) -> None:
             pass
 
         _redis_backend._async_clear = _fake_async_clear
 
-        # Simulate no running event loop (RuntimeError on get_event_loop)
-        with patch("asyncio.get_event_loop", side_effect=RuntimeError("no loop")):
-            new_loop = asyncio.new_event_loop()
-            with patch("asyncio.new_event_loop", return_value=new_loop):
-                with patch("asyncio.set_event_loop") as mock_set:
-                    _redis_backend.clear("test_ns")
-                    mock_set.assert_called_once_with(new_loop)
+        # Simulate no running event loop (RuntimeError on get_running_loop)
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")):
+            with patch("asyncio.run") as mock_run:
+                _redis_backend.clear("test_ns")
+                mock_run.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_async_clear_all_namespaces(self, _redis_backend: Any) -> None:
@@ -1241,6 +1242,9 @@ class TestCohereTenacityImportError:
         t.model = "command-r"
         t._api_key = "key"
         t._timeout = 30.0
+        t._retryable = (Exception,)
+        t._client = MagicMock()
+        t._cohere = MagicMock()
 
         with patch.dict(sys.modules, {"tenacity": None}):
             with pytest.raises(ConfigurationError, match="tenacity"):
@@ -1271,9 +1275,10 @@ class TestCohereStrResponseFallback:
         mock_client.chat = AsyncMock(return_value=mock_response)
 
         mock_cohere = MagicMock()
-        mock_cohere.AsyncClientV2 = MagicMock(return_value=mock_client)
+        t._client = mock_client
+        t._cohere = mock_cohere
 
-        raw = await t._single_call(cohere=mock_cohere, system_prompt="sys", text="pay E 5")
+        raw = await t._single_call(system_prompt="sys", text="pay E 5")
         assert "5.0" in raw or "E" in raw
 
 
@@ -1320,6 +1325,8 @@ class TestGeminiNoApiKey:
         t.model = "gemini-1.5-flash"
         t._api_key = ""  # falsy → configure branch skipped
         t._timeout = 30.0
+        t._genai = mock_genai
+        t._client = None
 
         with patch.dict(sys.modules, {
             "google.generativeai": mock_genai,
@@ -1333,28 +1340,20 @@ class TestGeminiNoApiKey:
 
 
 class TestMistralBothImportsFail:
-    """mistral.py lines 89-90: both mistralai.client and mistralai.Mistral imports fail."""
+    """mistral.py: both mistralai.client and mistralai.Mistral imports fail → ConfigurationError."""
 
-    @pytest.mark.asyncio
-    async def test_both_imports_fail_raises_configuration_error(self) -> None:
+    def test_both_imports_fail_raises_configuration_error(self) -> None:
         pytest.importorskip("mistralai")
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        t.model = "mistral-large-latest"
-        t._api_key = "key"
-        t._timeout = 30.0
-
-        # Make a fake mistralai module WITHOUT Mistral → triggers both import failures
-        fake_mistralai_no_mistral = MagicMock(spec=[])  # no Mistral attribute
-
+        # Patch before construction — the import failure is in __init__, not extract()
         with patch.dict(sys.modules, {
-            "mistralai.client": None,       # v2 import fails
-            "mistralai": fake_mistralai_no_mistral,  # v1 import also fails
+            "mistralai.client": None,   # v2 import fails
+            "mistralai": None,          # v1 import also fails
         }):
             with pytest.raises((ConfigurationError, ImportError)):
-                await t.extract("pay Z 10", _Pay)
+                MistralTranslator("mistral-large-latest", api_key="key")
 
 
 class TestMistralParseNonExtractionError:

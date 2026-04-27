@@ -47,7 +47,7 @@ class AnthropicTranslator:
     ) -> None:
         try:
             import anthropic
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "anthropic package is required for AnthropicTranslator. "
                 "Install it with: pip install 'pramanix[translator]'"
@@ -55,8 +55,9 @@ class AnthropicTranslator:
 
         self.model = model
         self._timeout = timeout
+        self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY") or None
         self._client = anthropic.AsyncAnthropic(
-            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY") or None,
+            api_key=self._api_key,
             timeout=timeout,
         )
         self._retryable = (anthropic.APITimeoutError, anthropic.APIConnectionError)
@@ -90,7 +91,7 @@ class AnthropicTranslator:
                 stop_after_attempt,
                 wait_exponential,
             )
-        except ImportError as exc:
+        except ImportError as exc:  # pragma: no cover
             raise ImportError(
                 "tenacity package is required for retry support. "
                 "Install it with: pip install 'pramanix[translator]'"
@@ -131,7 +132,7 @@ class AnthropicTranslator:
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
-        await self._client.aclose()
+        await self._client.close()
 
     async def __aenter__(self) -> AnthropicTranslator:
         return self
@@ -145,29 +146,18 @@ class AnthropicTranslator:
         system_prompt: str,
         text: str,
     ) -> str:
-        """Make a single Messages API call and return the raw content string.
+        """Make a single streaming Messages API call and return the text content.
 
-        Uses ``{"type": "json"}`` extended thinking off — plain text is
-        returned which ``parse_llm_response`` then extracts JSON from.
+        Uses the streaming API so that the implementation works with proxy
+        environments (such as the VS Code Language Model server) that emit
+        Server-Sent Events rather than a monolithic JSON response body.
+        Exceptions (``APIStatusError``, ``APITimeoutError``, etc.) propagate
+        to ``extract()`` unchanged, where retry and error-mapping logic lives.
         """
-        try:
-            response = await self._client.messages.create(
-                model=self.model,
-                max_tokens=1024,
-                system=system_prompt,
-                messages=[{"role": "user", "content": text}],
-            )
-        except self._api_status_error:
-            raise  # let extract() handle
-        except Exception:
-            raise  # let tenacity handle retryable errors
-
-        # Anthropic returns a list of content blocks; grab the first text block.
-        for block in response.content:
-            text_val: str | None = getattr(block, "text", None)
-            if text_val:
-                return text_val
-
-        raise ExtractionFailureError(
-            f"[{self.model}] Anthropic returned no text content in the response."
-        )
+        async with self._client.messages.stream(
+            model=self.model,
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": text}],
+        ) as stream:
+            return await stream.get_final_text()

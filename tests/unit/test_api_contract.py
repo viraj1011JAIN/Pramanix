@@ -160,6 +160,30 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Utility helpers (v1.0.0)
         "invariant_mixin",
         "model_dump_z3",
+        # Fast-path rules (v1.0.0)
+        "FastPathRule",
+        "SemanticFastPath",
+        # Integrations — beta (v1.0.0)
+        "HaystackGuardedComponent",
+        "PramanixCrewAITool",
+        "PramanixFunctionTool",
+        "PramanixGuardedModule",
+        "PramanixGuardedTool",
+        "PramanixPydanticAIValidator",
+        "PramanixQueryEngineTool",
+        "PramanixSemanticKernelPlugin",
+        "PramanixToolCallback",
+        # Identity (v1.0.0)
+        "IdentityClaims",
+        "JWTExpiredError",
+        "JWTVerificationError",
+        # State loading (v1.0.0)
+        "RedisStateLoader",
+        "StateLoadError",
+        "StateLoader",
+        # Resolver / migration errors (v1.0.0)
+        "MigrationError",
+        "ResolverConflictError",
     }
 )
 
@@ -731,6 +755,8 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         "injection_scorer_path",
         # E-4: audit sinks (v1.0.0)
         "audit_sinks",
+        # translator circuit breaker config (v1.0.0)
+        "translator_circuit_breaker_config",
     }
 )
 
@@ -759,6 +785,7 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     "injection_scorer_path":    None,
     "consensus_strictness":     "semantic",
     "audit_sinks":              (),
+    "translator_circuit_breaker_config": None,
 }
 
 

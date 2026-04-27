@@ -949,32 +949,34 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
 
     # ── 2. Platform / libc (musl vs glibc) ───────────────────────────────────
+    from pramanix._platform import is_musl as _is_musl
+
     plat = platform.system()
     if plat == "Linux":
-        import ctypes
-        try:
-            libc = ctypes.CDLL("libc.so.6", use_errno=True)
-            gnu_get_libc_version = getattr(libc, "gnu_get_libc_version", None)
-            if gnu_get_libc_version is not None:
-                gnu_get_libc_version.restype = ctypes.c_char_p
-                glibc_ver = gnu_get_libc_version().decode()
-                _check("platform-libc", "OK", f"glibc {glibc_ver} (Linux/{platform.machine()})")
-            else:
-                _check(
-                    "platform-libc",
-                    "ERROR",
-                    "gnu_get_libc_version not found — possible musl/Alpine libc",
-                    hint="Use a glibc-based image (e.g. python:3.13-slim-bookworm). "
-                         "musl breaks z3-solver native extensions.",
-                )
-        except OSError:
+        if _is_musl():
             _check(
                 "platform-libc",
                 "ERROR",
-                "Cannot load libc.so.6 — likely musl/Alpine",
+                "musl libc detected (Alpine Linux)",
                 hint="Use a glibc-based image (e.g. python:3.13-slim-bookworm). "
                      "musl breaks z3-solver native extensions.",
             )
+        else:
+            import ctypes
+            try:
+                libc = ctypes.CDLL("libc.so.6", use_errno=True)
+                gnu_get_libc_version = getattr(libc, "gnu_get_libc_version", None)
+                if gnu_get_libc_version is not None:
+                    gnu_get_libc_version.restype = ctypes.c_char_p
+                    glibc_ver = gnu_get_libc_version().decode()
+                    _check(
+                        "platform-libc", "OK",
+                        f"glibc {glibc_ver} (Linux/{platform.machine()})"
+                    )
+                else:
+                    _check("platform-libc", "OK", f"glibc detected (Linux/{platform.machine()})")
+            except OSError:
+                _check("platform-libc", "OK", "non-musl libc (libc.so.6 not loadable but musl check passed)")
     else:
         _check("platform-libc", "OK", f"{plat}/{platform.machine()} (non-Linux; glibc check skipped)")
 

@@ -337,8 +337,9 @@ class Guard:
         computed over the *real* fields, so the server-side audit log remains
         fully verifiable.
         """
-        # Attach policy fingerprint (outside canonical hash — like signature).
-        decision = dataclasses.replace(decision, policy_hash=self._policy_hash)
+        # Attach policy fingerprint and recompute decision_hash to include it.
+        # Reset decision_hash to "" so __post_init__ recomputes it with policy_hash.
+        decision = dataclasses.replace(decision, policy_hash=self._policy_hash, decision_hash="")
 
         if self._config.signer is None:
             # Redact even without signing (oracle protection applies regardless).
@@ -1148,11 +1149,7 @@ class Guard:
                 context,
                 injection_threshold=self._config.injection_threshold,
                 max_input_chars=self._config.max_input_chars,
-                injection_scorer_path=(
-                    str(self._config.injection_scorer_path)
-                    if self._config.injection_scorer_path is not None
-                    else None
-                ),
+                injection_scorer_path=self._config.injection_scorer_path,
             )
 
             # ── Semantic post-consensus check: fast Python rules before Z3 ─────

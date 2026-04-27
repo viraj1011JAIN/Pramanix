@@ -411,19 +411,12 @@ class TestOllamaTranslatorMalformedResponse:
 
 
 class TestOllamaTranslatorMissingDependency:
-    @pytest.mark.asyncio
-    async def test_missing_httpx_raises_import_error(
+    def test_missing_httpx_raises_import_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If httpx is not installed, extract() raises ImportError.
-
-        monkeypatch.setitem(sys.modules, "httpx", None) simulates a missing
-        package in a test environment where httpx IS installed.
-        Unreachable through normal API usage.
-        """
-        t = OllamaTranslator()
+        """If httpx is not installed, OllamaTranslator() raises ImportError."""
         monkeypatch.setitem(  # type: ignore[arg-type]
             sys.modules, "httpx", None
         )
         with pytest.raises(ImportError, match="httpx"):
-            await t.extract("transfer 100", _TransferIntent)
+            OllamaTranslator()

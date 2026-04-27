@@ -35,7 +35,7 @@ packages = [{include = "pramanix", from = "src"}]
 pramanix = "pramanix.cli:main"
 
 [tool.poetry.dependencies]
-python = ">=3.13"
+python = ">=3.13,<4.0"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"

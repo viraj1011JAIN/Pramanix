@@ -56,23 +56,30 @@ def test_kafka_sink_raises_config_error_without_confluent(
         KafkaAuditSink("my-topic", {"bootstrap.servers": "localhost:9092"})
 
 
+def _make_kafka_sink(mock_producer: MagicMock, max_queue: int = 10_000) -> KafkaAuditSink:
+    """Build a KafkaAuditSink via __new__ with all required attrs set."""
+    import threading
+    sink = KafkaAuditSink.__new__(KafkaAuditSink)
+    sink._topic = "test-topic"
+    sink._producer = mock_producer
+    sink._queue_depth = 0
+    sink._max_queue = max_queue
+    sink._overflow_count = 0
+    sink._queue_lock = threading.Lock()
+    sink._poll_stop = threading.Event()
+    return sink
+
+
 def test_kafka_sink_records_to_queue() -> None:
     mock_confluent = MagicMock()
     mock_producer = MagicMock()
     mock_confluent.Producer.return_value = mock_producer
 
     with patch.dict(sys.modules, {"confluent_kafka": mock_confluent}):
-        sink = KafkaAuditSink.__new__(KafkaAuditSink)
-        sink._topic = "test-topic"
-        sink._producer = mock_producer
-        sink._queue_depth = 0
-        sink._max_queue = 10_000
-        sink._overflow_count = 0
-
+        sink = _make_kafka_sink(mock_producer)
         d = _make_decision()
         sink.emit(d)
         mock_producer.produce.assert_called_once()
-        mock_producer.poll.assert_called_once_with(0)
 
 
 def test_kafka_sink_overflow_increments_counter() -> None:
@@ -81,13 +88,7 @@ def test_kafka_sink_overflow_increments_counter() -> None:
     mock_confluent.Producer.return_value = mock_producer
 
     with patch.dict(sys.modules, {"confluent_kafka": mock_confluent}):
-        sink = KafkaAuditSink.__new__(KafkaAuditSink)
-        sink._topic = "test-topic"
-        sink._producer = mock_producer
-        sink._queue_depth = 0
-        sink._max_queue = 0  # full from the start
-        sink._overflow_count = 0
-
+        sink = _make_kafka_sink(mock_producer, max_queue=0)
         d = _make_decision()
         sink.emit(d)
         assert sink.overflow_count == 1
@@ -100,12 +101,7 @@ def test_kafka_sink_failure_does_not_propagate() -> None:
     mock_confluent.Producer.return_value = mock_producer
 
     with patch.dict(sys.modules, {"confluent_kafka": mock_confluent}):
-        sink = KafkaAuditSink.__new__(KafkaAuditSink)
-        sink._topic = "test-topic"
-        sink._producer = mock_producer
-        sink._queue_depth = 0
-        sink._max_queue = 10_000
-        sink._overflow_count = 0
+        sink = _make_kafka_sink(mock_producer)
         # Should not raise
         sink.emit(_make_decision())
 
@@ -122,6 +118,8 @@ def test_s3_sink_raises_config_error_without_boto3(
 
 
 def test_s3_sink_records_puts_object() -> None:
+    import concurrent.futures
+
     mock_boto3 = MagicMock()
     mock_client = MagicMock()
     mock_boto3.client.return_value = mock_client
@@ -131,8 +129,10 @@ def test_s3_sink_records_puts_object() -> None:
         sink._bucket = "test-bucket"
         sink._prefix = "audit/"
         sink._s3 = mock_client
+        sink._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         sink.emit(_make_decision())
+        sink._pool.shutdown(wait=True)  # wait for the upload thread
         mock_client.put_object.assert_called_once()
         call_kwargs = mock_client.put_object.call_args[1]
         assert call_kwargs["Bucket"] == "test-bucket"
@@ -157,42 +157,36 @@ def test_s3_sink_failure_does_not_propagate() -> None:
 # ── SplunkHecAuditSink ────────────────────────────────────────────────────────
 
 
-def test_splunk_sink_records_sends_http(monkeypatch: pytest.MonkeyPatch) -> None:
-    from unittest.mock import patch as _patch
+def test_splunk_sink_records_sends_http() -> None:
+    import httpx
+    import respx
 
-    responses = []
-
-    def fake_urlopen(req, timeout=None):
-        responses.append(req)
-        mock_resp = MagicMock()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        return mock_resp
-
-    with _patch("urllib.request.urlopen", fake_urlopen):
+    with respx.mock(base_url="http://splunk:8088") as mock_splunk:
+        mock_splunk.post("/services/collector").mock(
+            return_value=httpx.Response(200, json={"text": "Success", "code": 0})
+        )
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "my-token")
         sink.emit(_make_decision())
 
-    assert len(responses) == 1
-    req = responses[0]
-    assert req.get_header("Authorization") == "Splunk my-token"
+        assert mock_splunk.calls.call_count == 1
+        req = mock_splunk.calls[0].request
+        assert req.headers["Authorization"] == "Splunk my-token"
 
 
 def test_splunk_sink_accepts_bare_token() -> None:
     """SplunkHecAuditSink accepts tokens without 'Splunk ' prefix."""
-    from unittest.mock import patch as _patch
+    import httpx
+    import respx
 
-    with _patch("urllib.request.urlopen") as mock_open:
-        mock_resp = MagicMock()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_open.return_value = mock_resp
-
+    with respx.mock(base_url="http://splunk:8088") as mock_splunk:
+        mock_splunk.post("/services/collector").mock(
+            return_value=httpx.Response(200, json={"text": "Success", "code": 0})
+        )
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "bare-token")
         sink.emit(_make_decision())
 
-    call_args = mock_open.call_args[0][0]
-    assert "Splunk bare-token" in call_args.get_header("Authorization")
+        req = mock_splunk.calls[0].request
+        assert "Splunk bare-token" in req.headers["Authorization"]
 
 
 def test_splunk_sink_failure_does_not_propagate() -> None:

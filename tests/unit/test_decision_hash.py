@@ -18,7 +18,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from pramanix.decision import Decision
+from pramanix.decision import Decision, SolverStatus
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -31,17 +31,23 @@ def _make_decision(
     policy: str = "TestPolicy",
 ) -> Decision:
     if allowed:
-        return Decision.safe(
+        return Decision(
+            allowed=True,
+            status=SolverStatus.SAFE,
             intent_dump={"amount": amount},
             state_dump={"balance": balance, "state_version": "v1"},
             metadata={"policy": policy, "policy_version": "1.0"},
+            policy_hash=policy,
         )
-    return Decision.unsafe(
+    return Decision(
+        allowed=False,
+        status=SolverStatus.UNSAFE,
         violated_invariants=violated or ("test_rule",),
         explanation=explanation or "Test block",
         intent_dump={"amount": amount},
         state_dump={"balance": balance, "state_version": "v1"},
         metadata={"policy": policy, "policy_version": "1.0"},
+        policy_hash=policy,
     )
 
 

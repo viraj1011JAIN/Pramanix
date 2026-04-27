@@ -266,11 +266,16 @@ class TestAwsKmsKeyProviderBehavior:
         *,
         explicit_version: str | None = None,
     ) -> AwsKmsKeyProvider:
+        import threading
         p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
         p._client = mock_client
         p._secret_arn = self._ARN
         p._version_stage = "AWSCURRENT"
         p._explicit_version = explicit_version
+        p._cache_lock = threading.Lock()
+        p._cached_pem = None
+        p._cached_version = None
+        p._cache_expires = 0.0
         return p
 
     def test_private_key_pem_from_secret_string(self, test_pem: bytes) -> None:
@@ -291,20 +296,23 @@ class TestAwsKmsKeyProviderBehavior:
 
     def test_key_version_from_describe_secret(self) -> None:
         mc = MagicMock()
-        mc.describe_secret.return_value = {
-            "VersionIdsToStages": {"ver-abc-123": ["AWSCURRENT"]}
+        mc.get_secret_value.return_value = {
+            "SecretString": "PLACEHOLDER_PEM",
+            "VersionId": "ver-abc-123",
         }
         assert self._provider(mc).key_version() == "ver-abc-123"
 
     def test_explicit_version_skips_describe(self) -> None:
         mc = MagicMock()
-        assert self._provider(mc, explicit_version="pinned-v2").key_version() == "pinned-v2"
-        mc.describe_secret.assert_not_called()
+        mc.get_secret_value.return_value = {"SecretString": "PLACEHOLDER_PEM"}
+        p = self._provider(mc, explicit_version="pinned-v2")
+        assert p.key_version() == "pinned-v2"
 
     def test_key_version_fallback_when_stage_absent(self) -> None:
         mc = MagicMock()
-        mc.describe_secret.return_value = {
-            "VersionIdsToStages": {"ver-old": ["AWSPREVIOUS"]}
+        mc.get_secret_value.return_value = {
+            "SecretString": "PLACEHOLDER_PEM",
+            # No "VersionId" key → falls back to "aws-unknown"
         }
         assert self._provider(mc).key_version() == "aws-unknown"
 
@@ -326,10 +334,15 @@ class TestAzureKeyVaultKeyProviderBehavior:
     """Tests AzureKeyVaultKeyProvider logic with an injected mock SecretClient."""
 
     def _provider(self, mock_client: MagicMock) -> AzureKeyVaultKeyProvider:
+        import threading
         p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
         p._client = mock_client
         p._secret_name = "pramanix-signing-key"
         p._secret_version = None
+        p._cache_lock = threading.Lock()
+        p._cached_pem = None
+        p._cached_version = None
+        p._cache_expires = 0.0
         return p
 
     def _mock_secret(self, pem: bytes, version: str = "abc123def") -> MagicMock:
@@ -376,11 +389,15 @@ class TestGcpKmsKeyProviderBehavior:
         *,
         version_id: str = "latest",
     ) -> GcpKmsKeyProvider:
+        import threading
         p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
         p._client = mock_client
         p._project_id = "my-project"
         p._secret_id = "pramanix-signing-key"
         p._version_id = version_id
+        p._cache_lock = threading.Lock()
+        p._cached_pem = None
+        p._cache_expires = 0.0
         return p
 
     def test_private_key_pem_from_payload(self, test_pem: bytes) -> None:
@@ -418,11 +435,16 @@ class TestHashiCorpVaultKeyProviderBehavior:
     """Tests HashiCorpVaultKeyProvider logic with an injected mock hvac.Client."""
 
     def _provider(self, mock_client: MagicMock) -> HashiCorpVaultKeyProvider:
+        import threading
         p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
         p._client = mock_client
         p._secret_path = "pramanix/signing-key"
         p._field = "private_key_pem"
         p._mount_point = "secret"
+        p._cache_lock = threading.Lock()
+        p._cached_pem = None
+        p._cached_version = None
+        p._cache_expires = 0.0
         return p
 
     def _kv_response(self, pem: bytes, version: int = 3) -> dict:  # type: ignore[type-arg]

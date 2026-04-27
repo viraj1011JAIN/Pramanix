@@ -57,7 +57,8 @@ class MerkleProof:
         current = self.leaf_hash
         for sibling, direction in self.proof_path:
             combined = sibling + current if direction == "left" else current + sibling
-            current = hashlib.sha256(combined.encode()).hexdigest()
+            # H-07: internal nodes use \x01 prefix (matches _build_root)
+            current = hashlib.sha256(b"\x01" + combined.encode()).hexdigest()
         return current == self.root_hash
 
 
@@ -95,7 +96,8 @@ class MerkleAnchor:
         return self._build_root(self._leaves[:])
 
     def prove(self, decision_id: str) -> MerkleProof | None:
-        target = hashlib.sha256(decision_id.encode()).hexdigest()
+        # H-07: use the same \x00 prefix as add() to locate the leaf
+        target = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
         try:
             idx = self._leaves.index(target)
         except ValueError:

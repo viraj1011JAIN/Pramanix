@@ -208,22 +208,19 @@ class TestN4ResolverOverwriteWarning:
             "First-time registration must not log a warning"
         )
 
-    def test_overwrite_emits_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Re-registering the same name must emit a WARNING-level log."""
+    def test_overwrite_emits_warning(self) -> None:
+        """Re-registering without force=True raises ResolverConflictError."""
+        from pramanix.exceptions import ResolverConflictError
         reg = ResolverRegistry()
         reg.register("balance", lambda: 100)
-        with caplog.at_level(logging.WARNING, logger="pramanix.resolvers"):
+        with pytest.raises(ResolverConflictError, match="balance"):
             reg.register("balance", lambda: 200)
-        assert any(
-            "balance" in r.message and r.levelno == logging.WARNING
-            for r in caplog.records
-        ), "Expected a WARNING log mentioning the field name 'balance' on overwrite"
 
     def test_overwrite_still_updates_resolver(self) -> None:
-        """After overwriting, the new resolver must be used."""
+        """After overwriting with force=True, the new resolver must be used."""
         reg = ResolverRegistry()
         reg.register("counter", lambda: 1)
-        reg.register("counter", lambda: 2)
+        reg.register("counter", lambda: 2, force=True)
         assert reg.resolve("counter") == 2
 
     def test_non_callable_still_raises_type_error(self) -> None:
