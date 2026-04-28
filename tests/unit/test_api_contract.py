@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""API contract lock tests â€” Phase 1.2.
+"""API contract lock tests — Phase 1.2.
 
 THESE TESTS ARE INTENTIONALLY BRITTLE.
 
 They encode the exact public API surface at v0.9.0 as immutable snapshots.
-When a test here fails on a branch, it is NOT a test bug â€” it means the
+When a test here fails on a branch, it is NOT a test bug — it means the
 public API changed and the change requires ALL THREE of:
 
   (a) An explicit snapshot update in this file, AND
@@ -17,13 +17,13 @@ Do NOT update the snapshots without completing all three steps.
 
 Contracts locked at v0.9.0:
 
-  1. pramanix.__all__            â€” exact set of 43 exported names.
-  2. SolverStatus                â€” exact 9 members, wire values, iteration order.
-  3. Decision.to_dict()          â€” exact 13-key schema + per-field type semantics.
-  4. GuardConfig field names     â€” exact 20 fields, all-defaults constructor, frozen.
-  5. GuardConfig default values  â€” operational defaults that callers depend on.
-  6. Direct import surface       â€” high-visibility names importable from `pramanix`.
-  7. Decision factory methods    â€” all factory class-methods exist, correct status.
+  1. pramanix.__all__            — exact set of 43 exported names.
+  2. SolverStatus                — exact 9 members, wire values, iteration order.
+  3. Decision.to_dict()          — exact 13-key schema + per-field type semantics.
+  4. GuardConfig field names     — exact 29 fields, all-defaults constructor, frozen.
+  5. GuardConfig default values  — operational defaults that callers depend on.
+  6. Direct import surface       — high-visibility names importable from `pramanix`.
+  7. Decision factory methods    — all factory class-methods exist, correct status.
 
 See docs/api-compatibility.md for the full semver policy and update procedure.
 """
@@ -42,7 +42,7 @@ from pramanix.decision import _BLOCKED_STATUSES, Decision, SolverStatus
 from pramanix.guard_config import GuardConfig
 
 # ============================================================================
-# 1.  pramanix.__all__ â€” exact export set
+# 1.  pramanix.__all__ — exact export set
 # ============================================================================
 #
 # Order of __all__ is NOT part of the public contract (Python `import *` does
@@ -61,7 +61,7 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Compliance (Phase 11)
         "ComplianceReport",
         "ComplianceReporter",
-        # Exceptions â€” core
+        # Exceptions — core
         "ConfigurationError",
         "FieldTypeError",
         "GuardError",
@@ -78,10 +78,16 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "TranspileError",
         "ValidationError",
         "WorkerError",
-        # Exceptions â€” translator (Phase 4)
+        # Exceptions — translator (Phase 4)
         "ExtractionFailureError",
         "ExtractionMismatchError",
         "InjectionBlockedError",
+        # New security exceptions (v1.0.0+)
+        "FlowViolationError",
+        "MemoryViolationError",
+        "OversightRequiredError",
+        "PrivilegeEscalationError",
+        "ProvenanceError",
         # DSL expressions
         "ArrayField",
         "ConstraintExpr",
@@ -184,6 +190,39 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Resolver / migration errors (v1.0.0)
         "MigrationError",
         "ResolverConflictError",
+        # IFC — information-flow control (v1.0.0+)
+        "ClassifiedData",
+        "FlowDecision",
+        "FlowEnforcer",
+        "FlowPolicy",
+        "FlowRule",
+        "TrustLabel",
+        # Privilege separation (v1.0.0+)
+        "CapabilityManifest",
+        "ExecutionContext",
+        "ExecutionScope",
+        "ScopeEnforcer",
+        "ToolCapability",
+        # Human oversight (v1.0.0+)
+        "ApprovalDecision",
+        "ApprovalRequest",
+        "ApprovalStatus",
+        "EscalationQueue",
+        "InMemoryApprovalWorkflow",
+        "OversightRecord",
+        # Memory security (v1.0.0+)
+        "MemoryEntry",
+        "ScopedMemoryPartition",
+        "SecureMemoryStore",
+        # Policy lifecycle (v1.0.0+)
+        "FieldChange",
+        "InvariantChange",
+        "PolicyDiff",
+        "ShadowEvaluator",
+        "ShadowResult",
+        # Provenance / chain-of-custody (v1.0.0+)
+        "ProvenanceChain",
+        "ProvenanceRecord",
     }
 )
 
@@ -250,7 +289,7 @@ class TestAllExportsLock:
 
 
 # ============================================================================
-# 2.  Direct import surface â€” high-visibility names
+# 2.  Direct import surface — high-visibility names
 # ============================================================================
 #
 # Verifies that the core types can be imported directly from `pramanix`
@@ -303,7 +342,7 @@ class TestDirectImportSurface:
 
 
 # ============================================================================
-# 3.  SolverStatus â€” member names, wire values, and iteration order
+# 3.  SolverStatus — member names, wire values, and iteration order
 # ============================================================================
 #
 # Wire values (.value strings) appear in:
@@ -318,7 +357,7 @@ class TestDirectImportSurface:
 # To update: change _EXPECTED_SOLVER_STATUS_ORDERED, add CHANGELOG.md entry.
 # ============================================================================
 
-# Ordered tuple â€” iteration order is locked.
+# Ordered tuple — iteration order is locked.
 # Reordering requires a MINOR bump (non-breaking, but visible in for-loops
 # and documentation that lists members in source order).
 _EXPECTED_SOLVER_STATUS_ORDERED: tuple[tuple[str, str], ...] = (
@@ -333,7 +372,7 @@ _EXPECTED_SOLVER_STATUS_ORDERED: tuple[tuple[str, str], ...] = (
     ("CACHE_HIT",          "cache_hit"),
 )
 
-# Derived dict â€” used for per-member value assertions (order-independent).
+# Derived dict — used for per-member value assertions (order-independent).
 _EXPECTED_SOLVER_STATUS: dict[str, str] = dict(_EXPECTED_SOLVER_STATUS_ORDERED)
 
 
@@ -359,7 +398,7 @@ class TestSolverStatusLock:
         )
 
     def test_no_missing_members(self) -> None:
-        """Removing a member is MAJOR â€” callers may hold references to the removed name."""
+        """Removing a member is MAJOR — callers may hold references to the removed name."""
         actual_names = {m.name for m in SolverStatus}
         missing = set(_EXPECTED_SOLVER_STATUS) - actual_names
         assert not missing, (
@@ -368,7 +407,7 @@ class TestSolverStatusLock:
         )
 
     def test_wire_values_unchanged(self) -> None:
-        """Wire values appear in persistent audit logs â€” any change corrupts stored records."""
+        """Wire values appear in persistent audit logs — any change corrupts stored records."""
         actual = {m.name: m.value for m in SolverStatus}
         mismatches = [
             f"  {name}: expected {exp!r}, got {actual[name]!r}"
@@ -376,7 +415,7 @@ class TestSolverStatusLock:
             if name in actual and actual[name] != exp
         ]
         assert not mismatches, (
-            "SolverStatus wire value(s) changed (MAJOR â€” corrupts audit logs):\n"
+            "SolverStatus wire value(s) changed (MAJOR — corrupts audit logs):\n"
             + "\n".join(mismatches)
         )
 
@@ -384,14 +423,14 @@ class TestSolverStatusLock:
         """Enum declaration order is part of the documented public interface."""
         actual_order = tuple((m.name, m.value) for m in SolverStatus)
         assert actual_order == _EXPECTED_SOLVER_STATUS_ORDERED, (
-            "SolverStatus iteration order changed (MINOR change â€” must be explicit).\n"
+            "SolverStatus iteration order changed (MINOR change — must be explicit).\n"
             f"  Expected: {_EXPECTED_SOLVER_STATUS_ORDERED}\n"
             f"  Got:      {actual_order}\n"
             "Update _EXPECTED_SOLVER_STATUS_ORDERED and add CHANGELOG.md entry."
         )
 
     def test_all_values_are_str(self) -> None:
-        """SolverStatus inherits from StrEnum â€” every .value must be a plain str."""
+        """SolverStatus inherits from StrEnum — every .value must be a plain str."""
         non_str = [(m.name, type(m.value)) for m in SolverStatus if not isinstance(m.value, str)]
         assert not non_str, f"SolverStatus member(s) with non-str .value: {non_str!r}"
 
@@ -424,7 +463,7 @@ class TestSolverStatusLock:
 
 
 # ============================================================================
-# 4.  Decision.to_dict() â€” wire schema key set and per-field type semantics
+# 4.  Decision.to_dict() — wire schema key set and per-field type semantics
 # ============================================================================
 #
 # Decision.to_dict() is the canonical wire format for:
@@ -436,10 +475,10 @@ class TestSolverStatusLock:
 # Value types: changing a type is MAJOR (corrupts deserialisation code).
 #
 # Fields NOT locked for specific content (only type/presence):
-#   - metadata:      dict â€” caller-supplied; content varies per policy
-#   - intent_dump:   dict â€” runtime intent data
-#   - state_dump:    dict â€” runtime state data
-#   - explanation:   str  â€” human-readable; wording may change in patches
+#   - metadata:      dict — caller-supplied; content varies per policy
+#   - intent_dump:   dict — runtime intent data
+#   - state_dump:    dict — runtime state data
+#   - explanation:   str  — human-readable; wording may change in patches
 #
 # To update: change _EXPECTED_DECISION_KEYS or the per-field type tests,
 #            add CHANGELOG.md entry with semver category.
@@ -481,7 +520,7 @@ def _unsafe_decision() -> Decision:
 class TestDecisionToDictLock:
     """Contract: Decision.to_dict() wire schema and field types must not change silently."""
 
-    # â”€â”€ key set â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ key set â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def test_exact_key_count(self, _safe_decision: Decision) -> None:
         actual_keys = frozenset(_safe_decision.to_dict())
@@ -506,10 +545,10 @@ class TestDecisionToDictLock:
             "Removing a wire field is a semver MAJOR breaking change."
         )
 
-    # â”€â”€ per-field type semantics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ per-field type semantics â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def test_decision_id_is_uuid4_str(self, _safe_decision: Decision) -> None:
-        """decision_id is used as a distributed trace key â€” must be UUID4 string."""
+        """decision_id is used as a distributed trace key — must be UUID4 string."""
         d = _safe_decision.to_dict()
         assert isinstance(d["decision_id"], str) and d["decision_id"], (
             "decision_id must be a non-empty str"
@@ -523,7 +562,7 @@ class TestDecisionToDictLock:
         )
 
     def test_allowed_is_exactly_bool(self, _safe_decision: Decision) -> None:
-        """allowed must be bool, not int â€” `type(x) is bool` is stricter than isinstance."""
+        """allowed must be bool, not int — `type(x) is bool` is stricter than isinstance."""
         d = _safe_decision.to_dict()
         assert type(d["allowed"]) is bool, (
             f"allowed must be exactly bool (not int subclass), got {type(d['allowed'])}"
@@ -576,7 +615,7 @@ class TestDecisionToDictLock:
         assert isinstance(_safe_decision.to_dict()["state_dump"], dict)
 
     def test_decision_hash_is_64_char_lowercase_hex(self, _safe_decision: Decision) -> None:
-        """decision_hash is SHA-256 â€” 64 lowercase hex chars."""
+        """decision_hash is SHA-256 — 64 lowercase hex chars."""
         d = _safe_decision.to_dict()
         assert isinstance(d["decision_hash"], str), (
             f"decision_hash must be str, got {type(d['decision_hash'])}"
@@ -589,7 +628,7 @@ class TestDecisionToDictLock:
         )
 
     def test_signature_is_str_or_none_not_bytes(self, _safe_decision: Decision) -> None:
-        """signature must be str | None â€” bytes breaks JSON serialisation."""
+        """signature must be str | None — bytes breaks JSON serialisation."""
         d = _safe_decision.to_dict()
         assert d["signature"] is None or isinstance(d["signature"], str), (
             f"signature must be str | None (not bytes), got {type(d['signature'])}"
@@ -607,7 +646,7 @@ class TestDecisionToDictLock:
             f"policy_hash must be str | None, got {type(d['policy_hash'])}"
         )
 
-    # â”€â”€ cross-field invariants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ cross-field invariants â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def test_safe_decision_allowed_true_status_safe(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
@@ -634,7 +673,7 @@ class TestDecisionToDictLock:
 
 
 # ============================================================================
-# 5.  Decision factory methods â€” existence and status contract
+# 5.  Decision factory methods — existence and status contract
 # ============================================================================
 #
 # Factory methods are the canonical way to construct Decisions.
@@ -697,14 +736,14 @@ class TestDecisionFactories:
         assert d.status is SolverStatus.VALIDATION_FAILURE
 
     def test_decision_is_frozen(self) -> None:
-        """Decision must be immutable â€” callers rely on this for thread safety."""
+        """Decision must be immutable — callers rely on this for thread safety."""
         d = Decision.safe()
         with pytest.raises(AttributeError):
             d.allowed = False  # type: ignore[misc]
 
 
 # ============================================================================
-# 6.  GuardConfig â€” field names, stable defaults, and immutability
+# 6.  GuardConfig — field names, stable defaults, and immutability
 # ============================================================================
 #
 # GuardConfig fields are part of the public API: callers write
@@ -716,7 +755,7 @@ class TestDecisionFactories:
 #   on the default.  Treat as MINOR if the new default is strictly safer,
 #   MAJOR otherwise.
 #
-# Fields intentionally NOT locked for default value (operational tuning â€”
+# Fields intentionally NOT locked for default value (operational tuning —
 # may be tightened across patch releases without a version bump):
 #   - shed_latency_threshold_ms
 #   - shed_worker_pct
@@ -757,6 +796,11 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         "audit_sinks",
         # translator circuit breaker config (v1.0.0)
         "translator_circuit_breaker_config",
+        # Architectural pillar opt-in fields (v1.0.0+)
+        "ifc_policy",
+        "capability_manifest",
+        "oversight_workflow",
+        "memory_store",
     }
 )
 
@@ -786,6 +830,11 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     "consensus_strictness":     "semantic",
     "audit_sinks":              (),
     "translator_circuit_breaker_config": None,
+    # Architectural pillar opt-in fields (v1.0.0+)
+    "ifc_policy":               None,
+    "capability_manifest":      None,
+    "oversight_workflow":       None,
+    "memory_store":             None,
 }
 
 
@@ -804,7 +853,7 @@ class TestGuardConfigFieldLock:
         )
 
     def test_no_unexpected_fields(self) -> None:
-        """New fields added without snapshot update â€” additions are MINOR."""
+        """New fields added without snapshot update — additions are MINOR."""
         unexpected = self._actual_fields() - _EXPECTED_GUARDCONFIG_FIELDS
         assert not unexpected, (
             f"New GuardConfig field(s) without snapshot update:\n  {sorted(unexpected)}\n"
@@ -813,7 +862,7 @@ class TestGuardConfigFieldLock:
         )
 
     def test_no_missing_fields(self) -> None:
-        """Removed/renamed fields are MAJOR â€” callers pass them as kwargs."""
+        """Removed/renamed fields are MAJOR — callers pass them as kwargs."""
         missing = _EXPECTED_GUARDCONFIG_FIELDS - self._actual_fields()
         assert not missing, (
             f"GuardConfig field(s) missing:\n  {sorted(missing)}\n"
@@ -821,7 +870,7 @@ class TestGuardConfigFieldLock:
         )
 
     def test_zero_arg_constructor_works(self) -> None:
-        """GuardConfig() with no arguments must succeed â€” all fields have defaults."""
+        """GuardConfig() with no arguments must succeed — all fields have defaults."""
         cfg = GuardConfig()  # must not raise
         assert cfg is not None
 
@@ -855,7 +904,7 @@ class TestGuardConfigFieldLock:
         )
 
     def test_guard_config_is_frozen(self) -> None:
-        """GuardConfig must remain immutable (frozen=True) â€” mutable config is a hazard."""
+        """GuardConfig must remain immutable (frozen=True) — mutable config is a hazard."""
         cfg = GuardConfig()
         with pytest.raises(AttributeError):  # FrozenInstanceError (3.11+) subclasses AttributeError
             cfg.execution_mode = "async-thread"  # type: ignore[misc]

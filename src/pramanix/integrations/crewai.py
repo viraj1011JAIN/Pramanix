@@ -179,4 +179,7 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
         if st.underlying_fn is not None:
             return str(st.underlying_fn(tool_input))
 
-        return f"Action '{self.name}' allowed by Pramanix guard. No underlying function configured."
+        raise NotImplementedError(
+            f"PramanixCrewAITool '{self.name}' has no underlying_fn configured. "
+            "Pass underlying_fn= at construction time."
+        )

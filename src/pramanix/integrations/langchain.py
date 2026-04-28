@@ -74,11 +74,19 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
                 object.__setattr__(self, "name", name)
                 object.__setattr__(self, "description", description)
 
+        if execute_fn is None:
+            import logging as _lc_log
+            _lc_log.getLogger(__name__).warning(
+                "PramanixGuardedTool '%s': execute_fn is None — "
+                "ALLOW decisions raise NotImplementedError. "
+                "Pass execute_fn= to configure the guarded action.",
+                name,
+            )
         # Store private behavioral state bypassing Pydantic schema
         object.__setattr__(self, "_pramanix_guard", guard)
         object.__setattr__(self, "_pramanix_schema", intent_schema)
         object.__setattr__(self, "_pramanix_state", state_provider)
-        object.__setattr__(self, "_pramanix_execute", execute_fn or (lambda i: "OK"))
+        object.__setattr__(self, "_pramanix_execute", execute_fn)
         # H-13: one shared executor — created once, never per-call.
         object.__setattr__(
             self,
@@ -129,6 +137,11 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         decision = await guard.verify_async(intent=intent, state=state)
 
         if decision.allowed:
+            if execute_fn is None:
+                raise NotImplementedError(
+                    f"PramanixGuardedTool '{self.name}' has no execute_fn. "
+                    "Pass execute_fn= at construction time."
+                )
             result = execute_fn(intent)
             if asyncio.iscoroutine(result):
                 result = await result

@@ -349,6 +349,52 @@ class GuardConfig:
         config = GuardConfig(audit_sinks=(StdoutAuditSink(), InMemoryAuditSink()))
     """
 
+    ifc_policy: Any | None = field(default=None)
+    """Optional :class:`~pramanix.ifc.FlowPolicy` for information-flow control.
+
+    When set, callers can use the policy with a
+    :class:`~pramanix.ifc.FlowEnforcer` to gate data flows between components.
+    Guard itself does not enforce IFC — this field is a convenience carrier so
+    that the operator's IFC configuration travels with the Guard.
+
+    Default: ``None`` (IFC not configured).
+    """
+
+    capability_manifest: Any | None = field(default=None)
+    """Optional :class:`~pramanix.privilege.CapabilityManifest` for privilege separation.
+
+    When set, operators can pass this to a
+    :class:`~pramanix.privilege.ScopeEnforcer` to enforce least-privilege
+    before dispatching tool calls.  Guard itself does not enforce capability
+    checks — this field carries the manifest alongside the Guard configuration.
+
+    Default: ``None`` (privilege separation not configured).
+    """
+
+    oversight_workflow: Any | None = field(default=None)
+    """Optional :class:`~pramanix.oversight.InMemoryApprovalWorkflow` (or any
+    compatible approval workflow implementation).
+
+    When set, operators integrate the workflow into their agent loop to gate
+    high-impact actions behind human approval before execution.  Guard itself
+    does not enforce oversight — this field carries the workflow alongside
+    the Guard configuration.
+
+    Default: ``None`` (human oversight not configured).
+    """
+
+    memory_store: Any | None = field(default=None)
+    """Optional :class:`~pramanix.memory.SecureMemoryStore` for scoped,
+    label-filtered agent memory.
+
+    When set, agents can read/write to the store using its
+    ``(tenant_id, workflow_id)`` partition scheme.  Guard itself does not
+    interact with the memory store — this field carries the store alongside
+    the Guard configuration.
+
+    Default: ``None`` (secure memory not configured).
+    """
+
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
             raise ConfigurationError(
@@ -484,6 +530,21 @@ class GuardConfig:
                 "the input size limit is disabled. Large payloads can exhaust memory "
                 "before reaching the solver. "
                 "Set max_input_bytes to a positive value (default: 65536).",
+                UserWarning,
+                stacklevel=2,
+            )
+        # ── Production safety: no policy-version binding ──────────────────────
+        if _is_prod and self.expected_policy_hash is None:
+            warnings.warn(
+                "GuardConfig(expected_policy_hash=None) in production "
+                "(PRAMANIX_ENV=production): policy-version binding is disabled. "
+                "A silent policy drift — a hot-reload, a misconfigured deploy, "
+                "or a supply-chain substitution — would not be detected at Guard "
+                "construction time. Set expected_policy_hash to the SHA-256 "
+                "fingerprint of your compiled policy. Retrieve it after first "
+                "construction via guard.policy_hash, pin it in your deployment "
+                "config, and set GuardConfig(expected_policy_hash=<hash>) on "
+                "all subsequent deployments.",
                 UserWarning,
                 stacklevel=2,
             )

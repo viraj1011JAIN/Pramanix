@@ -12,15 +12,23 @@ Coverage:
 """
 from __future__ import annotations
 
+import sys
 from decimal import Decimal
 from typing import ClassVar
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
+from tests.helpers.real_protocols import (
+    _ConfluentKafkaModule,
+    _GrpcRpcHandler,
+    _KafkaConsumer,
+    _KafkaMessage,
+    _RpcContext,
+)
 
 # ── Shared test policy ────────────────────────────────────────────────────────
 
@@ -44,176 +52,117 @@ def _make_guard() -> Guard:
 
 
 class TestPramanixGrpcInterceptor:
+    """Uses real grpcio (installed) — no sys.modules injection needed."""
+
     def _make_interceptor(self, intent: dict):
         from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-        guard = _make_guard()
         return PramanixGrpcInterceptor(
-            guard=guard,
+            guard=_make_guard(),
             intent_extractor=lambda details, req: intent,
             state_provider=lambda: {},
         )
 
     def test_allowed_calls_original_handler(self):
-        """When guard allows, the original unary handler must be called."""
+        """When guard allows, intercept_service returns a non-None wrapped handler."""
+        from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-        mock_grpc = MagicMock()
-        mock_grpc.StatusCode = MagicMock()
-        mock_grpc.StatusCode.PERMISSION_DENIED = "PERMISSION_DENIED"
-        mock_grpc.StatusCode.INTERNAL = "INTERNAL"
-        mock_grpc.ServerInterceptor = object
+        def _original(req, ctx):
+            return "handler_result"
 
-        with patch.dict("sys.modules", {"grpc": mock_grpc}):
-            # Reload to pick up mock
-            import importlib
+        handler = _GrpcRpcHandler(unary_unary=_original)
 
-            from pramanix.interceptors import grpc as grpc_mod
-            importlib.reload(grpc_mod)
+        interceptor = PramanixGrpcInterceptor(
+            guard=_make_guard(),
+            intent_extractor=lambda d, r: {"amount": Decimal("100")},
+            state_provider=lambda: {},
+        )
 
-            original_handler = MagicMock(return_value="handler_result")
-            mock_handler = MagicMock()
-            mock_handler.unary_unary = original_handler
-            mock_handler._replace = MagicMock(return_value=mock_handler)
-
-            interceptor = grpc_mod.PramanixGrpcInterceptor(
-                guard=_make_guard(),
-                intent_extractor=lambda d, r: {"amount": Decimal("100")},
-                state_provider=lambda: {},
-            )
-            interceptor._denied_code = "PERMISSION_DENIED"
-
-            continuation = MagicMock(return_value=mock_handler)
-            details = MagicMock()
-
-            result = interceptor.intercept_service(continuation, details)
-            assert result is not None
+        result = interceptor.intercept_service(lambda _: handler, object())
+        assert result is not None
 
     def test_none_handler_returned_as_is(self):
         """If continuation returns None, intercept_service returns None."""
-        mock_grpc = MagicMock()
-        mock_grpc.ServerInterceptor = object
+        from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-        with patch.dict("sys.modules", {"grpc": mock_grpc}):
-            import importlib
-
-            from pramanix.interceptors import grpc as grpc_mod
-            importlib.reload(grpc_mod)
-
-            interceptor = grpc_mod.PramanixGrpcInterceptor(
-                guard=_make_guard(),
-                intent_extractor=lambda d, r: {"amount": Decimal("100")},
-                state_provider=lambda: {},
-            )
-            result = interceptor.intercept_service(lambda _: None, MagicMock())
-            assert result is None
+        interceptor = PramanixGrpcInterceptor(
+            guard=_make_guard(),
+            intent_extractor=lambda d, r: {"amount": Decimal("100")},
+            state_provider=lambda: {},
+        )
+        result = interceptor.intercept_service(lambda _: None, object())
+        assert result is None
 
     def test_guarded_unary_blocks_when_denied(self):
         """_guarded_unary must call context.abort when guard blocks."""
-        mock_grpc = MagicMock()
-        mock_grpc.StatusCode = MagicMock()
-        mock_grpc.StatusCode.PERMISSION_DENIED = "PERMISSION_DENIED"
-        mock_grpc.StatusCode.INTERNAL = "INTERNAL"
-        mock_grpc.ServerInterceptor = object
+        import grpc
 
-        with patch.dict("sys.modules", {"grpc": mock_grpc}):
-            import importlib
+        from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-            from pramanix.interceptors import grpc as grpc_mod
-            importlib.reload(grpc_mod)
+        def _original(req, ctx):
+            return "should_not_reach"
 
-            original_handler_fn = MagicMock(return_value="result")
-            mock_handler = MagicMock()
-            mock_handler.unary_unary = original_handler_fn
+        handler = _GrpcRpcHandler(unary_unary=_original)
 
-            captured_wrapped = {}
+        interceptor = PramanixGrpcInterceptor(
+            guard=_make_guard(),
+            intent_extractor=lambda d, r: {"amount": Decimal("-100")},  # always blocks
+            state_provider=lambda: {},
+        )
 
-            def fake_replace(**kwargs):
-                captured_wrapped.update(kwargs)
-                new_handler = MagicMock()
-                new_handler.unary_unary = kwargs.get("unary_unary", original_handler_fn)
-                return new_handler
+        wrapped = interceptor._wrap_handler(handler, object())
+        ctx = _RpcContext()
+        wrapped.unary_unary(object(), ctx)
 
-            mock_handler._replace = fake_replace
-
-            interceptor = grpc_mod.PramanixGrpcInterceptor(
-                guard=_make_guard(),
-                intent_extractor=lambda d, r: {"amount": Decimal("-100")},  # will be blocked
-                state_provider=lambda: {},
-            )
-            interceptor._denied_code = "PERMISSION_DENIED"
-
-            wrapped = interceptor._wrap_handler(mock_handler, MagicMock())
-            context = MagicMock()
-            wrapped.unary_unary(MagicMock(), context)
-            context.abort.assert_called_once()
-            call_args = context.abort.call_args[0]
-            assert call_args[0] == "PERMISSION_DENIED"
+        assert ctx.aborted is True
+        assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
 
 # ── PramanixKafkaConsumer ─────────────────────────────────────────────────────
 
 
 class TestPramanixKafkaConsumer:
-    def _build_mock_message(self, value: bytes = b"{}") -> MagicMock:
-        msg = MagicMock()
-        msg.error.return_value = None
-        msg.value.return_value = value
-        msg.topic.return_value = "test-topic"
-        msg.offset.return_value = 0
-        return msg
+    """Bypasses __init__ via __new__ + direct attribute injection.
+
+    confluent_kafka IS installed, so PramanixKafkaConsumer is directly
+    importable.  We avoid a real broker by injecting a _KafkaConsumer
+    (from real_protocols) as the private _consumer attribute — no
+    sys.modules injection or importlib.reload required.
+    """
+
+    def _build(self, messages, intent_extractor):
+        from pramanix.interceptors.kafka import PramanixKafkaConsumer
+
+        consumer_instance = _KafkaConsumer(messages=messages)
+        c = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
+        c._guard = _make_guard()
+        c._intent_extractor = intent_extractor
+        c._state_provider = lambda: {}
+        c._dlq_producer = None
+        c._dlq_topic = "pramanix.dlq"
+        c._consumer = consumer_instance
+        return c
 
     def test_blocked_message_not_yielded(self):
         """A message that fails guard verification must not be yielded."""
-        mock_confluent = MagicMock()
-        mock_consumer_instance = MagicMock()
-        blocked_msg = self._build_mock_message(b'{"amount": -100}')
-
-        # First call returns blocked message, second returns None to stop iteration
-        mock_consumer_instance.poll.side_effect = [blocked_msg, None]
-        mock_confluent.Consumer.return_value = mock_consumer_instance
-
-        with patch.dict("sys.modules", {"confluent_kafka": mock_confluent}):
-            import importlib
-
-            from pramanix.interceptors import kafka as kafka_mod
-            importlib.reload(kafka_mod)
-
-            consumer = kafka_mod.PramanixKafkaConsumer(
-                kafka_config={"bootstrap.servers": "localhost:9092", "group.id": "test"},
-                topics=["test-topic"],
-                guard=_make_guard(),
-                intent_extractor=lambda msg: {"amount": Decimal("-100")},  # always blocks
-                state_provider=lambda: {},
-            )
-            yielded = list(consumer.safe_poll(timeout=0.1))
-            assert yielded == []
+        blocked_msg = _KafkaMessage(b'{"amount": -100}')
+        consumer = self._build(
+            messages=[blocked_msg],
+            intent_extractor=lambda msg: {"amount": Decimal("-100")},
+        )
+        yielded = list(consumer.safe_poll(timeout=0.1))
+        assert yielded == []
 
     def test_allowed_message_is_yielded(self):
         """A message that passes guard verification must be yielded."""
-        mock_confluent = MagicMock()
-        mock_consumer_instance = MagicMock()
-        allowed_msg = self._build_mock_message(b'{"amount": 100}')
-
-        mock_consumer_instance.poll.side_effect = [allowed_msg, None]
-        mock_confluent.Consumer.return_value = mock_consumer_instance
-        mock_confluent.KafkaException = Exception
-
-        with patch.dict("sys.modules", {"confluent_kafka": mock_confluent}):
-            import importlib
-
-            from pramanix.interceptors import kafka as kafka_mod
-            importlib.reload(kafka_mod)
-
-            consumer = kafka_mod.PramanixKafkaConsumer(
-                kafka_config={"bootstrap.servers": "localhost:9092", "group.id": "test"},
-                topics=["test-topic"],
-                guard=_make_guard(),
-                intent_extractor=lambda msg: {"amount": Decimal("100")},  # always passes
-                state_provider=lambda: {},
-            )
-            yielded = list(consumer.safe_poll(timeout=0.1))
-            assert len(yielded) == 1
-            assert yielded[0] is allowed_msg
+        allowed_msg = _KafkaMessage(b'{"amount": 100}')
+        consumer = self._build(
+            messages=[allowed_msg],
+            intent_extractor=lambda msg: {"amount": Decimal("100")},
+        )
+        yielded = list(consumer.safe_poll(timeout=0.1))
+        assert len(yielded) == 1
+        assert yielded[0] is allowed_msg
 
 
 # ── Kubernetes Admission Webhook ──────────────────────────────────────────────
@@ -262,7 +211,7 @@ class TestAdmissionWebhook:
 
         app = create_admission_webhook(
             guard=_make_guard(),
-            intent_extractor=lambda r: {"amount": Decimal("100")},  # always passes
+            intent_extractor=lambda r: {"amount": Decimal("100")},
             state_provider=lambda: {},
         )
 
@@ -283,7 +232,7 @@ class TestAdmissionWebhook:
 
         app = create_admission_webhook(
             guard=_make_guard(),
-            intent_extractor=lambda r: {"amount": Decimal("-100")},  # always blocks
+            intent_extractor=lambda r: {"amount": Decimal("-100")},
             state_provider=lambda: {},
         )
 
@@ -294,3 +243,4 @@ class TestAdmissionWebhook:
         assert body["response"]["allowed"] is False
         assert "status" in body["response"]
         assert body["response"]["uid"] == "test-uid-1234"
+

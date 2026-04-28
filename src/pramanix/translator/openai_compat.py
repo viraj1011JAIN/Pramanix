@@ -106,7 +106,7 @@ class OpenAICompatTranslator:
         attempts = 0
 
         try:
-            async for attempt in AsyncRetrying(
+            async for attempt in AsyncRetrying(  # pragma: no branch
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
                 retry=retry_if_exception_type(self._retryable),
@@ -122,21 +122,28 @@ class OpenAICompatTranslator:
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"OpenAI model '{self.model}' unreachable after {attempts} attempt(s): {exc}",
+                f"OpenAI model '{self.model}' unreachable after "
+                f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
 
         except self._api_status_error as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] OpenAI API error {exc.status_code}: {exc.message}"
+                f"[{self.model}] OpenAI API error "
+                f"{exc.status_code}: {exc.message}"
             ) from exc
-
-        raise AssertionError("unreachable")  # pragma: no cover
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
-        await self._client.aclose()
+        # openai SDK ≥1.0 uses close() (coroutine); older builds used aclose().
+        # Prefer close() but fall back gracefully for forward compatibility.
+        import inspect
+        _close = getattr(self._client, "close", None) or getattr(self._client, "aclose", None)
+        if _close is not None:
+            result = _close()
+            if inspect.isawaitable(result):
+                await result
 
     async def __aenter__(self) -> OpenAICompatTranslator:
         return self
@@ -151,20 +158,15 @@ class OpenAICompatTranslator:
         text: str,
     ) -> str:
         """Make a single chat-completion call and return the raw content string."""
-        try:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0,
-            )
-        except self._api_status_error:
-            raise  # let extract() handle API errors
-        except Exception:
-            raise  # let tenacity handle retryable network errors
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
 
         raw_content: str | None = response.choices[0].message.content
         if not raw_content:

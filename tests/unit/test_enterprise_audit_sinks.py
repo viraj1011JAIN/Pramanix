@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock, patch
+import types
+from unittest.mock import patch
 
 import pytest
 
@@ -16,6 +17,15 @@ from pramanix.audit_sink import (
 )
 from pramanix.decision import Decision, SolverStatus
 from pramanix.exceptions import ConfigurationError
+from tests.helpers.real_protocols import (
+    _CapturingLogsApi,
+    _CapturingProducer,
+    _DatadogHTTPLog,
+    _DatadogHTTPLogItem,
+    _ErrorS3Client,
+    _KafkaDLQProducer,
+    _S3Client,
+)
 
 
 def _make_decision(allowed: bool = True) -> Decision:
@@ -56,12 +66,12 @@ def test_kafka_sink_raises_config_error_without_confluent(
         KafkaAuditSink("my-topic", {"bootstrap.servers": "localhost:9092"})
 
 
-def _make_kafka_sink(mock_producer: MagicMock, max_queue: int = 10_000) -> KafkaAuditSink:
+def _make_kafka_sink(producer: _CapturingProducer, max_queue: int = 10_000) -> KafkaAuditSink:
     """Build a KafkaAuditSink via __new__ with all required attrs set."""
     import threading
     sink = KafkaAuditSink.__new__(KafkaAuditSink)
     sink._topic = "test-topic"
-    sink._producer = mock_producer
+    sink._producer = producer
     sink._queue_depth = 0
     sink._max_queue = max_queue
     sink._overflow_count = 0
@@ -71,39 +81,24 @@ def _make_kafka_sink(mock_producer: MagicMock, max_queue: int = 10_000) -> Kafka
 
 
 def test_kafka_sink_records_to_queue() -> None:
-    mock_confluent = MagicMock()
-    mock_producer = MagicMock()
-    mock_confluent.Producer.return_value = mock_producer
-
-    with patch.dict(sys.modules, {"confluent_kafka": mock_confluent}):
-        sink = _make_kafka_sink(mock_producer)
-        d = _make_decision()
-        sink.emit(d)
-        mock_producer.produce.assert_called_once()
+    producer = _CapturingProducer()
+    sink = _make_kafka_sink(producer)
+    sink.emit(_make_decision())
+    assert len(producer.produced) == 1
 
 
 def test_kafka_sink_overflow_increments_counter() -> None:
-    mock_confluent = MagicMock()
-    mock_producer = MagicMock()
-    mock_confluent.Producer.return_value = mock_producer
-
-    with patch.dict(sys.modules, {"confluent_kafka": mock_confluent}):
-        sink = _make_kafka_sink(mock_producer, max_queue=0)
-        d = _make_decision()
-        sink.emit(d)
-        assert sink.overflow_count == 1
+    producer = _CapturingProducer()
+    sink = _make_kafka_sink(producer, max_queue=0)
+    sink.emit(_make_decision())
+    assert sink.overflow_count == 1
 
 
 def test_kafka_sink_failure_does_not_propagate() -> None:
-    mock_confluent = MagicMock()
-    mock_producer = MagicMock()
-    mock_producer.produce.side_effect = Exception("broker down")
-    mock_confluent.Producer.return_value = mock_producer
-
-    with patch.dict(sys.modules, {"confluent_kafka": mock_confluent}):
-        sink = _make_kafka_sink(mock_producer)
-        # Should not raise
-        sink.emit(_make_decision())
+    # Producer whose produce() raises — emit() must swallow the exception.
+    producer = _KafkaDLQProducer(produce_raises=Exception("broker down"))
+    sink = _make_kafka_sink(producer)
+    sink.emit(_make_decision())  # must not raise
 
 
 # ── S3AuditSink ───────────────────────────────────────────────────────────────
@@ -120,38 +115,28 @@ def test_s3_sink_raises_config_error_without_boto3(
 def test_s3_sink_records_puts_object() -> None:
     import concurrent.futures
 
-    mock_boto3 = MagicMock()
-    mock_client = MagicMock()
-    mock_boto3.client.return_value = mock_client
+    s3 = _S3Client()
+    sink = S3AuditSink.__new__(S3AuditSink)
+    sink._bucket = "test-bucket"
+    sink._prefix = "audit/"
+    sink._s3 = s3
+    sink._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-    with patch.dict(sys.modules, {"boto3": mock_boto3}):
-        sink = S3AuditSink.__new__(S3AuditSink)
-        sink._bucket = "test-bucket"
-        sink._prefix = "audit/"
-        sink._s3 = mock_client
-        sink._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-        sink.emit(_make_decision())
-        sink._pool.shutdown(wait=True)  # wait for the upload thread
-        mock_client.put_object.assert_called_once()
-        call_kwargs = mock_client.put_object.call_args[1]
-        assert call_kwargs["Bucket"] == "test-bucket"
-        assert call_kwargs["Key"].startswith("audit/")
+    sink.emit(_make_decision())
+    sink._pool.shutdown(wait=True)  # wait for upload thread
+    assert len(s3.put_object_calls) == 1
+    call_kwargs = s3.put_object_calls[0]
+    assert call_kwargs["Bucket"] == "test-bucket"
+    assert call_kwargs["Key"].startswith("audit/")
 
 
 def test_s3_sink_failure_does_not_propagate() -> None:
-    mock_boto3 = MagicMock()
-    mock_client = MagicMock()
-    mock_client.put_object.side_effect = Exception("S3 unavailable")
-    mock_boto3.client.return_value = mock_client
-
-    with patch.dict(sys.modules, {"boto3": mock_boto3}):
-        sink = S3AuditSink.__new__(S3AuditSink)
-        sink._bucket = "bucket"
-        sink._prefix = ""
-        sink._s3 = mock_client
-        # Must not raise
-        sink.emit(_make_decision())
+    s3 = _ErrorS3Client()
+    sink = S3AuditSink.__new__(S3AuditSink)
+    sink._bucket = "bucket"
+    sink._prefix = ""
+    sink._s3 = s3
+    sink.emit(_make_decision())  # must not raise
 
 
 # ── SplunkHecAuditSink ────────────────────────────────────────────────────────
@@ -190,12 +175,9 @@ def test_splunk_sink_accepts_bare_token() -> None:
 
 
 def test_splunk_sink_failure_does_not_propagate() -> None:
-    from unittest.mock import patch as _patch
-
-    with _patch("urllib.request.urlopen", side_effect=Exception("network error")):
+    with patch("urllib.request.urlopen", side_effect=Exception("network error")):
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "tok")
-        # Must not raise
-        sink.emit(_make_decision())
+        sink.emit(_make_decision())  # must not raise
 
 
 # ── DatadogAuditSink ──────────────────────────────────────────────────────────
@@ -210,24 +192,28 @@ def test_datadog_sink_raises_config_error_without_package(
 
 
 def test_datadog_sink_records_sends_log() -> None:
-    mock_dd = MagicMock()
-    mock_config_cls = MagicMock()
-    mock_config_instance = MagicMock()
-    mock_config_cls.return_value = mock_config_instance
-    mock_api_client = MagicMock()
-    mock_logs_api = MagicMock()
-    mock_logs_api_instance = MagicMock()
-    mock_logs_api.return_value = mock_logs_api_instance
+    """emit() calls logs_api.submit_log with a real HTTPLog payload."""
+    # Inject real Datadog model types as module-like namespace objects so that
+    # `from datadog_api_client.v2.model.http_log import HTTPLog` resolves to our
+    # duck-type class — no MagicMock involved.
+    fake_log_mod = types.SimpleNamespace(HTTPLog=_DatadogHTTPLog)
+    fake_log_item_mod = types.SimpleNamespace(HTTPLogItem=_DatadogHTTPLogItem)
 
-    mock_dd.Configuration = mock_config_cls
-    mock_dd.ApiClient = MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_api_client), __exit__=MagicMock(return_value=False)))
-    mock_dd_v2 = MagicMock()
-    mock_dd_v2.LogsApi = mock_logs_api
-
-    with patch.dict(sys.modules, {"datadog_api_client": mock_dd, "datadog_api_client.v2": mock_dd_v2}):
+    with patch.dict(sys.modules, {
+        "datadog_api_client.v2.model.http_log": fake_log_mod,
+        "datadog_api_client.v2.model.http_log_item": fake_log_item_mod,
+    }):
+        logs_api = _CapturingLogsApi()
         sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._api_key = "dd-test-key"
         sink._service = "pramanix"
         sink._source = "pramanix-audit"
-        # Just ensure emit() does not raise
+        sink._tags = ""
+        sink._logs_api = logs_api
+
         sink.emit(_make_decision())
+
+    assert len(logs_api.submit_log_calls) == 1
+    payload = logs_api.submit_log_calls[0]
+    assert isinstance(payload, _DatadogHTTPLog)
+    assert len(payload.items) == 1
+

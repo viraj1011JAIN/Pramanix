@@ -37,12 +37,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -113,6 +116,12 @@ class MerkleArchiver:
             )
         )
         self._active: list[_Leaf] = []
+        _log.warning(
+            "MerkleArchiver: archive files are written in PLAINTEXT. "
+            "For compliance regimes requiring encryption at rest "
+            "(SOC 2, PCI DSS, HIPAA), encrypt the archive directory "
+            "or implement a custom archiver with AES-256-GCM."
+        )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

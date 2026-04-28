@@ -125,6 +125,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
         effective_config = config or GuardConfig(execution_mode="async-thread")
         self._guard: Guard = Guard(policy, effective_config)
         self._signer = DecisionSigner()
+        self._redact_violations: bool = effective_config.redact_violations
 
     async def dispatch(self, request: Any, call_next: Any) -> Any:
         """Run the Pramanix guard pipeline for each incoming request."""
@@ -180,28 +181,35 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
         # ── 6. Verify ─────────────────────────────────────────────────────────
         decision = await self._guard.verify_async(intent=intent_dict, state=state)
 
-        # ── 7. BLOCK path — timing pad + 403 ─────────────────────────────────
+        # ── 7. Timing pad — applied to ALL responses (ALLOW and BLOCK) ──────────
+        # Prevents timing-oracle attacks that distinguish fast-BLOCK from ALLOW.
+        elapsed = time.monotonic() - t_start
+        pad = max(0.0, self._timing_budget_s - elapsed)
+        if pad > 0.0:
+            await asyncio.sleep(pad)
+
+        # ── 8. BLOCK path — 403 ───────────────────────────────────────────────
         if not decision.allowed:
-            elapsed = time.monotonic() - t_start
-            pad = max(0.0, self._timing_budget_s - elapsed)
-            if pad > 0.0:
-                await asyncio.sleep(pad)
-            response = JSONResponse(
-                status_code=403,
-                content={
+            if self._redact_violations:
+                block_content: dict[str, Any] = {
+                    "decision_id": decision.decision_id,
+                    "status": decision.status.value,
+                }
+            else:
+                block_content = {
                     "decision_id": decision.decision_id,
                     "status": decision.status.value,
                     "violated_invariants": list(decision.violated_invariants),
                     "explanation": decision.explanation,
-                },
-            )
+                }
+            response = JSONResponse(status_code=403, content=block_content)
             signed = self._signer.sign(decision)
             if signed:
                 response.headers["X-Pramanix-Proof"] = signed.token
                 response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
             return response
 
-        # ── 8. ALLOW path — forward to route handler ──────────────────────────
+        # ── 9. ALLOW path — forward to route handler ──────────────────────────
         response = await call_next(request)
         signed = self._signer.sign(decision)
         if signed:

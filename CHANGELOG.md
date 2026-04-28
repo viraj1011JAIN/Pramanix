@@ -5,6 +5,119 @@ All notable changes to Pramanix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **C-01 — Async fail-safe bypass patched:** `verify_async()` had a bare
+  `except Exception: pass` in the `max_input_bytes` size-check path.
+  Payloads that could not be JSON-serialised (e.g., circular references,
+  custom objects) silently bypassed the size gate and continued to the Z3
+  solver. The `except` clause now logs the error and returns
+  `Decision.error(allowed=False)`, matching the sync `verify()` behaviour.
+  A concurrent load test (50 simultaneous coroutines, both oversized and
+  unserializable variants) is included in `tests/unit/test_production_gaps.py`.
+
+- **H-02 / M-05 — Timing-oracle double fix:**
+  1. `PramanixMiddleware.dispatch()` previously applied `timing_budget_ms`
+     only to BLOCK responses; ALLOW responses returned immediately, leaking
+     a timing oracle that distinguishes allowed from blocked intents. The
+     timing pad is now applied unconditionally to every response, before the
+     ALLOW/BLOCK branch.
+  2. `GuardConfig.redact_violations=True` was not honoured in `dispatch()` —
+     `violated_invariants` and `explanation` were included in the 403 body
+     regardless. The block body is now filtered when `redact_violations=True`.
+
+- **H-03 — LangChain integration silent stub removed (BREAKING):**
+  `PramanixGuardedTool` previously defaulted `execute_fn` to
+  `lambda i: "OK"` when no function was provided. Every guarded action
+  returned a success string without executing any real logic — completely
+  defeating the purpose of the tool. `execute_fn=None` is now stored as-is;
+  calling `_arun()` without an `execute_fn` raises `NotImplementedError`
+  with a diagnostic message. A `UserWarning` is emitted at construction
+  time to catch the misconfiguration early.
+  **Migration:** see `MIGRATION.md § H-03`.
+
+- **H-04 — CrewAI integration silent stub removed (BREAKING):**
+  `PramanixCrewAITool._run()` previously returned
+  `f"[pramanix] Action '{self.name}' blocked — policy violation."` when
+  `underlying_fn=None`. A blocked CrewAI tool should raise, not return a
+  non-exception string that the agent framework may treat as success.
+  `underlying_fn=None` now raises `NotImplementedError` with a diagnostic
+  message.
+  **Migration:** see `MIGRATION.md § H-04`.
+
+### Fixed
+
+- **M-01 — Stale model name:** Default Anthropic model updated from
+  `claude-opus-4-5` to `claude-opus-4-7` in `Guard.parse_and_verify()`.
+
+- **M-02 — Async version-check asymmetry:** `verify_async()` was missing
+  the `_policy_semver` (tuple comparison) branch present in sync `verify()`.
+  Policy version checks with `expected_policy_semver` tuples were silently
+  skipped on the async path.
+
+- **M-03 — Injection scorer field scope:** The prompt-injection scorer
+  checked only the `recipient_id` field for suspicious characters. The
+  check now applies to any field whose name ends in `_id`, `_key`, `_token`,
+  `_ref`, `_number`, `_code`, `_account`, or `_address`.
+
+- **M-04 — `ExecutionToken` missing policy_hash:** `ExecutionTokenSigner.mint()`
+  now extracts `decision.policy_hash` and embeds it in the token. A
+  `WARNING` log is emitted when `policy_hash` is `None` (i.e., policy
+  binding is disabled).
+
+- **M-05 — FastAPI redaction not applied (combined with H-02 above).**
+
+- **L-01 — `GuardViolationError` raw attribute access:** `str(exc)` for
+  `GuardViolationError` used `getattr(decision, 'status', 'unknown')`
+  instead of `decision.status` — masking `AttributeError` on unexpected
+  types.
+
+- **L-02 — `MerkleArchiver` plaintext warning:** Added `_log.warning()`
+  in `MerkleArchiver.__init__` notifying operators that archive files are
+  written in plaintext; production deployments in regulated environments must
+  encrypt the archive directory.
+
+- **L-03 / L-04 — Dead code in `OpenAICompatTranslator`:** Removed
+  redundant bare re-raise `try/except` blocks from `_single_call()` that
+  added neither handling nor documentation value.
+
+### Added
+
+- **`pramanix.logging_helpers`** — new module providing:
+  - `configure_production_logging(level, fmt, stream, logger_name)` —
+    idempotent `StreamHandler` setup (JSON or text) for the `pramanix`
+    logger namespace.
+  - `check_logging_configuration(logger_name)` — walks the logger hierarchy
+    and returns a status dict (`ok`, `level`, `detail`, `hint`,
+    `handlers`, `using_last_resort`) suitable for health checks and
+    `pramanix doctor`.
+  - `PRAMANIX_LOGGER_NAMES` — tuple of all canonical Pramanix logger names.
+
+- **`pramanix doctor` check #10 — logging-handlers:** Reports `WARN` when
+  no explicit `logging.Handler` is reachable for the `pramanix` namespace
+  (only Python's `lastResort` fallback active). Advises calling
+  `configure_production_logging()` at startup.
+
+- **`pramanix doctor` check #11 — policy-hash-binding:** Reports `WARN`
+  when `PRAMANIX_ENV=production` and `PRAMANIX_EXPECTED_POLICY_HASH` is
+  unset, indicating that silent policy-drift detection is disabled.
+
+- **`GuardConfig` production warning for `expected_policy_hash=None`:**
+  A `UserWarning` is now emitted during `GuardConfig.__post_init__()` when
+  `PRAMANIX_ENV=production` and `expected_policy_hash is None`.
+
+- **`tests/unit/test_production_gaps.py`** — 14 new tests covering:
+  - Concurrent async size-check: 50 coroutines, oversized payload path,
+    serialization-error path, mixed batch (no cross-contamination).
+  - Timing-pad distribution: p5 latency assertions (≥ 90 % of budget)
+    for both ALLOW and BLOCK in sync and async modes; symmetry ratio check
+    (≤ 1.30) to detect asymmetric padding that leaks a timing oracle.
+
+- **`MIGRATION.md`** — new top-level migration guide covering v0.7–v1.0
+  upgrade paths, all breaking changes, and `before`/`after` code examples.
+
 ## [1.0.0] - 2026-04-22
 
 ### Fixed

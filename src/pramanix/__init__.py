@@ -27,6 +27,12 @@ __stability__: dict[str, str] = {
     "translator": "beta",       # LLM translation stack (httpx/openai/anthropic)
     "integrations": "beta",     # LangChain, LlamaIndex, AutoGen, FastAPI adapters
     "fast_path": "beta",        # fast-path cache (GuardConfig.fast_path_enabled)
+    "ifc": "beta",              # information-flow control (TrustLabel, FlowPolicy, FlowEnforcer)
+    "privilege": "beta",        # privilege separation (ExecutionScope, ScopeEnforcer)
+    "oversight": "beta",        # human oversight (InMemoryApprovalWorkflow, EscalationQueue)
+    "memory": "beta",           # secure scoped memory (SecureMemoryStore, ScopedMemoryPartition)
+    "lifecycle": "beta",        # policy lifecycle (PolicyDiff, ShadowEvaluator)
+    "provenance": "beta",       # chain-of-custody (ProvenanceRecord, ProvenanceChain)
 }
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
@@ -62,15 +68,20 @@ from pramanix.exceptions import (
     ExtractionFailureError,
     ExtractionMismatchError,
     FieldTypeError,
+    FlowViolationError,
     GuardError,
     GuardViolationError,
     InjectionBlockedError,
     InputTooLongError,
     InvariantLabelError,
     LLMTimeoutError,
+    MemoryViolationError,
+    OversightRequiredError,
     PolicyCompilationError,
     PolicyError,
     PramanixError,
+    PrivilegeEscalationError,
+    ProvenanceError,
     SemanticPolicyViolation,
     SolverError,
     SolverTimeoutError,
@@ -79,6 +90,42 @@ from pramanix.exceptions import (
     ValidationError,
     WorkerError,
 )
+from pramanix.ifc import (
+    ClassifiedData,
+    FlowDecision,
+    FlowEnforcer,
+    FlowPolicy,
+    FlowRule,
+    TrustLabel,
+)
+from pramanix.lifecycle import (
+    FieldChange,
+    InvariantChange,
+    PolicyDiff,
+    ShadowEvaluator,
+    ShadowResult,
+)
+from pramanix.memory import (
+    MemoryEntry,
+    ScopedMemoryPartition,
+    SecureMemoryStore,
+)
+from pramanix.oversight import (
+    ApprovalDecision,
+    ApprovalRequest,
+    ApprovalStatus,
+    EscalationQueue,
+    InMemoryApprovalWorkflow,
+    OversightRecord,
+)
+from pramanix.privilege import (
+    CapabilityManifest,
+    ExecutionContext,
+    ExecutionScope,
+    ScopeEnforcer,
+    ToolCapability,
+)
+from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 from pramanix.execution_token import (
     ExecutionToken,
     ExecutionTokenSigner,
@@ -139,11 +186,19 @@ __all__ = [
     "AdaptiveCircuitBreaker",
     # A-3: Array field quantifiers
     "ArrayField",
+    # Oversight — approval workflow
+    "ApprovalDecision",
+    "ApprovalRequest",
+    "ApprovalStatus",
     # E-4: Audit sinks
     "AuditSink",
     "BuiltinScorer",
     "CalibratedScorer",
+    # Privilege separation
+    "CapabilityManifest",
     "CircuitBreakerConfig",
+    # IFC — classified data
+    "ClassifiedData",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
@@ -165,17 +220,31 @@ __all__ = [
     "EnvKeyProvider",
     # Phase 12 — Hardening: sealed execution token (TOCTOU gap)
     "ExecutionToken",
+    # Privilege separation
+    "ExecutionContext",
+    "ExecutionScope",
     "ExecutionTokenSigner",
     "ExecutionTokenVerifier",
     "Exists",
+    # Oversight — escalation queue
+    "EscalationQueue",
     # Exceptions — translator (Phase 4)
     "ExtractionFailureError",
     "ExtractionMismatchError",
     # DSL
     "FastPathRule",
     "Field",
+    # Lifecycle diff
+    "FieldChange",
     "FieldTypeError",
     "FileKeyProvider",
+    # IFC flow control
+    "FlowDecision",
+    "FlowEnforcer",
+    "FlowPolicy",
+    "FlowRule",
+    # New exceptions
+    "FlowViolationError",
     "ForAll",
     # Guard
     "Guard",
@@ -187,6 +256,8 @@ __all__ = [
     # Identity claims
     "IdentityClaims",
     "InMemoryAuditSink",
+    # Oversight workflow
+    "InMemoryApprovalWorkflow",
     "InMemoryDistributedBackend",
     # E-1: Redis-free token backends
     "InMemoryExecutionTokenVerifier",
@@ -197,6 +268,7 @@ __all__ = [
     "InputTooLongError",
     # C-2: Invariant AST cache
     "InvariantASTCache",
+    "InvariantChange",
     "InvariantLabelError",
     # Phase 9 — Pillar 3: Zero-trust identity
     "JWTExpiredError",
@@ -209,15 +281,23 @@ __all__ = [
     "MerkleAnchor",
     # E-2: Merkle pruning and archival
     "MerkleArchiver",
+    # Memory security
+    "MemoryEntry",
+    "MemoryViolationError",
     # Policy migration error
     "MigrationError",
     # B-1: Nested model descriptor chaining
     "NestedField",
+    # Oversight record
+    "OversightRecord",
+    "OversightRequiredError",
     "PemKeyProvider",
     # Phase 12 — Hardening: persistent Merkle anchoring
     "PersistentMerkleAnchor",
     # Policy
     "Policy",
+    # Lifecycle
+    "PolicyDiff",
     # Limitations overrides: static policy coverage analysis
     "PolicyAuditor",
     "PolicyCompilationError",
@@ -240,6 +320,12 @@ __all__ = [
     # Integrations — beta
     "PramanixToolCallback",
     "PramanixVerifier",
+    # Privilege separation
+    "PrivilegeEscalationError",
+    # Provenance
+    "ProvenanceChain",
+    "ProvenanceError",
+    "ProvenanceRecord",
     "RedisDistributedBackend",
     # Phase 13 — Enterprise: distributed Redis token store
     "RedisExecutionTokenVerifier",
@@ -251,10 +337,18 @@ __all__ = [
     "ResolverRegistry",
     "S3AuditSink",
     "SQLiteExecutionTokenVerifier",
+    # Privilege separation
+    "ScopeEnforcer",
+    # Memory security
+    "ScopedMemoryPartition",
+    "SecureMemoryStore",
     # Fast-path cache
     "SemanticFastPath",
     # Exceptions — hardening (Phase 4)
     "SemanticPolicyViolation",
+    # Lifecycle shadow evaluation
+    "ShadowEvaluator",
+    "ShadowResult",
     "SolverError",
     "SolverStatus",
     "SolverTimeoutError",
@@ -265,7 +359,11 @@ __all__ = [
     "StdoutAuditSink",
     # Limitations overrides: string→int enum helper
     "StringEnumField",
+    # Privilege separation
+    "ToolCapability",
     "TranspileError",
+    # IFC trust labels
+    "TrustLabel",
     "ValidationError",
     "WorkerError",
     # Decorator

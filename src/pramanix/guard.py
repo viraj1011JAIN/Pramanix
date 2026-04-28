@@ -861,8 +861,23 @@ class Guard:
                         )
                     )
                     return await _timed(_d)
-            except Exception:
-                pass  # size-check failure is non-fatal; proceed to validation
+            except Exception as _size_exc_async:
+                import logging as _sz_log_async
+
+                _sz_log_async.getLogger(__name__).error(
+                    "guard.verify_async: JSON serialisation failed for size check (%s); "
+                    "blocking request to enforce max_input_bytes safety",
+                    _size_exc_async,
+                )
+                _d = self._sign_decision(
+                    Decision.error(
+                        reason=(
+                            "Input payload could not be size-checked (serialisation error). "
+                            f"Request rejected (max_input_bytes={self._config.max_input_bytes})."
+                        )
+                    )
+                )
+                return await _timed(_d)
 
         # Steps 1-4: validation and version check run on the caller's thread.
         try:
@@ -878,7 +893,48 @@ class Guard:
                 flatten_model(state) if isinstance(state, BaseModel) else dict(state)
             )
 
-            if self._policy_version is not None:
+            if self._policy_semver is not None:
+                actual_version = state_values.get("state_version")
+                if actual_version is None:
+                    _d = self._sign_decision(
+                        Decision.validation_failure(
+                            reason=(
+                                "state_version is missing from state data. "
+                                f"Policy '{self._policy.__name__}' requires "
+                                "semver='"
+                                f"{'{}.{}.{}'.format(*self._policy_semver)}'."
+                            )
+                        )
+                    )
+                    return await _timed(_d)
+                try:
+                    _sv_parts = tuple(
+                        int(p) for p in str(actual_version).split(".")
+                    )
+                    if len(_sv_parts) != 3:
+                        raise ValueError
+                except (ValueError, AttributeError):
+                    _d = self._sign_decision(
+                        Decision.validation_failure(
+                            reason=(
+                                f"state_version {actual_version!r} is not a "
+                                "valid semver string (expected 'X.Y.Z'). "
+                                f"Policy '{self._policy.__name__}' requires "
+                                "semver='"
+                                f"{'{}.{}.{}'.format(*self._policy_semver)}'."
+                            )
+                        )
+                    )
+                    return await _timed(_d)
+                if _sv_parts != self._policy_semver:
+                    _d = self._sign_decision(
+                        Decision.stale_state(
+                            expected="{}.{}.{}".format(*self._policy_semver),
+                            actual=str(actual_version),
+                        )
+                    )
+                    return await _timed(_d)
+            elif self._policy_version is not None:
                 actual_version = state_values.get("state_version")
                 if actual_version is None:
                     _d = self._sign_decision(
@@ -1068,7 +1124,7 @@ class Guard:
         prompt: str,
         intent_schema: type[BaseModel],
         state: dict[str, Any] | BaseModel,
-        models: tuple[str, str] = ("gpt-4o", "claude-opus-4-5"),
+        models: tuple[str, str] = ("gpt-4o", "claude-opus-4-7"),
         context: Any | None = None,
     ) -> Decision:
         """Extract structured intent from natural language, then verify.

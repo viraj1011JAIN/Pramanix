@@ -214,6 +214,13 @@ class ExecutionTokenSigner:
                 f"Received status={decision.status.value!r}. "
                 "Do not tokenise blocked decisions."
             )
+        policy_hash_val = getattr(decision, "policy_hash", None)
+        if policy_hash_val is None:
+            _log.warning(
+                "ExecutionTokenSigner.mint(): policy_hash is None — "
+                "token carries no policy-version binding. Set "
+                "GuardConfig.expected_policy_hash to enable binding."
+            )
         token_id = secrets.token_hex(16)
         expires_at = time.time() + self._ttl
 
@@ -222,7 +229,7 @@ class ExecutionTokenSigner:
             decision_id=decision.decision_id,
             allowed=True,
             intent_dump=dict(decision.intent_dump),
-            policy_hash=getattr(decision, "policy_hash", None),
+            policy_hash=policy_hash_val,
             expires_at=expires_at,
             token_id=token_id,
             signature="",  # placeholder — replaced below
@@ -286,6 +293,12 @@ class ExecutionTokenVerifier:
         # entries can be evicted once the TTL elapses, bounding memory usage.
         self._consumed: dict[str, float] = {}
         self._lock = threading.Lock()
+        _log.warning(
+            "ExecutionTokenVerifier: consumed-set is IN-MEMORY ONLY. "
+            "In a multi-process or distributed deployment, tokens can be replayed "
+            "across processes. Back the registry with Redis SETNX or a transactional "
+            "database for production distributed deployments."
+        )
 
     def _evict_expired(self) -> None:
         """Prune consumed entries whose TTL has elapsed.  Called under lock."""

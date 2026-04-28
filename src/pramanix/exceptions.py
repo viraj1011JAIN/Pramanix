@@ -36,16 +36,21 @@ __all__ = [
     "ExtractionFailureError",
     "ExtractionMismatchError",
     "FieldTypeError",
+    "FlowViolationError",
     "GuardError",
     "GuardViolationError",
     "InjectionBlockedError",
     "InputTooLongError",
     "InvariantLabelError",
     "LLMTimeoutError",
+    "MemoryViolationError",
     "MigrationError",
+    "OversightRequiredError",
     "PolicyCompilationError",
     "PolicyError",
     "PramanixError",
+    "PrivilegeEscalationError",
+    "ProvenanceError",
     "ResolverConflictError",
     # Hardening exceptions (Phase 4)
     "SemanticPolicyViolation",
@@ -237,8 +242,7 @@ class GuardViolationError(GuardError):
         # Avoid importing Decision at class definition time (circular risk).
         self.decision = decision
         super().__init__(
-            f"Guard blocked action: {getattr(decision, 'status', 'unknown')!s} — "
-            f"{getattr(decision, 'explanation', '')}"
+            f"Guard blocked action: {decision.status!s} — {decision.explanation}"
         )
 
 
@@ -383,4 +387,158 @@ class MigrationError(PramanixError):
         self.missing_key = missing_key
         self.from_version = from_version
         self.to_version = to_version
+        super().__init__(message)
+
+
+# ── Information-flow control errors ──────────────────────────────────────────
+
+
+class FlowViolationError(PramanixError):
+    """A data flow was attempted that violates the active :class:`FlowPolicy`.
+
+    Raised by :class:`~pramanix.ifc.FlowEnforcer` when data at trust label
+    *source_label* cannot flow to a sink at *sink_label* under the registered
+    policy.  The ``rule`` attribute holds the matching :class:`FlowRule` when
+    one was found; ``None`` when the flow was denied by the default-deny policy.
+
+    Attributes:
+        source_label:    The trust label of the data being moved.
+        sink_label:      The trust label of the target sink.
+        sink_component:  The name of the receiving component.
+        rule:            The :class:`FlowRule` that matched, if any.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        source_label: object = None,
+        sink_label: object = None,
+        sink_component: str = "",
+        rule: object = None,
+    ) -> None:
+        self.source_label = source_label
+        self.sink_label = sink_label
+        self.sink_component = sink_component
+        self.rule = rule
+        super().__init__(message)
+
+
+# ── Privilege separation errors ───────────────────────────────────────────────
+
+
+class PrivilegeEscalationError(PramanixError):
+    """An operation required a scope not present in the active capability manifest.
+
+    Raised by :class:`~pramanix.privilege.ScopeEnforcer` when a tool or action
+    requires *required_scope* but the current execution context only holds
+    *held_scopes*.
+
+    Attributes:
+        required_scope:  The missing scope name.
+        held_scopes:     Frozenset of scope names currently held.
+        tool:            Name of the tool / action that triggered the check.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        required_scope: str = "",
+        held_scopes: frozenset[str] | None = None,
+        tool: str = "",
+    ) -> None:
+        self.required_scope = required_scope
+        self.held_scopes: frozenset[str] = held_scopes or frozenset()
+        self.tool = tool
+        super().__init__(message)
+
+
+# ── Human oversight errors ────────────────────────────────────────────────────
+
+
+class OversightRequiredError(PramanixError):
+    """An action requires human approval before it can be executed.
+
+    Raised by :class:`~pramanix.oversight.ApprovalWorkflow` when an action
+    with a scope that requires dual-control or explicit approval is attempted
+    without a pending approval already granted.
+
+    Attributes:
+        request_id:   The UUID of the :class:`~pramanix.oversight.ApprovalRequest`
+                      that was created.
+        action:       Description of the blocked action.
+        reason:       Why approval is required.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        request_id: str = "",
+        action: str = "",
+        reason: str = "",
+    ) -> None:
+        self.request_id = request_id
+        self.action = action
+        self.reason = reason
+        super().__init__(message)
+
+
+# ── Memory security errors ────────────────────────────────────────────────────
+
+
+class MemoryViolationError(PramanixError):
+    """A memory write or read violates the active memory-security policy.
+
+    Raised by :class:`~pramanix.memory.SecureMemoryStore` when:
+
+    * UNTRUSTED data attempts to write to a partition at CONFIDENTIAL or
+      higher trust level (write-up prevention).
+    * A read attempts to retrieve data across tenant or workflow boundaries
+      (isolation violation).
+
+    Attributes:
+        partition_id:  Identifier of the partition being accessed.
+        operation:     ``"read"`` or ``"write"``.
+        reason:        Human-readable reason for the rejection.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        partition_id: str = "",
+        operation: str = "",
+        reason: str = "",
+    ) -> None:
+        self.partition_id = partition_id
+        self.operation = operation
+        self.reason = reason
+        super().__init__(message)
+
+
+# ── Provenance errors ─────────────────────────────────────────────────────────
+
+
+class ProvenanceError(PramanixError):
+    """A provenance chain is broken, incomplete, or tampered.
+
+    Raised by :class:`~pramanix.provenance.ProvenanceChain` when a chain link
+    fails integrity verification or required fields are absent.
+
+    Attributes:
+        decision_id:  The decision whose provenance could not be verified.
+        reason:       Specific failure description.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        decision_id: str = "",
+        reason: str = "",
+    ) -> None:
+        self.decision_id = decision_id
+        self.reason = reason
         super().__init__(message)

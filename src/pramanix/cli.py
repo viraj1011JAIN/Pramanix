@@ -1083,7 +1083,51 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         else:
             _check(f"extra:{label}", "SKIP", f"{modname} not installed (optional)", hint=install_hint)
 
-    # ── 10. Redis reachability (only if PRAMANIX_REDIS_URL is configured) ─────
+    # ── 10. Logging handler configuration ────────────────────────────────────
+    from pramanix.logging_helpers import check_logging_configuration as _chk_log
+    _log_status = _chk_log("pramanix")
+    _check(
+        "logging-handlers",
+        _log_status["level"],  # type: ignore[arg-type]
+        _log_status["detail"],
+        hint=_log_status["hint"],
+    )
+
+    # ── 11. Policy-hash binding in production ─────────────────────────────────
+    _policy_hash_env = os.environ.get("PRAMANIX_EXPECTED_POLICY_HASH", "")
+    _pramanix_env = os.environ.get("PRAMANIX_ENV", "").lower()
+    if _pramanix_env == "production":
+        if _policy_hash_env:
+            _check(
+                "policy-hash-binding",
+                "OK",
+                "PRAMANIX_EXPECTED_POLICY_HASH is set "
+                f"({_policy_hash_env[:12]}…)",
+            )
+        else:
+            _check(
+                "policy-hash-binding",
+                "WARN",
+                "PRAMANIX_EXPECTED_POLICY_HASH not set — "
+                "policy-version binding disabled in production. "
+                "Silent policy drift will not be detected.",
+                hint=(
+                    "Run guard = Guard(Policy) once, capture guard.policy_hash,"
+                    " pin it in config, then set "
+                    "GuardConfig(expected_policy_hash=<hash>)."
+                ),
+            )
+    else:
+        _check(
+            "policy-hash-binding",
+            "SKIP",
+            "PRAMANIX_ENV != 'production' — policy-hash check skipped",
+            hint=(
+                "Set PRAMANIX_ENV=production to enable production checks."
+            ),
+        )
+
+    # ── 12. Redis reachability (only if PRAMANIX_REDIS_URL is configured) ────
     redis_url = os.environ.get("PRAMANIX_REDIS_URL", "")
     if redis_url:
         if _has("redis"):

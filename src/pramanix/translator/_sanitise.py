@@ -180,13 +180,23 @@ def injection_confidence_score(
     except Exception:
         score += 0.4  # unparseable amount is itself a suspicious anomaly
 
-    # Non-word recipient IDs may be path-traversal / code-injection.
-    # M-29: use \w with re.UNICODE so Unicode names (André, 김민준) are not
-    # incorrectly flagged.  Only ASCII control characters and shell metacharacters
-    # are genuinely suspicious in an ID field.
-    rid = str(extracted_intent.get("recipient_id", ""))
-    if rid and re.search(r"[^\w\-@.]", rid, flags=re.UNICODE):
-        score += 0.3
+    # Non-word characters in any ID-like field are suspicious (path-traversal /
+    # code-injection vectors).  Check all string fields whose names suggest an
+    # identifier rather than free-text (e.g. description, reason).
+    # M-29: \w with re.UNICODE so Unicode names (André, 김민준) are not flagged.
+    _ID_LIKE_SUFFIXES = (
+        "_id", "_key", "_token", "_ref",
+        "_number", "_code", "_account", "_address",
+    )
+    for _field_name, _field_val in extracted_intent.items():
+        if isinstance(_field_val, str) and _field_val:
+            if any(
+                _field_name.lower().endswith(sfx)
+                for sfx in _ID_LIKE_SUFFIXES
+            ):
+                if re.search(r"[^\w\-@.]", _field_val, flags=re.UNICODE):
+                    score += 0.3
+                    break  # one +0.3 maximum; no amplification for multi-field
 
     # High-entropy token — possible base64, hex or encoded payload embedded
     if re.search(r"[A-Za-z0-9+/]{20,}={0,2}", user_input):

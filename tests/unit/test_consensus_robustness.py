@@ -72,36 +72,49 @@ class TestRawStringsAgree:
 class TestCreateTranslatorRouting:
     def test_gemini_prefix_routing(self, monkeypatch):
         """create_translator with 'gemini:...' should instantiate GeminiTranslator."""
-        from unittest.mock import MagicMock, patch
+        import types
+        from unittest.mock import patch
 
-        mock_translator = MagicMock()
-        mock_cls = MagicMock(return_value=mock_translator)
+        from tests.helpers.real_protocols import _GeminiGenaiModule
 
-        with (
-            patch("pramanix.translator.gemini.GeminiTranslator", mock_cls, create=True),
-            patch.dict("sys.modules", {"google.generativeai": MagicMock()}),
-        ):
-            import pramanix.translator.gemini as gem_mod
-            original_cls = gem_mod.GeminiTranslator
-            gem_mod.GeminiTranslator = mock_cls
+        class _RecordingGeminiTranslator:
+            instances: list = []
 
-            create_translator("gemini:gemini-1.5-flash", api_key="key")
-            # Should have called the mock class constructor
+            def __init__(self, *args, **kwargs):
+                _RecordingGeminiTranslator.instances.clear()
+                _RecordingGeminiTranslator.instances.append(self)
+
+        import pramanix.translator.gemini as gem_mod
+        original_cls = gem_mod.GeminiTranslator
+        gem_mod.GeminiTranslator = _RecordingGeminiTranslator  # type: ignore[assignment]
+        try:
+            with patch.dict("sys.modules", {"google.generativeai": _GeminiGenaiModule()}):
+                create_translator("gemini:gemini-1.5-flash", api_key="key")
+            assert len(_RecordingGeminiTranslator.instances) == 1
+        finally:
             gem_mod.GeminiTranslator = original_cls
 
     def test_cohere_prefix_routing(self, monkeypatch):
         """create_translator with 'cohere:...' should instantiate CohereTranslator."""
-        from unittest.mock import MagicMock, patch
+        import types
+        from unittest.mock import patch
 
-        mock_translator = MagicMock()
-        mock_cls = MagicMock(return_value=mock_translator)
+        class _RecordingCohereTranslator:
+            instances: list = []
 
-        with patch.dict("sys.modules", {"cohere": MagicMock()}):
-            import pramanix.translator.cohere as coh_mod
-            original_cls = coh_mod.CohereTranslator
-            coh_mod.CohereTranslator = mock_cls
+            def __init__(self, *args, **kwargs):
+                _RecordingCohereTranslator.instances.clear()
+                _RecordingCohereTranslator.instances.append(self)
 
-            create_translator("cohere:command-r", api_key="key")
+        import pramanix.translator.cohere as coh_mod
+        original_cls = coh_mod.CohereTranslator
+        coh_mod.CohereTranslator = _RecordingCohereTranslator  # type: ignore[assignment]
+        try:
+            fake_cohere = types.SimpleNamespace(Client=object, AsyncClient=object)
+            with patch.dict("sys.modules", {"cohere": fake_cohere}):
+                create_translator("cohere:command-r", api_key="key")
+            assert len(_RecordingCohereTranslator.instances) == 1
+        finally:
             coh_mod.CohereTranslator = original_cls
 
     def test_unknown_prefix_raises(self):

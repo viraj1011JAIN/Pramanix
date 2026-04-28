@@ -27,6 +27,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+from tests.helpers.real_protocols import _GeminiRecordingGenaiModule
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared schemas
@@ -46,60 +48,42 @@ class _Pay(BaseModel):
 class TestGeminiSingleCall:
     """Exercise GeminiTranslator._single_call — lines 150-172."""
 
-    def _make_genai(self, *, has_async: bool = True, response_text: str = '{"amount":1.0,"recipient":"X"}') -> MagicMock:
-        """Return a mock google.generativeai module."""
-        mock_genai = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = response_text
-
-        if has_async:
-            mock_model = MagicMock()
-            mock_model.generate_content_async = AsyncMock(return_value=mock_response)
-        else:
-            # Old SDK: no generate_content_async attribute
-            # Use spec to restrict available attrs → hasattr returns False for generate_content_async
-            mock_model = MagicMock(spec=["generate_content"])
-            mock_model.generate_content = MagicMock(return_value=mock_response)
-
-        mock_genai.GenerativeModel.return_value = mock_model
-        mock_genai.GenerationConfig = MagicMock(return_value=MagicMock())
-        mock_genai.configure = MagicMock()
-        return mock_genai
-
     @pytest.mark.asyncio
     async def test_single_call_async_path(self) -> None:
         """Lines 155-163: generate_content_async branch executed."""
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = self._make_genai(has_async=True)
+        genai = _GeminiRecordingGenaiModule('{"amount":1.0,"recipient":"X"}')
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-pro"
         t._api_key = "key"
         t._timeout = 30.0
-        t._genai = mock_genai
+        t._genai = genai
         t._client = None
 
         raw = await t._single_call(prompt="test prompt")
         assert raw == '{"amount":1.0,"recipient":"X"}'
-        mock_genai.GenerativeModel.return_value.generate_content_async.assert_called_once()
+        # Real call_count replaces mock.assert_called_once()
+        assert genai.last_model.call_count == 1
 
     @pytest.mark.asyncio
     async def test_single_call_executor_fallback(self) -> None:
         """Lines 164-166: run_in_executor fallback when no generate_content_async."""
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = self._make_genai(has_async=False)
+        genai = _GeminiRecordingGenaiModule(
+            '{"amount":1.0,"recipient":"X"}', sync_only=True
+        )
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
         t._api_key = None
         t._timeout = 30.0
-        t._genai = mock_genai
+        t._genai = genai
         t._client = None
 
         raw = await t._single_call(prompt="another prompt")
         assert raw == '{"amount":1.0,"recipient":"X"}'
-        # generate_content (sync) must have been called
-        mock_genai.GenerativeModel.return_value.generate_content.assert_called_once()
+        assert genai.last_model.call_count == 1
 
     @pytest.mark.asyncio
     async def test_single_call_empty_response_raises(self) -> None:
@@ -107,12 +91,12 @@ class TestGeminiSingleCall:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = self._make_genai(has_async=True, response_text="   ")
+        genai = _GeminiRecordingGenaiModule("   ")
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
         t._api_key = None
         t._timeout = 30.0
-        t._genai = mock_genai
+        t._genai = genai
         t._client = None
 
         with pytest.raises(ExtractionFailureError, match="empty response"):
@@ -123,18 +107,16 @@ class TestGeminiSingleCall:
         """Lines 101-102: _retryable = (Exception,) when google.api_core not importable."""
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = self._make_genai(has_async=True)
+        genai = _GeminiRecordingGenaiModule('{"amount":1.0,"recipient":"X"}')
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
         t._api_key = "k"
         t._timeout = 30.0
-        t._genai = mock_genai
+        t._genai = genai
         t._client = None
 
-        # Patch google.generativeai to be available (avoid ConfigurationError), and
-        # google.api_core.exceptions to be unimportable → _retryable = (Exception,)
         with patch.dict(sys.modules, {
-            "google.generativeai": mock_genai,
+            "google.generativeai": genai,
             "google.api_core": None,
             "google.api_core.exceptions": None,
         }):
@@ -147,21 +129,17 @@ class TestGeminiSingleCall:
         from pramanix.exceptions import LLMTimeoutError
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = self._make_genai(has_async=True)
-        # Make the model raise on every call
-        mock_genai.GenerativeModel.return_value.generate_content_async = AsyncMock(
-            side_effect=Exception("server down")
-        )
-
+        # raising=True → model always raises Exception("server down")
+        genai = _GeminiRecordingGenaiModule(raising=True)
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
         t._api_key = "k"
         t._timeout = 30.0
-        t._genai = mock_genai
+        t._genai = genai
         t._client = None
 
         with patch.dict(sys.modules, {
-            "google.generativeai": mock_genai,
+            "google.generativeai": genai,
             "google.api_core": None,
             "google.api_core.exceptions": None,
         }):
