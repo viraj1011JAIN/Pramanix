@@ -2,7 +2,7 @@
 
 **Deterministic neuro-symbolic guardrails for autonomous AI agents.**
 
-`pip install pramanix` — Python ≥ 3.13 — AGPL-3.0
+Python ≥ 3.13 — AGPL-3.0 — **PyPI release pending** (install from source; see Installation)
 
 ---
 
@@ -178,7 +178,7 @@ Worker pool recycling: after `max_decisions_per_worker=10,000` decisions (defaul
 Policies are plain Python classes. The DSL uses operator overloading; it never calls `eval`, `exec`, or `ast.parse`.
 
 ```python
-from pramanix import Policy, Field, E, ConstraintExpr, ForAll
+from pramanix import Policy, Field, E, ConstraintExpr, ForAll, ArrayField
 from decimal import Decimal
 
 class TradePolicy(Policy):
@@ -186,7 +186,8 @@ class TradePolicy(Policy):
     amount   = Field("amount",   Decimal, "Real")
     side     = Field("side",     str,     "String")
     quantity = Field("quantity", int,     "Int")
-    prices   = Field("prices",   list,    "Array")
+    # ArrayField — required for ForAll/Exists; ForAll raises PolicyCompilationError on plain Field
+    prices   = ArrayField("prices", Decimal, z3_sort="Real", max_length=50)
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
@@ -220,7 +221,7 @@ All fields are validated at construction time. Invalid values raise `Configurati
 | `min_response_ms` | `0.0` | — |
 | `redact_violations` | `False` | — |
 | `expected_policy_hash` | `None` | `PRAMANIX_EXPECTED_POLICY_HASH` |
-| `metrics_enabled` | `True` | `PRAMANIX_METRICS_ENABLED` |
+| `metrics_enabled` | `False` | `PRAMANIX_METRICS_ENABLED` |
 | `otel_enabled` | `False` | `PRAMANIX_OTEL_ENABLED` |
 | `fast_path_enabled` | `False` | `PRAMANIX_FAST_PATH_ENABLED` |
 | `signer` | `None` | — |
@@ -245,7 +246,8 @@ These are not enforced. They are warnings. You decide what production means for 
 @dataclass(frozen=True)
 class Decision:
     allowed:             bool
-    status:              SolverStatus      # SAFE | UNSAFE | TIMEOUT | ERROR | STALE_STATE | VALIDATION_FAILURE
+    status:              SolverStatus      # SAFE | UNSAFE | TIMEOUT | ERROR | STALE_STATE
+                                           # VALIDATION_FAILURE | CONSENSUS_FAILURE | RATE_LIMITED
     violated_invariants: list[str]         # empty on ALLOW; invariant labels on BLOCK
     explanation:         str               # Z3 counterexample text on BLOCK
     decision_id:         str               # UUID4
@@ -270,18 +272,18 @@ Factory methods: `Decision.safe()`, `Decision.unsafe()`, `Decision.timeout()`, `
 Every `Decision` carries a deterministic SHA-256 hash over its content fields. This hash is the basis for Ed25519 signing and Merkle anchoring.
 
 ```python
-from pramanix import Guard, GuardConfig, PramanixSigner, DecisionSigner
+from pramanix import Guard, GuardConfig, PramanixSigner
 from pramanix import MerkleAnchor, InMemoryAuditSink
 
-signer = PramanixSigner.generate()  # or load from KeyProvider
+signer = PramanixSigner.generate()  # Ed25519 keypair — load from KeyProvider in production
 config = GuardConfig(
-    signer=DecisionSigner(signer),
+    signer=signer,
     audit_sinks=[InMemoryAuditSink()],
 )
 guard = Guard(TransferPolicy, config=config)
 
 decision = guard.verify(intent, state)
-# decision.signature is set; decision is in audit_sink.decisions
+# decision.signature is set; decision is in audit_sinks[0].decisions
 ```
 
 Merkle anchoring lets you prove any single decision was part of an unaltered batch without replaying all decisions:
@@ -292,7 +294,7 @@ for d in decisions:
     anchor.add(d.decision_id)
 
 proof = anchor.prove(decisions[42].decision_id)
-assert proof.verify(anchor.root())
+assert proof.verify()  # verifies against the root stored in the proof
 ```
 
 For production deployments with many decisions, `MerkleArchiver` handles segment-based flushing at configurable `max_active_entries`, writing `.merkle.archive.YYYYMMDD` files with chain-binding checkpoint leaves.
@@ -306,16 +308,21 @@ A `Decision(allowed=True)` can be replayed. Without single-use enforcement, an a
 `ExecutionToken` closes this gap:
 
 ```python
+import secrets
+import redis
 from pramanix import ExecutionTokenSigner, RedisExecutionTokenVerifier
 
-token_signer = ExecutionTokenSigner(secret_key=os.environ["TOKEN_KEY"])
-verifier = RedisExecutionTokenVerifier(redis_url=os.environ["REDIS_URL"])
+secret = secrets.token_bytes(32)  # bytes; share securely across replicas
+token_signer = ExecutionTokenSigner(secret_key=secret)
+
+r = redis.Redis(host="redis.internal", port=6379, decode_responses=True)
+verifier = RedisExecutionTokenVerifier(secret_key=secret, redis_client=r)
 
 # After verify() returns ALLOW:
 token = token_signer.mint(decision)
 
 # At execution time:
-if verifier.consume(token, expected_state_version=current_version):
+if verifier.consume(token):
     # execute the action — token is now consumed, cannot be replayed
     pass
 ```
@@ -332,12 +339,13 @@ Under sustained Z3 solver pressure, use `AdaptiveCircuitBreaker` to shed load wh
 from pramanix import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
 cb = AdaptiveCircuitBreaker(guard, config=CircuitBreakerConfig(
-    pressure_threshold_ms=200,
-    open_duration_s=30,
-    probe_count=3,
+    pressure_threshold_ms=100.0,     # ms threshold to count a solve as "slow"
+    consecutive_pressure_count=5,    # N consecutive slow solves → OPEN
+    recovery_seconds=30.0,           # seconds before moving to HALF_OPEN
+    isolation_threshold=3,           # N consecutive OPEN episodes → ISOLATED
 ))
 
-decision = await cb.verify_async(intent, state)
+decision = await cb.verify_async(intent=intent, state=state)
 # Returns Decision.error(allowed=False) in OPEN/ISOLATED state
 ```
 
@@ -354,7 +362,7 @@ In rolling deployments, replicas may run different policy versions simultaneousl
 ```python
 # One-time: get the hash from a reference build
 guard = Guard(TransferPolicy)
-print(guard.policy_hash)  # "sha256:a1b2c3d4..."
+print(guard._policy_hash)  # "sha256:a1b2c3d4..."  — private attribute
 
 # In production config:
 config = GuardConfig(
@@ -375,9 +383,9 @@ from pramanix.integrations.fastapi import PramanixMiddleware
 app = FastAPI()
 app.add_middleware(
     PramanixMiddleware,
-    guard=guard,
-    intent_extractor=lambda req: ...,  # dict from request
-    state_loader=lambda req: ...,      # dict from request
+    policy=TransferPolicy,              # Policy subclass
+    intent_model=TransferIntent,        # Pydantic model; parsed from request body
+    state_loader=lambda req: ...,       # async callable; returns state dict
 )
 ```
 
@@ -389,6 +397,7 @@ The middleware applies `timing_budget_ms` to both ALLOW and BLOCK responses unco
 
 ```python
 from pramanix.integrations.langchain import PramanixGuardedTool
+from pramanix import Guard
 
 async def execute_transfer(intent: dict) -> str:
     await payment_gateway.transfer(**intent)
@@ -397,9 +406,13 @@ async def execute_transfer(intent: dict) -> str:
 tool = PramanixGuardedTool(
     name="transfer_funds",
     description="Transfer funds between accounts",
-    policy=TransferPolicy,
-    intent_model=TransferIntent,
-    execute_fn=execute_transfer,  # required — no default
+    guard=Guard(TransferPolicy),        # Guard instance, not Policy class
+    intent_schema=TransferIntent,       # Pydantic model for intent validation
+    state_provider=lambda: {            # callable returning current state dict
+        "balance": account.balance,
+        "daily_spent": account.daily_spent,
+    },
+    execute_fn=execute_transfer,        # required — no default; None emits UserWarning
 )
 ```
 
@@ -425,15 +438,43 @@ async def transfer_funds(amount: Decimal, balance: Decimal, **kwargs):
 
 ## Primitives
 
-Pre-built policy mixin classes for common domains. Use `invariant_mixin` to compose them into your own policy:
+Pre-built constraint factories for common domains. Call them inside `invariants()`:
 
 ```python
-from pramanix import Policy, invariant_mixin
+from decimal import Decimal
+from pramanix import Policy, Field
 from pramanix.primitives.finance import NonNegativeBalance, UnderDailyLimit
 from pramanix.primitives.rbac import RoleMustBeIn
 
-@invariant_mixin(NonNegativeBalance, UnderDailyLimit, RoleMustBeIn)
 class MyPolicy(Policy):
+    balance     = Field("balance",     Decimal, "Real")
+    amount      = Field("amount",      Decimal, "Real")
+    daily_limit = Field("daily_limit", Decimal, "Real")
+    role        = Field("role",        str,     "String")
+
+    @classmethod
+    def invariants(cls):
+        return [
+            NonNegativeBalance(cls.balance, cls.amount),
+            UnderDailyLimit(cls.amount, cls.daily_limit),
+            RoleMustBeIn(cls.role, allowed_roles=["admin", "teller"]),
+        ]
+```
+
+`invariant_mixin` is a **separate** mechanism for sharing constraint sets across policies. Decorate a function, then pass it to the Policy subclass via `mixins=`:
+
+```python
+from pramanix import Policy, Field, E, invariant_mixin
+from pramanix.expressions import ConstraintExpr
+
+@invariant_mixin
+def BalanceSafety(fields: dict[str, Field]) -> list[ConstraintExpr]:
+    return [
+        (E(fields["balance"]) >= 0).named("non_neg_balance"),
+    ]
+
+class MyPolicy(Policy, mixins=[BalanceSafety]):
+    balance = Field("balance", Decimal, "Real")
     ...
 ```
 
@@ -501,13 +542,14 @@ pramanix calibrate-injection --dataset labelled.jsonl --output scorer.pkl
 For production Ed25519 signing, use a `KeyProvider` instead of inline PEM:
 
 ```python
-from pramanix import AwsKmsKeyProvider, DecisionSigner, GuardConfig
+from pramanix import AwsKmsKeyProvider, PramanixSigner, GuardConfig
 
 key_provider = AwsKmsKeyProvider(
-    secret_name="pramanix/signing-key",
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:pramanix-signing-key",
     region_name="us-east-1",
 )
-config = GuardConfig(signer=DecisionSigner.from_provider(key_provider))
+signer = PramanixSigner.from_provider(key_provider)
+config = GuardConfig(signer=signer)
 ```
 
 Available providers: `PemKeyProvider`, `EnvKeyProvider`, `FileKeyProvider`, `AwsKmsKeyProvider`, `AzureKeyVaultKeyProvider`, `GcpKmsKeyProvider`, `HashiCorpVaultKeyProvider`.
