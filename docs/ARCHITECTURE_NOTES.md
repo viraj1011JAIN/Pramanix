@@ -216,6 +216,9 @@ User code
 | `ERROR` | `False` | Unexpected internal error |
 | `STALE_STATE` | `False` | `state_version` field mismatch |
 | `VALIDATION_FAILURE` | `False` | Pydantic model validation failed |
+| `CONSENSUS_FAILURE` | `False` | Dual-model LLM consensus disagreement |
+| `RATE_LIMITED` | `False` | Load-shedding threshold exceeded |
+| `CACHE_HIT` | `False` | Reserved; not currently returned by Guard |
 
 **Canonical hash (`decision_hash`):** SHA-256 over `decision_id + status + allowed + violated_invariants + explanation`. Computed via `orjson` (or stdlib `json` if orjson not installed). Deterministic regardless of key ordering.
 
@@ -389,6 +392,9 @@ These are library code — they define invariants but own no state and make no e
 7. Structlog secrets-redaction processor runs before any renderer — secrets never reach disk.
 8. Policy fingerprint mismatch on Guard construction raises `ConfigurationError` — no silent drift.
 9. Alpine/musl is rejected at import time unless explicitly bypassed.
+10. HMAC-sealed IPC: worker results in `async-process` mode are tagged with an ephemeral key. The host verifies the tag before trusting `allowed`. A forged `allowed=True` from a compromised worker requires knowledge of the in-process ephemeral key.
+11. `ConstraintExpr.__bool__` raises `PolicyCompilationError` — accidental `and`/`or` in a policy is caught at compile time, not silently mis-evaluated.
+12. `min_response_ms` timing pad is applied unconditionally to both ALLOW and BLOCK — not just BLOCK — to prevent timing oracle attacks.
 
 ---
 

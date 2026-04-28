@@ -197,3 +197,78 @@ Each entry records the decision, the alternatives that were considered, and the 
 - In rolling deployments, it is possible for two replicas to be running different versions of the same policy class (e.g., during a deploy). This produces split-brain policy enforcement.
 - The fingerprint check forces operators to explicitly acknowledge a policy change (by updating `expected_policy_hash`) rather than silently running a different policy version.
 - The `policy_hash` field on every `Decision` provides a record of which policy version produced each decision. This is required for audit trail reconstruction.
+
+---
+
+## 15. HMAC-sealed IPC for async-process worker results
+
+**Decision:** In `async-process` mode, each solve result is HMAC-SHA256 tagged with an ephemeral key (`_EphemeralKey`) before crossing the `multiprocessing.Queue` boundary. The host process verifies the tag before trusting the result.
+
+**Alternatives considered:**
+- Trust the `Decision` dict returned from the subprocess directly: A compromised or exploited worker process (e.g., via a malformed Z3 formula triggering a UAF) could forge `allowed=True` across the process boundary. No other defense exists at the `Queue` level.
+
+**Why HMAC seal:**
+- The `multiprocessing.Queue` does not provide integrity guarantees. A forged pickle payload from a compromised worker is indistinguishable from a legitimate one without an explicit MAC.
+- The ephemeral key is generated once per `Guard` instance lifetime at construction time, stored only in the host process, and never serialized to disk (`_EphemeralKey.__reduce__` raises `TypeError`).
+- The overhead is one HMAC-SHA256 per decision (microseconds). The security property is that forging `allowed=True` from a compromised worker requires knowledge of the ephemeral key, which is only accessible in the host process.
+
+---
+
+## 16. `issued_at=0` in signed decision payloads
+
+**Decision:** The `iat` (issued-at) timestamp is not embedded in the JWS body of a `DecisionSigner.sign()` payload. `VerificationResult.issued_at` is always `0`.
+
+**Why:**
+- Including wall-clock time in the signed payload means two identical decisions signed at different moments produce different signatures. This breaks signature determinism: given the same `(decision, key)` pair, `sign()` must produce the same output.
+- Signature determinism matters for test reproducibility and for detecting accidental re-signing.
+- The timestamp is preserved in `SignedDecision.issued_at` outside the HMAC boundary — available for display but not part of the integrity guarantee.
+
+---
+
+## 17. `ConstraintExpr.__bool__` raises instead of returning a value
+
+**Decision:** `ConstraintExpr.__bool__` raises `PolicyCompilationError` with a message explaining that `and`/`or` must be replaced with `&`/`|`.
+
+**Alternatives considered:**
+- Return `True` unconditionally: Silently makes every Python `and`/`or` expression appear valid. The combined constraint silently behaves as the left operand only.
+- Return `False` unconditionally: Same problem; even worse behavior in policy logic.
+
+**Why raise:**
+- `bool(expr1) and bool(expr2)` short-circuits at Python level and discards one operand. The policy author intended `expr1 & expr2` (Z3 conjunction). These are not the same operation.
+- This is a policy correctness bug that is invisible at runtime — the wrong constraint is compiled and wrong decisions are produced silently. Raising at compilation time surfaces the bug immediately.
+- The cost is zero for correct policies. The DSL operators that produce `ConstraintExpr` values return `ConstraintExpr`, not `bool`. Only accidental use of `and`/`or` triggers this path.
+
+---
+
+## 18. Iterative Merkle root construction (replacing recursive)
+
+**Decision:** `MerkleAnchor._build_root` uses an iterative `while len(level) > 1:` loop, not recursion.
+
+**Why:**
+- The recursive implementation hits Python's default call stack limit at approximately 1,000 decisions (log₂ of 1,000 ≈ 10 recursion levels, but the full hash tree is built pair-wise and each recursion is one level). For production audit logs with tens of thousands of decisions per batch, the recursion limit causes a `RecursionError`.
+- The iterative version uses O(1) stack depth regardless of batch size. There is no functional difference in the output.
+
+---
+
+## 19. Timing pad applied to both ALLOW and BLOCK responses
+
+**Decision:** `GuardConfig.min_response_ms` padding is applied to every `Guard.verify()` return, unconditionally, before the `allowed` branch.
+
+**Alternatives considered:**
+- Apply padding only to BLOCK responses: A caller that can distinguish ALLOW latency from BLOCK latency can binary-search which invariants are violated. This leaks a timing oracle that identifies the violated constraint even with `redact_violations=True`.
+
+**Why unconditional:**
+- Timing side-channel attacks require a measurable latency difference between outcomes. Unconditional padding makes ALLOW and BLOCK responses statistically indistinguishable at the network level (given sufficient padding budget).
+- The same principle applies to the FastAPI middleware: `timing_budget_ms` is applied before the ALLOW/BLOCK response branch, not after.
+
+---
+
+## 20. `max_input_bytes` failure returns `Decision.error()` not propagates exception
+
+**Decision:** When `max_input_bytes` is exceeded (or when the payload cannot be serialized to check size), `verify_async()` returns `Decision.error(allowed=False)` rather than propagating the exception.
+
+**Context:** Prior to v1.0.0 (C-01 fix), `verify_async()` had a bare `except Exception: pass` in the size-check path. Unserializable payloads (circular references, custom objects) silently bypassed the size gate and continued to the Z3 solver.
+
+**Why return `Decision.error()` rather than propagate:**
+- Fail-closed consistency: all failure paths return `Decision.error(allowed=False)`. Propagating an exception from `verify_async()` would break the no-raise contract and require callers to add exception handling to be safe.
+- The serialization failure is itself a signal that the input is malformed. Blocking is the correct outcome.

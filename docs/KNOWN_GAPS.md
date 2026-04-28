@@ -10,18 +10,20 @@ This document describes real gaps discovered from the code, not theoretical risk
 
 **Severity:** High for high-security deployments that care about replay across restarts.
 
-`InMemoryExecutionTokenVerifier` (the default) stores consumed token IDs in a `set` in process memory guarded by `threading.Lock`. A process restart clears this set. If a token was minted before the restart and has not yet expired, it can be consumed again after the restart.
+`InMemoryExecutionTokenVerifier` stores consumed token IDs in a `set` in process memory guarded by `threading.Lock`. A process restart clears this set. If a token was minted before the restart and has not yet expired, it can be consumed again after the restart.
 
 **Who is affected:** Any deployment where:
 - Tokens have a TTL longer than the typical restart gap, AND
 - An attacker can intercept a token and delay consumption until after a restart.
 
 **Current mitigations in code:**
+- `InMemoryExecutionTokenVerifier.__init__` emits `UserWarning` unconditionally, describing the in-memory limitation and naming the durable alternatives.
+- `InMemoryExecutionTokenVerifier.__init__` emits `RuntimeWarning` (elevated severity) when multi-worker environment variables (`WEB_CONCURRENCY`, `GUNICORN_CMD_ARGS`, `UVICORN_WORKERS`, `HYPERCORN_WORKERS`) are detected.
 - `RedisExecutionTokenVerifier` closes this gap for Redis deployments.
 - `SQLiteExecutionTokenVerifier` and `PostgresExecutionTokenVerifier` close it for SQL deployments.
 - Default token TTL is 30 seconds — short enough that most planned restarts drain the window.
 
-**What is not in code:** No documentation or warning in `InMemoryExecutionTokenVerifier.__init__` telling users that it is not durable. No guidance on which verifier to use in production.
+**What remains unaddressed:** `pramanix doctor` does not check whether the configured token verifier backend is durable. A deployment using `InMemoryExecutionTokenVerifier` in production will pass the doctor check without comment.
 
 ---
 
@@ -177,3 +179,44 @@ The policy fingerprint mismatch check (guard against silent policy drift in roll
 The structlog secrets-redaction processor in `guard_config.py` redacts values for keys that match a known-sensitive pattern list (API keys, PEM data, HMAC secrets). User-defined field names that happen to contain sensitive values (e.g., a field named `user_token`) will not be redacted unless the redaction pattern list is extended.
 
 This is not a Guard issue — Guard never logs field values by default. The redaction applies to structlog log records emitted by Guard internals (e.g., policy name, decision ID, latency). User-controlled field values are not logged.
+
+---
+
+## 16. `interceptors/__init__.py` declares names in `__all__` without importing them
+
+**Severity:** Low — the implementation is in submodules.
+
+`src/pramanix/interceptors/__init__.py` declares:
+
+```python
+__all__ = ["PramanixGrpcInterceptor", "PramanixKafkaConsumer"]
+```
+
+but does not import them. `from pramanix.interceptors import PramanixGrpcInterceptor` raises `ImportError`. Import directly from submodules:
+
+```python
+from pramanix.interceptors.grpc  import PramanixGrpcInterceptor
+from pramanix.interceptors.kafka import PramanixKafkaConsumer
+```
+
+---
+
+## 17. CrewAI, DSPy, Haystack, Pydantic AI, and Semantic Kernel adapters are stubs
+
+**Severity:** Medium — these are listed as beta integrations but have minimal real test coverage.
+
+The five adapters in `integrations/crewai.py`, `integrations/dspy.py`, `integrations/haystack.py`, `integrations/pydantic_ai.py`, and `integrations/semantic_kernel.py` are present and structurally correct. However, they have not been tested against real framework versions (i.e., actual `crewai`, `dspy-ai`, `haystack-ai`, `pydantic-ai`, or `semantic-kernel` library objects in an integration test). They may fail against specific framework API changes or version constraints.
+
+**What is tested:** Unit-level tests that mock the framework objects.
+
+**What is not tested:** Actual `crewai.Task` execution, DSPy `Module.forward()` pipeline, Haystack `Pipeline.run()`, Pydantic AI validator hooks, or Semantic Kernel plugin registration.
+
+---
+
+## 18. `pramanix doctor` does not check token verifier backend durability
+
+**Severity:** Informational.
+
+`pramanix doctor` checks 11 environment conditions but does not detect whether the application is using `InMemoryExecutionTokenVerifier` in a multi-process deployment. A deployment that uses the in-memory verifier with multiple workers (Gunicorn, Uvicorn `--workers N`) will pass the doctor check despite having broken replay protection.
+
+The `InMemoryExecutionTokenVerifier.__init__` emits `RuntimeWarning` when multi-worker env vars are detected, but this only fires at object construction time — not at doctor check time.
