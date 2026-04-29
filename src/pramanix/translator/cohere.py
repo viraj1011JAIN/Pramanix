@@ -137,6 +137,21 @@ class CohereTranslator:
                 model=self.model,
                 attempts=attempts,
             ) from exc
+        except Exception as exc:
+            # Wrap httpx transport/timeout errors that are not in _retryable
+            # (e.g. httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout).
+            try:
+                import httpx as _httpx
+
+                if isinstance(exc, (_httpx.TransportError, _httpx.TimeoutException)):
+                    raise LLMTimeoutError(
+                        f"Cohere model '{self.model}' connection error: {exc}",
+                        model=self.model,
+                        attempts=attempts,
+                    ) from exc
+            except ImportError:
+                pass
+            raise
 
         raise AssertionError("unreachable")  # pragma: no cover
 

@@ -28,6 +28,14 @@ import pytest
 pytest.importorskip("redis", reason="redis not installed")
 pytest.importorskip("testcontainers", reason="testcontainers not installed")
 
+from .conftest import _DOCKER_AVAILABLE  # noqa: E402
+
+if not _DOCKER_AVAILABLE:
+    pytest.skip(
+        "Docker not available — zero-trust integration tests require a Redis container",
+        allow_module_level=True,
+    )
+
 import redis.asyncio as aioredis
 from testcontainers.redis import RedisContainer
 

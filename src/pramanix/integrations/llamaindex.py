@@ -165,7 +165,7 @@ class PramanixFunctionTool:
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
             intent: dict[str, Any] = self._intent_schema.model_validate(
-                raw, strict=True
+                raw
             ).model_dump()
         except Exception as exc:
             return ToolOutput(
@@ -182,7 +182,7 @@ class PramanixFunctionTool:
         # ── 4. Guard verify ────────────────────────────────────────────────────
         decision = await self._guard.verify_async(intent=intent, state=state)
 
-        # ── 5. ALLOW path ──────────────────────────────────────────────────────
+        # ── 5. ALLOW path — call fn and return result ─────────────────────────
         if decision.allowed:
             result = self._fn(**intent)
             if asyncio.iscoroutine(result):
@@ -393,7 +393,7 @@ class PramanixQueryEngineTool:
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
             intent: dict[str, Any] = self._intent_schema.model_validate(
-                raw, strict=True
+                raw
             ).model_dump()
         except Exception as exc:
             return ToolOutput(

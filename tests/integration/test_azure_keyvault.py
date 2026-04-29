@@ -32,8 +32,17 @@ import uuid
 from typing import Generator
 
 import pytest
-from azure.identity import ClientSecretCredential  # type: ignore[import-untyped]
-from azure.keyvault.secrets import SecretClient  # type: ignore[import-untyped]
+
+azure_identity = pytest.importorskip(
+    "azure.identity",
+    reason="azure-identity not installed; run: pip install 'pramanix[azure]'",
+)
+azure_keyvault_secrets = pytest.importorskip(
+    "azure.keyvault.secrets",
+    reason="azure-keyvault-secrets not installed; run: pip install 'pramanix[azure]'",
+)
+ClientSecretCredential = azure_identity.ClientSecretCredential
+SecretClient = azure_keyvault_secrets.SecretClient
 
 from pramanix.key_provider import AzureKeyVaultKeyProvider
 

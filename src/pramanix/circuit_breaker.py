@@ -702,7 +702,7 @@ class RedisDistributedBackend:
             self._client = None
 
     def __del__(self) -> None:
-        if self._client is not None:
+        if getattr(self, "_client", None) is not None:
             log.warning(
                 "RedisDistributedBackend GC'd with an open Redis connection — "
                 "call close() explicitly to release the connection cleanly."

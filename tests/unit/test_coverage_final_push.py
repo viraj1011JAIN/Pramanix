@@ -533,18 +533,29 @@ class TestRedisGetClientLazyInit:
 
     @pytest.mark.asyncio
     async def test_lazy_client_creation(self, _redis_backend: Any) -> None:
-        """_client starts None; _get_client() must populate it."""
+        """_client starts None; _get_client() populates it and caches it.
+
+        Two distinct FakeRedis instances are offered: if caching is broken,
+        the second call would return the second instance.  Correct caching
+        means both calls return the first instance.
+        """
+        import fakeredis.aioredis as fake_aioredis
         import redis.asyncio as aioredis
 
-        fake_client = MagicMock()
-        with patch.object(aioredis, "from_url", return_value=fake_client) as mock_from_url:
-            client1 = await _redis_backend._get_client()
-            client2 = await _redis_backend._get_client()  # second call — uses cache
+        real_fake_1 = fake_aioredis.FakeRedis(decode_responses=True)
+        real_fake_2 = fake_aioredis.FakeRedis(decode_responses=True)
+        factory_calls: list[object] = [real_fake_1, real_fake_2]
 
-        # from_url called exactly once (caching works)
-        mock_from_url.assert_called_once()
-        assert client1 is fake_client
-        assert client2 is fake_client  # same object
+        def _from_url(*args: Any, **kwargs: Any) -> Any:
+            return factory_calls.pop(0)
+
+        with patch.object(aioredis, "from_url", side_effect=_from_url):
+            client1 = await _redis_backend._get_client()
+            client2 = await _redis_backend._get_client()  # second call — must use cache
+
+        assert client1 is real_fake_1
+        assert client2 is real_fake_1  # same object — from_url called exactly once
+        assert client2 is not real_fake_2  # proves no second call to from_url
 
 
 class TestRedisGetStateMalformedData:
@@ -552,11 +563,16 @@ class TestRedisGetStateMalformedData:
 
     @pytest.mark.asyncio
     async def test_malformed_failure_count_returns_default(self, _redis_backend: Any) -> None:
+        import fakeredis.aioredis as fake_aioredis
+
         from pramanix.circuit_breaker import CircuitState
 
-        fake_client = AsyncMock()
-        fake_client.hgetall = AsyncMock(return_value={"circuit_state": "open", "failure_count": "NOT_AN_INT"})
-        _redis_backend._client = fake_client
+        client = fake_aioredis.FakeRedis(decode_responses=True)
+        await client.hset(
+            "pramanix:cb:ns_bad",
+            mapping={"circuit_state": "open", "failure_count": "NOT_AN_INT"},
+        )
+        _redis_backend._client = client
 
         state = await _redis_backend.get_state("ns_bad")
         # ValueError in int("NOT_AN_INT") → returns _DistributedState() default
@@ -565,79 +581,74 @@ class TestRedisGetStateMalformedData:
 
 
 class TestRedisSetStatePipeline:
-    """Lines 698-716: set_state executes pipeline HSET+EXPIRE."""
+    """Lines 698-716: set_state executes pipeline HSET+EXPIRE against real fakeredis."""
 
     @pytest.mark.asyncio
     async def test_set_state_executes_pipeline(self, _redis_backend: Any) -> None:
+        import fakeredis.aioredis as fake_aioredis
+
         from pramanix.circuit_breaker import CircuitState, _DistributedState
 
-        # Mock pipeline context manager
-        mock_pipe = AsyncMock()
-        mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
-        mock_pipe.__aexit__ = AsyncMock(return_value=False)
-        mock_pipe.hset = AsyncMock()
-        mock_pipe.expire = AsyncMock()
-        mock_pipe.execute = AsyncMock(return_value=[1, 1])
-
-        fake_client = AsyncMock()
-        fake_client.hgetall = AsyncMock(return_value={})  # no existing state
-        fake_client.pipeline = MagicMock(return_value=mock_pipe)
-        _redis_backend._client = fake_client
+        client = fake_aioredis.FakeRedis(decode_responses=True)
+        _redis_backend._client = client
 
         await _redis_backend.set_state(
             "pipe_ns",
             _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=2),
         )
 
-        mock_pipe.hset.assert_called_once()
-        mock_pipe.expire.assert_called_once()
-        mock_pipe.execute.assert_called_once()
+        # Verify the state was actually written to the real fakeredis store
+        state = await _redis_backend.get_state("pipe_ns")
+        assert state.circuit_state == CircuitState.OPEN.value
+        assert state.failure_count == 2
 
     @pytest.mark.asyncio
     async def test_set_state_lower_severity_keeps_existing(self, _redis_backend: Any) -> None:
-        """Lines 698-700: existing state is more severe → keeps existing circuit_state."""
+        """Lines 698-700: existing state is more severe → conservative merge keeps it."""
+        import fakeredis.aioredis as fake_aioredis
+
         from pramanix.circuit_breaker import CircuitState, _DistributedState
 
-        mock_pipe = AsyncMock()
-        mock_pipe.__aenter__ = AsyncMock(return_value=mock_pipe)
-        mock_pipe.__aexit__ = AsyncMock(return_value=False)
-        mock_pipe.hset = AsyncMock()
-        mock_pipe.expire = AsyncMock()
-        mock_pipe.execute = AsyncMock(return_value=[1, 1])
+        client = fake_aioredis.FakeRedis(decode_responses=True)
+        # Pre-seed OPEN state (severity=2) directly in the real fakeredis store
+        await client.hset(
+            "pramanix:cb:severity_ns",
+            mapping={
+                "circuit_state": CircuitState.OPEN.value,
+                "failure_count": "3",
+                "last_failure_time": "1000.0",
+                "open_episode_count": "1",
+            },
+        )
+        _redis_backend._client = client
 
-        fake_client = AsyncMock()
-        # existing state: OPEN (severity=2)
-        fake_client.hgetall = AsyncMock(return_value={
-            "circuit_state": CircuitState.OPEN.value,
-            "failure_count": "3",
-            "last_failure_time": "1000.0",
-            "open_episode_count": "1",
-        })
-        fake_client.pipeline = MagicMock(return_value=mock_pipe)
-        _redis_backend._client = fake_client
-
-        # Try to set CLOSED (severity=0) — OPEN must win
+        # Try to set CLOSED (severity=0) — conservative merge must keep OPEN
         await _redis_backend.set_state(
             "severity_ns",
             _DistributedState(circuit_state=CircuitState.CLOSED.value, failure_count=0),
         )
 
-        # Verify hset was called with OPEN state (severity-wins)
-        call_kwargs = mock_pipe.hset.call_args
-        merged = call_kwargs.kwargs.get("mapping") or call_kwargs.args[1] if len(call_kwargs.args) > 1 else {}
-        # The mapping should preserve OPEN
-        assert CircuitState.OPEN.value in str(call_kwargs)
+        state = await _redis_backend.get_state("severity_ns")
+        assert state.circuit_state == CircuitState.OPEN.value, (
+            "Conservative merge must keep the more-severe OPEN state"
+        )
 
     @pytest.mark.asyncio
     async def test_set_state_redis_exception_is_swallowed(self, _redis_backend: Any) -> None:
         """Lines 724->exit: exception inside set_state is silently swallowed."""
+        import fakeredis.aioredis as fake_aioredis
+
         from pramanix.circuit_breaker import CircuitState, _DistributedState
 
-        fake_client = AsyncMock()
-        fake_client.hgetall = AsyncMock(side_effect=ConnectionError("Redis down"))
-        _redis_backend._client = fake_client
+        class _UnreachableFakeRedis(fake_aioredis.FakeRedis):
+            """FakeRedis subclass that simulates a network-down hgetall."""
 
-        # Must NOT raise — exception is swallowed, local state governs
+            async def hgetall(self, *args: Any, **kwargs: Any) -> Any:
+                raise ConnectionError("Redis unreachable — simulated failure")
+
+        _redis_backend._client = _UnreachableFakeRedis(decode_responses=True)
+
+        # Must NOT raise — set_state swallows Redis failures and local state governs
         await _redis_backend.set_state(
             "fail_ns",
             _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=1),
@@ -645,31 +656,53 @@ class TestRedisSetStatePipeline:
 
 
 class TestRedisClear:
-    """Lines 728-729: clear() creates a new event loop when none exists."""
+    """Lines 728-729: clear() uses asyncio.run() when no event loop is running."""
 
-    def test_clear_creates_loop_when_none_and_clears(self, _redis_backend: Any) -> None:
-        """RuntimeError from get_running_loop → asyncio.run() path."""
-        async def _fake_async_clear(ns: Any) -> None:
-            pass
+    def test_clear_no_loop_uses_asyncio_run(self) -> None:
+        """Running clear() from a plain thread (no event loop) exercises asyncio.run() path.
 
-        _redis_backend._async_clear = _fake_async_clear
+        asyncio_mode="auto" adds a loop to the test thread, so we spawn a real
+        threading.Thread — threads start with no event loop, making
+        asyncio.get_running_loop() raise RuntimeError and clear() fall back to
+        asyncio.run(), which is the branch we want to exercise.
+        """
+        import threading
 
-        # Simulate no running event loop (RuntimeError on get_running_loop)
-        with patch("asyncio.get_running_loop", side_effect=RuntimeError("no loop")):
-            with patch("asyncio.run") as mock_run:
-                _redis_backend.clear("test_ns")
-                mock_run.assert_called_once()
+        import fakeredis.aioredis as fake_aioredis
+
+        from pramanix.circuit_breaker import RedisDistributedBackend
+
+        results: list[str] = []
+
+        def _run_in_thread() -> None:
+            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
+            backend._redis_url = "redis://fake"
+            backend._sync_interval = 1.0
+            backend._prefix = "pramanix:cb:"
+            backend._ttl = 300
+            backend._client = fake_aioredis.FakeRedis(decode_responses=True)
+            backend.clear("test_ns")
+            results.append("ok")
+
+        thread = threading.Thread(target=_run_in_thread)
+        thread.start()
+        thread.join(timeout=10.0)
+        assert results == ["ok"], "clear() in a no-loop thread must complete without error"
 
     @pytest.mark.asyncio
     async def test_async_clear_all_namespaces(self, _redis_backend: Any) -> None:
-        """Lines 728-729: _async_clear with namespace=None deletes all matching keys."""
-        fake_client = AsyncMock()
-        fake_client.keys = AsyncMock(return_value=["pramanix:cb:ns1", "pramanix:cb:ns2"])
-        fake_client.delete = AsyncMock()
-        _redis_backend._client = fake_client
+        """_async_clear(None) deletes all keys matching the backend prefix."""
+        import fakeredis.aioredis as fake_aioredis
+
+        client = fake_aioredis.FakeRedis(decode_responses=True)
+        await client.hset("pramanix:cb:ns1", mapping={"circuit_state": "open"})
+        await client.hset("pramanix:cb:ns2", mapping={"circuit_state": "open"})
+        _redis_backend._client = client
 
         await _redis_backend._async_clear(None)
-        fake_client.delete.assert_called_once_with("pramanix:cb:ns1", "pramanix:cb:ns2")
+
+        assert await client.exists("pramanix:cb:ns1") == 0
+        assert await client.exists("pramanix:cb:ns2") == 0
 
 
 class TestCircuitBreakerVerifyAsyncIsolatedState:

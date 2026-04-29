@@ -234,8 +234,8 @@ class TestCohereTranslatorReal:
         )
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        result = await t.extract("Pay Dave 200", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            result = await t.extract("Pay Dave 200", _Payment)
         assert result["recipient"] == "Dave"
 
     @pytest.mark.asyncio
@@ -249,9 +249,9 @@ class TestCohereTranslatorReal:
         respx.post(_COHERE_URL).mock(
             side_effect=_httpx.ConnectError("connection refused")
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        with pytest.raises((LLMTimeoutError, Exception)):
-            await t.extract("Pay Alice 100", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            with pytest.raises((LLMTimeoutError, Exception)):
+                await t.extract("Pay Alice 100", _Payment)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -263,9 +263,9 @@ class TestCohereTranslatorReal:
         respx.post(_COHERE_URL).respond(
             200, json=_cohere_ok("NOT JSON AT ALL")
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        with pytest.raises(ExtractionFailureError):
-            await t.extract("Pay Alice 100", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            with pytest.raises(ExtractionFailureError):
+                await t.extract("Pay Alice 100", _Payment)
 
     def test_init_raises_config_error_without_cohere(self):
         """ConfigurationError when cohere package is absent."""
@@ -297,14 +297,11 @@ class TestCohereTranslatorReal:
         """Lines 188-190: older SDK → response.text fallback."""
         from pramanix.translator.cohere import CohereTranslator
 
-        # Respond with the v4-style format (no message.content[0].text)
-        # The SDK's AsyncClientV2 always returns the v5 format, but we verify
-        # the extractor's happy-path works end-to-end with v5.
         respx.post(_COHERE_URL).respond(
             200, json=_cohere_ok('{"amount": 30, "recipient": "Eve"}')
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        result = await t.extract("Pay Eve 30", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            result = await t.extract("Pay Eve 30", _Payment)
         assert result["recipient"] == "Eve"
 
     @pytest.mark.asyncio
@@ -314,13 +311,12 @@ class TestCohereTranslatorReal:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.cohere import CohereTranslator
 
-        # Return an empty text field → _single_call raises ExtractionFailureError
         respx.post(_COHERE_URL).respond(
             200, json=_cohere_ok("")
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        with pytest.raises((ExtractionFailureError, Exception)):
-            await t.extract("Pay Alice 100", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            with pytest.raises((ExtractionFailureError, Exception)):
+                await t.extract("Pay Alice 100", _Payment)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -337,8 +333,8 @@ class TestCohereTranslatorReal:
             respx.post(_COHERE_URL).respond(
                 200, json=_cohere_ok('{"amount": 10, "recipient": "Frank"}')
             )
-            t = CohereTranslator("command-r-plus", api_key="test-key")
-            result = await t.extract("Pay Frank 10", _Payment)
+            async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+                result = await t.extract("Pay Frank 10", _Payment)
             assert result["recipient"] == "Frank"
         finally:
             if orig_errors is not None:
@@ -356,9 +352,9 @@ class TestCohereTranslatorReal:
         respx.post(_COHERE_URL).mock(
             side_effect=_httpx.ConnectError("timeout")
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        with pytest.raises(Exception):
-            await t.extract("Pay Alice 100", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            with pytest.raises(Exception):
+                await t.extract("Pay Alice 100", _Payment)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -372,9 +368,9 @@ class TestCohereTranslatorReal:
             429,
             json={"message": "too many requests"},
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        with pytest.raises((LLMTimeoutError, Exception)):
-            await t.extract("Pay Alice 100", _Payment)
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            with pytest.raises((LLMTimeoutError, Exception)):
+                await t.extract("Pay Alice 100", _Payment)
 
     @pytest.mark.asyncio
     @respx.mock
@@ -396,13 +392,13 @@ class TestCohereTranslatorReal:
                 "usage": {"tokens": {"input_tokens": 5, "output_tokens": 10}},
             },
         )
-        t = CohereTranslator("command-r-plus", api_key="test-key")
-        # May succeed (if SDK parses text field) or raise ExtractionFailureError
-        try:
-            result = await t.extract("Pay Jack 15", _Payment)
-            assert isinstance(result, dict)
-        except Exception:
-            pass  # Either path exercises lines 187-190
+        async with CohereTranslator("command-r-plus", api_key="test-key") as t:
+            # May succeed (if SDK parses text field) or raise ExtractionFailureError
+            try:
+                result = await t.extract("Pay Jack 15", _Payment)
+                assert isinstance(result, dict)
+            except Exception:
+                pass  # Either path exercises lines 187-190
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -547,9 +543,14 @@ class TestLlamaCppTranslatorReal:
 
     def test_init_raises_config_error_without_llama_cpp(self):
         """ConfigurationError when llama_cpp package is absent."""
+        import sys
+        from unittest.mock import patch
+
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.llamacpp import LlamaCppTranslator
 
-        # llama_cpp is not installed — __init__ raises ConfigurationError
-        with pytest.raises(ConfigurationError, match="llama-cpp-python"):
-            LlamaCppTranslator("/path/to/model.gguf")
+        # Shadow llama_cpp in sys.modules to simulate it being absent,
+        # regardless of whether it is installed in the current environment.
+        with patch.dict(sys.modules, {"llama_cpp": None}):  # type: ignore[arg-type]
+            with pytest.raises(ConfigurationError, match="llama-cpp-python"):
+                LlamaCppTranslator("/path/to/model.gguf")

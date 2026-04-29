@@ -159,7 +159,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
 
         # ── 4. Intent validation ──────────────────────────────────────────────
         try:
-            intent_obj = self._intent_model.model_validate(raw, strict=True)
+            intent_obj = self._intent_model.model_validate(raw)
             intent_dict: dict[str, Any] = intent_obj.model_dump()
         except Exception as exc:
             _log.warning("pramanix.fastapi.intent_validation_error: %s", exc, exc_info=True)

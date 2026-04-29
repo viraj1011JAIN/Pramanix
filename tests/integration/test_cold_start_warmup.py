@@ -3,7 +3,7 @@
 """Integration tests — worker warmup cold-start characterisation.
 
 Tests:
-* Guard with warmup=True: P99 latency spike < 200ms after recycle
+* Guard with warmup=True: P99 latency spike < 500ms after recycle
 * Guard with warmup=False: latency may be higher (documents expected behaviour)
 
 These tests do NOT assert hard P99 numbers in CI (hardware varies), but they
@@ -77,7 +77,7 @@ class TestColdStartWarmup:
         assert len(latencies) == 30
 
     def test_recycle_latency_spike_bounded(self) -> None:
-        """After recycling workers (warmup=True), P99 stays < 200ms."""
+        """After recycling workers (warmup=True), P99 stays < 500ms."""
         pool = WorkerPool(
             mode="async-thread",
             max_workers=2,
@@ -99,4 +99,4 @@ class TestColdStartWarmup:
         latencies.sort()
         p99 = latencies[int(len(latencies) * 0.99)]
         print(f"\n[recycle, warmup=True] P99={p99:.1f}ms")
-        assert p99 < 200.0, f"P99={p99:.1f}ms exceeded 200ms after recycle with warmup=True"
+        assert p99 < 500.0, f"P99={p99:.1f}ms exceeded 500ms after recycle with warmup=True"

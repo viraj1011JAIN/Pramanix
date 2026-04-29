@@ -83,3 +83,6 @@ docker-compose.override.yml
 *.key
 credentials.json
 secrets.yaml
+
+# Claude Code local data (memory, settings, hooks)
+.claude/

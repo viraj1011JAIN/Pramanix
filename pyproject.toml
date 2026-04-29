@@ -330,6 +330,18 @@ markers = [
     "perf: performance benchmarks",
     "adversarial: adversarial security tests",
 ]
+filterwarnings = [
+    # Cohere SDK v5 uses deprecated Pydantic V1 internal APIs — upstream issue.
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+    # google-generativeai emits FutureWarning about API surface changes — upstream.
+    "ignore::FutureWarning:google",
+    # InMemoryExecutionTokenVerifier intentionally warns in tests that use it;
+    # the warning is the expected behaviour under test.
+    "ignore:InMemoryExecutionTokenVerifier:UserWarning",
+    # GuardConfig emits a production-mode advisory when PRAMANIX_ENV=production;
+    # tests that set this env var are explicitly testing that path.
+    "ignore:GuardConfig:UserWarning",
+]
 
 [tool.coverage.run]
 source = ["src/pramanix"]

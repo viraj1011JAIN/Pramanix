@@ -129,7 +129,7 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
             raise ValueError(f"Pramanix: tool_input must be valid JSON: {e}") from e
 
         try:
-            intent = schema.model_validate(raw, strict=True).model_dump()
+            intent = schema.model_validate(raw).model_dump()
         except Exception as e:
             raise ValueError(f"Pramanix: intent validation failed: {e}") from e
 

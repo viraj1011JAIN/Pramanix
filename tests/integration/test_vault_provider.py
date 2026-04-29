@@ -17,7 +17,7 @@ import asyncio
 import hvac  # type: ignore[import-untyped]
 import pytest
 
-from pramanix.key_provider import VaultKeyProvider
+from pramanix.key_provider import HashiCorpVaultKeyProvider as VaultKeyProvider
 
 from .conftest import requires_docker
 
@@ -63,9 +63,9 @@ def test_vault_provider_reads_key(vault_addr_and_token: tuple[str, str]) -> None
     _write_secret(addr, token, _PEM_PRIVATE)
 
     provider = VaultKeyProvider(
-        addr=addr,
-        token=token,
+        addr,
         secret_path=_SECRET_PATH,
+        token=token,
         mount_point=_SECRET_MOUNT,
     )
     pem = asyncio.run(provider.private_key_pem()) if asyncio.iscoroutinefunction(
@@ -83,9 +83,9 @@ def test_vault_provider_missing_secret_raises(
     addr, token = vault_addr_and_token
 
     provider = VaultKeyProvider(
-        addr=addr,
-        token=token,
+        addr,
         secret_path="pramanix/does-not-exist",
+        token=token,
         mount_point=_SECRET_MOUNT,
     )
     with pytest.raises(Exception, match="(not found|404|InvalidPath|does.not.exist)"):
@@ -103,9 +103,9 @@ def test_vault_provider_bad_token_raises(
     addr, _ = vault_addr_and_token
 
     provider = VaultKeyProvider(
-        addr=addr,
-        token="wrong-token-definitely-invalid",
+        addr,
         secret_path=_SECRET_PATH,
+        token="wrong-token-definitely-invalid",
         mount_point=_SECRET_MOUNT,
     )
     with pytest.raises(Exception, match="(403|Forbidden|permission|Forbidden|auth)"):
@@ -156,9 +156,9 @@ def test_vault_provider_supports_rotation_false_for_vault(
     _write_secret(addr, token, _PEM_PRIVATE)
 
     provider = VaultKeyProvider(
-        addr=addr,
-        token=token,
+        addr,
         secret_path=_SECRET_PATH,
+        token=token,
         mount_point=_SECRET_MOUNT,
     )
     # M-28: providers must expose a supports_rotation property

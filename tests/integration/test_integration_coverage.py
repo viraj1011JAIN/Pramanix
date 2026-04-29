@@ -254,6 +254,7 @@ class TestLangchainDarkPaths:
             guard=_guard_allow(),
             intent_schema=_IntentModel,
             state_provider=_async_state,
+            execute_fn=lambda intent: "OK",
         )
         result = await tool._arun('{"amount": "100"}')
         assert result == "OK"
@@ -266,6 +267,7 @@ class TestLangchainDarkPaths:
             guard=_guard_allow(),
             intent_schema=_IntentModel,
             state_provider=lambda: {"state_version": "1.0"},
+            execute_fn=lambda intent: "OK",
         )
         # Synchronous context — no running event loop
         result = tool._run('{"amount": "100"}')
@@ -280,6 +282,7 @@ class TestLangchainDarkPaths:
             guard=_guard_allow(),
             intent_schema=_IntentModel,
             state_provider=lambda: {"state_version": "1.0"},
+            execute_fn=lambda intent: "OK",
         )
         # We are inside an async test — event loop IS running — hits thread path
         result = tool._run('{"amount": "100"}')
