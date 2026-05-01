@@ -308,6 +308,7 @@ class TestProductionModeWarning:
 
     def test_sync_in_production_emits_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self._config_with_mode("sync")
@@ -317,6 +318,7 @@ class TestProductionModeWarning:
 
     def test_async_thread_in_production_emits_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self._config_with_mode("async-thread")
@@ -326,6 +328,7 @@ class TestProductionModeWarning:
 
     def test_async_process_in_production_no_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self._config_with_mode("async-process")
@@ -342,6 +345,7 @@ class TestProductionModeWarning:
 
     def test_production_env_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "PRODUCTION")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self._config_with_mode("sync")
@@ -350,6 +354,7 @@ class TestProductionModeWarning:
 
     def test_warning_is_userwarning_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self._config_with_mode("sync")

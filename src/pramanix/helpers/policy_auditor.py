@@ -44,9 +44,18 @@ from pramanix.expressions import (
     _BinOp,
     _BoolOp,
     _CmpOp,
+    _ContainsOp,
+    _EndsWithOp,
+    _ExistsOp,
     _FieldRef,
+    _ForAllOp,
     _InOp,
+    _LengthBetweenOp,
     _Literal,
+    _ModOp,
+    _PowOp,
+    _RegexMatchOp,
+    _StartsWithOp,
 )
 
 __all__ = ["PolicyAuditor"]
@@ -70,6 +79,14 @@ def _collect_field_names(node: Any) -> set[str]:
         return _collect_field_names(node.left)
     if isinstance(node, _AbsOp):
         return _collect_field_names(node.operand)
+    if isinstance(node, _PowOp):
+        return _collect_field_names(node.base)
+    if isinstance(node, _ModOp):
+        return _collect_field_names(node.dividend) | _collect_field_names(node.divisor)
+    if isinstance(node, _StartsWithOp | _EndsWithOp | _ContainsOp | _LengthBetweenOp | _RegexMatchOp):
+        return _collect_field_names(node.operand)
+    if isinstance(node, _ForAllOp | _ExistsOp):
+        return {node.array_field.name}
     if isinstance(node, ConstraintExpr):
         return _collect_field_names(node.node)
     if isinstance(node, _Literal):

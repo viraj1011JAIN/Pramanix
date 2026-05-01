@@ -104,6 +104,7 @@ from pramanix.guard_config import (
     _validation_failures_total,
 )
 from pramanix.guard_pipeline import (
+    _apply_enum_coercions,
     _compute_policy_fingerprint,
     _fmt,
     _semantic_post_consensus_check,
@@ -320,6 +321,16 @@ class Guard:
                     {f for meta in self._compiled_meta for f in meta.field_refs}
                 ),
             },
+        )
+
+        # ── StringEnumField coercion cache ────────────────────────────────────
+        # Cached once at construction so verify() pays zero overhead per call
+        # when no coercions are registered (the common case).
+        self._string_enum_coercions: dict[str, Any] = policy.string_enum_coercions()
+        # Names of all Int-typed fields — used by the pre-solver string guard to
+        # surface a clear error instead of a confusing Z3 type-mismatch message.
+        self._int_field_names: frozenset[str] = frozenset(
+            name for name, f in policy.fields().items() if f.z3_type == "Int"
         )
 
     # ── verify ────────────────────────────────────────────────────────────────
@@ -548,6 +559,35 @@ class Guard:
                     state_values: dict[str, Any] = (
                         flatten_model(state) if isinstance(state, BaseModel) else dict(state)
                     )
+
+                    # ── StringEnumField auto-coercion ─────────────────────────────────
+                    # Encode string enum labels to their Int codes before Z3 runs.
+                    # Policies that declare string_enum_coercions() get transparent
+                    # encoding; callers no longer need to call .encode() manually.
+                    if self._string_enum_coercions:
+                        try:
+                            intent_values, state_values = _apply_enum_coercions(
+                                intent_values, state_values, self._string_enum_coercions
+                            )
+                        except ValueError as _enum_exc:
+                            return Decision.error(reason=str(_enum_exc))
+                    # ── Int-field string guard ─────────────────────────────────────────
+                    # If an Int-typed field still holds a str after coercion (or no
+                    # coercion was registered), surface a clear error rather than
+                    # letting Z3 produce a cryptic type-mismatch deep in the solver.
+                    if self._int_field_names:
+                        for _fval_dict in (intent_values, state_values):
+                            for _fn in self._int_field_names & _fval_dict.keys():
+                                if isinstance(_fval_dict[_fn], str):
+                                    return Decision.error(
+                                        reason=(
+                                            f"Field {_fn!r} is declared as Int but received "
+                                            f"string value {_fval_dict[_fn]!r}. "
+                                            "Use StringEnumField.encode() before verify(), "
+                                            "or declare Policy.string_enum_coercions() for "
+                                            "automatic encoding."
+                                        )
+                                    )
 
                     # ── Step 4: State version check ───────────────────────────────────
                     if self._policy_semver is not None:

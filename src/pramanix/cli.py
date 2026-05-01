@@ -1148,6 +1148,59 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             _check("redis-ping", "SKIP", "redis package not installed; skipping ping",
                    hint="pip install 'pramanix[identity]'")
 
+    # ── 13. Execution token backend durability ────────────────────────────
+    _token_backend = os.environ.get("PRAMANIX_EXECUTION_TOKEN_BACKEND", "").lower()
+    if _pramanix_env == "production":
+        if _token_backend in ("", "memory", "inmemory", "in-memory"):
+            _check(
+                "execution-token-backend",
+                "WARN",
+                "Execution token backend is IN-MEMORY (default). "
+                "In a multi-process or multi-replica deployment, tokens consumed "
+                "on one worker are not visible to other workers — enabling replay "
+                "attacks across processes. Process restarts also wipe consumed tokens.",
+                hint=(
+                    "Set PRAMANIX_EXECUTION_TOKEN_BACKEND=redis and configure "
+                    "PRAMANIX_REDIS_URL, or use SQLiteExecutionTokenVerifier "
+                    "for single-host multi-worker deployments."
+                ),
+            )
+        else:
+            _check(
+                "execution-token-backend",
+                "OK",
+                f"Execution token backend: {_token_backend}",
+            )
+    else:
+        _check(
+            "execution-token-backend",
+            "SKIP",
+            "PRAMANIX_ENV != 'production' — token backend durability check skipped",
+        )
+
+    # ── 14. Audit sink reachability ───────────────────────────────────────
+    if _pramanix_env == "production":
+        _check(
+            "audit-sink-reachability",
+            "ERROR",
+            "No audit sinks can be verified by 'doctor' — sinks are configured "
+            "programmatically on GuardConfig. In production, GuardConfig raises "
+            "ConfigurationError when audit_sinks=() unless "
+            "PRAMANIX_ALLOW_NO_AUDIT_SINKS=1 is set. "
+            "Ensure at least one AuditSink is passed to GuardConfig.",
+            hint=(
+                "Add a startup probe: instantiate your Guard and call "
+                "guard.config.audit_sinks[n].emit(Decision.error('health-check')) "
+                "to verify each sink is reachable at boot time."
+            ),
+        )
+    else:
+        _check(
+            "audit-sink-reachability",
+            "SKIP",
+            "PRAMANIX_ENV != 'production' — audit sink check skipped",
+        )
+
     # ── Render results ────────────────────────────────────────────────────────
     has_error = any(c["level"] == "ERROR" for c in checks)
     has_warn = any(c["level"] == "WARN" for c in checks)

@@ -305,6 +305,49 @@ class Policy:
         """
         return {k: v for k, v in vars(cls).items() if isinstance(v, Field)}
 
+    # ── StringEnumField coercion registry ────────────────────────────────────
+
+    @classmethod
+    def string_enum_coercions(cls) -> dict[str, Any]:
+        """Return a mapping of field name to :class:`~pramanix.helpers.string_enum.StringEnumField`.
+
+        Override this method in policies that use
+        :class:`~pramanix.helpers.string_enum.StringEnumField` to enable
+        transparent string-to-integer encoding in :meth:`~pramanix.guard.Guard.verify`
+        without requiring callers to call ``.encode()`` manually.
+
+        When a field name is registered here, :class:`~pramanix.guard.Guard`
+        automatically encodes any ``str`` values for that field to their
+        integer codes before the Z3 solver runs.  Values already supplied
+        as integers (already encoded) are passed through unchanged.
+
+        Returns:
+            ``{}`` by default.  Override to return
+            ``{"field_name": string_enum_field_instance, ...}``.
+
+        Example::
+
+            _status = StringEnumField("status", ["CLEAR", "PENDING", "BLOCKED"])
+
+            class AccountPolicy(Policy):
+                status = _status.field
+
+                @classmethod
+                def invariants(cls):
+                    return [
+                        _status.is_allowed_constraint(cls.status, ["CLEAR"]),
+                        _status.valid_values_constraint(cls.status),
+                    ]
+
+                @classmethod
+                def string_enum_coercions(cls):
+                    return {"status": _status}
+
+            # Guard.verify() now auto-encodes — no manual .encode() needed:
+            guard.verify(intent={}, state={"status": "CLEAR"})
+        """
+        return {}
+
     # ── Invariant declaration ─────────────────────────────────────────────────
 
     @classmethod

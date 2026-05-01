@@ -138,12 +138,14 @@ class TestGuardConfigValidation:
     def test_solver_rlimit_zero_in_production_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 447: PRAMANIX_ENV=production + solver_rlimit=0 → UserWarning."""
         monkeypatch.setenv("PRAMANIX_ENV", "production")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with pytest.warns(UserWarning, match="solver_rlimit"):
             GuardConfig(solver_rlimit=0)
 
     def test_max_input_bytes_zero_in_production_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 456: PRAMANIX_ENV=production + max_input_bytes=0 → UserWarning."""
         monkeypatch.setenv("PRAMANIX_ENV", "production")
+        monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with pytest.warns(UserWarning, match="max_input_bytes"):
             GuardConfig(max_input_bytes=0)
 

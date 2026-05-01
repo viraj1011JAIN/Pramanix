@@ -38,7 +38,8 @@ __all__ = ["GuardConfig"]
 # Pattern matches any event-dict key that looks like a credential.
 # The processor is applied BEFORE any renderer so secrets never reach disk.
 _SECRET_KEY_RE = re.compile(
-    r"(secret|api[_\-]?key|token|hmac|password|passwd|credential|private[_\-]?key)",
+    r"(secret|api[_\-]?key|token|hmac|password|passwd|credential|private[_\-]?key"
+    r"|access[_\-]?key|signing[_\-]?key|session|authorization|bearer|pii|ssn|phi)",
     re.IGNORECASE,
 )
 _REDACTED = "<redacted>"
@@ -506,14 +507,15 @@ class GuardConfig:
             )
         # ── Production safety: no audit sinks configured ──────────────────────
         if _is_prod and not self.audit_sinks:
-            warnings.warn(
-                "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
-                "no audit sinks configured — decisions are not persisted. "
-                "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink) "
-                "to maintain a durable audit trail.",
-                UserWarning,
-                stacklevel=2,
-            )
+            if not _env_bool("ALLOW_NO_AUDIT_SINKS", False):
+                raise ConfigurationError(
+                    "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
+                    "no audit sinks configured — decisions are not persisted. A regulated "
+                    "deployment without a durable audit trail fails SOC 2 / HIPAA compliance. "
+                    "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink). "
+                    "To suppress this error only for local testing: "
+                    "set PRAMANIX_ALLOW_NO_AUDIT_SINKS=1."
+                )
         # ── Production safety: resource limits disabled ────────────────────────
         if _is_prod and self.solver_rlimit == 0:
             warnings.warn(

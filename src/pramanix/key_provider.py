@@ -299,10 +299,17 @@ class AwsKmsKeyProvider:
         return time.monotonic() < self._cache_expires
 
     def _refresh_cache(self) -> None:
-        resp = self._client.get_secret_value(
-            SecretId=self._secret_arn,
-            VersionStage=self._version_stage,
-        )
+        try:
+            resp = self._client.get_secret_value(
+                SecretId=self._secret_arn,
+                VersionStage=self._version_stage,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"AwsKmsKeyProvider: failed to fetch secret {self._secret_arn!r} "
+                f"from AWS Secrets Manager — KMS may be unreachable or credentials "
+                f"are invalid. Underlying error: {type(exc).__name__}: {exc}"
+            ) from exc
         value: str | bytes = resp.get("SecretString") or resp.get("SecretBinary", b"")
         self._cached_pem = value.encode() if isinstance(value, str) else value
         if self._explicit_version:
@@ -332,10 +339,14 @@ class AwsKmsKeyProvider:
         return True
 
     def rotate_key(self) -> None:
-        """Trigger automatic rotation of the Secrets Manager secret."""
-        self._client.rotate_secret(SecretId=self._secret_arn)
+        """Trigger automatic rotation of the Secrets Manager secret.
+
+        Cache is invalidated *before* triggering rotation so no concurrent
+        reader can observe a stale key between the API call and expiry reset.
+        """
         with self._cache_lock:
-            self._cache_expires = 0.0  # invalidate cache after rotation
+            self._cache_expires = 0.0
+        self._client.rotate_secret(SecretId=self._secret_arn)
 
 
 class AzureKeyVaultKeyProvider:
@@ -392,9 +403,17 @@ class AzureKeyVaultKeyProvider:
         return time.monotonic() < self._cache_expires
 
     def _refresh_cache(self) -> None:
-        secret = self._client.get_secret(
-            self._secret_name, version=self._secret_version
-        )
+        try:
+            secret = self._client.get_secret(
+                self._secret_name, version=self._secret_version
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"AzureKeyVaultKeyProvider: failed to fetch secret {self._secret_name!r} "
+                f"from Azure Key Vault — the vault may be unreachable, the secret may "
+                f"not exist, or credentials are invalid. "
+                f"Underlying error: {type(exc).__name__}: {exc}"
+            ) from exc
         value: str | bytes = secret.value or ""
         self._cached_pem = value.encode() if isinstance(value, str) else value
         self._cached_version = str(secret.properties.version or "azure-unknown")
@@ -479,7 +498,16 @@ class GcpKmsKeyProvider:
         return time.monotonic() < self._cache_expires
 
     def _refresh_cache(self) -> None:
-        response = self._client.access_secret_version(name=self._version_name())
+        try:
+            response = self._client.access_secret_version(name=self._version_name())
+        except Exception as exc:
+            raise RuntimeError(
+                f"GcpKmsKeyProvider: failed to fetch secret "
+                f"projects/{self._project_id}/secrets/{self._secret_id}/"
+                f"versions/{self._version_id} from GCP Secret Manager — "
+                f"the project may be unreachable or credentials are invalid. "
+                f"Underlying error: {type(exc).__name__}: {exc}"
+            ) from exc
         payload: bytes | str = response.payload.data
         self._cached_pem = payload if isinstance(payload, bytes) else payload.encode()
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
@@ -562,10 +590,18 @@ class HashiCorpVaultKeyProvider:
         return time.monotonic() < self._cache_expires
 
     def _refresh_cache(self) -> None:
-        resp = self._client.secrets.kv.v2.read_secret_version(
-            path=self._secret_path,
-            mount_point=self._mount_point,
-        )
+        try:
+            resp = self._client.secrets.kv.v2.read_secret_version(
+                path=self._secret_path,
+                mount_point=self._mount_point,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"HashiCorpVaultKeyProvider: failed to read secret {self._secret_path!r} "
+                f"(mount={self._mount_point!r}) from HashiCorp Vault — "
+                f"the Vault server may be sealed/unreachable or the token is invalid. "
+                f"Underlying error: {type(exc).__name__}: {exc}"
+            ) from exc
         value: str | bytes = resp["data"]["data"][self._field]
         self._cached_pem = value.encode() if isinstance(value, str) else value
         self._cached_version = str(resp["data"]["metadata"]["version"])

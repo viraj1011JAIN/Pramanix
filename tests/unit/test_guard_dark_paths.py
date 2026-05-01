@@ -266,6 +266,69 @@ class TestSemanticPostConsensusCheck:
     def test_non_numeric_balance_is_skipped(self) -> None:
         self._call({"amount": "100"}, {"balance": "not-a-number"})
 
+    # ── Healthcare: dosage checks ────────────────────────────────────────────
+
+    def test_zero_dosage_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="dosage must be positive"):
+            self._call({"dosage": "0"}, {})
+
+    def test_negative_dosage_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="dosage must be positive"):
+            self._call({"dosage": "-5"}, {})
+
+    def test_dosage_exceeds_remaining_daily_allowance_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="Dosage exceeds remaining daily dose"):
+            self._call(
+                {"dosage": "200"},
+                {"max_daily_dose": "300", "total_daily_dose": "200"},
+            )
+
+    def test_dosage_within_remaining_daily_allowance_passes(self) -> None:
+        self._call(
+            {"dosage": "50"},
+            {"max_daily_dose": "300", "total_daily_dose": "200"},
+        )
+
+    def test_no_dosage_field_skips_healthcare_checks(self) -> None:
+        self._call({"other": "value"}, {"max_daily_dose": "300", "total_daily_dose": "200"})
+
+    def test_non_numeric_dosage_is_skipped(self) -> None:
+        self._call({"dosage": "not-a-number"}, {})
+
+    # ── Infra: replica and resource checks ──────────────────────────────────
+
+    def test_negative_replicas_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="requested_replicas must be non-negative"):
+            self._call({"requested_replicas": -1}, {})
+
+    def test_replicas_exceed_max_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="exceeds cluster max"):
+            self._call({"requested_replicas": 15}, {"max_replicas": 10})
+
+    def test_replicas_at_max_passes(self) -> None:
+        self._call({"requested_replicas": 10}, {"max_replicas": 10})
+
+    def test_replica_count_alias_accepted(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="exceeds cluster max"):
+            self._call({"replica_count": 20}, {"max_replicas": 10})
+
+    def test_cpu_request_exceeds_limit_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="cpu_request.*exceeds cpu_limit"):
+            self._call({"cpu_request": "2000"}, {"cpu_limit": "1000"})
+
+    def test_cpu_request_within_limit_passes(self) -> None:
+        self._call({"cpu_request": "500"}, {"cpu_limit": "1000"})
+
+    def test_memory_request_exceeds_limit_raises(self) -> None:
+        with pytest.raises(SemanticPolicyViolation, match="memory_request.*exceeds memory_limit"):
+            self._call({"memory_request": "8192"}, {"memory_limit": "4096"})
+
+    def test_memory_request_within_limit_passes(self) -> None:
+        self._call({"memory_request": "2048"}, {"memory_limit": "4096"})
+
+    def test_non_numeric_replicas_are_skipped(self) -> None:
+        self._call({"requested_replicas": "not-a-number"}, {"max_replicas": 10})
+
 
 # ===============================================================
 # Guard.verify_async -- async-thread mode paths

@@ -57,7 +57,7 @@ class PramanixKafkaConsumer:
     Blocked messages are dead-lettered or silently dropped.
 
     If ``confluent-kafka`` is not installed, the class is still importable
-    for unit testing via mock injection.
+    so that type annotations and imports work without the optional dependency.
 
     Args:
         kafka_config:     ``confluent_kafka.Consumer`` configuration dict.

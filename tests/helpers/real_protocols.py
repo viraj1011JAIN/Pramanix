@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Real protocol-compliant helpers for testing — zero unittest.mock.
+"""Protocol-compliant structural helpers for testing — no unittest.mock.
+
+These helpers implement real protocols via duck typing or inheritance.
+They are NOT mocks in the unittest.mock sense — they have real method
+bodies and real state, but are purpose-built for the test surface they
+exercise.  Where a class emulates a failure mode (e.g. always raising),
+that is a deliberate design choice, not mock simulation.
 
 Design rules
 ------------
 1. Every class implements the real protocol (duck-typed or via inheritance).
-2. Assertion helpers record state through real attribute mutation, not call
-   recorders.
-3. No MagicMock, AsyncMock, or patch() anywhere in this file.
+2. State is tracked through real attribute mutation, not call recorders.
+3. No MagicMock, AsyncMock, or patch() imported or used in this file.
 4. All async methods are real coroutines, not mocked awaitables.
 """
 from __future__ import annotations

@@ -57,8 +57,8 @@ class PramanixSemanticKernelPlugin:
         self._guard = guard
         self._plugin_name = plugin_name
 
-        # Validate presence of semantic-kernel — warn but don't hard-fail
-        # so tests can mock this without installing the full package.
+        # Validate presence of semantic-kernel at construction time so the
+        # missing-dependency error surfaces immediately rather than at call time.
         try:
             import semantic_kernel  # noqa: F401
         except ImportError as exc:
