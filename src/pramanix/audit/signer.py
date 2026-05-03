@@ -27,12 +27,16 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class SignedDecision:
+    """A Decision augmented with a compact JWS token for tamper-evident audit."""
+
     token: str  # Full JWS compact serialization
     decision_id: str  # Copied from Decision for fast lookup
     issued_at: int  # Unix timestamp (ms)
 
 
 class DecisionSigner:
+    """Signs Decision objects with HMAC-SHA-256 for verifiable audit trails."""
+
     _ALG = "HS256"
     _TYP = "PRAMANIX-PROOF"
     _ENV_KEY = "PRAMANIX_SIGNING_KEY"
@@ -47,6 +51,7 @@ class DecisionSigner:
 
     @property
     def is_active(self) -> bool:
+        """True if a valid signing key is configured."""
         return self._key is not None
 
     def sign(self, decision: Decision) -> SignedDecision | None:

@@ -195,6 +195,7 @@ class _CBWrappedTranslator:
         return getattr(self._translator, name)
 
     async def extract(self, text: str, intent_schema: Any, context: Any = None) -> Any:
+        """Extract structured intent from free-form text using the configured translator."""
         return await self._breaker.call(
             lambda: self._translator.extract(text, intent_schema, context)
         )

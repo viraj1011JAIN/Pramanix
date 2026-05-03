@@ -42,6 +42,8 @@ log = logging.getLogger(__name__)
 
 
 class CircuitState(enum.StrEnum):
+    """State machine states for the adaptive circuit breaker."""
+
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
@@ -49,6 +51,8 @@ class CircuitState(enum.StrEnum):
 
 
 class FailsafeMode(enum.StrEnum):
+    """Failsafe behaviour when the circuit breaker is open."""
+
     BLOCK_ALL = "block_all"
     ALLOW_WITH_AUDIT = "allow_with_audit"
     """.. deprecated::
@@ -63,6 +67,8 @@ class FailsafeMode(enum.StrEnum):
 
 @dataclass
 class CircuitBreakerConfig:
+    """Configuration for AdaptiveCircuitBreaker thresholds and recovery timing."""
+
     pressure_threshold_ms: float = 40.0
     consecutive_pressure_count: int = 5
     recovery_seconds: float = 30.0
@@ -87,6 +93,8 @@ class CircuitBreakerConfig:
 
 @dataclass
 class CircuitBreakerStatus:
+    """Point-in-time snapshot of circuit breaker state for observability."""
+
     state: CircuitState
     consecutive_pressure: int
     open_episodes: int
@@ -125,10 +133,12 @@ class AdaptiveCircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
+        """Current circuit state."""
         return self._state
 
     @property
     def status(self) -> CircuitBreakerStatus:
+        """Full status snapshot of the circuit breaker."""
         return CircuitBreakerStatus(
             state=self._state,
             consecutive_pressure=self._consecutive_pressure,
@@ -383,11 +393,13 @@ class InMemoryDistributedBackend:
 
     @classmethod
     async def get_state(cls, namespace: str) -> _DistributedState:
+        """Fetch the current circuit state from the distributed store."""
         with cls._lock:
             return cls._store.get(namespace, _DistributedState())
 
     @classmethod
     async def set_state(cls, namespace: str, state: _DistributedState) -> None:
+        """Persist a state transition to the distributed store."""
         with cls._lock:
             existing = cls._store.get(namespace, _DistributedState())
             # Conservative merge: escalate to most severe state across replicas.
@@ -880,6 +892,7 @@ class TranslatorCircuitBreaker:
 
     @property
     def state(self) -> CircuitState:
+        """Current circuit state."""
         return self._state
 
     async def call(

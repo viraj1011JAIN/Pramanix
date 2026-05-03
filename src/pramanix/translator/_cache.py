@@ -59,6 +59,7 @@ class _CacheEntry:
         self.expires_at = time.monotonic() + ttl_seconds
 
     def is_expired(self) -> bool:
+        """Return True if this entry has passed its TTL."""
         return time.monotonic() > self.expires_at
 
 
@@ -72,6 +73,7 @@ class _InProcessLRUCache:
         self._lock = Lock()
 
     def get(self, key: str) -> dict[str, Any] | None:
+        """Return the cached value for key, or None on cache miss or TTL expiry."""
         with self._lock:
             entry = self._store.get(key)
             if entry is None:
@@ -85,6 +87,7 @@ class _InProcessLRUCache:
             return dict(entry.value)  # Return copy — never expose mutable ref
 
     def set(self, key: str, value: dict[str, Any]) -> None:
+        """Store value under key, evicting the LRU entry when at capacity."""
         with self._lock:
             if key in self._store:
                 del self._store[key]
@@ -95,15 +98,18 @@ class _InProcessLRUCache:
             self._store[key] = _CacheEntry(dict(value), self._ttl)
 
     def invalidate(self, key: str) -> None:
+        """Remove key from the cache if present; no-op if absent."""
         with self._lock:
             self._store.pop(key, None)
 
     def clear(self) -> None:
+        """Remove all entries from the cache."""
         with self._lock:
             self._store.clear()
 
     @property
     def size(self) -> int:
+        """Return the current number of entries in the cache."""
         with self._lock:
             return len(self._store)
 
@@ -122,6 +128,7 @@ class _RedisCache:
         self._prefix = key_prefix
 
     def get(self, key: str) -> dict[str, Any] | None:
+        """Return the cached value from Redis, or None on miss or Redis failure."""
         try:
             import json
 
@@ -138,6 +145,7 @@ class _RedisCache:
             return None  # Redis failure → cache miss (safe)
 
     def set(self, key: str, value: dict[str, Any]) -> None:
+        """Store value in Redis with TTL; silently drops on Redis failure."""
         try:
             import json
 
@@ -154,10 +162,12 @@ class _RedisCache:
             )  # Redis failure → silent (cache is best-effort)
 
     def invalidate(self, key: str) -> None:
+        """Delete key from Redis; silently drops on Redis failure."""
         with contextlib.suppress(Exception):
             self._redis.delete(f"{self._prefix}{key}")
 
     def clear(self) -> None:
+        """Delete all cache entries matching this manager's key prefix."""
         try:
             cursor = 0
             while True:
@@ -235,10 +245,12 @@ class IntentCache:
 
     @property
     def enabled(self) -> bool:
+        """True if a cache backend is configured."""
         return self._enabled
 
     @property
     def stats(self) -> dict[str, Any]:
+        """Return current cache hit/miss statistics as a dict."""
         return {
             "enabled": self._enabled,
             "hits": self._hits,

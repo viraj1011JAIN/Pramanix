@@ -120,21 +120,26 @@ class PemKeyProvider:
         self._public_pem: bytes | None = None
 
     def private_key_pem(self) -> bytes:
+        """Return the inline PEM-encoded private key bytes."""
         return self._private_pem
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the PEM-encoded public key from the private key."""
         if self._public_pem is None:
             self._public_pem = _derive_public_pem(self._private_pem)
         return self._public_pem
 
     def key_version(self) -> str:
+        """Return the opaque key version label."""
         return self._version
 
     @property
     def supports_rotation(self) -> bool:
+        """Always False — PemKeyProvider does not support rotation."""
         return False
 
     def rotate_key(self) -> None:
+        """Not supported; raises NotImplementedError."""
         raise NotImplementedError(
             "PemKeyProvider does not support rotation — supply a new PEM to rotate."
         )
@@ -164,6 +169,7 @@ class EnvKeyProvider:
         self._version = version
 
     def private_key_pem(self) -> bytes:
+        """Read and return the PEM key from the configured environment variable."""
         pem = os.environ.get(self._env_var, "")
         if not pem:
             raise RuntimeError(
@@ -173,16 +179,20 @@ class EnvKeyProvider:
         return pem.encode()
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the public key from the environment-sourced private key."""
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
+        """Return the opaque key version label."""
         return self._version
 
     @property
     def supports_rotation(self) -> bool:
+        """Always False — update the environment variable to rotate."""
         return False
 
     def rotate_key(self) -> None:
+        """Not supported; raises NotImplementedError."""
         raise NotImplementedError(
             "EnvKeyProvider does not support rotation — update the environment variable to rotate."
         )
@@ -211,6 +221,7 @@ class FileKeyProvider:
         self._explicit_version = version
 
     def private_key_pem(self) -> bytes:
+        """Read and return the PEM key from the configured file path."""
         if not self._path.exists():
             raise FileNotFoundError(
                 f"FileKeyProvider: key file not found: {self._path}"
@@ -218,9 +229,11 @@ class FileKeyProvider:
         return self._path.read_bytes()
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the public key from the file-sourced private key."""
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
+        """Return the file mtime as a version string, or the explicit version if set."""
         if self._explicit_version is not None:
             return self._explicit_version
         try:
@@ -231,9 +244,11 @@ class FileKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
+        """Always False — replace the file contents to rotate."""
         return False
 
     def rotate_key(self) -> None:
+        """Not supported; raises NotImplementedError."""
         raise NotImplementedError(
             "FileKeyProvider does not support in-place rotation — "
             "replace the file contents and create a new FileKeyProvider."
@@ -320,15 +335,18 @@ class AwsKmsKeyProvider:
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
 
     def private_key_pem(self) -> bytes:
+        """Fetch and return the PEM key from AWS Secrets Manager."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
             return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the public key from the AWS-sourced private key."""
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
+        """Return the Secrets Manager VersionId as the key version."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
@@ -336,6 +354,7 @@ class AwsKmsKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
+        """True — rotation is delegated to AWS Secrets Manager."""
         return True
 
     def rotate_key(self) -> None:
@@ -420,15 +439,18 @@ class AzureKeyVaultKeyProvider:
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
 
     def private_key_pem(self) -> bytes:
+        """Fetch and return the PEM key from Azure Key Vault."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
             return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the public key from the Azure-sourced private key."""
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
+        """Return the Key Vault secret version as the key version."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
@@ -436,9 +458,11 @@ class AzureKeyVaultKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
+        """Always False — upload a new secret version in Azure to rotate."""
         return False
 
     def rotate_key(self) -> None:
+        """Not supported; raises NotImplementedError."""
         raise NotImplementedError(
             "AzureKeyVaultKeyProvider does not support automatic rotation. "
             "Upload a new secret version via the Azure portal or CLI, then "
@@ -513,22 +537,27 @@ class GcpKmsKeyProvider:
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
 
     def private_key_pem(self) -> bytes:
+        """Fetch and return the PEM key from GCP Secret Manager."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
             return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the public key from the GCP-sourced private key."""
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
+        """Return the GCP secret version ID as the key version."""
         return self._version_id
 
     @property
     def supports_rotation(self) -> bool:
+        """Always False — add a new secret version in GCP to rotate."""
         return False
 
     def rotate_key(self) -> None:
+        """Not supported; raises NotImplementedError."""
         raise NotImplementedError(
             "GcpKmsKeyProvider does not support automatic rotation. "
             "Add a new secret version via the GCP console or gcloud CLI, then "
@@ -608,15 +637,18 @@ class HashiCorpVaultKeyProvider:
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL
 
     def private_key_pem(self) -> bytes:
+        """Fetch and return the PEM key from HashiCorp Vault KV v2."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
             return self._cached_pem  # type: ignore[return-value]
 
     def public_key_pem(self) -> bytes:
+        """Derive and return the public key from the Vault-sourced private key."""
         return _derive_public_pem(self.private_key_pem())
 
     def key_version(self) -> str:
+        """Return the Vault secret version number as the key version."""
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
@@ -624,9 +656,11 @@ class HashiCorpVaultKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
+        """Always False — write a new secret version in Vault to rotate."""
         return False
 
     def rotate_key(self) -> None:
+        """Not supported; raises NotImplementedError."""
         raise NotImplementedError(
             "HashiCorpVaultKeyProvider does not support automatic rotation. "
             "Write a new secret version via the vault CLI or API, then "

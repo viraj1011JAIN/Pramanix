@@ -73,10 +73,12 @@ class PolicyMigration:
 
     @property
     def from_version_str(self) -> str:
+        """Return from_version as a dotted semver string (e.g. '1.0.0')."""
         return "{}.{}.{}".format(*self.from_version)
 
     @property
     def to_version_str(self) -> str:
+        """Return to_version as a dotted semver string (e.g. '2.0.0')."""
         return "{}.{}.{}".format(*self.to_version)
 
     def migrate(

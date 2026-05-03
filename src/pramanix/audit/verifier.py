@@ -23,6 +23,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class VerificationResult:
+    """Result of verifying a SignedDecision token produced by DecisionSigner."""
+
     valid: bool
     decision_id: str
     allowed: bool
@@ -47,6 +49,8 @@ class VerificationResult:
 
 
 class DecisionVerifier:
+    """Verifies SignedDecision tokens for tamper-evident audit log validation."""
+
     _MIN_KEY_LENGTH = 32
 
     def __init__(self, signing_key: str | None = None) -> None:

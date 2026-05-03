@@ -53,10 +53,12 @@ class FastPathResult:
 
     @classmethod
     def pass_through(cls) -> FastPathResult:
+        """Return a FastPathResult indicating the request should proceed to Z3."""
         return cls(blocked=False)
 
     @classmethod
     def block(cls, reason: str, rule_name: str = "") -> FastPathResult:
+        """Return a FastPathResult indicating the request is blocked before Z3."""
         return cls(blocked=True, reason=reason, rule_name=rule_name)
 
 
@@ -207,4 +209,5 @@ class FastPathEvaluator:
 
     @property
     def rule_count(self) -> int:
+        """Return the number of fast-path rules registered on this instance."""
         return len(self._rules)

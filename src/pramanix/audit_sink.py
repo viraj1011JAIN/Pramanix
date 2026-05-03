@@ -82,6 +82,7 @@ class StdoutAuditSink:
         self._stream = stream or sys.stdout
 
     def emit(self, decision: Decision) -> None:
+        """Serialize decision as a JSON line and write it to the configured stream."""
         try:
             line = json.dumps(decision.to_dict(), default=str)
             print(line, file=self._stream, flush=True)
@@ -108,6 +109,7 @@ class InMemoryAuditSink:
         self.decisions: list[Decision] = []
 
     def emit(self, decision: Decision) -> None:
+        """Append decision to the in-memory decisions list."""
         # L-07: list.append() cannot raise under normal conditions; the try/except
         # added no value and has been removed.
         self.decisions.append(decision)
@@ -210,6 +212,7 @@ class KafkaAuditSink:
                 log.warning("KafkaAuditSink: poll error: %s", exc)
 
     def emit(self, decision: Decision) -> None:
+        """Emit decision to the Kafka topic."""
         try:
             with self._queue_lock:
                 if self._queue_depth >= self._max_queue:
@@ -378,6 +381,7 @@ class SplunkHecAuditSink:
         )
 
     def emit(self, decision: Decision) -> None:
+        """Emit decision to Splunk via the HTTP Event Collector."""
         try:
             event: dict[str, Any] = {"event": decision.to_dict()}
             event["sourcetype"] = self._sourcetype
@@ -458,6 +462,7 @@ class DatadogAuditSink:
         self._logs_api = LogsApi(self._api_client)
 
     def emit(self, decision: Decision) -> None:
+        """Emit decision to Datadog as a structured log entry."""
         try:
             from datadog_api_client.v2.model.http_log import HTTPLog
             from datadog_api_client.v2.model.http_log_item import HTTPLogItem

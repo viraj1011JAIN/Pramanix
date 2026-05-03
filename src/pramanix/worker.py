@@ -113,10 +113,12 @@ class AdaptiveConcurrencyLimiter:
 
     @property
     def active_workers(self) -> int:
+        """Number of worker slots currently occupied."""
         return self._active
 
     @property
     def shed_count(self) -> int:
+        """Cumulative count of requests shed due to load since the pool started."""
         return self._shed_count
 
     def acquire(self) -> bool:

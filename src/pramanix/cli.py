@@ -32,6 +32,7 @@ from typing import Any
 
 
 def main() -> int:
+    """Entry point for the pramanix CLI; dispatches subcommands and returns an exit code."""
     parser = argparse.ArgumentParser(
         prog="pramanix",
         description="Pramanix cryptographic proof verification",

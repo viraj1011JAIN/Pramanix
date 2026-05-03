@@ -49,11 +49,14 @@ if TYPE_CHECKING:
 
 @dataclass
 class MerkleProof:
+    """Inclusion proof for a single Decision ID in a MerkleAnchor batch."""
+
     leaf_hash: str
     root_hash: str
     proof_path: list[tuple[str, str]]  # (sibling_hash, "left"|"right")
 
     def verify(self) -> bool:
+        """Return True if the proof path reconstructs the expected Merkle root."""
         current = self.leaf_hash
         for sibling, direction in self.proof_path:
             combined = sibling + current if direction == "left" else current + sibling
@@ -77,6 +80,7 @@ class MerkleAnchor:
         self._ids: set[str] = set()  # O(1) duplicate guard
 
     def add(self, decision_id: str) -> None:
+        """Hash and add decision_id as a leaf; raises ValueError on duplicates."""
         if decision_id in self._ids:
             raise ValueError(
                 f"Duplicate decision_id {decision_id!r} already anchored in this MerkleAnchor. "
@@ -91,11 +95,13 @@ class MerkleAnchor:
         self._leaves.append(leaf_hash)
 
     def root(self) -> str | None:
+        """Return the current Merkle root hash, or None if no leaves have been added."""
         if not self._leaves:
             return None
         return self._build_root(self._leaves[:])
 
     def prove(self, decision_id: str) -> MerkleProof | None:
+        """Return an inclusion proof for decision_id, or None if not in this tree."""
         # H-07: use the same \x00 prefix as add() to locate the leaf
         target = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
         try:

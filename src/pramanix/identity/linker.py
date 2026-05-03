@@ -31,6 +31,8 @@ from typing import Any, Protocol
 
 @dataclass(frozen=True)
 class IdentityClaims:
+    """Parsed and validated JWT claims for a bearer token."""
+
     sub: str
     roles: list[str]
     exp: int
@@ -39,20 +41,23 @@ class IdentityClaims:
 
 
 class StateLoader(Protocol):
+    """Protocol for loading application state keyed by verified identity claims."""
+
     async def load(self, claims: IdentityClaims) -> dict[str, Any]:
+        """Return a state dict for the given verified identity claims."""
         ...
 
 
 class StateLoadError(Exception):
-    pass
+    """Raised when application state cannot be loaded for the given claims."""
 
 
 class JWTVerificationError(Exception):
-    pass
+    """Raised when a JWT has an invalid signature or is structurally malformed."""
 
 
 class JWTExpiredError(Exception):
-    pass
+    """Raised when a JWT token has passed its expiry time (exp claim)."""
 
 
 class JWTIdentityLinker:

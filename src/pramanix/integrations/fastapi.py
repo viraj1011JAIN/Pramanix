@@ -256,6 +256,7 @@ def pramanix_route(
     def decorator(
         fn: Callable[..., Awaitable[Any]],
     ) -> Callable[..., Awaitable[Any]]:
+        """Apply guard enforcement to the decorated FastAPI route handler."""
         sig = inspect.signature(fn)
         params = set(sig.parameters.keys())
         missing = [p for p in ("intent", "state") if p not in params]
@@ -267,6 +268,7 @@ def pramanix_route(
 
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """Execute guard verification before calling the route handler."""
             # Extract intent and state from kwargs; fall back to positional args.
             intent: Any = kwargs.get("intent")
             state: Any = kwargs.get("state")

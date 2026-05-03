@@ -94,9 +94,11 @@ def guard(
     _guard_instance: Guard = Guard(policy=policy, config=_config)
 
     def decorator(fn: Any) -> Any:
+        """Wrap fn with guard enforcement, choosing sync or async path automatically."""
         if asyncio.iscoroutinefunction(fn):
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                """Run guard.verify_async() before delegating to the original coroutine."""
                 # Extract intent and state from positional / keyword args.
                 # Convention: first two positional args are (intent, state).
                 if len(args) < 2:
@@ -121,6 +123,7 @@ def guard(
         else:
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                """Run guard.verify() before delegating to the original function."""
                 # Same intent/state extraction convention as the async path.
                 if len(args) < 2:
                     intent = kwargs.get("intent", {})
