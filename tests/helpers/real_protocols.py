@@ -1540,11 +1540,15 @@ class _PingOkRedisClient:
     """Redis client duck-type whose ``ping()`` returns ``True``.
 
     Replaces ``MagicMock()`` + ``ping.return_value = True`` in doctor CLI tests
-    verifying the ``redis-ping OK`` path.
+    verifying the ``redis-ping OK`` path.  ``close()`` is a no-op — the CLI
+    calls it after a successful ping.
     """
 
     def ping(self) -> bool:
         return True
+
+    def close(self) -> None:
+        pass
 
 
 # ── Entry-point duck-type ─────────────────────────────────────────────────────

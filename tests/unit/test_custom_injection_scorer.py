@@ -110,17 +110,18 @@ class TestExtractWithConsensusCustomScorer:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A scorer registered in the entry-point group is loaded and called."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         import importlib.metadata as _meta
 
-        fake_scorer_fn = MagicMock(return_value=0.1)
-        fake_ep = MagicMock()
-        fake_ep.name = "test_scorer"
-        fake_ep.load.return_value = fake_scorer_fn
+        from tests.helpers.real_protocols import _FakeEntryPoint
+
+        def _scorer(text, extracted, warnings):
+            return 0.1
+
+        fake_ep = _FakeEntryPoint("test_scorer", _scorer)
 
         with patch.object(_meta, "entry_points", return_value=[fake_ep]):
-            # Simulate what redundant.py does when injection_scorer_path is set.
             eps = _meta.entry_points(group="pramanix.injection_scorers")
             ep = next((e for e in eps if e.name == "test_scorer"), None)
             assert ep is not None
@@ -128,4 +129,3 @@ class TestExtractWithConsensusCustomScorer:
             result = fn("user text", {"amount": "100"}, [])
 
         assert result == 0.1
-        fake_scorer_fn.assert_called_once_with("user text", {"amount": "100"}, [])
