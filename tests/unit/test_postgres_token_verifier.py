@@ -47,9 +47,45 @@ def test_postgres_verifier_raises_config_error_without_asyncpg(
 # ── Mocked asyncpg tests ──────────────────────────────────────────────────────
 
 
+class _ConnStub:
+    async def execute(self, sql: str, *args: object) -> None:
+        pass
+
+
+class _AcquireCtx:
+    async def __aenter__(self) -> _ConnStub:
+        return _ConnStub()
+
+    async def __aexit__(self, *_: object) -> None:
+        pass
+
+
+class _PoolStub:
+    def acquire(self) -> _AcquireCtx:
+        return _AcquireCtx()
+
+    async def close(self) -> None:
+        pass
+
+
+class _UniqueViolationError(Exception):
+    pass
+
+
+async def _create_pool(dsn: str, *, min_size: int, max_size: int) -> _PoolStub:
+    return _PoolStub()
+
+
 def _make_mock_asyncpg() -> object:
-    """Build a mock asyncpg module without using AsyncMock."""
-    return type("asyncpg", (), {})
+    """Build a duck-typed asyncpg module stub without using AsyncMock."""
+    return type(
+        "asyncpg",
+        (),
+        {
+            "create_pool": _create_pool,
+            "UniqueViolationError": _UniqueViolationError,
+        },
+    )
 
 
 def test_postgres_verifier_init(monkeypatch: pytest.MonkeyPatch) -> None:
