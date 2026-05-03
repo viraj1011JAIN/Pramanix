@@ -275,7 +275,7 @@ User code
 
 **Single-use guarantee:** `ExecutionTokenVerifier.consume()` checks signature + expiry + removes `token_id` from an in-memory set under `threading.Lock`. A token can be consumed exactly once.
 
-**Gap:** The consumed-set is in-memory only. A process restart clears it — replay is possible if a token was minted before restart and consumed after. `RedisExecutionTokenVerifier` closes this for Redis deployments. See KNOWN_GAPS.md.
+**Gap:** The consumed-set is in-memory only. A process restart clears it — replay is possible if a token was minted before restart and consumed after. `RedisExecutionTokenVerifier` closes this for Redis deployments. See `KNOWN_GAPS.md § 1`.
 
 ---
 
@@ -332,7 +332,7 @@ CLOSED → OPEN (pressure detected) → HALF_OPEN (probe) → CLOSED (recovery)
 
 **Injection scorer (`injection_scorer.py`):** `BuiltinScorer` wraps the heuristic. `CalibratedScorer` requires scikit-learn and must be trained on labelled examples. Scorer path configurable via `GuardConfig.injection_scorer_path`.
 
-**Status:** Beta. Requires two LLM API keys for full protection. See KNOWN_GAPS.md.
+**Status:** Beta. Requires two LLM API keys for full protection. See `KNOWN_GAPS.md § 7`.
 
 ---
 
@@ -375,9 +375,97 @@ These are library code — they define invariants but own no state and make no e
 
 **Owns:** Thin adapter layers for external frameworks.
 
-**Coverage:** FastAPI, LangChain, LlamaIndex, AutoGen, CrewAI, DSPy, Haystack, Pydantic AI, Semantic Kernel (the last five are stubs — see KNOWN_GAPS.md).
+**Coverage:** FastAPI, LangChain, LlamaIndex, AutoGen, CrewAI, DSPy, Haystack, Pydantic AI, Semantic Kernel (the last five are stubs — see `KNOWN_GAPS.md § 8`).
 
 **Boundary:** Adapters call `Guard.verify()`. They do not contain policy logic. All policy enforcement happens inside Guard.
+
+---
+
+### IFC — Information-Flow Control (`ifc/`)
+
+**Owns:** Lattice-based information-flow enforcement between trust levels.
+
+**Components:**
+- `FlowPolicy` — defines `FlowRule` entries mapping `(source_label, dest_label)` pairs to `ALLOW` or `DENY`.
+- `FlowEnforcer` — evaluates a `ClassifiedData` object against a `FlowPolicy`. Returns `FlowDecision`.
+- `TrustLabel` — string-typed enum of security classification levels (e.g. `"PUBLIC"`, `"CONFIDENTIAL"`, `"SECRET"`).
+
+**Boundary:** `FlowEnforcer` operates independently of `Guard`. It is the caller's responsibility to consult `FlowEnforcer` before allowing data to cross a trust boundary. No automatic coupling to `Guard.verify()` exists.
+
+**Status:** Beta. No integration tests with Guard. See `KNOWN_GAPS.md § 13`.
+
+---
+
+### Privilege Separation (`privilege/`)
+
+**Owns:** Tool capability manifests and execution scope enforcement.
+
+**Components:**
+- `CapabilityManifest` — declares which `ToolCapability` entries an agent is permitted to invoke.
+- `ExecutionScope` — a frozen set of permitted capabilities for one execution context.
+- `ScopeEnforcer` — raises `PrivilegeEscalationError` if a tool invocation is not in scope.
+
+**Boundary:** `ScopeEnforcer.enforce()` must be called at the point of tool invocation. It is not called by Guard automatically.
+
+**Status:** Beta. No integration tests with Guard. See `KNOWN_GAPS.md § 13`.
+
+---
+
+### Human Oversight (`oversight/`)
+
+**Owns:** Approval workflows for actions that require a human decision before execution.
+
+**Components:**
+- `InMemoryApprovalWorkflow` — stores pending `ApprovalRequest` objects in memory. `approve()` / `reject()` transition them to `ApprovalDecision`.
+- `EscalationQueue` — ordered queue for time-sensitive approval requests.
+- `OversightRecord` — immutable record of the approval decision and approver identity.
+
+**Boundary:** `OversightRequiredError` is raised when an action reaches the oversight gate without a valid approval. Guard does not consult the oversight subsystem — callers must wire it in.
+
+**Status:** Beta. In-memory only. No persistence. No integration tests. See `KNOWN_GAPS.md § 13`.
+
+---
+
+### Secure Memory (`memory/`)
+
+**Owns:** Scoped, access-controlled memory partitions for agent state.
+
+**Components:**
+- `SecureMemoryStore` — root store. Creates and manages `ScopedMemoryPartition` instances.
+- `ScopedMemoryPartition` — isolated key-value namespace. Cross-partition reads raise `MemoryViolationError`.
+- `MemoryEntry` — typed, timestamped entry with a `classification` label.
+
+**Boundary:** Partitions are isolated by label at the application level. No OS-level memory protection. Serialisation to disk is not implemented — store contents are lost on process exit.
+
+**Status:** Beta. No integration tests. See `KNOWN_GAPS.md § 13`.
+
+---
+
+### Policy Lifecycle (`lifecycle/`)
+
+**Owns:** Policy version diffing and shadow evaluation.
+
+**Components:**
+- `PolicyDiff` — compares two Policy versions and produces `FieldChange` and `InvariantChange` records.
+- `ShadowEvaluator` — runs a new policy version in shadow (no-op) mode alongside the current version. Returns `ShadowResult` with both decisions for comparison.
+
+**Boundary:** `ShadowEvaluator` does not affect the Guard's actual decision. It runs the shadow policy in a separate `Guard` instance and logs the difference.
+
+**Status:** Beta. No integration tests against real rolling deployments. See `KNOWN_GAPS.md § 13`.
+
+---
+
+### Provenance (`provenance.py`)
+
+**Owns:** Chain-of-custody records for agent actions.
+
+**Components:**
+- `ProvenanceRecord` — immutable record of one agent action: `agent_id`, `action`, `inputs`, `decision_id`, `timestamp`.
+- `ProvenanceChain` — ordered list of `ProvenanceRecord` entries with append-only semantics. `verify_chain()` checks hash-linking between consecutive records.
+
+**Boundary:** The chain is in-memory. Persistence is the caller's responsibility.
+
+**Status:** Beta. Hash-linking verified in unit tests. No end-to-end tests under concurrent write load. See `KNOWN_GAPS.md § 13`.
 
 ---
 

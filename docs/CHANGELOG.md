@@ -118,6 +118,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`MIGRATION.md`** — new top-level migration guide covering v0.7–v1.0
   upgrade paths, all breaking changes, and `before`/`after` code examples.
 
+- **`docs/KNOWN_GAPS.md`** — new honest inventory of 14 known limitations,
+  unfinished integrations, and design tradeoffs. Previously referenced from
+  README and source but the file did not exist. All cross-references updated
+  to use section numbers (`§ 1` through `§ 14`).
+
+### Fixed (tests)
+
+- **asyncpg stub completeness:** `_make_mock_asyncpg()` in
+  `tests/unit/test_postgres_token_verifier.py` returned
+  `type("asyncpg", (), {})` — no attributes. All three
+  `PostgresExecutionTokenVerifier` tests failed at construction time with
+  `AttributeError: type object 'asyncpg' has no attribute 'create_pool'`.
+  Replaced with duck-typed stubs: `_create_pool` async coroutine,
+  `_PoolStub` with `acquire()` async context manager and `close()`,
+  `_AcquireCtx`, `_ConnStub.execute()`, and `_UniqueViolationError`.
+  3 tests restored (3602 → 3605 passing suite-wide, 0 failures).
+
+### Documentation
+
+- **`README.md`** — corrected DSL string operation method names:
+  `startswith` / `endswith` / `matches` / `length` → `starts_with` /
+  `ends_with` / `matches_re` / `length_between` (these are the actual
+  method names in `expressions.py`; the README had Python builtin spellings).
+- **`README.md`** — `__stability__` dict updated to include six new beta
+  subsystems: `ifc`, `privilege`, `oversight`, `memory`, `lifecycle`,
+  `provenance`.
+- **`README.md`** — key management section: cloud key providers are not
+  re-exported from the top-level `pramanix` namespace; corrected import
+  to use `from pramanix.key_provider import AwsKmsKeyProvider`.
+- **`README.md`** — removed reference to `docs/HANDOVER.md` (file does not
+  exist); docs table now matches the actual `docs/` directory contents.
+- **`docs/PUBLIC_API.md`** — removed duplicate second half of the document
+  (~260 lines of stale content accidentally appended). Stability dict
+  updated to include all six new beta subsystems. Added DSL string-operation
+  method reference table. Cloud key provider import paths corrected.
+  Added all new exception classes from `__init__.py`.
+- **`docs/ARCHITECTURE_NOTES.md`** — added subsystem sections for IFC,
+  Privilege, Oversight, Memory, Lifecycle, and Provenance with boundary
+  contracts and known-gap references. Fixed bare `KNOWN_GAPS.md` references
+  to use section numbers.
+
 ## [1.0.0] - 2026-04-22
 
 ### Fixed

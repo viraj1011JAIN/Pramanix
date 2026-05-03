@@ -199,7 +199,7 @@ class TradePolicy(Policy):
         ]
 ```
 
-Supported operations: arithmetic (`+`, `-`, `*`, `/`, `**`, `%`, `abs`), comparisons, boolean composition (`&`, `|`, `~`), set membership (`.is_in()`), string operations (`.startswith()`, `.endswith()`, `.contains()`, `.matches(regex)`, `.length()`), array quantifiers (`ForAll`, `Exists`), datetime arithmetic (`DatetimeField`), nested model fields (`NestedField`).
+Supported operations: arithmetic (`+`, `-`, `*`, `/`, `**`, `%`, `abs`), comparisons, boolean composition (`&`, `|`, `~`), set membership (`.is_in()`), string operations (`.starts_with()`, `.ends_with()`, `.contains()`, `.matches_re(pattern)`, `.length_between(lo, hi)`), array quantifiers (`ForAll`, `Exists`), datetime arithmetic (`DatetimeField`), nested model fields (`NestedField`).
 
 `ConstraintExpr.__bool__` raises `PolicyCompilationError` if you accidentally use `and`/`or` instead of `&`/`|`. This catches a class of silent policy bug at compile time.
 
@@ -542,7 +542,8 @@ pramanix calibrate-injection --dataset labelled.jsonl --output scorer.pkl
 For production Ed25519 signing, use a `KeyProvider` instead of inline PEM:
 
 ```python
-from pramanix import AwsKmsKeyProvider, PramanixSigner, GuardConfig
+from pramanix import PramanixSigner, GuardConfig
+from pramanix.key_provider import AwsKmsKeyProvider
 
 key_provider = AwsKmsKeyProvider(
     "arn:aws:secretsmanager:us-east-1:123456789012:secret:pramanix-signing-key",
@@ -552,7 +553,8 @@ signer = PramanixSigner.from_provider(key_provider)
 config = GuardConfig(signer=signer)
 ```
 
-Available providers: `PemKeyProvider`, `EnvKeyProvider`, `FileKeyProvider`, `AwsKmsKeyProvider`, `AzureKeyVaultKeyProvider`, `GcpKmsKeyProvider`, `HashiCorpVaultKeyProvider`.
+Available providers — built-in (no extra deps): `PemKeyProvider`, `EnvKeyProvider`, `FileKeyProvider`.
+Cloud providers (require extras, import from `pramanix.key_provider` directly — not re-exported at top level): `AwsKmsKeyProvider`, `AzureKeyVaultKeyProvider`, `GcpKmsKeyProvider`, `HashiCorpVaultKeyProvider`.
 
 All cloud providers accept an injected `_client` parameter for testing without real credentials. None of them have been tested against live cloud endpoints in CI — see `docs/KNOWN_GAPS.md § 5`.
 
@@ -577,6 +579,12 @@ All cloud providers accept an injected `_client` parameter for testing without r
     "translator":      "beta",     # LLM extraction, injection scoring
     "integrations":    "beta",     # Framework adapters
     "fast_path":       "beta",     # FastPathRule, SemanticFastPath
+    "ifc":             "beta",     # FlowEnforcer, FlowPolicy, TrustLabel
+    "privilege":       "beta",     # ExecutionScope, ScopeEnforcer, CapabilityManifest
+    "oversight":       "beta",     # InMemoryApprovalWorkflow, EscalationQueue
+    "memory":          "beta",     # SecureMemoryStore, ScopedMemoryPartition
+    "lifecycle":       "beta",     # PolicyDiff, ShadowEvaluator
+    "provenance":      "beta",     # ProvenanceRecord, ProvenanceChain
 }
 ```
 
@@ -652,8 +660,7 @@ Commercial licensing for proprietary deployments: contact viraj@pramanix.dev.
 | `docs/PUBLIC_API.md` | Full export list with stability tiers |
 | `docs/CHANGELOG.md` | Version history (v0.0.0 → v1.0.0) |
 | `docs/MIGRATION.md` | Breaking change guide with before/after code |
-| `docs/KNOWN_GAPS.md` | Honest list of unfinished work and known limitations |
-| `docs/DECISIONS.md` | Architecture decision records |
-| `docs/HANDOVER.md` | Implementation notes, testing strategy, deployment guidance |
-| `docs/RELEASE_CHECKLIST.md` | Pre-release verification steps |
+| `docs/KNOWN_GAPS.md` | Honest inventory of unfinished work and known limitations |
+| `docs/DECISIONS.md` | Architecture decision records (ADRs) |
+| `docs/RELEASE_CHECKLIST.md` | Pre-release verification gates |
 | `docs/Blueprint.md` | Original design document |
