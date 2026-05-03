@@ -100,7 +100,7 @@ def make_allow_guard():
     """Return a real ``Guard`` whose policy always produces an ALLOW decision.
 
     Policy: ``amount >= 0``.  Callers must pass ``intent={"amount": Decimal("1")}``
-    (any non-negative value) and ``state={}``.
+    (any non-negative value) and ``state={"state_version": "1.0"}``.
     """
     from pramanix import E, Field, Guard, GuardConfig, Policy
 
@@ -156,11 +156,11 @@ def make_block_guard():
 
 #: Default intent/state pair for allow-guard tests — satisfies ``amount >= 0``.
 ALLOW_INTENT: dict[str, Any] = {"amount": Decimal("1")}
-ALLOW_STATE: dict[str, Any] = {}
+ALLOW_STATE: dict[str, Any] = {"state_version": "1.0"}
 
 #: Default intent/state pair for block-guard tests — violates ``amount > 9999``.
 BLOCK_INTENT: dict[str, Any] = {"amount": Decimal("1")}
-BLOCK_STATE: dict[str, Any] = {}
+BLOCK_STATE: dict[str, Any] = {"state_version": "1.0"}
 
 
 # ── Kafka protocol helpers ────────────────────────────────────────────────────
@@ -430,26 +430,46 @@ class _AsyncBreaker:
 
 
 class _MistralMessage:
-    content: str = '{"amount": 5.0}'
+    def __init__(self, content: str = '{"amount": 5.0}') -> None:
+        self.content: str = content
 
 
 class _MistralChoice:
-    def __init__(self) -> None:
-        self.message = _MistralMessage()
+    def __init__(self, content: str = '{"amount": 5.0}') -> None:
+        self.message = _MistralMessage(content)
 
 
 class _MistralApiResponse:
     """Real Mistral SDK response shape — ``choices[0].message.content``."""
 
+    def __init__(self, content: str = '{"amount": 5.0}') -> None:
+        self.choices = [_MistralChoice(content)]
+
+
+class _NullContentMistralApiResponse:
+    """Mistral SDK response with ``content=None`` — exercises the ``content or ""`` branch."""
+
     def __init__(self) -> None:
-        self.choices = [_MistralChoice()]
+        import types
+        msg = types.SimpleNamespace(content=None)
+        self.choices = [types.SimpleNamespace(message=msg)]
 
 
 class _MistralChatApi:
     """Real Mistral ``chat`` namespace with real ``async complete_async()``."""
 
+    def __init__(self, content: str = '{"amount": 5.0}') -> None:
+        self._content = content
+
     async def complete_async(self, **kw: Any) -> "_MistralApiResponse":
-        return _MistralApiResponse()
+        return _MistralApiResponse(self._content)
+
+
+class _NullContentMistralChatApi:
+    """Mistral ``chat`` namespace that returns ``content=None`` (old-SDK empty path)."""
+
+    async def complete_async(self, **kw: Any) -> "_NullContentMistralApiResponse":
+        return _NullContentMistralApiResponse()
 
 
 class _MistralClientStub:
@@ -457,10 +477,23 @@ class _MistralClientStub:
 
     ``self.chat.complete_async(...)`` is a real coroutine that returns a
     ``_MistralApiResponse`` — no ``AsyncMock`` involved.
+
+    Pass ``response_text`` to control the JSON string returned by the stub so
+    tests can verify parsing without asserting on the exact default value.
+    Pass ``null_content=True`` to return ``content=None``, exercising the
+    ``content or ""`` fallback branch in ``MistralTranslator._single_call()``.
     """
 
-    def __init__(self) -> None:
-        self.chat = _MistralChatApi()
+    def __init__(
+        self,
+        response_text: str = '{"amount": 5.0}',
+        *,
+        null_content: bool = False,
+    ) -> None:
+        if null_content:
+            self.chat: Any = _NullContentMistralChatApi()
+        else:
+            self.chat = _MistralChatApi(response_text)
 
 
 # ── Async context manager helper ─────────────────────────────────────────────
@@ -834,25 +867,38 @@ class _AwsSecretsClient:
     """AWS secretsmanager client duck-type for key provider cache tests.
 
     Replaces ``MagicMock()`` in AwsKmsKeyProvider cache-hit/miss tests.
-    Records ``get_secret_value()`` calls so tests can verify no-call on cache hit.
+    Records ``get_secret_value()`` and ``rotate_secret()`` calls so tests can
+    assert on call counts and arguments without ``assert_called_once_with()``.
+
+    Set ``secret_binary`` to return a ``SecretBinary`` payload instead of
+    ``SecretString`` (exercises the binary-secret branch in AwsKmsKeyProvider).
     """
 
     def __init__(
-        self, secret_string: str = "FAKE_PEM", version_id: str | None = None
+        self,
+        secret_string: str = "FAKE_PEM",
+        version_id: str | None = None,
+        *,
+        secret_binary: bytes | None = None,
     ) -> None:
         self._secret_string = secret_string
+        self._secret_binary = secret_binary
         self._version_id = version_id
         self.calls: int = 0
+        self.rotate_secret_calls: list[str] = []
 
     def get_secret_value(self, **kwargs: Any) -> dict:
         self.calls += 1
-        result: dict = {"SecretString": self._secret_string}
+        if self._secret_binary is not None:
+            result: dict = {"SecretBinary": self._secret_binary}
+        else:
+            result = {"SecretString": self._secret_string}
         if self._version_id is not None:
             result["VersionId"] = self._version_id
         return result
 
     def rotate_secret(self, *, SecretId: str) -> None:
-        pass
+        self.rotate_secret_calls.append(SecretId)
 
 
 # ── GCP Secret Manager client helper ─────────────────────────────────────────
@@ -862,17 +908,22 @@ class _GcpSecretClient:
     """GCP SecretManagerServiceClient duck-type for key provider tests.
 
     Records ``access_secret_version()`` calls.
+
+    Set ``as_str=True`` to return payload.data as a decoded string rather than
+    bytes — exercises the string-payload branch in GcpKmsKeyProvider.
     """
 
-    def __init__(self, data: bytes = b"FAKE_PEM") -> None:
+    def __init__(self, data: bytes = b"FAKE_PEM", *, as_str: bool = False) -> None:
         self._data = data
+        self._as_str = as_str
         self.calls: int = 0
 
     def access_secret_version(self, **kwargs: Any) -> Any:
         import types
 
         self.calls += 1
-        payload = types.SimpleNamespace(data=self._data)
+        raw: Any = self._data.decode() if self._as_str else self._data
+        payload = types.SimpleNamespace(data=raw)
         return types.SimpleNamespace(payload=payload)
 
 
@@ -978,10 +1029,19 @@ class _GeminiRaisingModelInstance:
 
     Used to exercise the retry-exhaustion / LLMTimeoutError path in
     GeminiTranslator.extract() without a real API key.
+
+    Raises DeadlineExceeded when google.api_core is available so it lands in
+    _retryable and eventually surfaces as LLMTimeoutError.  Falls back to plain
+    Exception when the optional SDK is absent (triggering the except Exception
+    catch-all with _retryable=(Exception,) fallback in the translator).
     """
 
     async def generate_content_async(self, prompt: str) -> Any:
-        raise Exception("server down")
+        try:
+            import google.api_core.exceptions as _gapi_exc
+            raise _gapi_exc.DeadlineExceeded("server down")
+        except ImportError:
+            raise Exception("server down")
 
 
 class _GeminiRecordingGenaiModule:
@@ -1098,4 +1158,450 @@ class _DatadogHTTPLog:
 
     def __init__(self, items: Any) -> None:
         self.items = list(items) if items is not None else []
+
+
+# ── HashiCorp Vault hvac client helpers ───────────────────────────────────────
+
+
+class _HvacKvV2:
+    """hvac.Client().secrets.kv.v2 duck-type."""
+
+    def __init__(self, pem: bytes, version: int, field: str) -> None:
+        self._pem = pem
+        self._version = version
+        self._field = field
+
+    def read_secret_version(self, path: str, mount_point: str) -> dict:
+        return {
+            "data": {
+                "data": {self._field: self._pem.decode()},
+                "metadata": {"version": self._version},
+            }
+        }
+
+
+class _HvacKv:
+    def __init__(self, pem: bytes, version: int, field: str) -> None:
+        self.v2 = _HvacKvV2(pem, version, field)
+
+
+class _HvacSecrets:
+    def __init__(self, pem: bytes, version: int, field: str) -> None:
+        self.kv = _HvacKv(pem, version, field)
+
+
+class _HvacClient:
+    """hvac.Client duck-type for HashiCorpVaultKeyProvider tests.
+
+    Replaces ``MagicMock()`` in tests that set
+    ``mc.secrets.kv.v2.read_secret_version.return_value = ...``.
+    The nested ``secrets.kv.v2.read_secret_version(path=..., mount_point=...)``
+    structure mirrors the real hvac API; no MagicMock involved.
+
+    Not a mock — every attribute access reaches a real object with a real method.
+    """
+
+    def __init__(
+        self,
+        pem: bytes,
+        version: int = 3,
+        field: str = "private_key_pem",
+    ) -> None:
+        self.secrets = _HvacSecrets(pem, version, field)
+
+
+# ── Cohere async client helpers ───────────────────────────────────────────────
+
+
+class _CohereChatV5Stub:
+    """Cohere AsyncClientV2 duck-type returning a v5 SDK response shape.
+
+    ``chat()`` is a real coroutine returning ``response.message.content[0].text``.
+    Replaces ``MagicMock()`` + ``AsyncMock(return_value=...)`` in Cohere
+    translator tests that exercise the SDK v5 response path.
+    """
+
+    def __init__(self, text: str = '{"amount": 5.0}') -> None:
+        import types
+        content_item = types.SimpleNamespace(text=text)
+        message = types.SimpleNamespace(content=[content_item])
+        self._response = types.SimpleNamespace(message=message)
+
+    async def chat(self, **kw: Any) -> Any:
+        return self._response
+
+
+class _CohereTypeErrorChatClient:
+    """Cohere async client whose ``chat()`` always raises ``TypeError``.
+
+    Exercises the old-SDK fallback branch in ``CohereTranslator._single_call()``
+    where ``AsyncClientV2.chat()`` raises ``TypeError`` (unknown ``response_format``
+    kwarg) and the code falls back to sync ``cohere.Client.chat()`` via executor.
+
+    Not a mock — ``chat()`` has a real body that raises a real ``TypeError``.
+    """
+
+    async def chat(self, **kw: Any) -> Any:
+        raise TypeError("unexpected kwarg: response_format")
+
+
+class _CohereNoMessageResponse:
+    """Cohere response where ``.message`` raises ``AttributeError``.
+
+    Exercises the ``.text`` fallback in ``CohereTranslator._single_call()``
+    when ``response.message.content[0].text`` fails.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    @property
+    def message(self) -> Any:
+        raise AttributeError("no message attribute on this SDK version")
+
+
+class _CohereNoMessageChatClient:
+    """Cohere async client returning a ``_CohereNoMessageResponse``.
+
+    Replaces ``MagicMock()`` + ``AsyncMock(return_value=mock_no_message_response)``
+    in tests that exercise the ``.text`` fallback path.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._response = _CohereNoMessageResponse(text)
+
+    async def chat(self, **kw: Any) -> Any:
+        return self._response
+
+
+class _CohereLegacySyncResponse:
+    """Cohere v4 sync response with ``response.text`` but no ``.message``.
+
+    Replaces ``MagicMock() + del mock.message`` in the old-SDK fallback tests.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    @property
+    def message(self) -> Any:
+        raise AttributeError("v4 SDK has no .message")
+
+
+class _CohereLegacySyncClient:
+    """Cohere v4 sync ``Client`` duck-type.
+
+    ``chat()`` is a real synchronous method (not a coroutine) — it runs in
+    ``run_in_executor`` inside ``CohereTranslator._single_call()`` when the
+    async client raises ``TypeError``.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._response = _CohereLegacySyncResponse(text)
+
+    def chat(self, **kw: Any) -> "_CohereLegacySyncResponse":
+        return self._response
+
+
+class _CohereLegacyModule:
+    """``cohere`` module duck-type with a ``Client`` factory.
+
+    Replaces ``MagicMock()`` in old-SDK fallback tests where the production
+    code calls ``self._cohere.Client(api_key=...).chat(...)``.
+
+    ``Client(...)`` returns a pre-built ``_CohereLegacySyncClient`` instance.
+    """
+
+    def __init__(self, text: str) -> None:
+        self._client_instance = _CohereLegacySyncClient(text)
+
+    def Client(self, **kw: Any) -> "_CohereLegacySyncClient":  # noqa: N802
+        return self._client_instance
+
+
+# ── OS process duck-types (for _force_kill_processes tests) ───────────────────
+
+
+class _AliveProcess:
+    """multiprocessing.Process duck-type that is alive and tracks ``kill()`` calls.
+
+    Replaces ``MagicMock()`` in ``_force_kill_processes`` tests.
+    """
+
+    def __init__(self, pid: int = 99999) -> None:
+        self.pid = pid
+        self.kill_called: int = 0
+
+    def is_alive(self) -> bool:
+        return True
+
+    def kill(self) -> None:
+        self.kill_called += 1
+
+
+class _DeadProcess:
+    """multiprocessing.Process duck-type that is NOT alive.
+
+    ``kill()`` is tracked to prove it was never called.
+    """
+
+    def __init__(self, pid: int = 12345) -> None:
+        self.pid = pid
+        self.kill_called: int = 0
+
+    def is_alive(self) -> bool:
+        return False
+
+    def kill(self) -> None:
+        self.kill_called += 1
+
+
+class _KillRaisesProcess:
+    """multiprocessing.Process duck-type whose ``kill()`` always raises ``OSError``.
+
+    Exercises the exception-swallowing path in ``_force_kill_processes``.
+    """
+
+    def __init__(self, pid: int = 55555) -> None:
+        self.pid = pid
+
+    def is_alive(self) -> bool:
+        return True
+
+    def kill(self) -> None:
+        raise OSError("permission denied")
+
+
+class _ExecutorStub:
+    """concurrent.futures.ProcessPoolExecutor duck-type with a ``_processes`` dict.
+
+    Replaces ``MagicMock()`` in ``_force_kill_processes`` tests.
+    The ``_processes`` attribute maps ``pid → process`` exactly like the real
+    ``ProcessPoolExecutor`` internal attribute.
+    """
+
+    def __init__(self, processes: dict) -> None:
+        self._processes = processes
+
+
+class _NoProcessesExecutorStub:
+    """Executor duck-type with NO ``_processes`` attribute.
+
+    Exercises the ``getattr(executor, "_processes", {})`` fallback in
+    ``_force_kill_processes`` — must not raise.
+    """
+
+
+# ── Callable tracker (replaces MagicMock for simple callables) ───────────────
+
+
+class _CallTracker:
+    """Callable that records invocations and returns a configurable value.
+
+    Replaces ``MagicMock(return_value=...)`` for simple callable stubs where
+    only call-count and return value matter.  ``assert_not_called()`` and
+    ``assert_called_once()`` raise ``AssertionError`` rather than silently
+    pass — real assertions, not MagicMock auto-pass.
+    """
+
+    def __init__(self, return_value: Any = None) -> None:
+        self._return_value = return_value
+        self.call_count: int = 0
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.call_count += 1
+        return self._return_value
+
+    def assert_not_called(self) -> None:
+        assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
+
+    def assert_called_once(self) -> None:
+        assert self.call_count == 1, f"Expected 1 call, got {self.call_count}"
+
+
+class _DSPyForwardFn:
+    """Callable forward() method that records calls and returns a configurable result."""
+
+    def __init__(self, return_value: Any = None) -> None:
+        self._return_value = return_value
+        self.call_count: int = 0
+
+    def __call__(self, **kwargs: Any) -> Any:
+        self.call_count += 1
+        return self._return_value
+
+    def assert_not_called(self) -> None:
+        assert self.call_count == 0, f"Expected 0 calls, got {self.call_count}"
+
+    def assert_called_once(self) -> None:
+        assert self.call_count == 1, f"Expected 1 call, got {self.call_count}"
+
+
+class _DSPyModule:
+    """DSPy module duck-type with a real forward() that tracks calls.
+
+    Replaces ``MagicMock()`` in ``PramanixGuardedModule`` integration tests.
+    ``forward(**kwargs)`` has a real body with a configurable return value.
+    ``inner.forward.assert_not_called()`` and ``inner.forward.assert_called_once()``
+    use real ``AssertionError`` — no MagicMock magic.
+    """
+
+    def __init__(self, return_value: Any = None) -> None:
+        self.forward = _DSPyForwardFn(return_value=return_value)
+
+
+# ── Kafka audit sink helpers ──────────────────────────────────────────────────
+
+
+class _KafkaAuditProducer:
+    """confluent_kafka.Producer duck-type for KafkaAuditSink tests.
+
+    Records the delivery callback passed to ``produce()`` so tests can trigger
+    delivery callbacks directly.  Supports a configurable poll side-effect so
+    the ``_background_poll`` exception-swallowing path can be tested without
+    threads or MagicMock.
+
+    Not a mock: every method has a real body that mutates real instance state.
+    """
+
+    def __init__(self) -> None:
+        self._last_callback: Any = None
+        self._poll_side_effect: Any = None  # nullable zero-arg callable
+
+    def produce(
+        self,
+        topic: str,
+        *,
+        value: bytes | None = None,
+        callback: Any = None,
+    ) -> None:
+        self._last_callback = callback
+
+    def poll(self, timeout: float = 0.1) -> int:
+        if self._poll_side_effect is not None:
+            self._poll_side_effect()
+        return 0
+
+    def flush(self, timeout: float = -1.0) -> None:
+        pass
+
+
+class _KafkaAuditModule:
+    """confluent_kafka module duck-type for ``KafkaAuditSink`` construction.
+
+    ``Producer(config)`` returns the injected ``_KafkaAuditProducer`` instance.
+    Replaces ``MagicMock()`` as the confluent_kafka sys.modules stub.
+    """
+
+    def __init__(self, producer: "_KafkaAuditProducer") -> None:
+        self._producer = producer
+
+    def Producer(self, config: Any) -> "_KafkaAuditProducer":  # noqa: N802
+        return self._producer
+
+
+# ── WorkerPool executor stub ──────────────────────────────────────────────────
+
+
+class _RaisingSubmitExecutor:
+    """Executor duck-type whose ``submit()`` always raises a given exception.
+
+    Replaces ``MagicMock(side_effect=WorkerError("..."))`` assigned to
+    ``pool._executor`` in ``WorkerPool`` error-path tests.
+
+    Not a mock: ``submit()`` has a real body that raises the stored exception.
+    """
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def submit(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        raise self._exc
+
+    def shutdown(self, wait: bool = True) -> None:
+        pass
+
+
+# ── Redis client stubs ────────────────────────────────────────────────────────
+
+
+class _PingFailRedisClient:
+    """Redis client duck-type whose ``ping()`` raises ``ConnectionRefusedError``.
+
+    Replaces ``MagicMock()`` + ``ping.side_effect = ConnectionRefusedError(...)``
+    in doctor CLI tests verifying the ``redis-ping ERROR`` path.
+    """
+
+    def ping(self) -> None:
+        raise ConnectionRefusedError("Connection refused")
+
+
+class _PingOkRedisClient:
+    """Redis client duck-type whose ``ping()`` returns ``True``.
+
+    Replaces ``MagicMock()`` + ``ping.return_value = True`` in doctor CLI tests
+    verifying the ``redis-ping OK`` path.
+    """
+
+    def ping(self) -> bool:
+        return True
+
+
+# ── Entry-point duck-type ─────────────────────────────────────────────────────
+
+
+class _FakeEntryPoint:
+    """importlib.metadata.EntryPoint duck-type for redundant translator tests.
+
+    Replaces ``MagicMock()`` used to stub entry-point objects returned by
+    ``importlib.metadata.entry_points()``.  ``load()`` returns the injected
+    callable directly — no auto-attribute magic.
+    """
+
+    def __init__(self, name: str, fn: Any) -> None:
+        self.name = name
+        self._fn = fn
+
+    def load(self) -> Any:
+        return self._fn
+
+
+# ── LlamaCpp module duck-type ─────────────────────────────────────────────────
+
+
+class _LlamaCppLlm:
+    """llama_cpp.Llama duck-type for LlamaCppTranslator tests.
+
+    ``create_chat_completion()`` returns a real response dict so the production
+    code can extract ``response["choices"][0]["message"]["content"]`` without
+    any MagicMock auto-attribute magic.
+    """
+
+    def __init__(self, response_text: str = '{"amount": 50}') -> None:
+        self._response_text = response_text
+        self.call_count: int = 0
+
+    def create_chat_completion(
+        self,
+        messages: Any,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+    ) -> dict:
+        self.call_count += 1
+        return {"choices": [{"message": {"content": self._response_text}}]}
+
+
+class _LlamaCppModule:
+    """llama_cpp module duck-type for sys.modules injection.
+
+    ``Llama(model_path=..., ...)`` returns a pre-built ``_LlamaCppLlm`` instance.
+    Replaces ``MagicMock()`` as the llama_cpp sys.modules stub in
+    ``LlamaCppTranslator`` tests.
+    """
+
+    def __init__(self, response_text: str = '{"amount": 50}') -> None:
+        self._llm = _LlamaCppLlm(response_text)
+
+    def Llama(self, model_path: str = "", **kw: Any) -> _LlamaCppLlm:  # noqa: N802
+        return self._llm
 

@@ -24,14 +24,13 @@ from __future__ import annotations
 import sys
 from decimal import Decimal
 from typing import Any
-from unittest.mock import MagicMock
-
 import pytest
 
 from pramanix.decision import Decision, SolverStatus
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
+from tests.helpers.real_protocols import _RpcContext
 
 
 # ── Minimal policy + guard ────────────────────────────────────────────────────
@@ -366,8 +365,8 @@ class TestGrpcInterceptorRealPaths:
         wrapped = interceptor._wrap_handler(handler, None)
 
         # Call the guarded unary
-        mock_context = MagicMock()
-        result = wrapped.unary_unary("request_payload", mock_context)
+        ctx = _RpcContext()
+        result = wrapped.unary_unary("request_payload", ctx)
         assert result == "response_ok"
         assert len(original_called) == 1
 
@@ -384,12 +383,11 @@ class TestGrpcInterceptorRealPaths:
         handler = FakeHandler(unary_unary=lambda req, ctx: "should_not_reach")
         wrapped = interceptor._wrap_handler(handler, None)
 
-        mock_context = MagicMock()
-        result = wrapped.unary_unary("request", mock_context)
+        ctx = _RpcContext()
+        result = wrapped.unary_unary("request", ctx)
         assert result is None
-        mock_context.abort.assert_called_once()
-        code, msg = mock_context.abort.call_args[0]
-        assert code == _grpc.StatusCode.PERMISSION_DENIED
+        assert ctx.aborted
+        assert ctx.abort_code == _grpc.StatusCode.PERMISSION_DENIED
 
     def test_guarded_unary_guard_exception_aborts_with_internal(self):
         """Lines 118-124: intent_extractor raises → abort with INTERNAL status."""
@@ -405,12 +403,11 @@ class TestGrpcInterceptorRealPaths:
         handler = FakeHandler(unary_unary=lambda req, ctx: "ok")
         wrapped = interceptor._wrap_handler(handler, None)
 
-        mock_context = MagicMock()
-        result = wrapped.unary_unary("request", mock_context)
+        ctx = _RpcContext()
+        result = wrapped.unary_unary("request", ctx)
         assert result is None
-        mock_context.abort.assert_called_once()
-        code, _ = mock_context.abort.call_args[0]
-        assert code == _grpc.StatusCode.INTERNAL
+        assert ctx.aborted
+        assert ctx.abort_code == _grpc.StatusCode.INTERNAL
 
     def test_grpc_import_fallback_lines_47_49(self):
         """Lines 47-49: _GRPC_AVAILABLE=False path in constructor."""

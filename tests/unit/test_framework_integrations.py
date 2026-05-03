@@ -13,14 +13,13 @@ Coverage:
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import MagicMock
-
 import pytest
 
 from pramanix.exceptions import GuardViolationError
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
+from tests.helpers.real_protocols import _CallTracker, _DSPyModule
 
 # ── Shared test policy ────────────────────────────────────────────────────────
 
@@ -49,7 +48,7 @@ class TestPramanixCrewAIToolBlocked:
         from pramanix.integrations.crewai import _SAFE_FAILURE_PREFIX, PramanixCrewAITool
 
         guard = _make_guard()
-        underlying = MagicMock(return_value="success")
+        underlying = _CallTracker(return_value="success")
 
         tool = PramanixCrewAITool(
             name="test_tool",
@@ -69,7 +68,7 @@ class TestPramanixCrewAIToolBlocked:
         from pramanix.integrations.crewai import PramanixCrewAITool
 
         guard = _make_guard()
-        underlying = MagicMock(return_value="transfer_complete")
+        underlying = _CallTracker(return_value="transfer_complete")
 
         tool = PramanixCrewAITool(
             name="test_tool",
@@ -109,7 +108,7 @@ class TestPramanixGuardedModuleBlocked:
         from pramanix.integrations.dspy import PramanixGuardedModule
 
         guard = _make_guard()
-        inner = MagicMock()
+        inner = _DSPyModule(return_value={"result": "unreachable"})
 
         module = PramanixGuardedModule(
             module=inner,
@@ -126,8 +125,7 @@ class TestPramanixGuardedModuleBlocked:
         from pramanix.integrations.dspy import PramanixGuardedModule
 
         guard = _make_guard()
-        inner = MagicMock()
-        inner.forward.return_value = {"result": "ok"}
+        inner = _DSPyModule(return_value={"result": "ok"})
 
         module = PramanixGuardedModule(
             module=inner,
@@ -144,7 +142,7 @@ class TestPramanixGuardedModuleBlocked:
         from pramanix.integrations.dspy import PramanixGuardedModule
 
         guard = _make_guard()
-        inner = MagicMock()
+        inner = _DSPyModule()
 
         module = PramanixGuardedModule(
             module=inner,

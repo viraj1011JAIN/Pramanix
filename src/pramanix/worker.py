@@ -373,7 +373,11 @@ def _warmup_worker() -> None:
         s.add(u > z3.RealVal(10, ctx))
         s.add(u < z3.RealVal(0, ctx))
         res = s.check()
-        assert res == z3.unsat
+        if res != z3.unsat:
+            raise RuntimeError(
+                f"Z3 warmup pattern 8 (unsat path) returned {res!r}; "
+                "expected unsat — Z3 context may be corrupted."
+            )
         del s
 
     except Exception as _warmup_exc:

@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import json
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from pramanix.cli import main
+from tests.helpers.real_protocols import _PingFailRedisClient, _PingOkRedisClient
 
 
 def _run_cli(args: list[str], capsys: pytest.CaptureFixture) -> tuple[int, str, str]:
@@ -262,10 +263,7 @@ class TestDoctorRedisCheck:
         except ImportError:
             pytest.skip("redis not installed")
 
-        with patch("redis.from_url") as mock_redis:
-            mock_client = MagicMock()
-            mock_client.ping.side_effect = ConnectionRefusedError("Connection refused")
-            mock_redis.return_value = mock_client
+        with patch("redis.from_url", return_value=_PingFailRedisClient()):
             _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
             data = json.loads(stdout)
             checks = {c["name"]: c for c in data["checks"]}
@@ -282,10 +280,7 @@ class TestDoctorRedisCheck:
         except ImportError:
             pytest.skip("redis not installed")
 
-        with patch("redis.from_url") as mock_redis:
-            mock_client = MagicMock()
-            mock_client.ping.return_value = True
-            mock_redis.return_value = mock_client
+        with patch("redis.from_url", return_value=_PingOkRedisClient()):
             _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
             data = json.loads(stdout)
             checks = {c["name"]: c for c in data["checks"]}

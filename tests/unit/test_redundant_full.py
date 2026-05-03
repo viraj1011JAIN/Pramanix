@@ -43,6 +43,7 @@ from pramanix.translator.redundant import (
     create_translator,
     extract_with_consensus,
 )
+from tests.helpers.real_protocols import _FakeEntryPoint
 
 
 # ── Minimal pydantic schema used in consensus tests ──────────────────────────
@@ -417,14 +418,12 @@ class TestExtractWithConsensus:
     def test_injection_scorer_path_custom_module(self):
         """Lines 294-304: injection_scorer_path is a registered entry-point name."""
         import importlib.metadata as _meta
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         def _benign_scorer(text, extracted, warnings):
             return 0.0
 
-        fake_ep = MagicMock()
-        fake_ep.name = "benign_scorer"
-        fake_ep.load.return_value = _benign_scorer
+        fake_ep = _FakeEntryPoint("benign_scorer", _benign_scorer)
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
@@ -496,14 +495,12 @@ class TestExtractWithConsensus:
     def test_injection_scorer_high_confidence_blocks(self):
         """Line 429: injection scorer entry-point returns 1.0 → InjectionBlockedError."""
         import importlib.metadata as _meta
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         def _adversarial_scorer(text, extracted, warnings):
             return 1.0
 
-        fake_ep = MagicMock()
-        fake_ep.name = "adversarial_scorer"
-        fake_ep.load.return_value = _adversarial_scorer
+        fake_ep = _FakeEntryPoint("adversarial_scorer", _adversarial_scorer)
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})

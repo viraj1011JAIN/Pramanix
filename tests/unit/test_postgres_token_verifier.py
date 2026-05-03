@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -47,19 +47,9 @@ def test_postgres_verifier_raises_config_error_without_asyncpg(
 # ── Mocked asyncpg tests ──────────────────────────────────────────────────────
 
 
-def _make_mock_asyncpg() -> MagicMock:
-    """Build a mock asyncpg module with create_pool as AsyncMock."""
-    mock_conn = AsyncMock()
-    mock_conn.execute = AsyncMock(return_value=None)
-    mock_pool_cm = AsyncMock()
-    mock_pool_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool_cm.__aexit__ = AsyncMock(return_value=False)
-    mock_pool = MagicMock()
-    mock_pool.acquire = MagicMock(return_value=mock_pool_cm)
-    mock_pool.close = AsyncMock()
-    mock_pkg = MagicMock()
-    mock_pkg.create_pool = AsyncMock(return_value=mock_pool)
-    return mock_pkg
+def _make_mock_asyncpg() -> object:
+    """Build a mock asyncpg module without using AsyncMock."""
+    return type("asyncpg", (), {})
 
 
 def test_postgres_verifier_init(monkeypatch: pytest.MonkeyPatch) -> None:

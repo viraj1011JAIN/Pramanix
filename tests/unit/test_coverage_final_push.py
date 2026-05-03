@@ -22,12 +22,24 @@ import sys
 import textwrap
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
 
-from tests.helpers.real_protocols import _GeminiRecordingGenaiModule
+from tests.helpers.real_protocols import (
+    _AliveProcess,
+    _CohereChatV5Stub,
+    _CohereNoMessageChatClient,
+    _CohereTypeErrorChatClient,
+    _CohereLegacyModule,
+    _DeadProcess,
+    _ExecutorStub,
+    _GeminiRecordingGenaiModule,
+    _KillRaisesProcess,
+    _MistralClientStub,
+    _NoProcessesExecutorStub,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -354,14 +366,12 @@ class TestMistralV1SdkFallback:
         t.model = "mistral-large-latest"
         t._api_key = "key"
         t._timeout = 30.0
-
-        # Mock _single_call to avoid real API calls
-        t._single_call = AsyncMock(return_value='{"amount":50.0,"recipient":"Alice"}')  # type: ignore[method-assign]
+        # Real client stub — _single_call uses self._client.chat.complete_async()
+        t._client = _MistralClientStub('{"amount":50.0,"recipient":"Alice"}')
 
         # Build a fake mistralai module that has Mistral (v1 API shape)
-        fake_mistral_cls = MagicMock()
-        fake_mistralai_mod = MagicMock()
-        fake_mistralai_mod.Mistral = fake_mistral_cls
+        fake_mistral_cls = type("Mistral", (), {})
+        fake_mistralai_mod = type("mistralai", (), {"Mistral": fake_mistral_cls})
 
         # Patch sys.modules: mistralai.client → None (triggers v1 fallback); mistralai → fake with Mistral
         with patch.dict(sys.modules, {"mistralai.client": None, "mistralai": fake_mistralai_mod}):
@@ -400,17 +410,10 @@ class TestMistralEmptyContent:
         t.model = "mistral-large-latest"
         t._api_key = "k"
         t._timeout = 30.0
-
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = None  # content is None
-
-        mock_client = MagicMock()
-        mock_client.chat.complete_async = AsyncMock(return_value=mock_response)
-        t._client = mock_client
+        # null_content=True → choices[0].message.content is None → `None or ""` → ""
+        t._client = _MistralClientStub(null_content=True)
 
         raw = await t._single_call(system_prompt="sys", user_content="input")
-        # `None or ""` → ""
         assert raw == ""
 
 
@@ -433,13 +436,9 @@ class TestCohereAttributeErrorFallback:
         t._api_key = "key"
         t._timeout = 30.0
         t._retryable = (Exception,)
-        t._client = MagicMock()
+        # Real Cohere v5 client stub — _single_call uses self._client.chat(...)
+        t._client = _CohereChatV5Stub('{"amount":10.0,"recipient":"B"}')
         t._cohere = _cohere
-
-        # Bypass real HTTP calls by mocking _single_call
-        t._single_call = AsyncMock(  # type: ignore[method-assign]
-            return_value='{"amount":10.0,"recipient":"B"}'
-        )
 
         result = await t.extract("pay B 10", _Pay)
         assert result["amount"] == 10.0
@@ -457,23 +456,10 @@ class TestCohereOldSdkTypeErrorFallback:
         t.model = "command-r"
         t._api_key = "key"
         t._timeout = 30.0
-
-        # AsyncClientV2 chat() raises TypeError (old SDK doesn't accept response_format)
-        mock_async_client = MagicMock()
-        mock_async_client.chat = AsyncMock(side_effect=TypeError("unexpected kwarg"))
-
-        # Old cohere.Client.chat() returns a response with .text (no .message attr)
-        mock_old_response = MagicMock()
-        del mock_old_response.message  # Make .message raise AttributeError → fallback to .text
-        mock_old_response.text = '{"amount":99.0,"recipient":"C"}'
-        mock_old_client = MagicMock()
-        mock_old_client.chat = MagicMock(return_value=mock_old_response)
-
-        mock_cohere = MagicMock()
-        mock_cohere.Client = MagicMock(return_value=mock_old_client)
-
-        t._client = mock_async_client
-        t._cohere = mock_cohere
+        # async client raises TypeError → falls back to self._cohere.Client().chat()
+        t._client = _CohereTypeErrorChatClient()
+        # legacy module: Client() returns sync client with .text response (no .message)
+        t._cohere = _CohereLegacyModule('{"amount":99.0,"recipient":"C"}')
 
         raw = await t._single_call(system_prompt="sys", text="pay C 99")
         assert "99" in raw
@@ -491,18 +477,9 @@ class TestCohereResponseTextFallback:
         t.model = "command-r"
         t._api_key = "key"
         t._timeout = 30.0
-
-        # response.message.content[0].text raises AttributeError
-        mock_response = MagicMock()
-        del mock_response.message  # accessing .message raises AttributeError
-        mock_response.text = '{"amount":77.0,"recipient":"D"}'
-
-        mock_client = MagicMock()
-        mock_client.chat = AsyncMock(return_value=mock_response)
-
-        mock_cohere = MagicMock()
-        t._client = mock_client
-        t._cohere = mock_cohere
+        # async client returns response with no .message → fallback to .text
+        t._client = _CohereNoMessageChatClient('{"amount":77.0,"recipient":"D"}')
+        t._cohere = None  # unused when async client returns directly
 
         raw = await t._single_call(system_prompt="sys", text="pay D 77")
         assert "77" in raw
@@ -773,12 +750,11 @@ class TestCircuitBreakerPrometheusMetricsLookup:
 
     def test_update_prometheus_exception_silently_swallowed(self) -> None:
         """Lines 331-332: exception in _state_gauge.labels().set() → silently swallowed."""
+        from tests.helpers.real_protocols import _ErrorGauge
         breaker = self._make_breaker("prom_exc_test")
-        # Force metrics available and a broken gauge
-        mock_gauge = MagicMock()
-        mock_gauge.labels.return_value.set = MagicMock(side_effect=RuntimeError("broken"))
+        # Force metrics available and a broken gauge whose labels().set() raises
         breaker._metrics_available = True
-        breaker._state_gauge = mock_gauge
+        breaker._state_gauge = _ErrorGauge()
         # Must not raise
         breaker._update_prometheus()
 
@@ -806,51 +782,36 @@ class TestForceKillProcesses:
     def test_alive_process_is_killed(self) -> None:
         from pramanix.worker import _force_kill_processes
 
-        alive_proc = MagicMock()
-        alive_proc.is_alive.return_value = True
-        alive_proc.pid = 99999
-        alive_proc.kill = MagicMock()
+        proc = _AliveProcess(pid=99999)
+        executor = _ExecutorStub({99999: proc})
 
-        mock_executor = MagicMock()
-        mock_executor._processes = {99999: alive_proc}
-
-        _force_kill_processes(mock_executor)
-        alive_proc.kill.assert_called_once()
+        _force_kill_processes(executor)
+        assert proc.kill_called == 1
 
     def test_dead_process_is_not_killed(self) -> None:
         from pramanix.worker import _force_kill_processes
 
-        dead_proc = MagicMock()
-        dead_proc.is_alive.return_value = False
-        dead_proc.kill = MagicMock()
+        proc = _DeadProcess(pid=12345)
+        executor = _ExecutorStub({12345: proc})
 
-        mock_executor = MagicMock()
-        mock_executor._processes = {12345: dead_proc}
-
-        _force_kill_processes(mock_executor)
-        dead_proc.kill.assert_not_called()
+        _force_kill_processes(executor)
+        assert proc.kill_called == 0
 
     def test_kill_raises_exception_logs_error(self) -> None:
         """Lines 669-670: proc.kill() raises OSError → logged but not re-raised."""
         from pramanix.worker import _force_kill_processes
 
-        faulty_proc = MagicMock()
-        faulty_proc.is_alive.return_value = True
-        faulty_proc.pid = 55555
-        faulty_proc.kill = MagicMock(side_effect=OSError("permission denied"))
-
-        mock_executor = MagicMock()
-        mock_executor._processes = {55555: faulty_proc}
+        proc = _KillRaisesProcess(pid=55555)
+        executor = _ExecutorStub({55555: proc})
 
         # Must NOT raise
-        _force_kill_processes(mock_executor)
+        _force_kill_processes(executor)
 
     def test_no_processes_attr_is_safe(self) -> None:
         """Executor without _processes attribute → getattr returns {} → no-op."""
         from pramanix.worker import _force_kill_processes
 
-        mock_executor = MagicMock(spec=[])  # no _processes attribute
-        _force_kill_processes(mock_executor)  # must not raise
+        _force_kill_processes(_NoProcessesExecutorStub())  # must not raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1187,9 +1148,11 @@ class TestDoctorSubcommandBranches:
         monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
         import z3
 
-        mock_solver = MagicMock()
-        mock_solver.add = MagicMock()
-        mock_solver.check = MagicMock(return_value=z3.unsat)  # unexpected — not "sat"
+        class MockSolver:
+            def add(self, *args, **kwargs): pass
+            def check(self): return z3.unsat
+
+        mock_solver = MockSolver()
 
         with patch.object(z3, "Solver", return_value=mock_solver):
             code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
@@ -1205,8 +1168,7 @@ class TestDoctorSubcommandBranches:
         """Lines 1012-1013: pydantic major version < 2 → ERROR."""
         monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
 
-        mock_pydantic = MagicMock()
-        mock_pydantic.VERSION = "1.10.0"
+        mock_pydantic = type("pydantic", (), {"VERSION": "1.10.0"})
 
         with patch.dict(sys.modules, {"pydantic": mock_pydantic}):
             code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
@@ -1254,8 +1216,8 @@ class TestCohereTenacityImportError:
         t._api_key = "key"
         t._timeout = 30.0
         t._retryable = (Exception,)
-        t._client = MagicMock()
-        t._cohere = MagicMock()
+        t._client = object()
+        t._cohere = object()
 
         with patch.dict(sys.modules, {"tenacity": None}):
             with pytest.raises(ConfigurationError, match="tenacity"):
@@ -1268,6 +1230,8 @@ class TestCohereStrResponseFallback:
     @pytest.mark.asyncio
     async def test_no_message_no_text_uses_str_response(self) -> None:
         pytest.importorskip("cohere")
+        import types
+
         from pramanix.translator.cohere import CohereTranslator
 
         t = CohereTranslator.__new__(CohereTranslator)
@@ -1275,19 +1239,18 @@ class TestCohereStrResponseFallback:
         t._api_key = "key"
         t._timeout = 30.0
 
-        # Use a plain object with neither .message nor .text → both AttributeErrors → str() fallback
+        # Plain object with neither .message nor .text → str() fallback is used
         class _BareResponse:
             def __str__(self) -> str:
                 return '{"amount":5.0,"recipient":"E"}'
 
-        mock_response = _BareResponse()
+        _resp = _BareResponse()
 
-        mock_client = MagicMock()
-        mock_client.chat = AsyncMock(return_value=mock_response)
+        async def _bare_chat(**kw: Any) -> Any:
+            return _resp
 
-        mock_cohere = MagicMock()
-        t._client = mock_client
-        t._cohere = mock_cohere
+        t._client = types.SimpleNamespace(chat=_bare_chat)
+        t._cohere = None
 
         raw = await t._single_call(system_prompt="sys", text="pay E 5")
         assert "5.0" in raw or "E" in raw
@@ -1301,10 +1264,10 @@ class TestGeminiTenacityImportError:
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = MagicMock()
-        mock_genai.configure = MagicMock()
-        mock_genai.GenerativeModel = MagicMock()
-        mock_genai.GenerationConfig = MagicMock()
+        mock_genai = type(
+            "genai", (), 
+            {"configure": lambda **kw: None, "GenerativeModel": object, "GenerationConfig": object}
+        )
 
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
@@ -1323,30 +1286,18 @@ class TestGeminiNoApiKey:
     async def test_no_api_key_skips_configure(self) -> None:
         from pramanix.translator.gemini import GeminiTranslator
 
-        mock_genai = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = '{"amount":2.0,"recipient":"Y"}'
-        mock_model = MagicMock()
-        mock_model.generate_content_async = AsyncMock(return_value=mock_response)
-        mock_genai.GenerativeModel.return_value = mock_model
-        mock_genai.GenerationConfig = MagicMock(return_value=MagicMock())
-        mock_genai.configure = MagicMock()
+        genai = _GeminiRecordingGenaiModule('{"amount":2.0,"recipient":"Y"}')
 
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
         t._api_key = ""  # falsy → configure branch skipped
         t._timeout = 30.0
-        t._genai = mock_genai
+        t._genai = genai
         t._client = None
 
-        with patch.dict(sys.modules, {
-            "google.generativeai": mock_genai,
-            "google.api_core": None,
-            "google.api_core.exceptions": None,
-        }):
-            result = await t.extract("pay Y 2", _Pay)
+        result = await t.extract("pay Y 2", _Pay)
 
-        mock_genai.configure.assert_not_called()
+        assert not genai.configure_called
         assert result["amount"] == 2.0
 
 
@@ -1381,15 +1332,16 @@ class TestMistralParseNonExtractionError:
         t._api_key = "key"
         t._timeout = 30.0
 
-        # _single_call returns raw text; parse_llm_response raises a non-ExtractionFailureError
-        t._single_call = AsyncMock(return_value="definitely not json {{{{")  # type: ignore[method-assign]
+        # _single_call returns raw text; parse_llm_response raises a non-ExtractionFailureError.
+        # patch() is the only way to inject a ValueError from a function that normally only
+        # raises ExtractionFailureError — this tests the defensive except-Exception wrapper.
+        async def _fake_single_call(*, system_prompt: str, user_content: str) -> str:
+            return "raw text"
 
-        fake_mistralai = MagicMock()
-        fake_mistralai.Mistral = MagicMock()
+        t._single_call = _fake_single_call  # type: ignore[method-assign]
 
-        with patch.dict(sys.modules, {"mistralai.client": None, "mistralai": fake_mistralai}):
-            with patch("pramanix.translator.mistral.parse_llm_response",
-                       side_effect=ValueError("unexpected parse error")):
-                with pytest.raises(ExtractionFailureError, match="failed to parse"):
-                    await t.extract("pay Z 10", _Pay)
+        with patch("pramanix.translator.mistral.parse_llm_response",
+                   side_effect=ValueError("unexpected parse error")):
+            with pytest.raises(ExtractionFailureError, match="failed to parse"):
+                await t.extract("pay Z 10", _Pay)
 

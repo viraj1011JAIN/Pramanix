@@ -208,7 +208,13 @@ class TestSignerFromProvider:
 # SDK is not installed.  They are skipped when the SDK *is* present.
 
 import importlib
-from unittest.mock import MagicMock
+
+from tests.helpers.real_protocols import (
+    _AwsSecretsClient,
+    _AzureSecretClient,
+    _GcpSecretClient,
+    _HvacClient,
+)
 
 
 def _has_module(name: str) -> bool:
@@ -252,7 +258,7 @@ class TestCloudKmsImportGuard:
 
 
 class TestAwsKmsKeyProviderBehavior:
-    """Tests AwsKmsKeyProvider logic with an injected mock boto3 client.
+    """Tests AwsKmsKeyProvider logic with an injected real _AwsSecretsClient.
 
     Uses ``__new__`` + attribute injection to bypass the SDK import check so
     these tests run regardless of whether boto3 is installed in CI.
@@ -262,13 +268,13 @@ class TestAwsKmsKeyProviderBehavior:
 
     def _provider(
         self,
-        mock_client: MagicMock,
+        client: _AwsSecretsClient,
         *,
         explicit_version: str | None = None,
     ) -> AwsKmsKeyProvider:
         import threading
         p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = mock_client
+        p._client = client
         p._secret_arn = self._ARN
         p._version_stage = "AWSCURRENT"
         p._explicit_version = explicit_version
@@ -279,64 +285,52 @@ class TestAwsKmsKeyProviderBehavior:
         return p
 
     def test_private_key_pem_from_secret_string(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {"SecretString": test_pem.decode()}
-        assert self._provider(mc).private_key_pem() == test_pem
+        client = _AwsSecretsClient(test_pem.decode())
+        assert self._provider(client).private_key_pem() == test_pem
 
     def test_private_key_pem_from_secret_binary(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {"SecretBinary": test_pem}
-        assert self._provider(mc).private_key_pem() == test_pem
+        client = _AwsSecretsClient(secret_binary=test_pem)
+        assert self._provider(client).private_key_pem() == test_pem
 
     def test_public_key_derived(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {"SecretString": test_pem.decode()}
-        pub = self._provider(mc).public_key_pem()
+        client = _AwsSecretsClient(test_pem.decode())
+        pub = self._provider(client).public_key_pem()
         assert b"PUBLIC KEY" in pub
 
     def test_key_version_from_describe_secret(self) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {
-            "SecretString": "PLACEHOLDER_PEM",
-            "VersionId": "ver-abc-123",
-        }
-        assert self._provider(mc).key_version() == "ver-abc-123"
+        client = _AwsSecretsClient("PLACEHOLDER_PEM", version_id="ver-abc-123")
+        assert self._provider(client).key_version() == "ver-abc-123"
 
     def test_explicit_version_skips_describe(self) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {"SecretString": "PLACEHOLDER_PEM"}
-        p = self._provider(mc, explicit_version="pinned-v2")
+        client = _AwsSecretsClient("PLACEHOLDER_PEM")
+        p = self._provider(client, explicit_version="pinned-v2")
         assert p.key_version() == "pinned-v2"
 
     def test_key_version_fallback_when_stage_absent(self) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {
-            "SecretString": "PLACEHOLDER_PEM",
-            # No "VersionId" key → falls back to "aws-unknown"
-        }
-        assert self._provider(mc).key_version() == "aws-unknown"
+        # No version_id → get_secret_value returns no "VersionId" key → "aws-unknown"
+        client = _AwsSecretsClient("PLACEHOLDER_PEM")
+        assert self._provider(client).key_version() == "aws-unknown"
 
     def test_rotate_calls_rotate_secret(self) -> None:
-        mc = MagicMock()
-        self._provider(mc).rotate_key()
-        mc.rotate_secret.assert_called_once_with(SecretId=self._ARN)
+        client = _AwsSecretsClient()
+        self._provider(client).rotate_key()
+        assert client.rotate_secret_calls == [self._ARN]
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret_value.return_value = {"SecretString": test_pem.decode()}
-        assert isinstance(self._provider(mc), KeyProvider)
+        client = _AwsSecretsClient(test_pem.decode())
+        assert isinstance(self._provider(client), KeyProvider)
 
 
 # ── AzureKeyVaultKeyProvider — behaviour with injected mock client ────────────
 
 
 class TestAzureKeyVaultKeyProviderBehavior:
-    """Tests AzureKeyVaultKeyProvider logic with an injected mock SecretClient."""
+    """Tests AzureKeyVaultKeyProvider logic with an injected real _AzureSecretClient."""
 
-    def _provider(self, mock_client: MagicMock) -> AzureKeyVaultKeyProvider:
+    def _provider(self, client: _AzureSecretClient) -> AzureKeyVaultKeyProvider:
         import threading
         p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        p._client = mock_client
+        p._client = client
         p._secret_name = "pramanix-signing-key"
         p._secret_version = None
         p._cache_lock = threading.Lock()
@@ -345,53 +339,40 @@ class TestAzureKeyVaultKeyProviderBehavior:
         p._cache_expires = 0.0
         return p
 
-    def _mock_secret(self, pem: bytes, version: str = "abc123def") -> MagicMock:
-        secret = MagicMock()
-        secret.value = pem.decode()
-        secret.properties.version = version
-        return secret
-
     def test_private_key_pem_returns_value(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret.return_value = self._mock_secret(test_pem)
-        assert self._provider(mc).private_key_pem() == test_pem
+        assert self._provider(_AzureSecretClient(test_pem.decode())).private_key_pem() == test_pem
 
     def test_public_key_derived(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret.return_value = self._mock_secret(test_pem)
-        pub = self._provider(mc).public_key_pem()
+        pub = self._provider(_AzureSecretClient(test_pem.decode())).public_key_pem()
         assert b"PUBLIC KEY" in pub
 
     def test_key_version_from_properties(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret.return_value = self._mock_secret(test_pem, version="v20260401")
-        assert self._provider(mc).key_version() == "v20260401"
+        client = _AzureSecretClient(test_pem.decode(), version_id="v20260401")
+        assert self._provider(client).key_version() == "v20260401"
 
     def test_rotate_raises_not_implemented(self) -> None:
         with pytest.raises(NotImplementedError):
-            self._provider(MagicMock()).rotate_key()
+            self._provider(_AzureSecretClient("")).rotate_key()
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.get_secret.return_value = self._mock_secret(test_pem)
-        assert isinstance(self._provider(mc), KeyProvider)
+        assert isinstance(self._provider(_AzureSecretClient(test_pem.decode())), KeyProvider)
 
 
 # ── GcpKmsKeyProvider — behaviour with injected mock client ──────────────────
 
 
 class TestGcpKmsKeyProviderBehavior:
-    """Tests GcpKmsKeyProvider logic with an injected mock SecretManagerClient."""
+    """Tests GcpKmsKeyProvider logic with an injected real _GcpSecretClient."""
 
     def _provider(
         self,
-        mock_client: MagicMock,
+        client: _GcpSecretClient,
         *,
         version_id: str = "latest",
     ) -> GcpKmsKeyProvider:
         import threading
         p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        p._client = mock_client
+        p._client = client
         p._project_id = "my-project"
         p._secret_id = "pramanix-signing-key"
         p._version_id = version_id
@@ -401,43 +382,36 @@ class TestGcpKmsKeyProviderBehavior:
         return p
 
     def test_private_key_pem_from_payload(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.access_secret_version.return_value.payload.data = test_pem
-        assert self._provider(mc).private_key_pem() == test_pem
+        assert self._provider(_GcpSecretClient(test_pem)).private_key_pem() == test_pem
 
     def test_private_key_pem_from_string_payload(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.access_secret_version.return_value.payload.data = test_pem.decode()
-        assert self._provider(mc).private_key_pem() == test_pem
+        assert self._provider(_GcpSecretClient(test_pem, as_str=True)).private_key_pem() == test_pem
 
     def test_version_name_construction(self) -> None:
-        mc = MagicMock()
-        p = self._provider(mc, version_id="42")
+        p = self._provider(_GcpSecretClient(b""), version_id="42")
         assert p._version_name() == "projects/my-project/secrets/pramanix-signing-key/versions/42"
 
     def test_key_version_returns_version_id(self) -> None:
-        assert self._provider(MagicMock(), version_id="7").key_version() == "7"
+        assert self._provider(_GcpSecretClient(b""), version_id="7").key_version() == "7"
 
     def test_rotate_raises_not_implemented(self) -> None:
         with pytest.raises(NotImplementedError):
-            self._provider(MagicMock()).rotate_key()
+            self._provider(_GcpSecretClient(b"")).rotate_key()
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.access_secret_version.return_value.payload.data = test_pem
-        assert isinstance(self._provider(mc), KeyProvider)
+        assert isinstance(self._provider(_GcpSecretClient(test_pem)), KeyProvider)
 
 
 # ── HashiCorpVaultKeyProvider — behaviour with injected mock client ───────────
 
 
 class TestHashiCorpVaultKeyProviderBehavior:
-    """Tests HashiCorpVaultKeyProvider logic with an injected mock hvac.Client."""
+    """Tests HashiCorpVaultKeyProvider logic with an injected real _HvacClient."""
 
-    def _provider(self, mock_client: MagicMock) -> HashiCorpVaultKeyProvider:
+    def _provider(self, client: _HvacClient) -> HashiCorpVaultKeyProvider:
         import threading
         p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._client = mock_client
+        p._client = client
         p._secret_path = "pramanix/signing-key"
         p._field = "private_key_pem"
         p._mount_point = "secret"
@@ -447,37 +421,19 @@ class TestHashiCorpVaultKeyProviderBehavior:
         p._cache_expires = 0.0
         return p
 
-    def _kv_response(self, pem: bytes, version: int = 3) -> dict:  # type: ignore[type-arg]
-        return {
-            "data": {
-                "data": {"private_key_pem": pem.decode()},
-                "metadata": {"version": version},
-            }
-        }
-
     def test_private_key_pem_from_kv(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.secrets.kv.v2.read_secret_version.return_value = self._kv_response(test_pem)
-        assert self._provider(mc).private_key_pem() == test_pem
+        assert self._provider(_HvacClient(test_pem)).private_key_pem() == test_pem
 
     def test_public_key_derived(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.secrets.kv.v2.read_secret_version.return_value = self._kv_response(test_pem)
-        pub = self._provider(mc).public_key_pem()
+        pub = self._provider(_HvacClient(test_pem)).public_key_pem()
         assert b"PUBLIC KEY" in pub
 
     def test_key_version_from_metadata(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.secrets.kv.v2.read_secret_version.return_value = self._kv_response(test_pem, version=7)
-        assert self._provider(mc).key_version() == "7"
+        assert self._provider(_HvacClient(test_pem, version=7)).key_version() == "7"
 
     def test_rotate_raises_not_implemented(self) -> None:
         with pytest.raises(NotImplementedError):
-            self._provider(MagicMock()).rotate_key()
+            self._provider(_HvacClient(b"PLACEHOLDER")).rotate_key()
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
-        mc = MagicMock()
-        mc.secrets.kv.v2.read_secret_version.return_value = self._kv_response(
-            _generate_test_pem()
-        )
-        assert isinstance(self._provider(mc), KeyProvider)
+        assert isinstance(self._provider(_HvacClient(_generate_test_pem())), KeyProvider)

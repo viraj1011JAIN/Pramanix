@@ -366,7 +366,12 @@ class SecureMemoryStore:
             MemoryViolationError: Propagated from :meth:`ScopedMemoryPartition.write`.
         """
         partition = self.get_partition(tenant_id, workflow_id, create=True)
-        assert partition is not None
+        if partition is None:  # pragma: no cover — create=True always returns a partition
+            raise RuntimeError(
+                f"SecureMemoryStore.get_partition returned None for "
+                f"({tenant_id!r}, {workflow_id!r}) with create=True; "
+                "this is a bug in the store implementation."
+            )
         return partition.write(
             key,
             value=value,

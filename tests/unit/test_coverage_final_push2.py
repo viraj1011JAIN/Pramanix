@@ -1,76 +1,95 @@
+import logging
+import sys
+from unittest.mock import patch
+
+import pytest
+
+from pramanix.exceptions import WorkerError
 from pramanix.expressions import Field, E
+from pramanix.policy import Policy
 from pramanix.transpiler import analyze_string_promotions
 from pramanix.worker import WorkerPool
-from pramanix.exceptions import WorkerError
-from pramanix.policy import Policy
-from unittest.mock import MagicMock
-import pytest
+from tests.helpers.real_protocols import (
+    _KafkaAuditModule,
+    _KafkaAuditProducer,
+    _RaisingSubmitExecutor,
+)
+
 
 def test_analyze_string_promotions_disqualified_continue():
     from pramanix.expressions import ConstraintExpr
     s = Field("s", "String")
     invariants = [
         ConstraintExpr(E(s) == "ok", label="inv1"),
-        ConstraintExpr(E(s).startswith("x"), label="inv2")
+        ConstraintExpr(E(s).startswith("x"), label="inv2"),
     ]
     promotions = analyze_string_promotions(invariants)
     assert "s" not in promotions
+
 
 class DummyPolicy(Policy):
     @classmethod
     def invariants(cls):
         return []
 
+
 def test_worker_pool_worker_error():
-    pool = WorkerPool(mode="async-thread", max_workers=1, max_decisions_per_worker=10, warmup=False)
+    pool = WorkerPool(
+        mode="async-thread",
+        max_workers=1,
+        max_decisions_per_worker=10,
+        warmup=False,
+    )
     pool.spawn()
-    
-    # Mock executor to raise WorkerError on submit
-    pool._executor.submit = MagicMock(side_effect=WorkerError("mock error"))
-    
+    pool._executor = _RaisingSubmitExecutor(WorkerError("submit failed"))
     with pytest.raises(WorkerError):
         pool.submit_solve(DummyPolicy, {}, 1000)
     pool.shutdown(wait=False)
 
+
 def test_worker_pool_async_process_normal_unseal():
-    pool = WorkerPool(mode="async-process", max_workers=1, max_decisions_per_worker=10, warmup=False)
+    pool = WorkerPool(
+        mode="async-process",
+        max_workers=1,
+        max_decisions_per_worker=10,
+        warmup=False,
+    )
     pool.spawn()
     decision = pool.submit_solve(DummyPolicy, {}, 1000)
     assert decision.allowed is True
     pool.shutdown(wait=False)
 
-def test_kafka_audit_sink_delivery_err():
+
+def test_kafka_audit_sink_delivery_err(caplog):
     from pramanix.audit_sink import KafkaAuditSink
     from pramanix.decision import Decision
-    from unittest.mock import patch
-    import sys
 
-    # Mock confluent_kafka module completely to avoid ImportError
-    mock_ck = MagicMock()
-    mock_producer = MagicMock()
-    mock_ck.Producer.return_value = mock_producer
+    producer = _KafkaAuditProducer()
+    kafka_mod = _KafkaAuditModule(producer)
 
-    with patch.dict(sys.modules, {"confluent_kafka": mock_ck}):
+    with patch.dict(sys.modules, {"confluent_kafka": kafka_mod}):  # type: ignore[arg-type]
         sink = KafkaAuditSink("test_topic", {"bootstrap.servers": "localhost"})
-        sink.emit(Decision.safe())
 
-        # The produce method takes a callback
-        # Find the callback and call it with an error
-        kwargs = mock_producer.produce.call_args.kwargs
-        cb = kwargs["callback"]
-        
-        # Test error case (231->exit)
-        with patch("pramanix.audit_sink.log.error") as mock_log:
-            cb(Exception("delivery failed"), None)
-            mock_log.assert_called_with("KafkaAuditSink: delivery error: %s", Exception("delivery failed"))
-        
-        # Test poll exception
-        def side_effect(*args, **kwargs):
+        # Stop the background poll thread so it doesn't interfere
+        sink._poll_stop.set()
+        sink._poll_thread.join(timeout=2.0)
+
+        # Emit a decision so produce() is called and the callback is registered
+        with caplog.at_level(logging.ERROR, logger="pramanix.audit_sink"):
+            sink.emit(Decision.safe())
+            assert producer._last_callback is not None
+            producer._last_callback(Exception("delivery failed"), None)
+        assert "delivery error" in caplog.text
+        assert "delivery failed" in caplog.text
+
+        # Test _background_poll exception path — reset stop event for the direct call
+        sink._poll_stop.clear()
+
+        def _poll_se() -> None:
             sink._poll_stop.set()
             raise Exception("poll error")
-        
-        mock_producer.poll.side_effect = side_effect
-        with patch("pramanix.audit_sink.log.warning") as mock_warn:
-            sink._background_poll()
-            mock_warn.assert_called_with("KafkaAuditSink: poll error: %s", Exception("poll error"))
 
+        producer._poll_side_effect = _poll_se
+        with caplog.at_level(logging.WARNING, logger="pramanix.audit_sink"):
+            sink._background_poll()
+        assert "poll error" in caplog.text

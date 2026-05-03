@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import asyncio
 import os
-from unittest.mock import AsyncMock, patch
+import sys
 
 import pytest
 from pydantic import BaseModel
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.gemini import GeminiTranslator
+
+from tests.helpers.real_protocols import _GeminiRecordingGenaiModule
 
 from .conftest import requires_gemini
 
@@ -35,61 +37,50 @@ class TransferIntent(BaseModel):
     action: str
 
 
-# ── Unit tests (mock _single_call) ────────────────────────────────────────────
+def _make_translator(genai_module: _GeminiRecordingGenaiModule) -> GeminiTranslator:
+    """Build a GeminiTranslator with injected genai module — no real API call."""
+    t = GeminiTranslator.__new__(GeminiTranslator)
+    t.model = "gemini-1.5-flash"
+    t._api_key = "test-key"
+    t._timeout = 30.0
+    t._genai = genai_module
+    t._client = None
+    return t
 
 
-@patch(
-    "pramanix.translator.gemini.GeminiTranslator._single_call",
-    new_callable=AsyncMock,
-)
-def test_gemini_extract_returns_parsed_dict(mock_call: AsyncMock) -> None:
-    """extract() parses the JSON string returned by _single_call."""
-    mock_call.return_value = '{"amount": 150.0, "action": "transfer"}'
+# ── Unit tests (real genai duck-type, no @patch) ──────────────────────────────
 
-    translator = GeminiTranslator("gemini-1.5-flash", api_key="test-key")
+
+def test_gemini_extract_returns_parsed_dict() -> None:
+    """extract() parses the JSON string returned by _single_call (real code path)."""
+    genai = _GeminiRecordingGenaiModule('{"amount": 150.0, "action": "transfer"}')
+    translator = _make_translator(genai)
     result = asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
-
     assert result["amount"] == 150.0
     assert result["action"] == "transfer"
+    assert genai.last_model.call_count == 1
 
 
-@patch(
-    "pramanix.translator.gemini.GeminiTranslator._single_call",
-    new_callable=AsyncMock,
-)
-def test_gemini_extract_empty_response_raises(mock_call: AsyncMock) -> None:
-    """ExtractionFailureError when _single_call returns empty text."""
-    mock_call.return_value = ""
-
-    translator = GeminiTranslator("gemini-1.5-flash", api_key="test-key")
+def test_gemini_extract_empty_response_raises() -> None:
+    """ExtractionFailureError when the genai model returns blank text."""
+    genai = _GeminiRecordingGenaiModule("   ")
+    translator = _make_translator(genai)
     with pytest.raises(ExtractionFailureError):
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 
 
-@patch(
-    "pramanix.translator.gemini.GeminiTranslator._single_call",
-    new_callable=AsyncMock,
-)
-def test_gemini_extract_malformed_json_raises(mock_call: AsyncMock) -> None:
-    """ExtractionFailureError when _single_call returns non-JSON text."""
-    mock_call.return_value = "I cannot help with that request."
-
-    translator = GeminiTranslator("gemini-1.5-flash", api_key="test-key")
+def test_gemini_extract_malformed_json_raises() -> None:
+    """ExtractionFailureError when the genai model returns non-JSON text."""
+    genai = _GeminiRecordingGenaiModule("I cannot help with that request.")
+    translator = _make_translator(genai)
     with pytest.raises(ExtractionFailureError):
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 
 
-@patch(
-    "pramanix.translator.gemini.GeminiTranslator._single_call",
-    new_callable=AsyncMock,
-)
-def test_gemini_network_failure_raises_timeout_error(mock_call: AsyncMock) -> None:
-    """LLMTimeoutError when _single_call raises a transport-level error."""
-    import httpx
-
-    mock_call.side_effect = httpx.ConnectError("unreachable")
-
-    translator = GeminiTranslator("gemini-1.5-flash", api_key="test-key")
+def test_gemini_network_failure_raises_timeout_error() -> None:
+    """LLMTimeoutError when the genai model raises on every attempt."""
+    genai = _GeminiRecordingGenaiModule(raising=True)
+    translator = _make_translator(genai)
     with pytest.raises((LLMTimeoutError, ExtractionFailureError)):
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 

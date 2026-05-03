@@ -1,40 +1,27 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Tests for framework adapters: Haystack, SemanticKernel, PydanticAI (F-1)."""
+"""Tests for framework adapters: Haystack, SemanticKernel, PydanticAI (F-1).
+
+All tests use real Guard instances from tests.helpers.real_protocols.
+The only MagicMock usage is for sys.modules stubs to simulate absent optional
+SDK packages (semantic_kernel, pydantic_ai) — these stub the import boundary,
+not any Pramanix behaviour.
+"""
 from __future__ import annotations
 
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from pramanix.decision import Decision, SolverStatus
 from pramanix.exceptions import ConfigurationError, GuardViolationError
 
-
-def _allowed_decision() -> Decision:
-    return Decision(
-        allowed=True,
-        status=SolverStatus.SAFE,
-        violated_invariants=(),
-        explanation="all good",
-    )
-
-
-def _blocked_decision() -> Decision:
-    return Decision(
-        allowed=False,
-        status=SolverStatus.UNSAFE,
-        violated_invariants=("overdraft",),
-        explanation="overdraft detected",
-    )
-
-
-def _make_mock_guard(allowed: bool = True) -> MagicMock:
-    guard = MagicMock()
-    decision = _allowed_decision() if allowed else _blocked_decision()
-    guard.verify = MagicMock(return_value=decision)
-    guard.verify_async = AsyncMock(return_value=decision)
-    return guard
+from tests.helpers.real_protocols import (
+    ALLOW_INTENT,
+    ALLOW_STATE,
+    BLOCK_INTENT,
+    make_allow_guard,
+    make_block_guard,
+)
 
 
 # ── HaystackGuardedComponent ──────────────────────────────────────────────────
@@ -50,13 +37,14 @@ def test_haystack_import_no_haystack(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_haystack_run_allows_documents() -> None:
+    """Documents pass through when the Guard issues an ALLOW decision."""
     from pramanix.integrations.haystack import HaystackGuardedComponent
 
-    guard = _make_mock_guard(allowed=True)
+    guard = make_allow_guard()
     comp = HaystackGuardedComponent(
         guard=guard,
-        intent_extractor=lambda item: {"action": "read"},
-        state_provider=lambda: {},
+        intent_extractor=lambda _item: ALLOW_INTENT,
+        state_provider=lambda: ALLOW_STATE,
     )
     result = comp.run(documents=["doc1", "doc2"])
     assert "documents" in result
@@ -65,13 +53,14 @@ def test_haystack_run_allows_documents() -> None:
 
 
 def test_haystack_run_blocks_documents_on_violation() -> None:
+    """Documents are blocked when the Guard issues a BLOCK decision."""
     from pramanix.integrations.haystack import HaystackGuardedComponent
 
-    guard = _make_mock_guard(allowed=False)
+    guard = make_block_guard()
     comp = HaystackGuardedComponent(
         guard=guard,
-        intent_extractor=lambda item: {"action": "write"},
-        state_provider=lambda: {},
+        intent_extractor=lambda _item: BLOCK_INTENT,
+        state_provider=lambda: ALLOW_STATE,
         block_on_error=True,
     )
     result = comp.run(documents=["doc1"])
@@ -81,13 +70,14 @@ def test_haystack_run_blocks_documents_on_violation() -> None:
 
 @pytest.mark.asyncio
 async def test_haystack_run_async_allows() -> None:
+    """Async run_async passes documents through on ALLOW."""
     from pramanix.integrations.haystack import HaystackGuardedComponent
 
-    guard = _make_mock_guard(allowed=True)
+    guard = make_allow_guard()
     comp = HaystackGuardedComponent(
         guard=guard,
-        intent_extractor=lambda item: {},
-        state_provider=lambda: {},
+        intent_extractor=lambda _item: ALLOW_INTENT,
+        state_provider=lambda: ALLOW_STATE,
     )
     result = await comp.run_async(documents=["doc"])
     assert len(result["documents"]) == 1
@@ -106,11 +96,11 @@ def test_sk_raises_config_error_without_semantic_kernel(
         from pramanix.integrations.semantic_kernel import (
             PramanixSemanticKernelPlugin,
         )
-        PramanixSemanticKernelPlugin(_make_mock_guard())
+        PramanixSemanticKernelPlugin(make_allow_guard())
 
 
 def test_sk_plugin_verify_returns_json() -> None:
-    """verify() returns JSON string with allowed/status/explanation."""
+    """verify() returns JSON string with allowed/status/explanation (real Guard)."""
     mock_sk = MagicMock()
     sys.modules.setdefault("semantic_kernel", mock_sk)
     sys.modules.setdefault("semantic_kernel.functions", mock_sk)
@@ -122,15 +112,17 @@ def test_sk_plugin_verify_returns_json() -> None:
 
     from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
 
-    guard = _make_mock_guard(allowed=True)
-    plugin = PramanixSemanticKernelPlugin(guard)
-    result = plugin.verify('{"action": "read"}', '{}')
+    # amount=1 satisfies the allow-guard invariant (amount >= 0)
+    plugin = PramanixSemanticKernelPlugin(make_allow_guard())
+    result = plugin.verify('{"amount": 1}', '{"state_version": "1.0"}')
     parsed = json.loads(result)
     assert parsed["allowed"] is True
+    assert "status" in parsed
 
 
 @pytest.mark.asyncio
 async def test_sk_plugin_verify_async_returns_json() -> None:
+    """verify_async() exercises the real async Guard path."""
     import json
 
     mock_sk = MagicMock()
@@ -142,9 +134,8 @@ async def test_sk_plugin_verify_async_returns_json() -> None:
 
     from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
 
-    guard = _make_mock_guard(allowed=True)
-    plugin = PramanixSemanticKernelPlugin(guard)
-    result = await plugin.verify_async('{"action": "read"}', '{}')
+    plugin = PramanixSemanticKernelPlugin(make_allow_guard())
+    result = await plugin.verify_async('{"amount": 1}', '{"state_version": "1.0"}')
     parsed = json.loads(result)
     assert parsed["allowed"] is True
 
@@ -162,10 +153,11 @@ def test_pydantic_ai_raises_config_error_without_pydantic_ai(
         from pramanix.integrations.pydantic_ai import (
             PramanixPydanticAIValidator,
         )
-        PramanixPydanticAIValidator(_make_mock_guard())
+        PramanixPydanticAIValidator(make_allow_guard())
 
 
 def test_pydantic_ai_check_allowed_returns_decision() -> None:
+    """check() returns the Decision on ALLOW (real Guard — Z3 verified)."""
     mock_pai = MagicMock()
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
@@ -174,13 +166,13 @@ def test_pydantic_ai_check_allowed_returns_decision() -> None:
 
     from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
-    guard = _make_mock_guard(allowed=True)
-    validator = PramanixPydanticAIValidator(guard)
-    decision = validator.check({"action": "read"})
+    validator = PramanixPydanticAIValidator(make_allow_guard())
+    decision = validator.check(ALLOW_INTENT, state=ALLOW_STATE)
     assert decision.allowed is True
 
 
 def test_pydantic_ai_check_blocked_raises_guard_violation() -> None:
+    """check() raises GuardViolationError when Z3 finds a constraint violated."""
     mock_pai = MagicMock()
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
@@ -189,14 +181,17 @@ def test_pydantic_ai_check_blocked_raises_guard_violation() -> None:
 
     from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
-    guard = _make_mock_guard(allowed=False)
-    validator = PramanixPydanticAIValidator(guard)
-    with pytest.raises(GuardViolationError):
-        validator.check({"action": "write"})
+    # BLOCK_INTENT has amount=1, which violates block guard's "amount > 9999"
+    validator = PramanixPydanticAIValidator(make_block_guard())
+    with pytest.raises(GuardViolationError) as exc_info:
+        validator.check(BLOCK_INTENT, state=ALLOW_STATE)
+    # Verify the violation is Z3-attributed, not a validation error
+    assert exc_info.value.decision.violated_invariants == ("above_threshold",)
 
 
 @pytest.mark.asyncio
 async def test_pydantic_ai_check_async_allowed() -> None:
+    """check_async() exercises the real async Guard path with ALLOW result."""
     mock_pai = MagicMock()
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
@@ -205,14 +200,14 @@ async def test_pydantic_ai_check_async_allowed() -> None:
 
     from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
-    guard = _make_mock_guard(allowed=True)
-    validator = PramanixPydanticAIValidator(guard)
-    decision = await validator.check_async({"action": "read"})
+    validator = PramanixPydanticAIValidator(make_allow_guard())
+    decision = await validator.check_async(ALLOW_INTENT, state=ALLOW_STATE)
     assert decision.allowed is True
 
 
 @pytest.mark.asyncio
 async def test_pydantic_ai_check_async_blocked_raises() -> None:
+    """check_async() raises GuardViolationError when Z3 blocks (async path)."""
     mock_pai = MagicMock()
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
@@ -221,7 +216,7 @@ async def test_pydantic_ai_check_async_blocked_raises() -> None:
 
     from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
-    guard = _make_mock_guard(allowed=False)
-    validator = PramanixPydanticAIValidator(guard)
-    with pytest.raises(GuardViolationError):
-        await validator.check_async({"action": "write"})
+    validator = PramanixPydanticAIValidator(make_block_guard())
+    with pytest.raises(GuardViolationError) as exc_info:
+        await validator.check_async(BLOCK_INTENT, state=ALLOW_STATE)
+    assert exc_info.value.decision.violated_invariants == ("above_threshold",)
