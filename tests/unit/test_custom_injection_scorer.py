@@ -96,7 +96,7 @@ class TestExtractWithConsensusCustomScorer:
             )
 
         with pytest.raises(ValueError, match="No registered injection scorer"):
-            asyncio.get_event_loop().run_until_complete(_run())
+            asyncio.run(_run())
 
     def test_scorer_path_none_uses_builtin(self) -> None:
         """When injection_scorer_path is None, the built-in scorer is used."""

@@ -21,7 +21,7 @@ def test_analyze_string_promotions_disqualified_continue():
     s = Field("s", str, "String")
     invariants = [
         ConstraintExpr(E(s) == "ok", label="inv1"),
-        ConstraintExpr(E(s).startswith("x"), label="inv2"),
+        ConstraintExpr(E(s).starts_with("x"), label="inv2"),
     ]
     promotions = analyze_string_promotions(invariants)
     assert "s" not in promotions
