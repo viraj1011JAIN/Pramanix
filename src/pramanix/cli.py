@@ -22,6 +22,7 @@ Exit codes:
     1 — proof invalid / policy blocks the request / verification error
     2 — usage error (missing key, bad arguments)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -51,7 +52,7 @@ def main() -> int:
     av = audit_sub.add_parser(
         "verify",
         help="Verify a JSONL audit log signed with PramanixSigner (Ed25519). "
-             "For HMAC JWS bearer tokens use 'verify-proof' instead.",
+        "For HMAC JWS bearer tokens use 'verify-proof' instead.",
     )
     av.add_argument("log_file", help="Path to JSONL audit log file")
     av.add_argument(
@@ -109,20 +110,47 @@ def main() -> int:
         "migrate",
         help="Apply a PolicyMigration spec to a state JSON file.",
     )
-    mig.add_argument("--state", required=True, metavar="JSON_FILE",
-                     help="Path to the state JSON file to migrate.")
-    mig.add_argument("--from-version", required=True, metavar="X.Y.Z",
-                     help="Expected current semver of the state (e.g. 1.0.0).")
-    mig.add_argument("--to-version", required=True, metavar="X.Y.Z",
-                     help="Target semver after migration (e.g. 2.0.0).")
-    mig.add_argument("--rename", action="append", default=[], metavar="OLD=NEW",
-                     help="Rename a field: --rename old_name=new_name (repeatable).")
-    mig.add_argument("--remove", action="append", default=[], metavar="FIELD",
-                     help="Remove a field: --remove field_name (repeatable).")
-    mig.add_argument("--output", metavar="JSON_FILE",
-                     help="Write migrated state to this file (default: stdout).")
-    mig.add_argument("--json", dest="as_json", action="store_true",
-                     help="Output migrated state as JSON (default when --output not set).")
+    mig.add_argument(
+        "--state",
+        required=True,
+        metavar="JSON_FILE",
+        help="Path to the state JSON file to migrate.",
+    )
+    mig.add_argument(
+        "--from-version",
+        required=True,
+        metavar="X.Y.Z",
+        help="Expected current semver of the state (e.g. 1.0.0).",
+    )
+    mig.add_argument(
+        "--to-version",
+        required=True,
+        metavar="X.Y.Z",
+        help="Target semver after migration (e.g. 2.0.0).",
+    )
+    mig.add_argument(
+        "--rename",
+        action="append",
+        default=[],
+        metavar="OLD=NEW",
+        help="Rename a field: --rename old_name=new_name (repeatable).",
+    )
+    mig.add_argument(
+        "--remove",
+        action="append",
+        default=[],
+        metavar="FIELD",
+        help="Remove a field: --remove field_name (repeatable).",
+    )
+    mig.add_argument(
+        "--output", metavar="JSON_FILE", help="Write migrated state to this file (default: stdout)."
+    )
+    mig.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output migrated state as JSON (default when --output not set).",
+    )
 
     # G-3: schema export subcommand
     schema_cmd = sub.add_parser(
@@ -165,10 +193,7 @@ def main() -> int:
         "--dataset",
         required=True,
         metavar="JSONL_FILE",
-        help=(
-            "Path to a JSONL file.  Each line: "
-            '{"text": "...", "is_injection": true|false}'
-        ),
+        help=("Path to a JSONL file.  Each line: " '{"text": "...", "is_injection": true|false}'),
     )
     calib_cmd.add_argument(
         "--output",
@@ -182,6 +207,17 @@ def main() -> int:
         default=200,
         metavar="N",
         help="Minimum labelled examples required (default: 200).",
+    )
+    calib_cmd.add_argument(
+        "--hmac-key-hex",
+        metavar="HEX",
+        default=None,
+        help=(
+            "64-character hex string (= 32 bytes) used to sign the saved scorer "
+            "with HMAC-SHA-256.  Alternatively, set the PRAMANIX_SCORER_HMAC_KEY_HEX "
+            "environment variable.  When neither is supplied, Pramanix auto-generates "
+            "a random key and writes it to <output>.key — keep that file secret."
+        ),
     )
 
     # doctor subcommand
@@ -286,7 +322,9 @@ def _cmd_verify_proof(args: argparse.Namespace) -> int:
         print(f"VALID  decision_id={result.decision_id}  {status_line}")
         return 0
     else:
-        print(f"INVALID  decision_id={result.decision_id}  error={result.error or 'signature mismatch'}")
+        print(
+            f"INVALID  decision_id={result.decision_id}  error={result.error or 'signature mismatch'}"
+        )
         return 1
 
 
@@ -336,9 +374,12 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 
     try:
         from pramanix.crypto import PramanixVerifier
+
         verifier = PramanixVerifier(public_key_pem=public_key_pem)
     except ImportError:  # pragma: no cover
-        print("ERROR: cryptography package required. pip install cryptography", file=sys.stderr)  # pragma: no cover
+        print(
+            "ERROR: cryptography package required. pip install cryptography", file=sys.stderr
+        )  # pragma: no cover
         return 2  # pragma: no cover
     except Exception as e:
         print(f"ERROR: Invalid public key: {e}", file=sys.stderr)
@@ -669,7 +710,7 @@ def _cmd_policy_migrate(args: argparse.Namespace) -> int:
 
     # Parse field renames
     renames: dict[str, str] = {}
-    for rename_spec in (args.rename or []):
+    for rename_spec in args.rename or []:
         if "=" not in rename_spec:
             print(
                 f"ERROR: --rename must be OLD=NEW, got {rename_spec!r}.",
@@ -753,8 +794,7 @@ def _cmd_schema_export(args: argparse.Namespace) -> int:
     policy_spec: str = args.policy
     if ":" not in policy_spec:
         print(
-            "ERROR: --policy must be in the form FILE:ClassName, e.g. "
-            "my_policy.py:TradePolicy",
+            "ERROR: --policy must be in the form FILE:ClassName, e.g. " "my_policy.py:TradePolicy",
             file=sys.stderr,
         )
         return 2
@@ -842,9 +882,7 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
                 try:
                     row = _json_mod.loads(line)
                 except _json_mod.JSONDecodeError as exc:
-                    print(
-                        f"ERROR: Invalid JSON on line {line_num}: {exc}", file=sys.stderr
-                    )
+                    print(f"ERROR: Invalid JSON on line {line_num}: {exc}", file=sys.stderr)
                     return 2
                 if "text" not in row or "is_injection" not in row:
                     print(
@@ -882,8 +920,47 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
         return 1
 
     output_path = pathlib.Path(args.output)
+
+    # ── Resolve HMAC key (mandatory for pickle safety) ────────────────────────
+    # Priority: --hmac-key-hex flag > PRAMANIX_SCORER_HMAC_KEY_HEX env var >
+    #           auto-generate + write <output>.key sidecar.
+    import secrets as _secrets
+
+    _key_hex: str | None = getattr(args, "hmac_key_hex", None)
+    if not _key_hex:
+        _key_hex = os.environ.get("PRAMANIX_SCORER_HMAC_KEY_HEX")
+
+    if _key_hex:
+        try:
+            hmac_key = bytes.fromhex(_key_hex)
+        except ValueError as exc:
+            print(
+                f"ERROR: --hmac-key-hex / PRAMANIX_SCORER_HMAC_KEY_HEX is not valid hex: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        if len(hmac_key) < 16:
+            print(
+                "ERROR: HMAC key must be at least 16 bytes (32 hex chars); "
+                f"got {len(hmac_key)} bytes.",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        hmac_key = _secrets.token_bytes(32)
+        key_path = output_path.with_suffix(output_path.suffix + ".key")
+        key_path.write_text(hmac_key.hex() + "\n", encoding="utf-8")
+        print(
+            f"WARNING: No HMAC key supplied.  A random 32-byte key has been auto-generated "
+            f"and written to {key_path}.\n"
+            f"  Keep this file secret and pass it to future 'pramanix load-scorer' calls via:\n"
+            f"    --hmac-key-hex $(cat {key_path})\n"
+            f"  or set: PRAMANIX_SCORER_HMAC_KEY_HEX=$(cat {key_path})",
+            file=sys.stderr,
+        )
+
     try:
-        scorer.save(output_path)
+        scorer.save(output_path, hmac_key=hmac_key)
     except Exception as exc:
         print(f"ERROR: Failed to save scorer: {exc}", file=sys.stderr)
         return 1
@@ -901,6 +978,7 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # pramanix doctor — environment validation
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """Validate the Pramanix deployment environment.
@@ -960,75 +1038,102 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 "ERROR",
                 "musl libc detected (Alpine Linux)",
                 hint="Use a glibc-based image (e.g. python:3.13-slim-bookworm). "
-                     "musl breaks z3-solver native extensions.",
+                "musl breaks z3-solver native extensions.",
             )
         else:
             import ctypes
+
             try:
                 libc = ctypes.CDLL("libc.so.6", use_errno=True)
                 gnu_get_libc_version = getattr(libc, "gnu_get_libc_version", None)
                 if gnu_get_libc_version is not None:
                     gnu_get_libc_version.restype = ctypes.c_char_p
                     glibc_ver = gnu_get_libc_version().decode()
-                    _check(
-                        "platform-libc", "OK",
-                        f"glibc {glibc_ver} (Linux/{platform.machine()})"
-                    )
+                    _check("platform-libc", "OK", f"glibc {glibc_ver} (Linux/{platform.machine()})")
                 else:
                     _check("platform-libc", "OK", f"glibc detected (Linux/{platform.machine()})")
             except OSError:
-                _check("platform-libc", "OK", "non-musl libc (libc.so.6 not loadable but musl check passed)")
+                _check(
+                    "platform-libc",
+                    "OK",
+                    "non-musl libc (libc.so.6 not loadable but musl check passed)",
+                )
     else:
-        _check("platform-libc", "OK", f"{plat}/{platform.machine()} (non-Linux; glibc check skipped)")
+        _check(
+            "platform-libc", "OK", f"{plat}/{platform.machine()} (non-Linux; glibc check skipped)"
+        )
 
     # ── 3. Pointer width ──────────────────────────────────────────────────────
     bits = struct.calcsize("P") * 8
     if bits == 64:
         _check("platform-bits", "OK", "64-bit process")
     else:
-        _check("platform-bits", "WARN", f"{bits}-bit process — 32-bit is unsupported",
-               hint="Run on a 64-bit platform.")
+        _check(
+            "platform-bits",
+            "WARN",
+            f"{bits}-bit process — 32-bit is unsupported",
+            hint="Run on a 64-bit platform.",
+        )
 
     # ── 4. Core pramanix import ───────────────────────────────────────────────
     try:
         import pramanix as _px
+
         ver = getattr(_px, "__version__", "unknown")
         _check("pramanix-import", "OK", f"pramanix {ver}")
     except Exception as exc:
-        _check("pramanix-import", "ERROR", f"Import failed: {exc}",
-               hint="Run 'pip install pramanix' or reinstall from source.")
+        _check(
+            "pramanix-import",
+            "ERROR",
+            f"Import failed: {exc}",
+            hint="Run 'pip install pramanix' or reinstall from source.",
+        )
 
     # ── 5. Z3 solver ─────────────────────────────────────────────────────────
     try:
         import z3
+
         s = z3.Solver()
         s.add(z3.Bool("x") == True)  # noqa: E712
         res = str(s.check())
         if res == "sat":
             _check("z3-solver", "OK", f"z3 {z3.get_version_string()} — solver functional")
         else:
-            _check("z3-solver", "ERROR", f"z3.Solver().check() returned {res!r} — unexpected",
-                   hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.")
+            _check(
+                "z3-solver",
+                "ERROR",
+                f"z3.Solver().check() returned {res!r} — unexpected",
+                hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.",
+            )
     except ImportError:
-        _check("z3-solver", "ERROR", "z3-solver not installed",
-               hint="pip install 'z3-solver>=4.12'")
+        _check(
+            "z3-solver", "ERROR", "z3-solver not installed", hint="pip install 'z3-solver>=4.12'"
+        )
     except Exception as exc:
-        _check("z3-solver", "ERROR", f"z3 functional check failed: {exc}",
-               hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.")
+        _check(
+            "z3-solver",
+            "ERROR",
+            f"z3 functional check failed: {exc}",
+            hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.",
+        )
 
     # ── 6. Pydantic ───────────────────────────────────────────────────────────
     try:
         import pydantic
+
         pv = pydantic.VERSION
         major = int(pv.split(".")[0])
         if major >= 2:
             _check("pydantic", "OK", f"pydantic {pv}")
         else:
-            _check("pydantic", "ERROR", f"pydantic {pv} — v2.x required",
-                   hint="pip install 'pydantic>=2.5'")
+            _check(
+                "pydantic",
+                "ERROR",
+                f"pydantic {pv} — v2.x required",
+                hint="pip install 'pydantic>=2.5'",
+            )
     except ImportError:
-        _check("pydantic", "ERROR", "pydantic not installed",
-               hint="pip install 'pydantic>=2.5'")
+        _check("pydantic", "ERROR", "pydantic not installed", hint="pip install 'pydantic>=2.5'")
 
     # ── 7. Signing key configuration ─────────────────────────────────────────
     signing_key = os.environ.get("PRAMANIX_SIGNING_KEY", "")
@@ -1040,7 +1145,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "WARN",
             "PRAMANIX_SIGNING_KEY not set — decision proofs will be unsigned",
             hint="Set PRAMANIX_SIGNING_KEY to a 32-byte hex secret, or use "
-                 "GuardConfig(signing_key=...) at runtime.",
+            "GuardConfig(signing_key=...) at runtime.",
         )
 
     # ── 8. Cryptography package (required for PramanixSigner / Ed25519) ───────
@@ -1049,10 +1154,15 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
                 Ed25519PrivateKey,  # noqa: F401
             )
+
             _check("cryptography", "OK", "cryptography — Ed25519 available")
         except ImportError as exc:
-            _check("cryptography", "WARN", f"cryptography import partial: {exc}",
-                   hint="Reinstall: pip install 'pramanix[crypto]'")
+            _check(
+                "cryptography",
+                "WARN",
+                f"cryptography import partial: {exc}",
+                hint="Reinstall: pip install 'pramanix[crypto]'",
+            )
     else:
         _check(
             "cryptography",
@@ -1082,10 +1192,13 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if _has(modname):
             _check(f"extra:{label}", "OK", f"{modname} installed")
         else:
-            _check(f"extra:{label}", "SKIP", f"{modname} not installed (optional)", hint=install_hint)
+            _check(
+                f"extra:{label}", "SKIP", f"{modname} not installed (optional)", hint=install_hint
+            )
 
     # ── 10. Logging handler configuration ────────────────────────────────────
     from pramanix.logging_helpers import check_logging_configuration as _chk_log
+
     _log_status = _chk_log("pramanix")
     _check(
         "logging-handlers",
@@ -1102,8 +1215,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             _check(
                 "policy-hash-binding",
                 "OK",
-                "PRAMANIX_EXPECTED_POLICY_HASH is set "
-                f"({_policy_hash_env[:12]}…)",
+                "PRAMANIX_EXPECTED_POLICY_HASH is set " f"({_policy_hash_env[:12]}…)",
             )
         else:
             _check(
@@ -1123,9 +1235,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "policy-hash-binding",
             "SKIP",
             "PRAMANIX_ENV != 'production' — policy-hash check skipped",
-            hint=(
-                "Set PRAMANIX_ENV=production to enable production checks."
-            ),
+            hint=("Set PRAMANIX_ENV=production to enable production checks."),
         )
 
     # ── 12. Redis reachability (only if PRAMANIX_REDIS_URL is configured) ────
@@ -1134,6 +1244,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if _has("redis"):
             try:
                 import redis as _redis
+
                 client = _redis.from_url(redis_url, socket_connect_timeout=3)
                 client.ping()
                 _check("redis-ping", "OK", f"Redis reachable at {redis_url}")
@@ -1146,8 +1257,12 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                     hint="Check PRAMANIX_REDIS_URL and that Redis is running.",
                 )
         else:
-            _check("redis-ping", "SKIP", "redis package not installed; skipping ping",
-                   hint="pip install 'pramanix[identity]'")
+            _check(
+                "redis-ping",
+                "SKIP",
+                "redis package not installed; skipping ping",
+                hint="pip install 'pramanix[identity]'",
+            )
 
     # ── 13. Execution token backend durability ────────────────────────────
     _token_backend = os.environ.get("PRAMANIX_EXECUTION_TOKEN_BACKEND", "").lower()
@@ -1208,6 +1323,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     if getattr(args, "as_json", False):
         import json as _json_mod
+
         summary = {
             "passed": not has_error,
             "errors": sum(1 for c in checks if c["level"] == "ERROR"),

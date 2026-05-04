@@ -194,7 +194,7 @@ class TestCalibratedScorer:
         pytest.importorskip("sklearn", reason="scikit-learn required")
         scorer = CalibratedScorer()
         with pytest.raises(RuntimeError, match="fit"):
-            scorer.save(Path("/tmp/unfitted.pkl"))
+            scorer.save(Path("/tmp/unfitted.pkl"), hmac_key=b"\x00" * 32)
 
     def test_save_and_load_roundtrip(self, fitted_scorer) -> None:
         from pramanix.translator.injection_scorer import CalibratedScorer
@@ -203,8 +203,9 @@ class TestCalibratedScorer:
             path = Path(tf.name)
 
         try:
-            fitted_scorer.save(path)
-            loaded = CalibratedScorer.load(path)
+            _TEST_HMAC_KEY = b"\x00" * 32  # 32-byte sentinel — test only
+            fitted_scorer.save(path, hmac_key=_TEST_HMAC_KEY)
+            loaded = CalibratedScorer.load(path, hmac_key=_TEST_HMAC_KEY)
             score1 = fitted_scorer.score("transfer $100")
             score2 = loaded.score("transfer $100")
             assert abs(score1 - score2) < 1e-6

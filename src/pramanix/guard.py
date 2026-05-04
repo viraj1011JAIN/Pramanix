@@ -446,6 +446,200 @@ class Guard:
         self._emit_to_sinks(decision)
         return decision
 
+    # ── Shared governance pipeline ──────────────────────────────────────────────
+
+    def _apply_governance_gates(
+        self,
+        intent_values: dict[str, Any],
+        state_values: dict[str, Any],
+        decision_safe: Decision,
+        decision_id: str,
+    ) -> "Decision | None":
+        """Apply inline governance gates after a Z3 SAFE result.
+
+        Returns a :meth:`~pramanix.decision.Decision.governance_blocked` Decision
+        if any gate fires, or ``None`` if all gates pass (caller should proceed
+        with the original SAFE decision).
+
+        This method is the **single implementation** of all three governance
+        gates — IFC, privilege, and human oversight.  It is called from both
+        :meth:`_verify_core` (synchronous path) and :meth:`verify_async` (all
+        three async execution modes) so that governance is **never bypassed**
+        regardless of execution mode.
+
+        Governance objects (FlowEnforcer, ScopeEnforcer, ApprovalWorkflow) are
+        resolved from ``self._config.governance`` in the **calling process**.
+        They are never serialised across the process boundary for async-process
+        mode — the worker only evaluates the Z3 policy; governance runs in the
+        supervisor process.
+
+        Args:
+            intent_values:  Flat dict produced by model_dump() on the intent.
+            state_values:   Flat dict produced by model_dump() on the state.
+            decision_safe:  The Z3 SAFE decision returned by the worker (or
+                            produced inline).  Used only for ``decision_id``
+                            and ``policy_hash`` forwarding in oversight requests.
+            decision_id:    Log correlation ID for this verify call.
+
+        Returns:
+            ``None`` — all gates passed; caller should return ``decision_safe``.
+            :class:`~pramanix.decision.Decision` — a ``GOVERNANCE_BLOCKED``
+            decision; caller must return this instead of ``decision_safe``.
+        """
+        gov = self._config.governance
+        if gov is None:
+            return None
+
+        # ── Step 7: Privilege scope gate ──────────────────────────────────────
+        if gov.capability_manifest is not None:
+            _tool = str(
+                intent_values.get("tool") or intent_values.get("_tool") or ""
+            )
+            if _tool:
+                from pramanix.exceptions import (  # noqa: PLC0415
+                    PrivilegeEscalationError,
+                )
+                from pramanix.privilege.scope import (  # noqa: PLC0415
+                    ExecutionContext,
+                    ExecutionScope,
+                    ScopeEnforcer,
+                )
+
+                _granted = gov.execution_scope or ExecutionScope.NONE
+                _ctx = ExecutionContext(
+                    granted_scopes=_granted,
+                    principal_id=str(intent_values.get("principal_id", "")),
+                    approved_by=str(
+                        intent_values.get("oversight_request_id", "")
+                        or intent_values.get("approved_by", "")
+                    ),
+                )
+                try:
+                    ScopeEnforcer(gov.capability_manifest).enforce(_tool, _ctx)
+                except PrivilegeEscalationError as _exc:
+                    _gb = Decision.governance_blocked(
+                        stage="privilege",
+                        reason=str(_exc),
+                        intent_dump=intent_values,
+                        state_dump=state_values,
+                    )
+                    _log.warning(
+                        "pramanix.guard.governance_blocked",
+                        decision_id=decision_id,
+                        policy=self._policy.__name__,
+                        stage="privilege",
+                        tool=_tool,
+                        reason=str(_exc),
+                    )
+                    return _gb
+
+        # ── Step 8: Human oversight gate ──────────────────────────────────────
+        if gov.oversight_workflow is not None:
+            from pramanix.oversight.workflow import (  # noqa: PLC0415
+                OversightRequiredError,
+            )
+
+            _approval_id = str(intent_values.get("oversight_request_id", ""))
+            if _approval_id:
+                if not gov.oversight_workflow.check(_approval_id):
+                    _gb = Decision.governance_blocked(
+                        stage="oversight",
+                        reason=(
+                            f"Oversight request '{_approval_id}' has not been "
+                            "approved or has expired. Obtain approval before retrying."
+                        ),
+                        metadata={"oversight_request_id": _approval_id},
+                        intent_dump=intent_values,
+                        state_dump=state_values,
+                    )
+                    _log.warning(
+                        "pramanix.guard.governance_blocked",
+                        decision_id=decision_id,
+                        policy=self._policy.__name__,
+                        stage="oversight",
+                        request_id=_approval_id,
+                    )
+                    return _gb
+            else:
+                try:
+                    gov.oversight_workflow.request_approval(
+                        principal_id=str(intent_values.get("principal_id", "")),
+                        action=str(
+                            intent_values.get("tool")
+                            or intent_values.get("action")
+                            or "unknown"
+                        ),
+                        decision_id=decision_safe.decision_id,
+                        policy_hash=self._policy_hash,
+                        intent_dump={k: str(v) for k, v in intent_values.items()},
+                        reason="Human oversight required by Guard configuration.",
+                    )
+                except OversightRequiredError as _exc:
+                    _gb = Decision.governance_blocked(
+                        stage="oversight",
+                        reason=str(_exc),
+                        metadata={"oversight_request_id": _exc.request_id},
+                        intent_dump=intent_values,
+                        state_dump=state_values,
+                    )
+                    _log.warning(
+                        "pramanix.guard.governance_blocked",
+                        decision_id=decision_id,
+                        policy=self._policy.__name__,
+                        stage="oversight",
+                        request_id=_exc.request_id,
+                    )
+                    return _gb
+
+        # ── Step 9: IFC flow gate ──────────────────────────────────────────────
+        if gov.ifc_policy is not None:
+            _src_comp = str(intent_values.get("_ifc_source_component", ""))
+            _snk_comp = str(intent_values.get("_ifc_sink_component", ""))
+            _src_label_raw = intent_values.get("_ifc_source_label")
+            _snk_label_raw = intent_values.get("_ifc_sink_label")
+            if (
+                _src_comp
+                and _snk_comp
+                and _src_label_raw is not None
+                and _snk_label_raw is not None
+            ):
+                from pramanix.exceptions import FlowViolationError  # noqa: PLC0415
+                from pramanix.ifc.enforcer import FlowEnforcer  # noqa: PLC0415
+                from pramanix.ifc.labels import (  # noqa: PLC0415
+                    ClassifiedData,
+                    TrustLabel,
+                )
+
+                try:
+                    _src_label = TrustLabel(int(_src_label_raw))
+                    _snk_label = TrustLabel(int(_snk_label_raw))
+                    _data = ClassifiedData(label=_src_label, source=_src_comp)
+                    FlowEnforcer(gov.ifc_policy).gate(
+                        _data,
+                        sink_label=_snk_label,
+                        sink_component=_snk_comp,
+                    )
+                except FlowViolationError as _exc:
+                    _gb = Decision.governance_blocked(
+                        stage="ifc",
+                        reason=str(_exc),
+                        intent_dump=intent_values,
+                        state_dump=state_values,
+                    )
+                    _log.warning(
+                        "pramanix.guard.governance_blocked",
+                        decision_id=decision_id,
+                        policy=self._policy.__name__,
+                        stage="ifc",
+                        source_component=_src_comp,
+                        sink_component=_snk_comp,
+                    )
+                    return _gb
+                except (ValueError, TypeError):
+                    pass  # malformed labels — skip gate silently
+
+        return None  # all gates passed
+
     def _verify_core(
         self,
         intent: dict[str, Any] | BaseModel,
@@ -694,174 +888,14 @@ class Guard:
                     )
                     _metric_status = decision_safe.status.value
 
-                    # ── Step 7: Privilege scope gate ──────────────────────────
-                    if self._config.capability_manifest is not None:
-                        _tool = str(
-                            intent_values.get("tool")
-                            or intent_values.get("_tool")
-                            or ""
-                        )
-                        if _tool:
-                            from pramanix.privilege.scope import (  # noqa: PLC0415
-                                ExecutionContext,
-                                ExecutionScope,
-                                ScopeEnforcer,
-                            )
-
-                            _granted = self._config.execution_scope or ExecutionScope.NONE
-                            _ctx = ExecutionContext(
-                                granted_scopes=_granted,
-                                principal_id=str(
-                                    intent_values.get("principal_id", "")
-                                ),
-                                approved_by=str(
-                                    intent_values.get("oversight_request_id", "")
-                                    or intent_values.get("approved_by", "")
-                                ),
-                            )
-                            try:
-                                ScopeEnforcer(
-                                    self._config.capability_manifest
-                                ).enforce(_tool, _ctx)
-                            except PrivilegeEscalationError as _exc:
-                                _gb = Decision.governance_blocked(
-                                    stage="privilege",
-                                    reason=str(_exc),
-                                    intent_dump=intent_values,
-                                    state_dump=state_values,
-                                )
-                                _metric_status = _gb.status.value
-                                _log.warning(
-                                    "pramanix.guard.governance_blocked",
-                                    decision_id=decision_id,
-                                    policy=self._policy.__name__,
-                                    stage="privilege",
-                                    tool=_tool,
-                                    reason=str(_exc),
-                                )
-                                return _gb
-
-                    # ── Step 8: Human oversight gate ──────────────────────────
-                    if self._config.oversight_workflow is not None:
-                        from pramanix.oversight.workflow import (  # noqa: PLC0415
-                            OversightRequiredError,
-                        )
-
-                        _approval_id = str(
-                            intent_values.get("oversight_request_id", "")
-                        )
-                        if _approval_id:
-                            if not self._config.oversight_workflow.check(_approval_id):
-                                _gb = Decision.governance_blocked(
-                                    stage="oversight",
-                                    reason=(
-                                        f"Oversight request '{_approval_id}' has not "
-                                        "been approved or has expired. Obtain approval "
-                                        "before retrying."
-                                    ),
-                                    metadata={"oversight_request_id": _approval_id},
-                                    intent_dump=intent_values,
-                                    state_dump=state_values,
-                                )
-                                _metric_status = _gb.status.value
-                                _log.warning(
-                                    "pramanix.guard.governance_blocked",
-                                    decision_id=decision_id,
-                                    policy=self._policy.__name__,
-                                    stage="oversight",
-                                    request_id=_approval_id,
-                                )
-                                return _gb
-                        else:
-                            try:
-                                self._config.oversight_workflow.request_approval(
-                                    principal_id=str(
-                                        intent_values.get("principal_id", "")
-                                    ),
-                                    action=str(
-                                        intent_values.get("tool")
-                                        or intent_values.get("action")
-                                        or "unknown"
-                                    ),
-                                    decision_id=decision_safe.decision_id,
-                                    policy_hash=self._policy_hash,
-                                    intent_dump={
-                                        k: str(v) for k, v in intent_values.items()
-                                    },
-                                    reason="Human oversight required by Guard configuration.",
-                                )
-                            except OversightRequiredError as _exc:
-                                _gb = Decision.governance_blocked(
-                                    stage="oversight",
-                                    reason=str(_exc),
-                                    metadata={"oversight_request_id": _exc.request_id},
-                                    intent_dump=intent_values,
-                                    state_dump=state_values,
-                                )
-                                _metric_status = _gb.status.value
-                                _log.warning(
-                                    "pramanix.guard.governance_blocked",
-                                    decision_id=decision_id,
-                                    policy=self._policy.__name__,
-                                    stage="oversight",
-                                    request_id=_exc.request_id,
-                                )
-                                return _gb
-
-                    # ── Step 9: IFC flow gate ─────────────────────────────────
-                    if self._config.ifc_policy is not None:
-                        _src_comp = str(
-                            intent_values.get("_ifc_source_component", "")
-                        )
-                        _snk_comp = str(
-                            intent_values.get("_ifc_sink_component", "")
-                        )
-                        _src_label_raw = intent_values.get("_ifc_source_label")
-                        _snk_label_raw = intent_values.get("_ifc_sink_label")
-                        if (
-                            _src_comp
-                            and _snk_comp
-                            and _src_label_raw is not None
-                            and _snk_label_raw is not None
-                        ):
-                            from pramanix.ifc.enforcer import (  # noqa: PLC0415
-                                FlowEnforcer,
-                            )
-                            from pramanix.ifc.labels import (  # noqa: PLC0415
-                                ClassifiedData,
-                                TrustLabel,
-                            )
-
-                            try:
-                                _src_label = TrustLabel(int(_src_label_raw))
-                                _snk_label = TrustLabel(int(_snk_label_raw))
-                                _data = ClassifiedData(
-                                    label=_src_label, source=_src_comp
-                                )
-                                FlowEnforcer(self._config.ifc_policy).gate(
-                                    _data,
-                                    sink_label=_snk_label,
-                                    sink_component=_snk_comp,
-                                )
-                            except FlowViolationError as _exc:
-                                _gb = Decision.governance_blocked(
-                                    stage="ifc",
-                                    reason=str(_exc),
-                                    intent_dump=intent_values,
-                                    state_dump=state_values,
-                                )
-                                _metric_status = _gb.status.value
-                                _log.warning(
-                                    "pramanix.guard.governance_blocked",
-                                    decision_id=decision_id,
-                                    policy=self._policy.__name__,
-                                    stage="ifc",
-                                    source_component=_src_comp,
-                                    sink_component=_snk_comp,
-                                )
-                                return _gb
-                            except (ValueError, TypeError):
-                                pass  # malformed labels — skip gate silently
+                    # ── Steps 7-9: Governance gates (privilege, oversight, IFC)
+                    # Single shared implementation — never diverges from async path.
+                    _gate_result = self._apply_governance_gates(
+                        intent_values, state_values, decision_safe, decision_id
+                    )
+                    if _gate_result is not None:
+                        _metric_status = _gate_result.status.value
+                        return _gate_result
 
                     _log.info(
                         "pramanix.guard.decision",
@@ -1238,6 +1272,14 @@ class Guard:
                 self._config.solver_timeout_ms,
                 self._config.solver_rlimit,
             )
+            # Governance gates must fire even in async mode.  The worker only
+            # evaluates the Z3 policy; governance runs in the calling process.
+            if decision.allowed:
+                _gate_result = self._apply_governance_gates(
+                    intent_values, state_values, decision, decision.decision_id
+                )
+                if _gate_result is not None:
+                    return await _timed(self._sign_decision(_gate_result))
             return await _timed(self._sign_decision(decision))
 
         if mode == "async-process":
@@ -1303,6 +1345,16 @@ class Guard:
                         Decision.error(reason=f"Process worker error ({type(exc).__name__}): {exc}")
                     )
                 )
+            # Governance gates must fire even in async-process mode.  The sealed
+            # worker only evaluated the Z3 policy; governance runs here in the
+            # supervisor process where FlowEnforcer, ScopeEnforcer, and
+            # ApprovalWorkflow objects live (they are NOT picklable).
+            if decision.allowed:
+                _gate_result = self._apply_governance_gates(
+                    intent_values, state_values, decision, decision.decision_id
+                )
+                if _gate_result is not None:
+                    return await _timed(self._sign_decision(_gate_result))
             return await _timed(self._sign_decision(decision))
 
         return await _timed(

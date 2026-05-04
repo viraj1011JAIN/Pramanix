@@ -39,6 +39,7 @@ import pytest
 
 import pramanix
 from pramanix.decision import _BLOCKED_STATUSES, Decision, SolverStatus
+from pramanix.governance_config import GovernanceConfig
 from pramanix.guard_config import GuardConfig
 
 # ============================================================================
@@ -223,6 +224,8 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Provenance / chain-of-custody (v1.0.0+)
         "ProvenanceChain",
         "ProvenanceRecord",
+        # Governance config bundle (v1.0.0+)
+        "GovernanceConfig",
     }
 )
 
@@ -798,12 +801,8 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         "audit_sinks",
         # translator circuit breaker config (v1.0.0)
         "translator_circuit_breaker_config",
-        # Architectural pillar opt-in fields (v1.0.0+)
-        "ifc_policy",
-        "capability_manifest",
-        # Phase 1-A: granted execution scope for privilege gate (v1.0.0+)
-        "execution_scope",
-        "oversight_workflow",
+        # Phase 1-B: GovernanceConfig bundle (replaces 4 flat fields) (v1.0.0+)
+        "governance",
         "memory_store",
     }
 )
@@ -834,12 +833,8 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     "consensus_strictness": "semantic",
     "audit_sinks": (),
     "translator_circuit_breaker_config": None,
-    # Architectural pillar opt-in fields (v1.0.0+)
-    "ifc_policy": None,
-    "capability_manifest": None,
-    # Phase 1-A: granted execution scope for privilege gate (v1.0.0+)
-    "execution_scope": None,
-    "oversight_workflow": None,
+    # Phase 1-B: GovernanceConfig bundle (replaces 4 flat fields) (v1.0.0+)
+    "governance": None,
     "memory_store": None,
 }
 
@@ -935,3 +930,50 @@ class TestGuardConfigFieldLock:
 
         with pytest.raises(ConfigurationError):
             GuardConfig(injection_threshold=threshold)
+
+
+# ── GovernanceConfig contract ─────────────────────────────────────────────────
+
+
+class TestGovernanceConfigLock:
+    """Contract: GovernanceConfig structure, validation, and immutability."""
+
+    def test_all_defaults_none(self) -> None:
+        """GovernanceConfig() with no arguments must succeed and all fields must default None."""
+        gov = GovernanceConfig()
+        assert gov.ifc_policy is None
+        assert gov.capability_manifest is None
+        assert gov.execution_scope is None
+        assert gov.oversight_workflow is None
+
+    def test_is_frozen(self) -> None:
+        """GovernanceConfig must remain immutable (frozen=True)."""
+        gov = GovernanceConfig()
+        with pytest.raises(AttributeError):
+            gov.ifc_policy = object()  # type: ignore[misc]
+
+    def test_execution_scope_without_manifest_raises(self) -> None:
+        """execution_scope requires capability_manifest — cross-validation in __post_init__."""
+        from pramanix.exceptions import ConfigurationError
+
+        sentinel = object()  # stand-in for an ExecutionScope value
+        with pytest.raises(ConfigurationError, match="execution_scope requires capability_manifest"):
+            GovernanceConfig(execution_scope=sentinel)
+
+    def test_execution_scope_with_manifest_accepted(self) -> None:
+        """execution_scope + capability_manifest together must not raise."""
+        manifest_stub = object()
+        scope_stub = object()
+        gov = GovernanceConfig(capability_manifest=manifest_stub, execution_scope=scope_stub)
+        assert gov.capability_manifest is manifest_stub
+        assert gov.execution_scope is scope_stub
+
+    def test_guard_config_accepts_governance_bundle(self) -> None:
+        """GuardConfig(governance=GovernanceConfig()) must construct without error."""
+        gov = GovernanceConfig()
+        cfg = GuardConfig(governance=gov)
+        assert cfg.governance is gov
+
+    def test_guard_config_governance_default_none(self) -> None:
+        """GuardConfig().governance defaults to None — all governance gates disabled."""
+        assert GuardConfig().governance is None

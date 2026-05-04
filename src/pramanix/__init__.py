@@ -145,6 +145,7 @@ from pramanix.expressions import (
     ForAll,
     NestedField,
 )
+from pramanix.governance_config import GovernanceConfig
 from pramanix.guard import Guard, GuardConfig
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
@@ -249,6 +250,7 @@ __all__ = [
     # Guard
     "Guard",
     "GuardConfig",
+    "GovernanceConfig",
     "GuardError",
     "GuardViolationError",
     # Integrations — beta

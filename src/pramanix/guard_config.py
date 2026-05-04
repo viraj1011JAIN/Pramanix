@@ -33,7 +33,9 @@ from pramanix.resolvers import resolver_registry
 if TYPE_CHECKING:
     from pramanix.crypto import PramanixSigner
 
-__all__ = ["GuardConfig"]
+__all__ = ["GovernanceConfig", "GuardConfig"]
+
+from pramanix.governance_config import GovernanceConfig  # noqa: E402
 
 # ── Structlog secrets redaction ───────────────────────────────────────────────
 # Pattern matches any event-dict key that looks like a credential.
@@ -345,67 +347,25 @@ class GuardConfig:
         config = GuardConfig(audit_sinks=(StdoutAuditSink(), InMemoryAuditSink()))
     """
 
-    ifc_policy: Any | None = field(default=None)
-    """Optional :class:`~pramanix.ifc.FlowPolicy` for information-flow control.
+    governance: GovernanceConfig | None = field(default=None)
+    """Optional :class:`~pramanix.governance_config.GovernanceConfig` bundle.
 
-    When set, Guard enforces IFC inline after a Z3 SAFE result.  Callers
-    signal IFC context via four reserved intent keys:
+    Groups all four governance pillars — IFC, privilege separation, human
+    oversight, and execution scope — into a single, cross-validated object.
+    Replaces the four flat ``ifc_policy``, ``capability_manifest``,
+    ``execution_scope``, and ``oversight_workflow`` fields that previously
+    lived at the root of ``GuardConfig``.
 
-    * ``_ifc_source_label`` — integer :class:`~pramanix.ifc.TrustLabel` value
-      of the data source (e.g. ``0`` for UNTRUSTED, ``2`` for INTERNAL).
-    * ``_ifc_sink_label`` — trust label of the destination component.
-    * ``_ifc_source_component`` — name of the originating component.
-    * ``_ifc_sink_component`` — name of the receiving component.
+    Guard's ``_apply_governance_gates`` method reads the nested fields via
+    ``self._config.governance.*``.  Governance is evaluated *after* a Z3 SAFE
+    result in both synchronous ``_verify_core`` and all ``verify_async``
+    execution modes — there is no async bypass.
 
-    If any of these keys are absent the IFC gate is skipped for that call.
-    On denial, :meth:`~pramanix.decision.Decision.governance_blocked` is
-    returned with ``stage="ifc"``.
+    Cross-validation is performed inside
+    :meth:`~pramanix.governance_config.GovernanceConfig.__post_init__` at
+    construction time, not at verify time.
 
-    Default: ``None`` (IFC not enforced).
-    """
-
-    capability_manifest: Any | None = field(default=None)
-    """Optional :class:`~pramanix.privilege.CapabilityManifest` for privilege
-    separation.
-
-    When set, Guard enforces least-privilege inline after a Z3 SAFE result.
-    The tool name is read from ``intent["tool"]``; if absent the privilege
-    gate is skipped.  Granted scopes come from :attr:`execution_scope`.
-
-    On denial, :meth:`~pramanix.decision.Decision.governance_blocked` is
-    returned with ``stage="privilege"``.
-
-    Default: ``None`` (privilege separation not enforced).
-    """
-
-    execution_scope: Any | None = field(default=None)
-    """Granted :class:`~pramanix.privilege.ExecutionScope` flags for this
-    Guard's principal.
-
-    Used by the inline privilege gate when :attr:`capability_manifest` is set.
-    Represents the maximum scope the calling agent is allowed to exercise.
-
-    Default: ``None`` → treated as ``ExecutionScope.NONE`` (deny all
-    capability checks).
-    """
-
-    oversight_workflow: Any | None = field(default=None)
-    """Optional :class:`~pramanix.oversight.InMemoryApprovalWorkflow` (or any
-    compatible approval workflow implementation).
-
-    When set, Guard enforces human oversight inline after a Z3 SAFE result:
-
-    * If ``intent["oversight_request_id"]`` is present, Guard calls
-      ``workflow.check(request_id)`` — if not approved it returns
-      :meth:`~pramanix.decision.Decision.governance_blocked` with
-      ``stage="oversight"``.
-    * If absent, Guard calls ``workflow.request_approval(...)`` which always
-      raises :exc:`~pramanix.oversight.OversightRequiredError`; Guard catches
-      it and returns GOVERNANCE_BLOCKED with
-      ``metadata["oversight_request_id"]`` set so callers can route the
-      approval request to a human reviewer, then retry with that ID.
-
-    Default: ``None`` (human oversight not enforced).
+    Default: ``None`` (no governance gates enforced).
     """
 
     memory_store: Any | None = field(default=None)
