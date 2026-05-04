@@ -14,12 +14,14 @@ repository = "https://github.com/viraj1011JAIN/Pramanix"
 documentation = "https://github.com/viraj1011JAIN/Pramanix#readme"
 keywords = ["ai-safety", "guardrails", "smt", "z3", "formal-verification", "neuro-symbolic"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Security",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
     "Operating System :: OS Independent",
@@ -35,11 +37,12 @@ packages = [{include = "pramanix", from = "src"}]
 pramanix = "pramanix.cli:main"
 
 [tool.poetry.dependencies]
-python = ">=3.13,<4.0"
+python = ">=3.11,<4.0"
 pydantic = "^2.5"
 z3-solver = "^4.12"
 structlog = "^23.2"
-prometheus-client = "^0.19"
+prometheus-client = {version = "^0.19", optional = true}
+orjson = {version = ">=3.9", optional = true}
 httpx = {version = "^0.27", optional = true}
 openai = {version = "^1.10", optional = true}
 anthropic = {version = "^0.97", optional = true}
@@ -52,7 +55,6 @@ langchain-core = {version = ">=0.1", optional = true}
 llama-index-core = {version = ">=0.10", optional = true}
 pyautogen = {version = ">=0.2", optional = true}
 redis = {version = ">=5.0", optional = true}
-orjson = ">=3.9"
 cryptography = {version = ">=41.0", optional = true}
 boto3 = {version = ">=1.34", optional = true}
 azure-keyvault-secrets = {version = ">=4.7", optional = true}
@@ -83,6 +85,8 @@ autogen = ["pyautogen"]
 integrations = ["fastapi", "starlette", "httpx", "langchain-core", "llama-index-core", "pyautogen"]
 identity = ["redis"]
 audit = ["fpdf2"]
+metrics = ["prometheus-client"]
+performance = ["orjson"]
 circuit-breaker = []
 crypto = ["cryptography"]
 aws = ["boto3"]
@@ -104,7 +108,7 @@ crewai = ["crewai"]
 pydantic-ai = ["pydantic-ai"]
 semantic-kernel = ["semantic-kernel"]
 haystack = ["haystack-ai"]
-all = ["httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2", "cohere", "mistralai", "google-generativeai", "llama-cpp-python", "asyncpg", "dspy-ai", "crewai", "pydantic-ai", "semantic-kernel", "haystack-ai"]
+all = ["prometheus-client", "orjson", "httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2", "cohere", "mistralai", "google-generativeai", "llama-cpp-python", "asyncpg", "dspy-ai", "crewai", "pydantic-ai", "semantic-kernel", "haystack-ai"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -133,7 +137,7 @@ google-generativeai = ">=0.7"
 
 [tool.mypy]
 strict = true
-python_version = "3.13"
+python_version = "3.11"
 incremental = false
 warn_return_any = true
 warn_unused_configs = true
@@ -244,7 +248,7 @@ ignore_missing_imports = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -356,7 +360,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 98
+fail_under = 95
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

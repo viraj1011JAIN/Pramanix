@@ -26,7 +26,8 @@ Hierarchy::
     │   ├── LLMTimeoutError             # LLM API timed out after retries (M3)
     │   ├── SemanticPolicyViolation     # post-consensus business-rule check (M3)
     │   └── InjectionBlockedError       # pre-LLM injection scorer blocked input (M3)
-    └── ConfigurationError              # Guard / Policy misconfiguration
+    ├── ConfigurationError              # Guard / Policy misconfiguration
+    └── IntegrityError                  # HMAC / cryptographic artifact verification failure
 """
 from __future__ import annotations
 
@@ -41,6 +42,7 @@ __all__ = [
     "GuardViolationError",
     "InjectionBlockedError",
     "InputTooLongError",
+    "IntegrityError",
     "InvariantLabelError",
     "LLMTimeoutError",
     "MemoryViolationError",
@@ -541,4 +543,23 @@ class ProvenanceError(PramanixError):
     ) -> None:
         self.decision_id = decision_id
         self.reason = reason
+        super().__init__(message)
+
+
+# ── Integrity errors ──────────────────────────────────────────────────────────
+
+
+class IntegrityError(PramanixError):
+    """HMAC or cryptographic integrity check failed.
+
+    Raised when a serialised artifact (e.g. a :class:`~pramanix.translator.injection_scorer.CalibratedScorer`
+    pickle) fails HMAC verification, indicating the file has been tampered with
+    or was signed with a different key.
+
+    Attributes:
+        path:  File path that failed verification (if applicable).
+    """
+
+    def __init__(self, message: str, *, path: str = "") -> None:
+        self.path = path
         super().__init__(message)

@@ -130,6 +130,7 @@ def _build_decision_canonical(
     return {
         "allowed": bool(allowed),
         "explanation": str(explanation or ""),
+        "hash_alg": "sha256-v1",
         "intent_dump": _make_json_safe(dict(intent_dump) if intent_dump else {}),
         "policy": str(policy or ""),
         "state_dump": _make_json_safe(dict(state_dump) if state_dump else {}),
@@ -248,6 +249,7 @@ class Decision:
     intent_dump: dict[str, Any] = field(default_factory=dict)
     state_dump: dict[str, Any] = field(default_factory=dict)
     decision_hash: str = field(default="")
+    hash_alg: str = "sha256-v1"
     signature: str | None = None
     public_key_id: str | None = None
     policy_hash: str | None = None
@@ -338,6 +340,7 @@ class Decision:
             "intent_dump": _make_json_safe(self.intent_dump),
             "state_dump": _make_json_safe(self.state_dump),
             "decision_hash": self.decision_hash,
+            "hash_alg": self.hash_alg,
             "signature": self.signature,
             "public_key_id": self.public_key_id,
             "policy_hash": self.policy_hash,

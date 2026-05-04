@@ -13,23 +13,15 @@ Missing lines targeted:
   RedundantTranslator: __init__ and extract
   create_translator: all model-prefix routing + unknown model error
 """
+
 from __future__ import annotations
 
 import asyncio
-import tempfile
-import textwrap
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 
 import pytest
-from pydantic import BaseModel
-
-from typing import Optional
-
-from typing import Optional
-
 from pramanix.exceptions import (
-    ConfigurationError,
     ExtractionFailureError,
     ExtractionMismatchError,
     InjectionBlockedError,
@@ -43,10 +35,12 @@ from pramanix.translator.redundant import (
     create_translator,
     extract_with_consensus,
 )
+from pydantic import BaseModel
+
 from tests.helpers.real_protocols import _FakeEntryPoint
 
-
 # ── Minimal pydantic schema used in consensus tests ──────────────────────────
+
 
 class _Transfer(BaseModel):
     amount: Decimal
@@ -56,16 +50,20 @@ class _Transfer(BaseModel):
 
 class _TransferWithOptional(BaseModel):
     """Schema with an Optional[str] field for branch coverage of Optional unwrapping."""
+
     amount: Decimal
     note: Optional[str] = None
 
 
 # ── Minimal Translator duck-type ──────────────────────────────────────────────
 
+
 class _FixedTranslator:
     """Returns a pre-configured dict, raising on demand."""
 
-    def __init__(self, result: dict[str, Any] | BaseException, model: str = "fixed") -> None:
+    def __init__(
+        self, result: dict[str, Any] | BaseException, model: str = "fixed"
+    ) -> None:
         self._result = result
         self.model = model
 
@@ -84,6 +82,7 @@ class _FixedTranslator:
 # _semantic_field_equal — all branches
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestSemanticFieldEqual:
     """Lines 131->143, 136-139, 150-158, 164, 174-175, 190-195."""
 
@@ -98,17 +97,28 @@ class TestSemanticFieldEqual:
     # ── Bool via schema annotation (lines 143-164) ────────────────────────────
     def test_bool_schema_true_variants_equal(self):
         """Lines 143-164: bool comparison via schema annotation."""
-        assert _semantic_field_equal(True, True, schema=_Transfer, field_name="approved")
-        assert _semantic_field_equal(True, "true", schema=_Transfer, field_name="approved")
+        assert _semantic_field_equal(
+            True, True, schema=_Transfer, field_name="approved"
+        )
+        assert _semantic_field_equal(
+            True, "true", schema=_Transfer, field_name="approved"
+        )
         assert _semantic_field_equal(True, 1, schema=_Transfer, field_name="approved")
 
     def test_bool_schema_false_variants_equal(self):
-        assert _semantic_field_equal(False, "false", schema=_Transfer, field_name="approved")
-        assert _semantic_field_equal(False, "0", schema=_Transfer, field_name="approved")
+        assert _semantic_field_equal(
+            False, "false", schema=_Transfer, field_name="approved"
+        )
+        assert _semantic_field_equal(
+            False, "0", schema=_Transfer, field_name="approved"
+        )
         assert _semantic_field_equal(False, 0, schema=_Transfer, field_name="approved")
 
     def test_bool_schema_true_vs_false_not_equal(self):
-        assert _semantic_field_equal(True, False, schema=_Transfer, field_name="approved") is False
+        assert (
+            _semantic_field_equal(True, False, schema=_Transfer, field_name="approved")
+            is False
+        )
 
     def test_bool_unrecognized_string_falls_back_to_eq(self):
         """Line 164: unrecognised bool string falls back to == comparison."""
@@ -123,7 +133,9 @@ class TestSemanticFieldEqual:
     # ── Numeric via schema annotation (lines 166-175) ─────────────────────────
     def test_numeric_schema_decimal_equals_float(self):
         """Lines 169-175: schema says Decimal → Decimal comparison."""
-        assert _semantic_field_equal(Decimal("500"), 500.0, schema=_Transfer, field_name="amount")
+        assert _semantic_field_equal(
+            Decimal("500"), 500.0, schema=_Transfer, field_name="amount"
+        )
 
     def test_numeric_runtime_int_float(self):
         """Lines 170-175: runtime isinstance numeric values."""
@@ -140,7 +152,12 @@ class TestSemanticFieldEqual:
     def test_string_schema_decimal_numeric_strings_equal(self):
         """Lines 181-186: schema=str, numeric-looking strings compared as Decimal."""
         # recipient is str type; "500" and "500.0" parse as Decimal → equal
-        assert _semantic_field_equal("500", "500.0", schema=_Transfer, field_name="recipient") is True
+        assert (
+            _semantic_field_equal(
+                "500", "500.0", schema=_Transfer, field_name="recipient"
+            )
+            is True
+        )
         assert _semantic_field_equal("500", "500.00") is True
 
     def test_string_casefold_equality(self):
@@ -161,9 +178,12 @@ class TestSemanticFieldEqual:
 
     def test_generic_decimal_conversion_possible(self):
         """Lines 190-193: non-string, non-numeric but Decimal-convertible value."""
+
         # A bytes-like or custom object that str() converts to a valid Decimal
         class _NumStr:
-            def __str__(self): return "42.0"
+            def __str__(self):
+                return "42.0"
+
         result = _semantic_field_equal(_NumStr(), Decimal("42"))
         assert isinstance(result, bool)
 
@@ -176,28 +196,48 @@ class TestSemanticFieldEqual:
     def test_field_not_in_schema_skips_annotation_lookup(self):
         """Line 131->143: field_name not in schema → branch jumps to bool check."""
         # 'nonexistent' field is not in _Transfer → field_info is None → skip to 143
-        result = _semantic_field_equal("hello", "hello", schema=_Transfer, field_name="nonexistent")
+        result = _semantic_field_equal(
+            "hello", "hello", schema=_Transfer, field_name="nonexistent"
+        )
         assert result is True  # casefold comparison
 
     # ── Lines 136-139: Optional[X] unwrapping ────────────────────────────────
     def test_optional_field_annotation_unwrapped(self):
         """Lines 136-139: Optional[str] has __origin__ → unwrapped to str."""
         # note is Optional[str] — annotation has __origin__ = Union
-        assert _semantic_field_equal("hello", "HELLO", schema=_TransferWithOptional, field_name="note") is True
-        assert _semantic_field_equal(None, None, schema=_TransferWithOptional, field_name="note") is True
+        assert (
+            _semantic_field_equal(
+                "hello", "HELLO", schema=_TransferWithOptional, field_name="note"
+            )
+            is True
+        )
+        assert (
+            _semantic_field_equal(
+                None, None, schema=_TransferWithOptional, field_name="note"
+            )
+            is True
+        )
 
     # ── Lines 158, 164: _norm_bool returns None for non-normalizable values ───
     def test_bool_field_non_normalizable_value_falls_back_to_eq(self):
         """Lines 158, 164: val not bool/int/str → _norm_bool returns None → fallback ==."""
         # field_type is bool, but values are dicts → _norm_bool returns None → line 164
-        assert _semantic_field_equal({}, {}, schema=_Transfer, field_name="approved") is True
-        assert _semantic_field_equal({}, {"x": 1}, schema=_Transfer, field_name="approved") is False
+        assert (
+            _semantic_field_equal({}, {}, schema=_Transfer, field_name="approved")
+            is True
+        )
+        assert (
+            _semantic_field_equal({}, {"x": 1}, schema=_Transfer, field_name="approved")
+            is False
+        )
 
     # ── Lines 174-175: numeric schema type but non-numeric string value ───────
     def test_numeric_schema_non_numeric_string_hits_invalid_operation(self):
         """Lines 174-175: schema says Decimal, value is non-numeric → Decimal raises."""
         # field_type=Decimal (is_numeric_type=True), Decimal("abc") → InvalidOperation
-        result = _semantic_field_equal("abc", "abc", schema=_Transfer, field_name="amount")
+        result = _semantic_field_equal(
+            "abc", "abc", schema=_Transfer, field_name="amount"
+        )
         # Falls through to string comparison after InvalidOperation
         assert isinstance(result, bool)
 
@@ -205,6 +245,7 @@ class TestSemanticFieldEqual:
 # ═════════════════════════════════════════════════════════════════════════════
 # _enforce_consensus — lenient mode paths (lines 508->exit, 524, 527)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestEnforceConsensus:
     """Lines 508->exit (lenient, no mismatches), 524 (non-critical log), 527 (critical raise)."""
@@ -313,9 +354,7 @@ class TestExtractWithConsensus:
     def test_happy_path_strict_keys(self):
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
-        result = self._run(
-            extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-        )
+        result = self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
         assert result["recipient"] == "Alice"
 
     def test_both_fail_with_timeout_raises_llm_timeout(self):
@@ -323,86 +362,70 @@ class TestExtractWithConsensus:
         ta = _FixedTranslator(LLMTimeoutError("a timed out", model="a", attempts=3))
         tb = _FixedTranslator(LLMTimeoutError("b timed out", model="b", attempts=3))
         with pytest.raises(LLMTimeoutError):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_both_fail_extraction_error_raised(self):
         """Line 342: both fail with non-timeout error → ExtractionFailureError."""
         ta = _FixedTranslator(ExtractionFailureError("bad json"))
         tb = _FixedTranslator(ExtractionFailureError("also bad"))
         with pytest.raises(ExtractionFailureError, match="Both translators"):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_model_a_timeout_raises(self):
         """Line 349: model A fails with LLMTimeoutError."""
         ta = _FixedTranslator(LLMTimeoutError("a timed out", model="a", attempts=1))
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         with pytest.raises(LLMTimeoutError):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_model_a_fails_extraction_error_raised(self):
         """Line 351: model A fails → ExtractionFailureError naming A."""
         ta = _FixedTranslator(ExtractionFailureError("A broke"))
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         with pytest.raises(ExtractionFailureError, match="fixed"):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_model_b_timeout_raises(self):
         """Line 358: model B fails with LLMTimeoutError."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator(LLMTimeoutError("b timed out", model="b", attempts=1))
         with pytest.raises(LLMTimeoutError):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_model_b_fails_extraction_error_raised(self):
         """Lines 360-364: model B fails → ExtractionFailureError naming B."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator(ExtractionFailureError("B broke"))
         with pytest.raises(ExtractionFailureError, match="fixed"):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_schema_validation_failure_model_a(self):
         """Lines 374-377 (line 381-382 region): model A returns invalid schema."""
         ta = _FixedTranslator({"amount": "not_a_number", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         with pytest.raises(ExtractionFailureError, match="Schema validation"):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_schema_validation_failure_model_b(self):
         """Lines 381-384 (line 404 region): model B returns invalid schema."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "bad", "recipient": "Alice"})
         with pytest.raises(ExtractionFailureError, match="Schema validation"):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_consensus_mismatch_raises(self):
         """Consensus disagreement → ExtractionMismatchError."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "999", "recipient": "Alice"})
         with pytest.raises(ExtractionMismatchError):
-            self._run(
-                extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb))
-            )
+            self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
     def test_lenient_mode_non_critical_disagreement_returns_a(self):
         """Line 429 region: lenient mode non-critical disagreement → returns A."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": True})
-        tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
+        tb = _FixedTranslator(
+            {"amount": "100", "recipient": "Alice", "approved": False}
+        )
         result = self._run(
             extract_with_consensus(
                 "Pay Alice 100",
@@ -453,8 +476,12 @@ class TestExtractWithConsensus:
             )
 
     def test_unanimous_mode_full_agreement(self):
-        ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
-        tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
+        ta = _FixedTranslator(
+            {"amount": "100", "recipient": "Alice", "approved": False}
+        )
+        tb = _FixedTranslator(
+            {"amount": "100", "recipient": "Alice", "approved": False}
+        )
         result = self._run(
             extract_with_consensus(
                 "Pay Alice 100",
@@ -537,51 +564,61 @@ class TestEnforceConsensusUnknownMode:
 # create_translator — all routing branches
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestCreateTranslator:
     """create_translator routes to the right class for each model prefix."""
 
     def test_gpt_prefix(self):
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+
         t = create_translator("gpt-4o", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_o1_prefix(self):
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+
         t = create_translator("o1-mini", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_o3_prefix(self):
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+
         t = create_translator("o3-mini", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_chatgpt_prefix(self):
         from pramanix.translator.openai_compat import OpenAICompatTranslator
+
         t = create_translator("chatgpt-4-turbo", api_key="sk-test")
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_claude_prefix(self):
         from pramanix.translator.anthropic import AnthropicTranslator
+
         t = create_translator("claude-opus-4-5", api_key="sk-ant-test")
         assert isinstance(t, AnthropicTranslator)
 
     def test_ollama_prefix(self):
         from pramanix.translator.ollama import OllamaTranslator
+
         t = create_translator("ollama:llama3", base_url="http://localhost:11434")
         assert isinstance(t, OllamaTranslator)
 
     def test_gemini_prefix(self):
         from pramanix.translator.gemini import GeminiTranslator
+
         t = create_translator("gemini:gemini-pro", api_key="test-key")
         assert isinstance(t, GeminiTranslator)
 
     def test_cohere_prefix(self):
         from pramanix.translator.cohere import CohereTranslator
+
         t = create_translator("cohere:command-r-plus", api_key="test-key")
         assert isinstance(t, CohereTranslator)
 
     def test_mistral_prefix(self):
         from pramanix.translator.mistral import MistralTranslator
+
         t = create_translator("mistral:mistral-large-latest", api_key="test-key")
         assert isinstance(t, MistralTranslator)
 
@@ -593,6 +630,7 @@ class TestCreateTranslator:
 # ═════════════════════════════════════════════════════════════════════════════
 # RedundantTranslator — __init__ and extract
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestRedundantTranslator:
     """RedundantTranslator wraps two translators and delegates to extract_with_consensus."""
@@ -613,7 +651,9 @@ class TestRedundantTranslator:
 
     def test_extract_lenient_mode(self):
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": True})
-        tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
+        tb = _FixedTranslator(
+            {"amount": "100", "recipient": "Alice", "approved": False}
+        )
         rt = RedundantTranslator(
             ta,
             tb,

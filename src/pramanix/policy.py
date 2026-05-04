@@ -557,6 +557,20 @@ class Policy:
     # ── Meta accessors ────────────────────────────────────────────────────────
 
     @classmethod
+    def _get_meta(cls) -> type | None:
+        """Walk the MRO to find the nearest declared ``Meta`` inner class.
+
+        ``vars(cls).get("Meta")`` only searches the class's own ``__dict__``,
+        causing subclasses that inherit ``Meta`` without redeclaring it to
+        silently drop all meta attributes.  MRO traversal fixes this.
+        """
+        for klass in cls.__mro__:
+            meta = vars(klass).get("Meta")
+            if meta is not None:
+                return meta
+        return None
+
+    @classmethod
     def meta_version(cls) -> str | None:
         """Return ``Meta.version`` if declared, otherwise ``None``.
 
@@ -568,7 +582,7 @@ class Policy:
         semver = cls.meta_semver()
         if semver is not None:
             return "{}.{}.{}".format(*semver)
-        meta = vars(cls).get("Meta")
+        meta = cls._get_meta()
         if meta is None:
             return None
         return getattr(meta, "version", None)
@@ -584,7 +598,7 @@ class Policy:
         Returns:
             The semver tuple or ``None`` if not declared.
         """
-        meta = vars(cls).get("Meta")
+        meta = cls._get_meta()
         if meta is None:
             return None
         return getattr(meta, "semver", None)
@@ -592,7 +606,7 @@ class Policy:
     @classmethod
     def meta_intent_model(cls) -> type | None:
         """Return ``Meta.intent_model`` if declared, otherwise ``None``."""
-        meta = vars(cls).get("Meta")
+        meta = cls._get_meta()
         if meta is None:
             return None
         return getattr(meta, "intent_model", None)
@@ -600,7 +614,7 @@ class Policy:
     @classmethod
     def meta_state_model(cls) -> type | None:
         """Return ``Meta.state_model`` if declared, otherwise ``None``."""
-        meta = vars(cls).get("Meta")
+        meta = cls._get_meta()
         if meta is None:
             return None
         return getattr(meta, "state_model", None)

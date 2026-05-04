@@ -35,6 +35,7 @@ import os
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -225,8 +226,8 @@ class ProvenanceChain:
         self._key = signing_key or _provenance_key()
         self._max_records = max_records
         self._lock = threading.Lock()
-        self._records: list[ProvenanceRecord] = []
-        self._tags: list[str] = []
+        self._records: deque[ProvenanceRecord] = deque(maxlen=max_records)
+        self._tags: deque[str] = deque(maxlen=max_records)
 
     def append(self, record: ProvenanceRecord) -> str:
         """Append *record* to the chain, rewriting ``prev_hash`` if needed.
@@ -265,11 +266,8 @@ class ProvenanceChain:
                 metadata=record.metadata,
             )
             tag = linked.hmac_tag(self._key)
-            self._records.append(linked)
+            self._records.append(linked)  # deque(maxlen=N) auto-evicts oldest
             self._tags.append(tag)
-            if len(self._records) > self._max_records:
-                self._records.pop(0)
-                self._tags.pop(0)
         _log.debug(
             "provenance.appended: decision_id=%s tag=%s",
             record.decision_id,

@@ -631,7 +631,17 @@ class HashiCorpVaultKeyProvider:
                 f"the Vault server may be sealed/unreachable or the token is invalid. "
                 f"Underlying error: {type(exc).__name__}: {exc}"
             ) from exc
-        value: str | bytes = resp["data"]["data"][self._field]
+        try:
+            value: str | bytes = resp["data"]["data"][self._field]
+        except KeyError:
+            from pramanix.exceptions import ConfigurationError
+
+            available = list(resp.get("data", {}).get("data", {}).keys())
+            raise ConfigurationError(
+                f"HashiCorpVaultKeyProvider: field {self._field!r} not found in secret "
+                f"{self._secret_path!r} (mount={self._mount_point!r}). "
+                f"Available fields: {available}"
+            )
         self._cached_pem = value.encode() if isinstance(value, str) else value
         self._cached_version = str(resp["data"]["metadata"]["version"])
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL

@@ -32,6 +32,8 @@ Usage::
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import pickle
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -204,20 +206,21 @@ class CalibratedScorer:
         # predict_proba returns [P(benign), P(injection)] for classes [0, 1].
         return float(proba[1])
 
-    def save(self, path: Path) -> None:
-        """Serialise the fitted scorer to *path* using pickle.
+    def save(self, path: Path, *, hmac_key: bytes) -> None:
+        """Serialise the fitted scorer to *path* and write an HMAC sidecar.
 
-        .. warning::
-            The saved file uses Python's ``pickle`` format.  **Never load a
-            ``.pkl`` file from an untrusted or attacker-controlled source** —
-            doing so is equivalent to remote code execution.  Sign the artifact
-            (e.g. with :func:`hmac.new`) before distributing it and verify the
-            signature in :meth:`load` before calling ``pickle.load``.  Consider
-            migrating to a safe serialisation format (JSON + feature weights)
-            for deployments that transfer scorer files across trust boundaries.
+        Writes two files:
+
+        * ``path`` — the pickle payload.
+        * ``path.with_suffix(".hmac")`` — a 32-byte SHA-256 HMAC tag computed
+          over the raw pickle bytes using *hmac_key*.  Pass the same key to
+          :meth:`load` to verify integrity before unpickling.
 
         Args:
-            path: Destination file path (e.g. ``Path("./scorer.pkl")``).
+            path:     Destination file path (e.g. ``Path("./scorer.pkl")``).
+            hmac_key: Secret key for HMAC-SHA-256 signing.  Must be kept
+                      confidential; 32 random bytes from :func:`secrets.token_bytes`
+                      is a safe choice.
 
         Raises:
             RuntimeError: If the scorer has not been fitted.
@@ -228,35 +231,54 @@ class CalibratedScorer:
             )
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("wb") as f:
-            pickle.dump(self._pipeline, f, protocol=pickle.HIGHEST_PROTOCOL)
+        raw = pickle.dumps(self._pipeline, protocol=pickle.HIGHEST_PROTOCOL)
+        path.write_bytes(raw)
+        tag = hmac.new(hmac_key, raw, hashlib.sha256).digest()
+        path.with_suffix(".hmac").write_bytes(tag)
 
     @classmethod
-    def load(cls, path: Path) -> CalibratedScorer:
-        """Restore a saved scorer from *path*.
+    def load(cls, path: Path, *, hmac_key: bytes) -> CalibratedScorer:
+        """Restore a saved scorer from *path* after verifying its HMAC tag.
 
-        .. warning::
-            **Only load ``.pkl`` files from trusted sources you control.**
-            Python's ``pickle`` format allows arbitrary code execution on load.
-            Before loading a scorer received from an external source, verify its
-            integrity with an HMAC signature or a content hash checked against a
-            known-good value.
+        Reads the ``.hmac`` sidecar produced by :meth:`save` and verifies it
+        against the pickle payload using *hmac_key* before deserialising.
+        Raises :class:`~pramanix.exceptions.IntegrityError` if the tag is
+        missing or does not match — preventing pickle-based RCE from tampered
+        model files.
 
         Args:
-            path: Path to a previously saved ``.pkl`` file.
+            path:     Path to a previously saved ``.pkl`` file.
+            hmac_key: The same secret key that was passed to :meth:`save`.
 
         Returns:
             A fitted :class:`CalibratedScorer` instance ready for :meth:`score`.
 
         Raises:
             FileNotFoundError: *path* does not exist.
+            IntegrityError: HMAC sidecar is absent or tag does not match.
             ConfigurationError: ``scikit-learn`` not installed.
         """
-        instance = cls.__new__(cls)
-        # Re-use __init__ only for the ConfigurationError check then replace pipeline.
-        instance.__init__()  # type: ignore[misc]
+        from pramanix.exceptions import IntegrityError
+
         path = Path(path)
-        with path.open("rb") as f:
-            instance._pipeline = pickle.load(f)  # — trusted model file
+        raw = path.read_bytes()
+        hmac_path = path.with_suffix(".hmac")
+        if not hmac_path.exists():
+            raise IntegrityError(
+                f"No HMAC sidecar found at {hmac_path}. "
+                "Re-save the scorer with CalibratedScorer.save() to generate one.",
+                path=str(path),
+            )
+        expected_tag = hmac_path.read_bytes()
+        actual_tag = hmac.new(hmac_key, raw, hashlib.sha256).digest()
+        if not hmac.compare_digest(actual_tag, expected_tag):
+            raise IntegrityError(
+                f"HMAC verification failed for scorer at {path}. "
+                "The file may have been tampered with or signed with a different key.",
+                path=str(path),
+            )
+        instance = cls.__new__(cls)
+        instance.__init__()  # type: ignore[misc]
+        instance._pipeline = pickle.loads(raw)  # noqa: S301 — HMAC-verified above
         instance._is_fitted = True
         return instance

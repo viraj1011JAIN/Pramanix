@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from typing import Literal
 
 from pramanix.ifc.labels import TrustLabel
@@ -60,12 +61,12 @@ class FlowRule:
             return False
         if (
             self.source_component is not None
-            and self.source_component != source_component
+            and not fnmatch(source_component, self.source_component)
         ):
             return False
         if (
             self.sink_component is not None
-            and self.sink_component != sink_component
+            and not fnmatch(sink_component, self.sink_component)
         ):
             return False
         return True

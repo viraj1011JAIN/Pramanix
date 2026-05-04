@@ -31,6 +31,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -136,7 +137,7 @@ class ScopedMemoryPartition:
         self.min_label = min_label
         self._max_entries = max_entries
         self._lock = threading.Lock()
-        self._entries: list[MemoryEntry] = []
+        self._entries: deque[MemoryEntry] = deque(maxlen=max_entries)
 
     def write(
         self,
@@ -194,10 +195,7 @@ class ScopedMemoryPartition:
             metadata=metadata or {},
         )
         with self._lock:
-            self._entries.append(entry)
-            # Evict oldest entry when cap is exceeded.
-            if len(self._entries) > self._max_entries:
-                self._entries.pop(0)
+            self._entries.append(entry)  # deque(maxlen=N) auto-evicts oldest
         _log.debug(
             "memory.written: key=%s label=%s tenant=%s workflow=%s entry_id=%s",
             key,

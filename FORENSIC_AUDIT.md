@@ -1,8 +1,8 @@
 # Pramanix Forensic Codebase Audit
 
-**Version under review:** 1.0.0  
-**Repository:** `C:\Pramanix` / `github.com/viraj1011JAIN/Pramanix`  
-**Audit date:** 2026-05-04  
+**Version under review:** 1.0.0
+**Repository:** `C:\Pramanix` / `github.com/viraj1011JAIN/Pramanix`
+**Audit date:** 2026-05-04
 **Auditor standard:** Code-first, evidence-first. Code overrides documentation. Stubs are called stubs. Simulations are called simulations. "Robust" and "production-ready" require proof.
 
 ---

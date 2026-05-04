@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import enum
+from collections import deque
 from dataclasses import dataclass as _dataclass
 from decimal import Decimal
 from typing import Any, ClassVar, cast
@@ -791,7 +792,7 @@ class InvariantASTCache:
     import threading as _threading
 
     _cache: ClassVar[dict[tuple[int, str], list[InvariantMeta]]] = {}
-    _access_order: ClassVar[list[tuple[int, str]]] = []  # ordered by last access
+    _access_order: ClassVar[deque[tuple[int, str]]] = deque()  # ordered by last access
     _max_size: int = 512
     _lock: Any = _threading.Lock()
 
@@ -850,7 +851,7 @@ class InvariantASTCache:
 
             # LRU eviction when at capacity.
             while len(cls._cache) >= cls._max_size and cls._access_order:
-                oldest = cls._access_order.pop(0)
+                oldest = cls._access_order.popleft()
                 cls._cache.pop(oldest, None)
 
             cls._cache[key] = meta

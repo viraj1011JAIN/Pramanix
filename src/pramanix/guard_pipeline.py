@@ -218,7 +218,8 @@ def _compute_policy_fingerprint(policy: type[Policy]) -> str:
             key=lambda x: x["label"],
         ),
         "fields": sorted(
-            ({"name": n, "type": f.z3_type} for n, f in all_fields.items()),
+            ({"name": n, "type": f.z3_type, "python_type": f.python_type.__qualname__}
+             for n, f in all_fields.items()),
             key=lambda x: x["name"],
         ),
     }

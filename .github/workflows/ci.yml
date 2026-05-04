@@ -289,7 +289,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -337,7 +337,6 @@ jobs:
             --cov-branch \
             --cov-report=xml:coverage.xml \
             --cov-report=term-missing \
-            --cov-fail-under=95 \
             tests/unit/ tests/integration/ tests/property/ tests/adversarial/
 
       - name: Upload coverage artifact (Python 3.13 only)

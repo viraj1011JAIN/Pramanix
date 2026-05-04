@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -288,7 +289,7 @@ class ShadowEvaluator:
         self._shadow = shadow_guard
         self._max_history = max_history
         self._lock = threading.Lock()
-        self._results: list[ShadowResult] = []
+        self._results: deque[ShadowResult] = deque(maxlen=max_history)
         self._total = 0
         self._diverged = 0
 
@@ -355,9 +356,7 @@ class ShadowEvaluator:
                     shadow_allowed,
                     shadow_error,
                 )
-            self._results.append(result)
-            if len(self._results) > self._max_history:
-                self._results.pop(0)
+            self._results.append(result)  # deque(maxlen=N) auto-evicts oldest
 
         return result
 

@@ -1,9 +1,9 @@
 # Pramanix Pre-PyPI Hardening and Elite Launch Strategy
 
-**Document type:** Architecture-first launch-readiness strategy  
-**Audience:** Founder, CTO, engineering team  
-**Repository state:** v1.0.0 tag, not yet published to PyPI  
-**Evidence standard:** Code is authoritative. Every claim in this document is backed by specific file, line, or test evidence from the repository. Where code and documentation disagree, code governs.  
+**Document type:** Architecture-first launch-readiness strategy
+**Audience:** Founder, CTO, engineering team
+**Repository state:** v1.0.0 tag, not yet published to PyPI
+**Evidence standard:** Code is authoritative. Every claim in this document is backed by specific file, line, or test evidence from the repository. Where code and documentation disagree, code governs.
 **Audit date:** 2026-05-04
 
 ---
@@ -71,7 +71,7 @@ Guardrails AI (9,000+ GitHub stars, PyPI-published, growing community) validates
 
 The overlap: both intercept AI system behavior to prevent harm. The non-overlap: Guardrails AI validates what the LLM said; Pramanix validates what the agent is about to do. Guardrails AI operates on free-form text output; Pramanix operates on structured intent dicts against formal policies. Guardrails AI uses probabilistic ML validators; Pramanix uses Z3 formal proof with counterexample attribution.
 
-Pramanix wins on: formal correctness guarantees, violation attribution, fail-closed provability, structured action enforcement.  
+Pramanix wins on: formal correctness guarantees, violation attribution, fail-closed provability, structured action enforcement.
 Pramanix loses on: PyPI availability (currently zero), output content validation (zero capability), ecosystem breadth, non-programmer usability.
 
 The competitive claim Pramanix can make honestly: for structured action authorization (financial transactions, infrastructure mutations, data access decisions), Z3-backed formal verification produces stronger guarantees than probabilistic validators. This is not a claim Guardrails AI can rebut because it is mathematically true.
@@ -179,8 +179,8 @@ The following issues must be resolved before any PyPI publication. Each is categ
 
 ### LB-1: CalibratedScorer Pickle RCE
 
-**Severity:** CRITICAL — blocks launch  
-**File:** `src/pramanix/translator/injection_scorer.py:260`  
+**Severity:** CRITICAL — blocks launch
+**File:** `src/pramanix/translator/injection_scorer.py:260`
 **Evidence:**
 ```python
 instance._pipeline = pickle.load(f)  # — trusted model file
@@ -222,8 +222,8 @@ Add a companion `save()` classmethod that writes both the `.pkl` and the `.pkl.s
 
 ### LB-2: FlowRule Label Matching Precision
 
-**Severity:** HIGH — blocks launch  
-**File:** `src/pramanix/ifc/flow_policy.py:49-71`  
+**Severity:** HIGH — blocks launch
+**File:** `src/pramanix/ifc/flow_policy.py:49-71`
 **Evidence:**
 ```python
 def matches(self, data_label, sink_label, source_component, sink_component) -> bool:
@@ -265,8 +265,8 @@ def matches(self, data_label: str, sink_label: str,
 
 ### LB-3: Python 3.13-Only Constraint
 
-**Severity:** CRITICAL — blocks launch  
-**File:** `pyproject.toml:38`  
+**Severity:** CRITICAL — blocks launch
+**File:** `pyproject.toml:38`
 **Evidence:** `python = ">=3.13,<4.0"`
 
 Python 3.13 was released October 2024. As of mid-2026, the enterprise Python install base is primarily 3.11 (security support through 2027-10) and 3.12 (security support through 2028-10). Requiring 3.13 excludes every enterprise that hasn't upgraded, every managed cloud Python runtime on an LTS image, and every CI matrix that hasn't added 3.13 yet.
@@ -288,8 +288,8 @@ No technical reason within the codebase requires 3.13. The `pyproject.toml` requ
 
 ### LB-4: Governance Subsystems Have No Guard Coupling
 
-**Severity:** HIGH — blocks launch (or must be explicitly scoped out of 1.0 claims)  
-**Files:** `ifc/enforcer.py`, `privilege/scope.py`, `oversight/workflow.py`, `memory/store.py`, `lifecycle/diff.py`, `provenance.py`  
+**Severity:** HIGH — blocks launch (or must be explicitly scoped out of 1.0 claims)
+**Files:** `ifc/enforcer.py`, `privilege/scope.py`, `oversight/workflow.py`, `memory/store.py`, `lifecycle/diff.py`, `provenance.py`
 **Evidence:** No call to any governance subsystem method exists in `guard.py`. No `GuardConfig` field accepts governance policy objects.
 
 A developer who reads the README, installs `pramanix`, configures IFC policies, and calls `guard.verify()` receives no IFC enforcement unless they manually call `flow_enforcer.gate()` after receiving an ALLOW. There is no composition primitive. There is no configuration path. There is no error if governance is configured but not wired.
@@ -314,8 +314,8 @@ Path B is lower technical risk for the launch date. Path A produces a stronger p
 
 ### LB-5: Decision Hash Has No Algorithm Version
 
-**Severity:** MEDIUM — blocks launch for regulated industry claims  
-**File:** `src/pramanix/decision.py:286-316`  
+**Severity:** MEDIUM — blocks launch for regulated industry claims
+**File:** `src/pramanix/decision.py:286-316`
 **Evidence:** `_compute_hash()` produces SHA-256 of 7 canonical fields. No version identifier is embedded in the `Decision` object. If the hash computation changes between Pramanix versions (e.g., adding `policy_fingerprint` to the canonical fields), every existing signed decision in every audit trail and Merkle archive becomes unverifiable against the new code.
 
 For financial institutions, healthcare providers, or any regulated industry building compliance audit trails on Pramanix, this is a forward-incompatibility trap with no migration path.
@@ -332,8 +332,8 @@ For financial institutions, healthcare providers, or any regulated industry buil
 
 ### LB-6: Policy Fingerprint Omits python_type
 
-**Severity:** MEDIUM  
-**File:** `src/pramanix/guard_pipeline.py:194-226`  
+**Severity:** MEDIUM
+**File:** `src/pramanix/guard_pipeline.py:194-226`
 **Evidence:** `_compute_policy_fingerprint()` hashes: policy name, version, invariant labels, field names, and field z3_types. It does NOT hash `python_type`. Two policies with identical names, field names, and z3_types but different Python types (`int` vs `Decimal`, both mapped to `"Real"`) produce identical fingerprints. Policy fingerprints are embedded in `ExecutionToken` — tokens issued under one type mapping remain valid for a different mapping.
 
 **Required fix:** Add `f.python_type.__qualname__` to the canonical field hash string. This is a one-line fix with significant correctness implications.
@@ -346,7 +346,7 @@ For financial institutions, healthcare providers, or any regulated industry buil
 
 ### LB-7: Coverage Gate Discrepancy
 
-**Severity:** MEDIUM (honesty/credibility issue)  
+**Severity:** MEDIUM (honesty/credibility issue)
 **Evidence:** `pyproject.toml:359`: `fail_under = 98`. CI workflow: `--cov-fail-under=95`. These diverge by 3 percentage points. Additionally, `integrations/*.py` is excluded from coverage (`omit` in pyproject.toml), meaning adapter code has zero mandatory coverage contribution.
 
 **Required fix:** Align the two values. Either raise CI to 98% (requires removing coverage-padding files and replacing with real tests), or lower `pyproject.toml` to 95% and explicitly document the delta. Removing the `integrations/*.py` exclusion from `omit` requires ensuring real framework tests count toward the gate.
@@ -359,7 +359,7 @@ For financial institutions, healthcare providers, or any regulated industry buil
 
 ### LB-8: Coverage-Padding Test Files
 
-**Severity:** MEDIUM (test suite integrity)  
+**Severity:** MEDIUM (test suite integrity)
 **Files identified:**
 ```
 tests/unit/test_coverage_boost.py
@@ -382,7 +382,7 @@ These files exist to satisfy a coverage metric, not to verify behavior. They inf
 
 ### LB-9: Five Adapters Untested Against Real Frameworks
 
-**Severity:** HIGH for launch credibility  
+**Severity:** HIGH for launch credibility
 **Files:** `integrations/crewai.py`, `integrations/dspy.py`, `integrations/haystack.py`, `integrations/pydantic_ai.py`, `integrations/semantic_kernel.py`
 
 These adapters are fully implemented but never exercised against real installed framework objects in CI. CrewAI, DSPy, and PydanticAI all have rapid API evolution. SemanticKernel has broken its own API multiple times between 1.x minor versions. The current adapters were written against specific versions and may already be broken.
@@ -404,7 +404,7 @@ These adapters are fully implemented but never exercised against real installed 
 
 ### LB-10: PyPI Packaging Not Configured
 
-**Severity:** CRITICAL — blocks launch by definition  
+**Severity:** CRITICAL — blocks launch by definition
 **Evidence:** No `dist/` directory. No configured trusted publishing workflow in `.github/workflows/publish.yml` (a `publish.yml` file exists but its content needs verification). No documented wheel smoke test against a clean virtual environment.
 
 **Required fix:** Configure PyPI trusted publishing (OIDC-based, no stored API key). Add wheel/sdist smoke test to CI that installs the built artifact into a fresh virtual environment and imports the package. Validate `python -c "import pramanix; print(pramanix.__version__)"` succeeds.
@@ -573,7 +573,7 @@ Deployments should choose one. The default should be Ed25519 for any regulated-i
 
 ### 6.4 HashiCorp Vault KeyError
 
-**File:** `key_provider.py:634`  
+**File:** `key_provider.py:634`
 **Issue:** `resp["data"]["data"][self._field]` — if `_field` does not exist, raw `KeyError` propagates outside the try/except block at line 627.
 
 **Fix:**
@@ -799,14 +799,14 @@ from collections import deque
 
 # Before
 self._entries: list[MemoryEntry] = []
-# ... 
+# ...
 if len(self._entries) > self._max_entries:
     self._entries.pop(0)
 self._entries.append(entry)
 
 # After
 self._entries: deque[MemoryEntry] = deque(maxlen=self._max_entries)
-# ... 
+# ...
 self._entries.append(entry)  # deque handles eviction automatically
 ```
 
@@ -835,27 +835,27 @@ self._entries.append(entry)  # deque handles eviction automatically
 
 ### 8.2 Test Gaps to Close Before Launch
 
-**G1: Governance coupling integration tests**  
-New file: `tests/integration/test_governance_coupling.py`  
+**G1: Governance coupling integration tests**
+New file: `tests/integration/test_governance_coupling.py`
 Tests: Guard + GovernanceConfig(ifc) auto-enforces on ALLOW; Guard + GovernanceConfig(privilege) blocks escalation; oversight required → BLOCK returned; governance error → fail-closed BLOCK.
 
-**G2: Real-framework adapter smoke tests**  
-New CI jobs: one per adapter (CrewAI, DSPy, Haystack, PydanticAI, SemanticKernel).  
+**G2: Real-framework adapter smoke tests**
+New CI jobs: one per adapter (CrewAI, DSPy, Haystack, PydanticAI, SemanticKernel).
 Each job: `pip install pramanix[adapter]`; import and construct adapter; exercise ALLOW path and BLOCK path; verify decision structure.
 
-**G3: Windows CI for async-process mode**  
+**G3: Windows CI for async-process mode**
 Add `windows-latest` runner to CI matrix. Run: `tests/unit/test_worker.py` and `tests/unit/test_process_pickle.py` and a new `test_async_process_windows.py` that exercises policy-defined-at-module-level with spawn semantics.
 
-**G4: Decision hash versioning tests**  
+**G4: Decision hash versioning tests**
 New tests in `test_decision.py`: hash_alg field present; hash_alg included in canonical bytes; PramanixVerifier routes by hash_alg; unknown hash_alg raises UnsupportedAlgorithmError.
 
-**G5: CalibratedScorer HMAC integrity tests**  
+**G5: CalibratedScorer HMAC integrity tests**
 New tests: tampered file raises IntegrityError; correct file loads; missing sig file raises FileNotFoundError; save+load round-trip succeeds.
 
-**G6: FlowRule glob matching tests**  
+**G6: FlowRule glob matching tests**
 New `tests/unit/test_flow_rule_glob.py`: 12 parametrized cases covering exact match, prefix wildcard, no-match, nested path, component patterns.
 
-**G7: Install smoke tests**  
+**G7: Install smoke tests**
 New CI stage: build wheel, install into clean venv, `python -c "import pramanix; assert pramanix.__version__ == '1.0.0'"`, verify no import errors on Python 3.11/3.12/3.13.
 
 ### 8.3 Removing Coverage Theater
