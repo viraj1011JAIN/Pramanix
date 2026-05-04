@@ -65,6 +65,7 @@ See also
 :mod:`pramanix.guard_pipeline` — semantic post-consensus check, policy
     fingerprinting, and explanation formatting helpers.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -141,6 +142,7 @@ def _is_picklable(obj: Any) -> bool:
 
 # ── Translator metric helper ──────────────────────────────────────────────────
 
+
 def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[str]) -> None:
     """Emit a Prometheus counter for LLM extraction / consensus failures (M-46).
 
@@ -167,6 +169,7 @@ def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[st
             _c = Counter(counter_name, description, ["model"])
         except ValueError:
             from prometheus_client import REGISTRY
+
             _c = REGISTRY._names_to_collectors.get(counter_name)  # type: ignore[union-attr]
             if _c is None:
                 return
@@ -303,9 +306,7 @@ class Guard:
         # M-09: consult InvariantASTCache before recompiling; key on the policy
         # class's JSON schema so the cache invalidates when fields change.
         _schema_hash = _hashlib.sha256(
-            _json.dumps(
-                self._policy.export_json_schema(), sort_keys=True
-            ).encode()
+            _json.dumps(self._policy.export_json_schema(), sort_keys=True).encode()
         ).hexdigest()
         _cached = _InvariantASTCache.get(self._policy, _schema_hash)
         if _cached is not None:
@@ -318,9 +319,7 @@ class Guard:
             extra={
                 "policy": getattr(self._policy, "__name__", str(self._policy)),
                 "invariant_count": len(self._compiled_meta),
-                "field_count": len(
-                    {f for meta in self._compiled_meta for f in meta.field_refs}
-                ),
+                "field_count": len({f for meta in self._compiled_meta for f in meta.field_refs}),
             },
         )
 
@@ -414,6 +413,7 @@ class Guard:
                 sink.emit(decision)
             except Exception as exc:
                 import logging as _logging
+
                 _logging.getLogger(__name__).error(
                     "Audit sink %r failed: %s", type(sink).__name__, exc
                 )
@@ -500,9 +500,7 @@ class Guard:
                     state if isinstance(state, dict) else state.model_dump()
                 )
                 _payload_size = len(
-                    _json_size.dumps(
-                        {"i": _raw_intent, "s": _raw_state}, default=str
-                    ).encode()
+                    _json_size.dumps({"i": _raw_intent, "s": _raw_state}, default=str).encode()
                 )
                 if _payload_size > self._config.max_input_bytes:
                     return Decision.error(
@@ -695,6 +693,176 @@ class Guard:
                         state_dump=state_values,
                     )
                     _metric_status = decision_safe.status.value
+
+                    # ── Step 7: Privilege scope gate ──────────────────────────
+                    if self._config.capability_manifest is not None:
+                        _tool = str(
+                            intent_values.get("tool")
+                            or intent_values.get("_tool")
+                            or ""
+                        )
+                        if _tool:
+                            from pramanix.privilege.scope import (  # noqa: PLC0415
+                                ExecutionContext,
+                                ExecutionScope,
+                                ScopeEnforcer,
+                            )
+
+                            _granted = self._config.execution_scope or ExecutionScope.NONE
+                            _ctx = ExecutionContext(
+                                granted_scopes=_granted,
+                                principal_id=str(
+                                    intent_values.get("principal_id", "")
+                                ),
+                                approved_by=str(
+                                    intent_values.get("oversight_request_id", "")
+                                    or intent_values.get("approved_by", "")
+                                ),
+                            )
+                            try:
+                                ScopeEnforcer(
+                                    self._config.capability_manifest
+                                ).enforce(_tool, _ctx)
+                            except PrivilegeEscalationError as _exc:
+                                _gb = Decision.governance_blocked(
+                                    stage="privilege",
+                                    reason=str(_exc),
+                                    intent_dump=intent_values,
+                                    state_dump=state_values,
+                                )
+                                _metric_status = _gb.status.value
+                                _log.warning(
+                                    "pramanix.guard.governance_blocked",
+                                    decision_id=decision_id,
+                                    policy=self._policy.__name__,
+                                    stage="privilege",
+                                    tool=_tool,
+                                    reason=str(_exc),
+                                )
+                                return _gb
+
+                    # ── Step 8: Human oversight gate ──────────────────────────
+                    if self._config.oversight_workflow is not None:
+                        from pramanix.oversight.workflow import (  # noqa: PLC0415
+                            OversightRequiredError,
+                        )
+
+                        _approval_id = str(
+                            intent_values.get("oversight_request_id", "")
+                        )
+                        if _approval_id:
+                            if not self._config.oversight_workflow.check(_approval_id):
+                                _gb = Decision.governance_blocked(
+                                    stage="oversight",
+                                    reason=(
+                                        f"Oversight request '{_approval_id}' has not "
+                                        "been approved or has expired. Obtain approval "
+                                        "before retrying."
+                                    ),
+                                    metadata={"oversight_request_id": _approval_id},
+                                    intent_dump=intent_values,
+                                    state_dump=state_values,
+                                )
+                                _metric_status = _gb.status.value
+                                _log.warning(
+                                    "pramanix.guard.governance_blocked",
+                                    decision_id=decision_id,
+                                    policy=self._policy.__name__,
+                                    stage="oversight",
+                                    request_id=_approval_id,
+                                )
+                                return _gb
+                        else:
+                            try:
+                                self._config.oversight_workflow.request_approval(
+                                    principal_id=str(
+                                        intent_values.get("principal_id", "")
+                                    ),
+                                    action=str(
+                                        intent_values.get("tool")
+                                        or intent_values.get("action")
+                                        or "unknown"
+                                    ),
+                                    decision_id=decision_safe.decision_id,
+                                    policy_hash=self._policy_hash,
+                                    intent_dump={
+                                        k: str(v) for k, v in intent_values.items()
+                                    },
+                                    reason="Human oversight required by Guard configuration.",
+                                )
+                            except OversightRequiredError as _exc:
+                                _gb = Decision.governance_blocked(
+                                    stage="oversight",
+                                    reason=str(_exc),
+                                    metadata={"oversight_request_id": _exc.request_id},
+                                    intent_dump=intent_values,
+                                    state_dump=state_values,
+                                )
+                                _metric_status = _gb.status.value
+                                _log.warning(
+                                    "pramanix.guard.governance_blocked",
+                                    decision_id=decision_id,
+                                    policy=self._policy.__name__,
+                                    stage="oversight",
+                                    request_id=_exc.request_id,
+                                )
+                                return _gb
+
+                    # ── Step 9: IFC flow gate ─────────────────────────────────
+                    if self._config.ifc_policy is not None:
+                        _src_comp = str(
+                            intent_values.get("_ifc_source_component", "")
+                        )
+                        _snk_comp = str(
+                            intent_values.get("_ifc_sink_component", "")
+                        )
+                        _src_label_raw = intent_values.get("_ifc_source_label")
+                        _snk_label_raw = intent_values.get("_ifc_sink_label")
+                        if (
+                            _src_comp
+                            and _snk_comp
+                            and _src_label_raw is not None
+                            and _snk_label_raw is not None
+                        ):
+                            from pramanix.ifc.enforcer import (  # noqa: PLC0415
+                                FlowEnforcer,
+                            )
+                            from pramanix.ifc.labels import (  # noqa: PLC0415
+                                ClassifiedData,
+                                TrustLabel,
+                            )
+
+                            try:
+                                _src_label = TrustLabel(int(_src_label_raw))
+                                _snk_label = TrustLabel(int(_snk_label_raw))
+                                _data = ClassifiedData(
+                                    label=_src_label, source=_src_comp
+                                )
+                                FlowEnforcer(self._config.ifc_policy).gate(
+                                    _data,
+                                    sink_label=_snk_label,
+                                    sink_component=_snk_comp,
+                                )
+                            except FlowViolationError as _exc:
+                                _gb = Decision.governance_blocked(
+                                    stage="ifc",
+                                    reason=str(_exc),
+                                    intent_dump=intent_values,
+                                    state_dump=state_values,
+                                )
+                                _metric_status = _gb.status.value
+                                _log.warning(
+                                    "pramanix.guard.governance_blocked",
+                                    decision_id=decision_id,
+                                    policy=self._policy.__name__,
+                                    stage="ifc",
+                                    source_component=_src_comp,
+                                    sink_component=_snk_comp,
+                                )
+                                return _gb
+                            except (ValueError, TypeError):
+                                pass  # malformed labels — skip gate silently
+
                     _log.info(
                         "pramanix.guard.decision",
                         decision_id=decision_id,
@@ -783,11 +951,10 @@ class Guard:
         except Exception as exc:  # — intentional fail-safe catch-all
             _verbose_reason = f"Unexpected internal error ({type(exc).__name__}): {exc}"
             _public_reason = (
-                "verification_error"
-                if self._config.redact_violations
-                else _verbose_reason
+                "verification_error" if self._config.redact_violations else _verbose_reason
             )
             import logging as _exc_log
+
             if self._config.redact_violations:
                 _exc_log.getLogger(__name__).error(
                     "pramanix.guard.decision: internal error (redacted from caller): %s",
@@ -949,9 +1116,7 @@ class Guard:
                     )
                     return await _timed(_d)
                 try:
-                    _sv_parts = tuple(
-                        int(p) for p in str(actual_version).split(".")
-                    )
+                    _sv_parts = tuple(int(p) for p in str(actual_version).split("."))
                     if len(_sv_parts) != 3:
                         raise ValueError
                 except (ValueError, AttributeError):
@@ -1015,8 +1180,7 @@ class Guard:
 
             if _missing_fields_async:
                 _missing_str = "; ".join(
-                    f"'{_lbl}' needs {sorted(_flds)}"
-                    for _lbl, _flds in _missing_fields_async
+                    f"'{_lbl}' needs {sorted(_flds)}" for _lbl, _flds in _missing_fields_async
                 )
                 _d = self._sign_decision(
                     Decision.error(reason=f"Missing required fields: {_missing_str}")
@@ -1037,13 +1201,9 @@ class Guard:
                     return await _timed(_d)
 
         except (ValidationError, StateValidationError) as exc:
-            return await _timed(
-                self._sign_decision(Decision.validation_failure(reason=str(exc)))
-            )
+            return await _timed(self._sign_decision(Decision.validation_failure(reason=str(exc))))
         except PramanixError as exc:
-            return await _timed(
-                self._sign_decision(Decision.error(reason=str(exc)))
-            )
+            return await _timed(self._sign_decision(Decision.error(reason=str(exc))))
         except Exception as exc:
             return await _timed(
                 self._sign_decision(
@@ -1095,10 +1255,7 @@ class Guard:
             try:
                 _pickle.dumps(values)
             except Exception as _pickle_exc:
-                _non_picklable = [
-                    k for k, v in values.items()
-                    if not _is_picklable(v)
-                ]
+                _non_picklable = [k for k, v in values.items() if not _is_picklable(v)]
                 return await _timed(
                     self._sign_decision(
                         Decision.error(
@@ -1139,23 +1296,17 @@ class Guard:
                     )
                 )
             except WorkerError as exc:
-                return await _timed(
-                    self._sign_decision(Decision.error(reason=str(exc)))
-                )
+                return await _timed(self._sign_decision(Decision.error(reason=str(exc))))
             except Exception as exc:
                 return await _timed(
                     self._sign_decision(
-                        Decision.error(
-                            reason=f"Process worker error ({type(exc).__name__}): {exc}"
-                        )
+                        Decision.error(reason=f"Process worker error ({type(exc).__name__}): {exc}")
                     )
                 )
             return await _timed(self._sign_decision(decision))
 
         return await _timed(
-            self._sign_decision(
-                Decision.error(reason=f"Unknown execution_mode: {mode!r}")
-            )
+            self._sign_decision(Decision.error(reason=f"Unknown execution_mode: {mode!r}"))
         )
 
     # ── parse_and_verify ────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ Contents
 * Environment-variable helper functions (``_env_str``, ``_env_int``, ``_env_bool``).
 * :class:`GuardConfig` — the immutable configuration dataclass for :class:`~pramanix.guard.Guard`.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -219,16 +220,12 @@ class GuardConfig:
     shed_worker_pct: float = field(default_factory=lambda: float(_env_str("SHED_WORKER_PCT", "90")))
     signer: PramanixSigner | None = field(default=None)
     # ── Phase 12 hardening fields ──────────────────────────────────────────────
-    solver_rlimit: int = field(
-        default_factory=lambda: _env_int("SOLVER_RLIMIT", 10_000_000)
-    )
+    solver_rlimit: int = field(default_factory=lambda: _env_int("SOLVER_RLIMIT", 10_000_000))
     """Z3 resource limit (elementary operations per solver call).
     Prevents logic-bomb and non-linear-expression DoS regardless of wall time.
     0 = disabled.  Default: 10 million operations.
     """
-    max_input_bytes: int = field(
-        default_factory=lambda: _env_int("MAX_INPUT_BYTES", 65_536)
-    )
+    max_input_bytes: int = field(default_factory=lambda: _env_int("MAX_INPUT_BYTES", 65_536))
     """Maximum serialised byte-size of the combined intent + state payload.
     Requests exceeding this limit are rejected before reaching the Z3 solver,
     preventing Big-Data DoS.  0 = disabled.  Default: 64 KiB.
@@ -264,9 +261,7 @@ class GuardConfig:
     with legitimate high-entropy inputs such as crypto addresses
     (e.g. ``0.7``).  Default: ``0.5``.  Env var: ``PRAMANIX_INJECTION_THRESHOLD``.
     """
-    max_input_chars: int = field(
-        default_factory=lambda: _env_int("MAX_INPUT_CHARS", 512)
-    )
+    max_input_chars: int = field(default_factory=lambda: _env_int("MAX_INPUT_CHARS", 512))
     """Maximum character count of the raw natural-language input string passed
     to :func:`~pramanix.translator.redundant.extract_with_consensus`.
 
@@ -353,35 +348,64 @@ class GuardConfig:
     ifc_policy: Any | None = field(default=None)
     """Optional :class:`~pramanix.ifc.FlowPolicy` for information-flow control.
 
-    When set, callers can use the policy with a
-    :class:`~pramanix.ifc.FlowEnforcer` to gate data flows between components.
-    Guard itself does not enforce IFC — this field is a convenience carrier so
-    that the operator's IFC configuration travels with the Guard.
+    When set, Guard enforces IFC inline after a Z3 SAFE result.  Callers
+    signal IFC context via four reserved intent keys:
 
-    Default: ``None`` (IFC not configured).
+    * ``_ifc_source_label`` — integer :class:`~pramanix.ifc.TrustLabel` value
+      of the data source (e.g. ``0`` for UNTRUSTED, ``2`` for INTERNAL).
+    * ``_ifc_sink_label`` — trust label of the destination component.
+    * ``_ifc_source_component`` — name of the originating component.
+    * ``_ifc_sink_component`` — name of the receiving component.
+
+    If any of these keys are absent the IFC gate is skipped for that call.
+    On denial, :meth:`~pramanix.decision.Decision.governance_blocked` is
+    returned with ``stage="ifc"``.
+
+    Default: ``None`` (IFC not enforced).
     """
 
     capability_manifest: Any | None = field(default=None)
-    """Optional :class:`~pramanix.privilege.CapabilityManifest` for privilege separation.
+    """Optional :class:`~pramanix.privilege.CapabilityManifest` for privilege
+    separation.
 
-    When set, operators can pass this to a
-    :class:`~pramanix.privilege.ScopeEnforcer` to enforce least-privilege
-    before dispatching tool calls.  Guard itself does not enforce capability
-    checks — this field carries the manifest alongside the Guard configuration.
+    When set, Guard enforces least-privilege inline after a Z3 SAFE result.
+    The tool name is read from ``intent["tool"]``; if absent the privilege
+    gate is skipped.  Granted scopes come from :attr:`execution_scope`.
 
-    Default: ``None`` (privilege separation not configured).
+    On denial, :meth:`~pramanix.decision.Decision.governance_blocked` is
+    returned with ``stage="privilege"``.
+
+    Default: ``None`` (privilege separation not enforced).
+    """
+
+    execution_scope: Any | None = field(default=None)
+    """Granted :class:`~pramanix.privilege.ExecutionScope` flags for this
+    Guard's principal.
+
+    Used by the inline privilege gate when :attr:`capability_manifest` is set.
+    Represents the maximum scope the calling agent is allowed to exercise.
+
+    Default: ``None`` → treated as ``ExecutionScope.NONE`` (deny all
+    capability checks).
     """
 
     oversight_workflow: Any | None = field(default=None)
     """Optional :class:`~pramanix.oversight.InMemoryApprovalWorkflow` (or any
     compatible approval workflow implementation).
 
-    When set, operators integrate the workflow into their agent loop to gate
-    high-impact actions behind human approval before execution.  Guard itself
-    does not enforce oversight — this field carries the workflow alongside
-    the Guard configuration.
+    When set, Guard enforces human oversight inline after a Z3 SAFE result:
 
-    Default: ``None`` (human oversight not configured).
+    * If ``intent["oversight_request_id"]`` is present, Guard calls
+      ``workflow.check(request_id)`` — if not approved it returns
+      :meth:`~pramanix.decision.Decision.governance_blocked` with
+      ``stage="oversight"``.
+    * If absent, Guard calls ``workflow.request_approval(...)`` which always
+      raises :exc:`~pramanix.oversight.OversightRequiredError`; Guard catches
+      it and returns GOVERNANCE_BLOCKED with
+      ``metadata["oversight_request_id"]`` set so callers can route the
+      approval request to a human reviewer, then retry with that ID.
+
+    Default: ``None`` (human oversight not enforced).
     """
 
     memory_store: Any | None = field(default=None)

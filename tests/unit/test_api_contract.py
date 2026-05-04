@@ -233,9 +233,9 @@ class TestAllExportsLock:
     def test_all_is_defined_as_list(self) -> None:
         """__all__ must exist and be a list (PEP 8 / import-star contract)."""
         assert hasattr(pramanix, "__all__"), "pramanix.__all__ must be defined"
-        assert isinstance(pramanix.__all__, list), (
-            f"pramanix.__all__ must be a list, got {type(pramanix.__all__).__name__}"
-        )
+        assert isinstance(
+            pramanix.__all__, list
+        ), f"pramanix.__all__ must be a list, got {type(pramanix.__all__).__name__}"
 
     def test_exact_count(self) -> None:
         """Exact count catches accidental duplicates inserted into __all__."""
@@ -278,14 +278,12 @@ class TestAllExportsLock:
     def test_no_private_names_in_all(self) -> None:
         """No underscore-prefixed name belongs in the public API."""
         private = [n for n in pramanix.__all__ if n.startswith("_")]
-        assert not private, (
-            f"Private name(s) found in pramanix.__all__: {private!r}"
-        )
+        assert not private, f"Private name(s) found in pramanix.__all__: {private!r}"
 
     def test_all_entries_are_strings(self) -> None:
-        assert all(isinstance(n, str) for n in pramanix.__all__), (
-            "Every entry in pramanix.__all__ must be a str"
-        )
+        assert all(
+            isinstance(n, str) for n in pramanix.__all__
+        ), "Every entry in pramanix.__all__ must be a str"
 
 
 # ============================================================================
@@ -297,47 +295,58 @@ class TestAllExportsLock:
 # code and must never silently become un-importable.
 # ============================================================================
 
+
 class TestDirectImportSurface:
     """Contract: core public names must be importable via `from pramanix import X`."""
 
     def test_guard_importable(self) -> None:
         from pramanix import Guard
+
         assert Guard is pramanix.Guard
 
     def test_guard_config_importable(self) -> None:
         from pramanix import GuardConfig
+
         assert GuardConfig is pramanix.GuardConfig
 
     def test_policy_importable(self) -> None:
         from pramanix import Policy
+
         assert Policy is pramanix.Policy
 
     def test_field_importable(self) -> None:
         from pramanix import Field
+
         assert Field is pramanix.Field
 
     def test_e_importable(self) -> None:
         from pramanix import E
+
         assert E is pramanix.E
 
     def test_decision_importable(self) -> None:
         from pramanix import Decision
+
         assert Decision is pramanix.Decision
 
     def test_solver_status_importable(self) -> None:
         from pramanix import SolverStatus
+
         assert SolverStatus is pramanix.SolverStatus
 
     def test_pramanix_error_importable(self) -> None:
         from pramanix import PramanixError
+
         assert issubclass(PramanixError, Exception)
 
     def test_guard_violation_error_is_pramanix_error(self) -> None:
         from pramanix import GuardViolationError, PramanixError
+
         assert issubclass(GuardViolationError, PramanixError)
 
     def test_configuration_error_is_pramanix_error(self) -> None:
         from pramanix import ConfigurationError, PramanixError
+
         assert issubclass(ConfigurationError, PramanixError)
 
 
@@ -361,15 +370,17 @@ class TestDirectImportSurface:
 # Reordering requires a MINOR bump (non-breaking, but visible in for-loops
 # and documentation that lists members in source order).
 _EXPECTED_SOLVER_STATUS_ORDERED: tuple[tuple[str, str], ...] = (
-    ("SAFE",               "safe"),
-    ("UNSAFE",             "unsafe"),
-    ("TIMEOUT",            "timeout"),
-    ("ERROR",              "error"),
-    ("STALE_STATE",        "stale_state"),
+    ("SAFE", "safe"),
+    ("UNSAFE", "unsafe"),
+    ("TIMEOUT", "timeout"),
+    ("ERROR", "error"),
+    ("STALE_STATE", "stale_state"),
     ("VALIDATION_FAILURE", "validation_failure"),
-    ("RATE_LIMITED",       "rate_limited"),
-    ("CONSENSUS_FAILURE",  "consensus_failure"),
-    ("CACHE_HIT",          "cache_hit"),
+    ("RATE_LIMITED", "rate_limited"),
+    ("CONSENSUS_FAILURE", "consensus_failure"),
+    ("CACHE_HIT", "cache_hit"),
+    # Phase 1-A: post-Z3 governance gate (MINOR bump)
+    ("GOVERNANCE_BLOCKED", "governance_blocked"),
 )
 
 # Derived dict — used for per-member value assertions (order-independent).
@@ -445,8 +456,7 @@ class TestSolverStatusLock:
     def test_safe_is_sole_non_blocked_non_observability(self) -> None:
         """Architectural invariant: the allowed=True path flows through SAFE only."""
         non_blocked_non_safe = [
-            m for m in SolverStatus
-            if m is not SolverStatus.SAFE and m not in _BLOCKED_STATUSES
+            m for m in SolverStatus if m is not SolverStatus.SAFE and m not in _BLOCKED_STATUSES
         ]
         assert non_blocked_non_safe == [SolverStatus.CACHE_HIT], (
             f"Unexpected unclassified SolverStatus member(s): {non_blocked_non_safe!r}.\n"
@@ -457,9 +467,7 @@ class TestSolverStatusLock:
     def test_blocked_statuses_are_subset_of_solver_status(self) -> None:
         """_BLOCKED_STATUSES must only reference members that actually exist."""
         unknown = _BLOCKED_STATUSES - set(SolverStatus)
-        assert not unknown, (
-            f"_BLOCKED_STATUSES references non-existent members: {unknown!r}"
-        )
+        assert not unknown, f"_BLOCKED_STATUSES references non-existent members: {unknown!r}"
 
 
 # ============================================================================
@@ -499,6 +507,8 @@ _EXPECTED_DECISION_KEYS: frozenset[str] = frozenset(
         "signature",
         "public_key_id",
         "policy_hash",
+        # P0: hash algorithm version field (v1.0.0+)
+        "hash_alg",
     }
 )
 
@@ -550,30 +560,28 @@ class TestDecisionToDictLock:
     def test_decision_id_is_uuid4_str(self, _safe_decision: Decision) -> None:
         """decision_id is used as a distributed trace key — must be UUID4 string."""
         d = _safe_decision.to_dict()
-        assert isinstance(d["decision_id"], str) and d["decision_id"], (
-            "decision_id must be a non-empty str"
-        )
+        assert (
+            isinstance(d["decision_id"], str) and d["decision_id"]
+        ), "decision_id must be a non-empty str"
         try:
             parsed = uuid.UUID(d["decision_id"])
         except ValueError:
             pytest.fail(f"decision_id {d['decision_id']!r} is not a valid UUID string")
-        assert parsed.version == 4, (
-            f"decision_id must be UUID4, got version {parsed.version}"
-        )
+        assert parsed.version == 4, f"decision_id must be UUID4, got version {parsed.version}"
 
     def test_allowed_is_exactly_bool(self, _safe_decision: Decision) -> None:
         """allowed must be bool, not int — `type(x) is bool` is stricter than isinstance."""
         d = _safe_decision.to_dict()
-        assert type(d["allowed"]) is bool, (
-            f"allowed must be exactly bool (not int subclass), got {type(d['allowed'])}"
-        )
+        assert (
+            type(d["allowed"]) is bool
+        ), f"allowed must be exactly bool (not int subclass), got {type(d['allowed'])}"
 
     def test_status_is_str_and_known_wire_value(self, _safe_decision: Decision) -> None:
         """status must be the plain str wire value, not a SolverStatus instance."""
         d = _safe_decision.to_dict()
-        assert isinstance(d["status"], str), (
-            f"status must be plain str (not SolverStatus enum), got {type(d['status'])}"
-        )
+        assert isinstance(
+            d["status"], str
+        ), f"status must be plain str (not SolverStatus enum), got {type(d['status'])}"
         known_values = set(_EXPECTED_SOLVER_STATUS.values())
         assert d["status"] in known_values, (
             f"status {d['status']!r} is not a known SolverStatus wire value. "
@@ -582,28 +590,26 @@ class TestDecisionToDictLock:
 
     def test_violated_invariants_is_list_of_str(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
-        assert isinstance(d["violated_invariants"], list), (
-            f"violated_invariants must be list, got {type(d['violated_invariants'])}"
-        )
+        assert isinstance(
+            d["violated_invariants"], list
+        ), f"violated_invariants must be list, got {type(d['violated_invariants'])}"
         for item in d["violated_invariants"]:
-            assert isinstance(item, str), (
-                f"violated_invariants must be list[str], found item of type {type(item)!r}"
-            )
+            assert isinstance(
+                item, str
+            ), f"violated_invariants must be list[str], found item of type {type(item)!r}"
 
     def test_explanation_is_str(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
-        assert isinstance(d["explanation"], str), (
-            f"explanation must be str, got {type(d['explanation'])}"
-        )
+        assert isinstance(
+            d["explanation"], str
+        ), f"explanation must be str, got {type(d['explanation'])}"
 
     def test_solver_time_ms_is_non_negative_numeric(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
-        assert isinstance(d["solver_time_ms"], int | float), (
-            f"solver_time_ms must be numeric, got {type(d['solver_time_ms'])}"
-        )
-        assert d["solver_time_ms"] >= 0, (
-            f"solver_time_ms must be >= 0, got {d['solver_time_ms']}"
-        )
+        assert isinstance(
+            d["solver_time_ms"], int | float
+        ), f"solver_time_ms must be numeric, got {type(d['solver_time_ms'])}"
+        assert d["solver_time_ms"] >= 0, f"solver_time_ms must be >= 0, got {d['solver_time_ms']}"
 
     def test_metadata_is_dict(self, _safe_decision: Decision) -> None:
         assert isinstance(_safe_decision.to_dict()["metadata"], dict)
@@ -617,34 +623,34 @@ class TestDecisionToDictLock:
     def test_decision_hash_is_64_char_lowercase_hex(self, _safe_decision: Decision) -> None:
         """decision_hash is SHA-256 — 64 lowercase hex chars."""
         d = _safe_decision.to_dict()
-        assert isinstance(d["decision_hash"], str), (
-            f"decision_hash must be str, got {type(d['decision_hash'])}"
-        )
-        assert len(d["decision_hash"]) == 64, (
-            f"decision_hash must be 64 hex chars (SHA-256), got {len(d['decision_hash'])}"
-        )
-        assert re.fullmatch(r"[0-9a-f]{64}", d["decision_hash"]), (
-            f"decision_hash must be lowercase hex: {d['decision_hash']!r}"
-        )
+        assert isinstance(
+            d["decision_hash"], str
+        ), f"decision_hash must be str, got {type(d['decision_hash'])}"
+        assert (
+            len(d["decision_hash"]) == 64
+        ), f"decision_hash must be 64 hex chars (SHA-256), got {len(d['decision_hash'])}"
+        assert re.fullmatch(
+            r"[0-9a-f]{64}", d["decision_hash"]
+        ), f"decision_hash must be lowercase hex: {d['decision_hash']!r}"
 
     def test_signature_is_str_or_none_not_bytes(self, _safe_decision: Decision) -> None:
         """signature must be str | None — bytes breaks JSON serialisation."""
         d = _safe_decision.to_dict()
-        assert d["signature"] is None or isinstance(d["signature"], str), (
-            f"signature must be str | None (not bytes), got {type(d['signature'])}"
-        )
+        assert d["signature"] is None or isinstance(
+            d["signature"], str
+        ), f"signature must be str | None (not bytes), got {type(d['signature'])}"
 
     def test_public_key_id_is_str_or_none(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
-        assert d["public_key_id"] is None or isinstance(d["public_key_id"], str), (
-            f"public_key_id must be str | None, got {type(d['public_key_id'])}"
-        )
+        assert d["public_key_id"] is None or isinstance(
+            d["public_key_id"], str
+        ), f"public_key_id must be str | None, got {type(d['public_key_id'])}"
 
     def test_policy_hash_is_str_or_none(self, _safe_decision: Decision) -> None:
         d = _safe_decision.to_dict()
-        assert d["policy_hash"] is None or isinstance(d["policy_hash"], str), (
-            f"policy_hash must be str | None, got {type(d['policy_hash'])}"
-        )
+        assert d["policy_hash"] is None or isinstance(
+            d["policy_hash"], str
+        ), f"policy_hash must be str | None, got {type(d['policy_hash'])}"
 
     # â"€â"€ cross-field invariants â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
@@ -653,9 +659,7 @@ class TestDecisionToDictLock:
         assert d["allowed"] is True
         assert d["status"] == "safe"
 
-    def test_unsafe_decision_allowed_false_status_unsafe(
-        self, _unsafe_decision: Decision
-    ) -> None:
+    def test_unsafe_decision_allowed_false_status_unsafe(self, _unsafe_decision: Decision) -> None:
         d = _unsafe_decision.to_dict()
         assert d["allowed"] is False
         assert d["status"] == "unsafe"
@@ -667,8 +671,7 @@ class TestDecisionToDictLock:
     def test_decision_hash_is_deterministic(self, _safe_decision: Decision) -> None:
         """Same Decision must produce the same hash on every to_dict() call."""
         assert (
-            _safe_decision.to_dict()["decision_hash"]
-            == _safe_decision.to_dict()["decision_hash"]
+            _safe_decision.to_dict()["decision_hash"] == _safe_decision.to_dict()["decision_hash"]
         ), "Decision.to_dict()['decision_hash'] is not deterministic"
 
 
@@ -679,6 +682,7 @@ class TestDecisionToDictLock:
 # Factory methods are the canonical way to construct Decisions.
 # Their existence and return-status are part of the public contract.
 # ============================================================================
+
 
 class TestDecisionFactories:
     """Contract: all factory class-methods must exist and return the correct status."""
@@ -696,14 +700,12 @@ class TestDecisionFactories:
         assert callable(getattr(Decision, "timeout", None)), "Decision.timeout() must exist"
 
     def test_stale_state_factory_exists(self) -> None:
-        assert callable(getattr(Decision, "stale_state", None)), (
-            "Decision.stale_state() must exist"
-        )
+        assert callable(getattr(Decision, "stale_state", None)), "Decision.stale_state() must exist"
 
     def test_validation_failure_factory_exists(self) -> None:
-        assert callable(getattr(Decision, "validation_failure", None)), (
-            "Decision.validation_failure() must exist"
-        )
+        assert callable(
+            getattr(Decision, "validation_failure", None)
+        ), "Decision.validation_failure() must exist"
 
     def test_safe_returns_allowed_true_and_safe_status(self) -> None:
         d = Decision.safe()
@@ -799,6 +801,8 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         # Architectural pillar opt-in fields (v1.0.0+)
         "ifc_policy",
         "capability_manifest",
+        # Phase 1-A: granted execution scope for privilege gate (v1.0.0+)
+        "execution_scope",
         "oversight_workflow",
         "memory_store",
     }
@@ -807,34 +811,36 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
 # Locked default values.  Fields marked (*) encode a safety/security guarantee:
 # changing them requires explicit security review in the PR.
 _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
-    "execution_mode":           "sync",
-    "solver_timeout_ms":        5_000,       # (*) Z3 solver timeout
-    "max_workers":              4,
+    "execution_mode": "sync",
+    "solver_timeout_ms": 5_000,  # (*) Z3 solver timeout
+    "max_workers": 4,
     "max_decisions_per_worker": 10_000,
-    "worker_warmup":            True,
-    "log_level":                "INFO",
-    "metrics_enabled":          False,
-    "otel_enabled":             False,
-    "translator_enabled":       False,
-    "fast_path_enabled":        False,
-    "fast_path_rules":          (),
-    "signer":                   None,
-    "solver_rlimit":            10_000_000,  # (*) anti-DoS resource limit
-    "max_input_bytes":          65_536,      # (*) 64 KiB input cap
-    "min_response_ms":          0.0,
-    "redact_violations":        False,
-    "expected_policy_hash":     None,
-    "injection_threshold":      0.5,         # (*) injection confidence gate
-    "max_input_chars":          512,         # (*) input character cap
-    "injection_scorer_path":    None,
-    "consensus_strictness":     "semantic",
-    "audit_sinks":              (),
+    "worker_warmup": True,
+    "log_level": "INFO",
+    "metrics_enabled": False,
+    "otel_enabled": False,
+    "translator_enabled": False,
+    "fast_path_enabled": False,
+    "fast_path_rules": (),
+    "signer": None,
+    "solver_rlimit": 10_000_000,  # (*) anti-DoS resource limit
+    "max_input_bytes": 65_536,  # (*) 64 KiB input cap
+    "min_response_ms": 0.0,
+    "redact_violations": False,
+    "expected_policy_hash": None,
+    "injection_threshold": 0.5,  # (*) injection confidence gate
+    "max_input_chars": 512,  # (*) input character cap
+    "injection_scorer_path": None,
+    "consensus_strictness": "semantic",
+    "audit_sinks": (),
     "translator_circuit_breaker_config": None,
     # Architectural pillar opt-in fields (v1.0.0+)
-    "ifc_policy":               None,
-    "capability_manifest":      None,
-    "oversight_workflow":       None,
-    "memory_store":             None,
+    "ifc_policy": None,
+    "capability_manifest": None,
+    # Phase 1-A: granted execution scope for privilege gate (v1.0.0+)
+    "execution_scope": None,
+    "oversight_workflow": None,
+    "memory_store": None,
 }
 
 
@@ -915,6 +921,7 @@ class TestGuardConfigFieldLock:
 
     def test_invalid_execution_mode_raises_configuration_error(self) -> None:
         from pramanix import ConfigurationError
+
         with pytest.raises(ConfigurationError):
             GuardConfig(execution_mode="batch")  # not a valid mode
 
@@ -925,5 +932,6 @@ class TestGuardConfigFieldLock:
     @pytest.mark.parametrize("threshold", [0.0, -0.1, 1.1, 2.0])
     def test_injection_threshold_out_of_range_raises(self, threshold: float) -> None:
         from pramanix import ConfigurationError
+
         with pytest.raises(ConfigurationError):
             GuardConfig(injection_threshold=threshold)

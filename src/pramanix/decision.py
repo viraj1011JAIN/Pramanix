@@ -35,6 +35,7 @@ Status semantics
 
 The invariant ``allowed=True ↔ status=SAFE`` is enforced in ``__post_init__``.
 """
+
 from __future__ import annotations
 
 import enum
@@ -98,6 +99,7 @@ def _json_safe_value(v: Any) -> Any:
         return v.isoformat()
     return str(v)
 
+
 def _build_decision_canonical(
     *,
     allowed: bool,
@@ -135,9 +137,7 @@ def _build_decision_canonical(
         "policy": str(policy or ""),
         "state_dump": _make_json_safe(dict(state_dump) if state_dump else {}),
         "status": str(status or ""),
-        "violated_invariants": sorted(
-            str(v) for v in (violated_invariants or ())
-        ),
+        "violated_invariants": sorted(str(v) for v in (violated_invariants or ())),
     }
 
 
@@ -189,6 +189,24 @@ class SolverStatus(enum.StrEnum):
     CACHE_HIT = "cache_hit"
     """Observability tag: intent extracted from LRU/Redis cache; Z3 still ran."""
 
+    GOVERNANCE_BLOCKED = "governance_blocked"
+    """Post-Z3 governance gate denied the action.
+
+    Raised by one of three inline governance steps that run after the Z3
+    solver returns SAFE:
+
+    * **Privilege scope** — :class:`~pramanix.privilege.ScopeEnforcer` found
+      the requested tool's required scopes were not in the execution context.
+    * **Human oversight** — :class:`~pramanix.oversight.InMemoryApprovalWorkflow`
+      requires a human approval that has not yet been granted.
+    * **Information-flow control** — :class:`~pramanix.ifc.FlowEnforcer`
+      denied a data-flow that would violate the configured :class:`~pramanix.ifc.FlowPolicy`.
+
+    The ``metadata`` dict carries ``stage`` (``"privilege"`` | ``"oversight"``
+    | ``"ifc"``) and, when applicable, ``oversight_request_id`` so callers can
+    route human-approval requests.
+    """
+
 
 # ── Decision ──────────────────────────────────────────────────────────────────
 
@@ -217,6 +235,7 @@ _BLOCKED_STATUSES: frozenset[SolverStatus] = frozenset(
         SolverStatus.VALIDATION_FAILURE,
         SolverStatus.RATE_LIMITED,
         SolverStatus.CONSENSUS_FAILURE,
+        SolverStatus.GOVERNANCE_BLOCKED,
     }
 )
 
@@ -294,11 +313,7 @@ class Decision:
         """
         # M-50: use self.policy_hash directly — not metadata.get("policy").
         policy = str(self.policy_hash or "")
-        status = str(
-            self.status.value
-            if hasattr(self.status, "value")
-            else self.status
-        )
+        status = str(self.status.value if hasattr(self.status, "value") else self.status)
         canonical = _build_decision_canonical(
             allowed=self.allowed,
             explanation=self.explanation,
@@ -312,6 +327,7 @@ class Decision:
             serialized = _canonical_bytes(canonical)
         except Exception:  # pragma: no cover
             import json  # pragma: no cover
+
             serialized = json.dumps(  # pragma: no cover
                 canonical, sort_keys=True, default=str
             ).encode()
@@ -566,6 +582,51 @@ class Decision:
             status=SolverStatus.CONSENSUS_FAILURE,
             explanation=reason,
             metadata=dict(metadata) if metadata is not None else {},
+        )
+
+    # ── Factory: GOVERNANCE_BLOCKED ───────────────────────────────────────────
+
+    @classmethod
+    def governance_blocked(
+        cls,
+        *,
+        reason: str,
+        stage: str = "governance",
+        metadata: dict[str, Any] | None = None,
+        intent_dump: dict[str, Any] | None = None,
+        state_dump: dict[str, Any] | None = None,
+    ) -> Decision:
+        """Construct a *blocked* decision when a post-Z3 governance gate fires.
+
+        This factory is used by the three inline governance steps that run
+        after the Z3 solver returns SAFE:
+
+        * ``stage="privilege"`` — :class:`~pramanix.privilege.ScopeEnforcer`
+          denied the tool's required scopes.
+        * ``stage="oversight"`` — human approval is required but not yet
+          granted.  ``metadata["oversight_request_id"]`` carries the ID the
+          caller must poll or route to a reviewer.
+        * ``stage="ifc"`` — :class:`~pramanix.ifc.FlowEnforcer` denied the
+          data flow.
+
+        Args:
+            reason:       Human-readable explanation of why the gate fired.
+            stage:        Which governance gate blocked (``"privilege"``,
+                          ``"oversight"``, or ``"ifc"``).
+            metadata:     Additional context (e.g. ``oversight_request_id``).
+            intent_dump:  Serialized intent dict for audit trail.
+            state_dump:   Serialized state dict for audit trail.
+        """
+        merged: dict[str, Any] = {"stage": stage}
+        if metadata:
+            merged.update(metadata)
+        return cls(
+            allowed=False,
+            status=SolverStatus.GOVERNANCE_BLOCKED,
+            explanation=reason,
+            metadata=merged,
+            intent_dump=dict(intent_dump) if intent_dump is not None else {},
+            state_dump=dict(state_dump) if state_dump is not None else {},
         )
 
     # ── Factory: CACHE_HIT ───────────────────────────────────────────────────

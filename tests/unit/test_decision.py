@@ -12,6 +12,7 @@ Coverage targets:
 - decision_id uniqueness and UUID4 validity
 - metadata isolation between instances
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -90,7 +91,9 @@ class TestSolverStatus:
         classified, this test fails — forcing an explicit decision.
         """
         observability_tags = {SolverStatus.CACHE_HIT}
-        unclassified = frozenset(SolverStatus) - _BLOCKED_STATUSES - observability_tags - {SolverStatus.SAFE}
+        unclassified = (
+            frozenset(SolverStatus) - _BLOCKED_STATUSES - observability_tags - {SolverStatus.SAFE}
+        )
         assert unclassified == frozenset(), (
             f"New status members are not classified as blocked or observability-only: "
             f"{unclassified}. Add them to _BLOCKED_STATUSES or observability_tags."
@@ -457,6 +460,7 @@ _EXPECTED_KEYS = frozenset(
         "signature",
         "public_key_id",
         "policy_hash",
+        "hash_alg",
     }
 )
 
@@ -572,9 +576,7 @@ class TestJsonSafeValue:
         """Nested dict is recursed through _make_json_safe."""
         from decimal import Decimal
 
-        result = _make_json_safe(
-            {"nested": {"amount": Decimal("50"), "flag": True}}
-        )
+        result = _make_json_safe({"nested": {"amount": Decimal("50"), "flag": True}})
         assert result["nested"]["amount"] == "50"
         assert result["nested"]["flag"] is True
 
