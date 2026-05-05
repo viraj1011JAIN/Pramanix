@@ -41,7 +41,7 @@ import logging
 import secrets as _secrets_mod
 import threading
 import time as _time_module
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -224,66 +224,19 @@ def _ppid_watchdog() -> None:
     seconds; when re-parented (PPID changes) it calls ``sys.exit(0)`` so the
     OS can reclaim resources.
 
-    On Windows ``os.getppid()`` is not available — we fall back to probing
-    the parent PID with ``os.kill(..., 0)`` (send-no-signal test).
+    ``os.getppid()`` is available on all platforms supported by Pramanix
+    (Python ≥ 3.11 on Linux, macOS, and Windows).
     """
     import os
     import sys
     import time as _t
 
-    if not hasattr(os, "getpid"):
-        return  # should never happen, but guard against exotic runtimes
-
-    use_getppid = hasattr(os, "getppid")
-    if use_getppid:
-        initial_ppid = os.getppid()
-    else:
-        # Windows fallback: pass the parent PID in explicitly via os.getpid()
-        # called in the *parent* process before spawn, or use ctypes to call
-        # the Windows NtQueryInformationProcess API for the parent PID.
-        # os.getppid() is available on Python 3.8+ on Windows, so the else
-        # branch is only reached on exotic runtimes.
-        initial_ppid = None
-        try:
-            import ctypes
-            import ctypes.wintypes
-
-            class _PROCESS_BASIC_INFORMATION(ctypes.Structure):
-                _fields_ = [
-                    ("ExitStatus", ctypes.c_ulong),
-                    ("PebBaseAddress", ctypes.c_void_p),
-                    ("AffinityMask", ctypes.c_ulong),
-                    ("BasePriority", ctypes.c_ulong),
-                    ("UniqueProcessId", ctypes.c_ulong),
-                    ("InheritedFromUniqueProcessId", ctypes.c_ulong),
-                ]
-
-            ntdll = ctypes.windll.ntdll
-            pbi = _PROCESS_BASIC_INFORMATION()
-            ret = ntdll.NtQueryInformationProcess(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                0,  # ProcessBasicInformation
-                ctypes.byref(pbi),
-                ctypes.sizeof(pbi),
-                None,
-            )
-            if ret == 0:
-                initial_ppid = int(pbi.InheritedFromUniqueProcessId)
-        except Exception:
-            return  # cannot determine PPID on this platform — skip watchdog
-
+    initial_ppid = os.getppid()
     while True:
         _t.sleep(2.0)
         try:
-            if use_getppid:
-                if os.getppid() != initial_ppid:
-                    sys.exit(0)
-            else:
-                # Windows: try zero-signal to test if parent is still alive
-                try:
-                    os.kill(initial_ppid, 0)  # type: ignore[arg-type]
-                except OSError:
-                    sys.exit(0)
+            if os.getppid() != initial_ppid:
+                sys.exit(0)
         except SystemExit:
             raise
         except Exception:
@@ -692,6 +645,11 @@ class WorkerPool:
 
         _t0_shed = _time_module.monotonic()
 
+        # Host-side deadline: Z3 solver timeout + 60 s spawn/IPC buffer.
+        # This prevents the host thread from blocking forever if a worker
+        # process hangs (e.g. a Z3 bug or OOM that bypasses the solver timeout).
+        _host_timeout_s: float = timeout_ms / 1000.0 + 60.0
+
         try:
             if self.mode == "async-process":
                 # Process mode: sign the result with an HMAC seal so the host
@@ -704,7 +662,17 @@ class WorkerPool:
                     _RESULT_SEAL_KEY.bytes,
                     rlimit,
                 )
-                sealed = future.result()
+                try:
+                    sealed = future.result(timeout=_host_timeout_s)
+                except FutureTimeoutError:
+                    future.cancel()
+                    _log.error(
+                        "WorkerPool: worker process exceeded host deadline (%.1fs)",
+                        _host_timeout_s,
+                    )
+                    return Decision.error(
+                        reason="Worker process timeout — host-side deadline exceeded."
+                    )
                 try:
                     result_dict = _unseal_decision(sealed)
                 except (ValueError, KeyError) as exc:
@@ -719,7 +687,17 @@ class WorkerPool:
                 future = self._executor.submit(
                     _worker_solve, policy_cls, values, timeout_ms, rlimit
                 )
-                result_dict = future.result()
+                try:
+                    result_dict = future.result(timeout=_host_timeout_s)
+                except FutureTimeoutError:
+                    future.cancel()
+                    _log.error(
+                        "WorkerPool: thread worker exceeded host deadline (%.1fs)",
+                        _host_timeout_s,
+                    )
+                    return Decision.error(
+                        reason="Worker thread timeout — host-side deadline exceeded."
+                    )
                 decision = self._dict_to_decision(result_dict)
         except WorkerError:
             self._shed_limiter.release(_FAILED_DISPATCH_PENALTY_MS)

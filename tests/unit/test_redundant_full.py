@@ -17,10 +17,13 @@ Missing lines targeted:
 from __future__ import annotations
 
 import asyncio
+import importlib.util as _ilu
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 import pytest
+from pydantic import BaseModel
+
 from pramanix.exceptions import (
     ExtractionFailureError,
     ExtractionMismatchError,
@@ -35,9 +38,11 @@ from pramanix.translator.redundant import (
     create_translator,
     extract_with_consensus,
 )
-from pydantic import BaseModel
-
 from tests.helpers.real_protocols import _FakeEntryPoint
+
+_GEMINI_AVAILABLE = _ilu.find_spec("google") is not None and _ilu.find_spec("google.generativeai") is not None
+_COHERE_AVAILABLE = _ilu.find_spec("cohere") is not None
+_MISTRAL_AVAILABLE = _ilu.find_spec("mistralai") is not None
 
 # ── Minimal pydantic schema used in consensus tests ──────────────────────────
 
@@ -52,7 +57,7 @@ class _TransferWithOptional(BaseModel):
     """Schema with an Optional[str] field for branch coverage of Optional unwrapping."""
 
     amount: Decimal
-    note: Optional[str] = None
+    note: str | None = None
 
 
 # ── Minimal Translator duck-type ──────────────────────────────────────────────
@@ -604,18 +609,21 @@ class TestCreateTranslator:
         t = create_translator("ollama:llama3", base_url="http://localhost:11434")
         assert isinstance(t, OllamaTranslator)
 
+    @pytest.mark.skipif(not _GEMINI_AVAILABLE, reason="google-generativeai not installed")
     def test_gemini_prefix(self):
         from pramanix.translator.gemini import GeminiTranslator
 
         t = create_translator("gemini:gemini-pro", api_key="test-key")
         assert isinstance(t, GeminiTranslator)
 
+    @pytest.mark.skipif(not _COHERE_AVAILABLE, reason="cohere not installed")
     def test_cohere_prefix(self):
         from pramanix.translator.cohere import CohereTranslator
 
         t = create_translator("cohere:command-r-plus", api_key="test-key")
         assert isinstance(t, CohereTranslator)
 
+    @pytest.mark.skipif(not _MISTRAL_AVAILABLE, reason="mistralai not installed")
     def test_mistral_prefix(self):
         from pramanix.translator.mistral import MistralTranslator
 

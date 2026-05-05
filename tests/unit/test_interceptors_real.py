@@ -21,17 +21,21 @@ grpc.py missing lines:
 """
 from __future__ import annotations
 
-import sys
+import importlib.util as _ilu
 from decimal import Decimal
 from typing import Any
+
 import pytest
 
-from pramanix.decision import Decision, SolverStatus
 from pramanix.expressions import E, Field
+
+_CONFLUENT_AVAILABLE = _ilu.find_spec("confluent_kafka") is not None
+_skip_without_confluent = pytest.mark.skipif(
+    not _CONFLUENT_AVAILABLE, reason="confluent-kafka not installed"
+)
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
 from tests.helpers.real_protocols import _RpcContext
-
 
 # ── Minimal policy + guard ────────────────────────────────────────────────────
 
@@ -146,6 +150,7 @@ class TestKafkaConsumerRealPaths:
         results = list(consumer.safe_poll())
         assert results == []
 
+    @_skip_without_confluent
     def test_safe_poll_message_with_error_returns(self):
         """Lines 117-118: msg.error() is truthy → log warning and stop."""
         from confluent_kafka import KafkaError
@@ -293,7 +298,6 @@ class TestKafkaConsumerRealPaths:
 class TestGrpcInterceptorRealPaths:
 
     def _make_interceptor(self, **kwargs) -> Any:
-        import grpc as _grpc
         from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
         return PramanixGrpcInterceptor(
@@ -342,7 +346,7 @@ class TestGrpcInterceptorRealPaths:
     def test_guarded_unary_allows_valid_request(self):
         """Line 135: allowed request calls original_unary and returns its result."""
         import collections
-        import grpc as _grpc
+
 
         interceptor = self._make_interceptor(
             intent_extractor=lambda hcd, req: {"amount": Decimal("50")},
@@ -373,6 +377,7 @@ class TestGrpcInterceptorRealPaths:
     def test_guarded_unary_blocks_invalid_request(self):
         """Guard blocks → context.abort() called, returns None."""
         import collections
+
         import grpc as _grpc
 
         interceptor = self._make_interceptor(
@@ -392,6 +397,7 @@ class TestGrpcInterceptorRealPaths:
     def test_guarded_unary_guard_exception_aborts_with_internal(self):
         """Lines 118-124: intent_extractor raises → abort with INTERNAL status."""
         import collections
+
         import grpc as _grpc
 
         def _bad_extractor(hcd, req):

@@ -17,8 +17,9 @@ from collections.abc import Generator
 from dataclasses import replace
 from typing import Any
 
-import asyncpg  # type: ignore[import-untyped]
 import pytest
+
+asyncpg = pytest.importorskip("asyncpg", reason="asyncpg not installed")  # type: ignore[assignment]
 
 from pramanix.decision import Decision, SolverStatus
 from pramanix.execution_token import (

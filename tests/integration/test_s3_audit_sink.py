@@ -15,14 +15,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import boto3  # type: ignore[import-untyped]
 import pytest
+
+boto3 = pytest.importorskip("boto3", reason="boto3 not installed")  # type: ignore[assignment]
 
 from pramanix.audit_sink import S3AuditSink
 from pramanix.decision import Decision, SolverStatus
 
 from .conftest import requires_docker
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

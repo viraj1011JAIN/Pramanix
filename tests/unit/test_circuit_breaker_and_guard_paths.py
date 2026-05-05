@@ -20,13 +20,18 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
+import importlib.util as _ilu
 import pytest
+
+_ASYNCPG_AVAILABLE = _ilu.find_spec("asyncpg") is not None
+_skip_without_asyncpg = pytest.mark.skipif(
+    not _ASYNCPG_AVAILABLE, reason="asyncpg not installed"
+)
 
 from tests.helpers.real_protocols import (
     _AnthropicErrorMessagesNS,
     _AnthropicMessagesNS,
     _AsyncClosablePool,
-    _AsyncCtxManager,
     _AsyncCloseClient,
     _AsyncErrorCloseClient,
     _AwsSecretsClient,
@@ -48,7 +53,6 @@ from tests.helpers.real_protocols import (
     _RpcContext,
     _SyncScanRedis,
 )
-
 
 # ── Helper factories ─────────────────────────────────────────────────────────
 
@@ -786,6 +790,7 @@ class TestPostgresExecutionTokenVerifier:
         assert result is False
         assert not pool.acquire_called
 
+    @_skip_without_asyncpg
     def test_consume_unique_violation_returns_false(self) -> None:
         """consume(): asyncpg.UniqueViolationError → False (token already used)."""
         import asyncpg
@@ -841,6 +846,7 @@ class TestPostgresExecutionTokenVerifier:
         assert result is True
 
     @pytest.mark.asyncio
+    @_skip_without_asyncpg
     async def test_consume_within_unique_violation(self) -> None:
         """consume_within() returns False on UniqueViolationError (INSERT)."""
         import asyncpg
@@ -1063,6 +1069,7 @@ class TestArchiverSegmentWriteFailure:
     def test_archive_segment_write_failure_cleans_up_tmp(self, tmp_path) -> None:
         """_archive_segment: write failure removes the tmp file and re-raises."""
         import os
+
         from pramanix.audit.archiver import MerkleArchiver
 
         archiver = MerkleArchiver(base_path=str(tmp_path), segment_days=0)

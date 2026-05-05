@@ -63,6 +63,7 @@ Usage::
     once in process B.  For distributed single-use enforcement, back
     the registry with Redis (SETNX) or a transactional database.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -77,6 +78,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 _log = logging.getLogger(__name__)
+
+# asyncpg is optional — only required for PostgresExecutionTokenVerifier.
+try:
+    import asyncpg as _asyncpg  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover
+    _asyncpg = None  # type: ignore[assignment]
+
+# Sentinel used in except clauses: empty tuple = catch nothing when asyncpg absent.
+_ASYNCPG_UNIQUE_VIOLATION: type | tuple[type, ...] = (
+    _asyncpg.UniqueViolationError if _asyncpg is not None else ()
+)
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
@@ -510,7 +522,6 @@ class SQLiteExecutionTokenVerifier:
         self._init_db()
 
     def _init_db(self) -> None:
-
         with self._lock:
             cur = self._conn.cursor()
             # WAL mode for better concurrent read performance.
@@ -521,9 +532,7 @@ class SQLiteExecutionTokenVerifier:
                 "  expires_at REAL NOT NULL"
                 ")"
             )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_expires ON consumed_tokens(expires_at)"
-            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_expires ON consumed_tokens(expires_at)")
             self._conn.commit()
 
     def _evict_expired(self) -> None:
@@ -822,9 +831,7 @@ class RedisExecutionTokenVerifier:
             signature="",
             state_version=token.state_version,
         )
-        expected_sig = hmac.new(
-            self._key, _token_body(unsigned), hashlib.sha256
-        ).hexdigest()
+        expected_sig = hmac.new(self._key, _token_body(unsigned), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(token.signature, expected_sig):
             return False
 
@@ -873,9 +880,7 @@ class RedisExecutionTokenVerifier:
         count = 0
         try:
             while True:
-                cursor, keys = self._redis.scan(
-                    cursor, match=f"{self._prefix}*", count=100
-                )
+                cursor, keys = self._redis.scan(cursor, match=f"{self._prefix}*", count=100)
                 count += len(keys)
                 if cursor == 0:
                     break
@@ -940,15 +945,13 @@ class PostgresExecutionTokenVerifier:
         import asyncio
         import threading
 
-        try:
-            import asyncpg  # noqa: F401
-        except ImportError as exc:
+        if _asyncpg is None:  # pragma: no cover
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
                 "asyncpg is required for PostgresExecutionTokenVerifier. "
                 "Install it with: pip install 'pramanix[postgres]'"
-            ) from exc
+            )
 
         if len(secret_key) < 16:
             raise ValueError("secret_key must be at least 16 bytes.")
@@ -967,15 +970,13 @@ class PostgresExecutionTokenVerifier:
         )
         self._loop_thread.start()
         # Create pool during __init__; fail-fast if Postgres is unreachable.
-        self._pool: Any = asyncio.run_coroutine_threadsafe(
-            self._init_pool(), self._loop
-        ).result(timeout=30.0)
+        self._pool: Any = asyncio.run_coroutine_threadsafe(self._init_pool(), self._loop).result(
+            timeout=30.0
+        )
 
     async def _init_pool(self) -> Any:
         """Create the asyncpg connection pool and ensure the schema exists."""
-        import asyncpg
-
-        pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+        pool = await _asyncpg.create_pool(self._dsn, min_size=1, max_size=5)  # type: ignore[union-attr]
         async with pool.acquire() as conn:
             await self._ensure_table(conn)
         return pool
@@ -995,9 +996,7 @@ class PostgresExecutionTokenVerifier:
         import asyncio
 
         try:
-            asyncio.run_coroutine_threadsafe(
-                self._pool.close(), self._loop
-            ).result(timeout=10.0)
+            asyncio.run_coroutine_threadsafe(self._pool.close(), self._loop).result(timeout=10.0)
         except Exception:
             pass
         self._loop.call_soon_threadsafe(self._loop.stop)
@@ -1047,8 +1046,6 @@ class PostgresExecutionTokenVerifier:
             return False
 
         # ── 4. Atomic INSERT with UNIQUE constraint ───────────────────────────
-        import asyncpg
-
         async with self._pool.acquire() as conn:
             try:
                 await conn.execute(
@@ -1057,7 +1054,7 @@ class PostgresExecutionTokenVerifier:
                     token.expires_at,
                 )
                 return True
-            except asyncpg.UniqueViolationError:
+            except _ASYNCPG_UNIQUE_VIOLATION:
                 # Token already consumed — single-use enforced.
                 return False
 
@@ -1143,8 +1140,6 @@ class PostgresExecutionTokenVerifier:
         Returns:
             ``True`` iff all four checks pass and the INSERT succeeded.
         """
-        import asyncpg
-
         # ── 1. Signature check ────────────────────────────────────────────────
         unsigned = ExecutionToken(
             decision_id=token.decision_id,
@@ -1179,5 +1174,5 @@ class PostgresExecutionTokenVerifier:
                 token.expires_at,
             )
             return True
-        except asyncpg.UniqueViolationError:
+        except _ASYNCPG_UNIQUE_VIOLATION:
             return False

@@ -6,6 +6,7 @@ Requires the ``pramanix[gemini]`` extra (``google-generativeai``, ``tenacity``).
 If the package is not installed, instantiation raises
 :exc:`~pramanix.exceptions.ConfigurationError` with the exact pip command.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -69,6 +70,7 @@ class GeminiTranslator:
         # M-12: build a per-instance genai client so two Guard instances with
         # different keys don't overwrite each other via genai.configure().
         import google.generativeai as _genai
+
         self._genai = _genai
         if self._api_key:
             # genai v0.8+ supports Client(api_key=...) per-instance.
@@ -102,13 +104,7 @@ class GeminiTranslator:
             LLMTimeoutError:        All retry attempts exhausted.
             ConfigurationError:     ``google-generativeai`` not installed.
         """
-        try:
-            import google.generativeai as genai
-        except ImportError as exc:
-            raise ConfigurationError(
-                "google-generativeai is required for GeminiTranslator. "
-                "Install it with: pip install 'pramanix[gemini]'"
-            ) from exc
+        genai = self._genai
 
         try:
             from tenacity import (
@@ -131,6 +127,7 @@ class GeminiTranslator:
         # We catch the generic Exception base from google.api_core for robustness.
         try:
             import google.api_core.exceptions as _gapi_exc
+
             _retryable: tuple[type[Exception], ...] = (
                 _gapi_exc.DeadlineExceeded,
                 _gapi_exc.ServiceUnavailable,
@@ -174,8 +171,6 @@ class GeminiTranslator:
                 pass
             raise
 
-        raise AssertionError("unreachable")
-
     async def _single_call(self, *, prompt: str) -> str:
         """Make a single GenerateContent call and return the raw text."""
         genai = self._genai
@@ -213,13 +208,9 @@ class GeminiTranslator:
                 response = await model_client.generate_content_async(prompt)
             else:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None, model_client.generate_content, prompt
-                )
+                response = await loop.run_in_executor(None, model_client.generate_content, prompt)
             raw_text = response.text
 
         if not raw_text or not raw_text.strip():
-            raise ExtractionFailureError(
-                f"[{self.model}] Gemini returned an empty response."
-            )
+            raise ExtractionFailureError(f"[{self.model}] Gemini returned an empty response.")
         return raw_text

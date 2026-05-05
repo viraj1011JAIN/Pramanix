@@ -271,7 +271,7 @@ class CalibratedScorer:
             IntegrityError:    Sidecar is absent or tag does not match.
             ConfigurationError: ``scikit-learn`` not installed.
         """
-        from pramanix.exceptions import IntegrityError  # noqa: PLC0415
+        from pramanix.exceptions import IntegrityError
 
         path = Path(path)
         raw = path.read_bytes()

@@ -28,7 +28,6 @@ from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
 
-
 # ── Shared minimal policy ─────────────────────────────────────────────────────
 
 class _AmtPolicy(Policy):
@@ -186,11 +185,13 @@ class TestWorkerPoolInternals:
         assert len(shed._latency_window) == 1
         assert shed._latency_window[0][1] == 50.0
 
+    @pytest.mark.slow
     def test_process_mode_decision_dict_to_decision(self) -> None:
         """Line 660: async-process mode runs _worker_solve_sealed and converts result."""
         guard = Guard(
             _AmtPolicy,
-            GuardConfig(execution_mode="async-process", metrics_enabled=False),
+            GuardConfig(execution_mode="async-process", metrics_enabled=False,
+                        worker_warmup=False),
         )
         decision = asyncio.run(
             guard.verify_async(intent={"amount": Decimal("10")}, state={})
@@ -221,7 +222,7 @@ class TestWorkerPoolInternals:
 
     def test_worker_pool_rate_limited_when_shed_saturated(self) -> None:
         """Line 633: Decision.rate_limited() returned when shed limiter is saturated."""
-        from pramanix.worker import AdaptiveConcurrencyLimiter, WorkerPool
+        from pramanix.worker import WorkerPool
 
         pool = WorkerPool(
             mode="async-thread",
@@ -258,6 +259,7 @@ class TestSerializationEdgeCases:
     def test_flatten_model_circular_reference_raises(self) -> None:
         """Line 101: circular model type reference detected."""
         from pydantic import BaseModel
+
         from pramanix.helpers.serialization import flatten_model
 
         class NodeModel(BaseModel):
@@ -270,6 +272,7 @@ class TestSerializationEdgeCases:
     def test_safe_dump_not_picklable_raises_type_error(self) -> None:
         """Lines 160-161: model_dump() produces an unpicklable value → TypeError."""
         from pydantic import BaseModel
+
         from pramanix.helpers.serialization import safe_dump
 
         class _Unpicklable:
@@ -294,6 +297,7 @@ class TestPolicyAuditorZ3Exception:
     def test_model_to_dict_wrong_type_exception_swallowed(self) -> None:
         """Bool var with z3_type='Real' → as_fraction() raises → silently skipped."""
         import z3
+
         from pramanix.helpers.policy_auditor import _model_to_dict
 
         ctx = z3.Context()
@@ -352,6 +356,7 @@ class TestTranslatorCacheEdgeCases:
     def test_redis_cache_clear_with_no_matching_keys(self) -> None:
         """Lines 153->155: scan returns empty keys list — delete branch not entered."""
         import fakeredis
+
         from pramanix.translator._cache import _RedisCache
 
         r = fakeredis.FakeRedis(decode_responses=True)
@@ -361,6 +366,7 @@ class TestTranslatorCacheEdgeCases:
     def test_intent_cache_falls_back_to_lru_when_redis_ping_fails(self) -> None:
         """Lines 210-211: Redis.ping() fails → fall back to in-process LRU."""
         import os
+
         from pramanix.translator._cache import IntentCache
 
         original = os.environ.get("PRAMANIX_INTENT_CACHE_REDIS_URL")

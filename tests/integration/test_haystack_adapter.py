@@ -282,9 +282,12 @@ class TestRunAsync:
 
 # ── Haystack framework registration (skipped without haystack) ────────────────
 
-haystack_mod = pytest.importorskip("haystack", reason="haystack-ai not installed")
+import importlib.util as _ilu
+
+_HAYSTACK_AVAILABLE = _ilu.find_spec("haystack") is not None
 
 
+@pytest.mark.skipif(not _HAYSTACK_AVAILABLE, reason="haystack-ai not installed")
 class TestHaystackFrameworkRegistration:
     def test_haystack_component_attribute_set(self):
         """With haystack installed, the class should have __haystack_component__

@@ -24,6 +24,7 @@ Usage::
         )
         return await do_transfer(amount, to)
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -92,8 +93,7 @@ class PramanixPydanticAIValidator:
             GuardViolationError: If the Guard blocks the intent.
         """
         resolved: dict[str, Any] = (
-            state if state is not None
-            else (self._state_fn() if self._state_fn is not None else {})
+            state if state is not None else (self._state_fn() if self._state_fn is not None else {})
         )
         decision = self._guard.verify(intent=intent, state=resolved)
         if not decision.allowed:
@@ -115,8 +115,7 @@ class PramanixPydanticAIValidator:
             GuardViolationError: If the Guard blocks the intent.
         """
         resolved: dict[str, Any] = (
-            state if state is not None
-            else (self._state_fn() if self._state_fn is not None else {})
+            state if state is not None else (self._state_fn() if self._state_fn is not None else {})
         )
         decision = await self._guard.verify_async(intent=intent, state=resolved)
         if not decision.allowed:

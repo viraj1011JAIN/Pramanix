@@ -44,12 +44,17 @@ _NON_PICKLABLE = threading.Lock()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.slow
 class TestProcessPickleSafety:
     @pytest.fixture
     def process_guard(self) -> Guard:
         return Guard(
             _SimplePolicy,
-            GuardConfig(execution_mode="async-process", solver_timeout_ms=5000),
+            GuardConfig(
+                execution_mode="async-process",
+                solver_timeout_ms=5000,
+                worker_warmup=False,
+            ),
         )
 
     @pytest.mark.asyncio

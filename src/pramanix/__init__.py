@@ -14,25 +14,25 @@ __version__ = "1.0.0"
 # "beta"         — available but may change in minor versions with a deprecation notice.
 # "experimental" — subject to change without notice; not for production use.
 __stability__: dict[str, str] = {
-    "core": "stable",           # Guard, Policy, Field, E, Decision, GuardConfig
-    "audit": "stable",          # DecisionSigner, DecisionVerifier, MerkleAnchor
-    "crypto": "stable",         # PramanixSigner, PramanixVerifier
+    "core": "stable",  # Guard, Policy, Field, E, Decision, GuardConfig
+    "audit": "stable",  # DecisionSigner, DecisionVerifier, MerkleAnchor
+    "crypto": "stable",  # PramanixSigner, PramanixVerifier
     "circuit_breaker": "stable",
     "execution_token": "stable",
-    "key_provider": "stable",   # PemKeyProvider, EnvKeyProvider, FileKeyProvider, cloud providers
-    "compliance": "stable",     # ComplianceReporter, ComplianceReport, to_pdf()
-    "audit_sinks": "stable",    # KafkaAuditSink, S3AuditSink, SplunkHecAuditSink, DatadogAuditSink
-    "worker": "stable",         # async-process execution backend
-    "primitives": "stable",     # fintech, healthcare, finance, rbac, time, infra
-    "translator": "beta",       # LLM translation stack (httpx/openai/anthropic)
-    "integrations": "beta",     # LangChain, LlamaIndex, AutoGen, FastAPI adapters
-    "fast_path": "beta",        # fast-path cache (GuardConfig.fast_path_enabled)
-    "ifc": "beta",              # information-flow control (TrustLabel, FlowPolicy, FlowEnforcer)
-    "privilege": "beta",        # privilege separation (ExecutionScope, ScopeEnforcer)
-    "oversight": "beta",        # human oversight (InMemoryApprovalWorkflow, EscalationQueue)
-    "memory": "beta",           # secure scoped memory (SecureMemoryStore, ScopedMemoryPartition)
-    "lifecycle": "beta",        # policy lifecycle (PolicyDiff, ShadowEvaluator)
-    "provenance": "beta",       # chain-of-custody (ProvenanceRecord, ProvenanceChain)
+    "key_provider": "stable",  # PemKeyProvider, EnvKeyProvider, FileKeyProvider, cloud providers
+    "compliance": "stable",  # ComplianceReporter, ComplianceReport, to_pdf()
+    "audit_sinks": "stable",  # KafkaAuditSink, S3AuditSink, SplunkHecAuditSink, DatadogAuditSink
+    "worker": "stable",  # async-process execution backend
+    "primitives": "stable",  # fintech, healthcare, finance, rbac, time, infra
+    "translator": "beta",  # LLM translation stack (httpx/openai/anthropic)
+    "integrations": "beta",  # LangChain, LlamaIndex, AutoGen, FastAPI adapters
+    "fast_path": "beta",  # fast-path cache (GuardConfig.fast_path_enabled)
+    "ifc": "beta",  # information-flow control (TrustLabel, FlowPolicy, FlowEnforcer)
+    "privilege": "beta",  # privilege separation (ExecutionScope, ScopeEnforcer)
+    "oversight": "beta",  # human oversight (InMemoryApprovalWorkflow, EscalationQueue)
+    "memory": "beta",  # secure scoped memory (SecureMemoryStore, ScopedMemoryPartition)
+    "lifecycle": "beta",  # policy lifecycle (PolicyDiff, ShadowEvaluator)
+    "provenance": "beta",  # chain-of-custody (ProvenanceRecord, ProvenanceChain)
 }
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
@@ -76,12 +76,14 @@ from pramanix.exceptions import (
     InvariantLabelError,
     LLMTimeoutError,
     MemoryViolationError,
+    MigrationError,
     OversightRequiredError,
     PolicyCompilationError,
     PolicyError,
     PramanixError,
     PrivilegeEscalationError,
     ProvenanceError,
+    ResolverConflictError,
     SemanticPolicyViolation,
     SolverError,
     SolverTimeoutError,
@@ -90,42 +92,6 @@ from pramanix.exceptions import (
     ValidationError,
     WorkerError,
 )
-from pramanix.ifc import (
-    ClassifiedData,
-    FlowDecision,
-    FlowEnforcer,
-    FlowPolicy,
-    FlowRule,
-    TrustLabel,
-)
-from pramanix.lifecycle import (
-    FieldChange,
-    InvariantChange,
-    PolicyDiff,
-    ShadowEvaluator,
-    ShadowResult,
-)
-from pramanix.memory import (
-    MemoryEntry,
-    ScopedMemoryPartition,
-    SecureMemoryStore,
-)
-from pramanix.oversight import (
-    ApprovalDecision,
-    ApprovalRequest,
-    ApprovalStatus,
-    EscalationQueue,
-    InMemoryApprovalWorkflow,
-    OversightRecord,
-)
-from pramanix.privilege import (
-    CapabilityManifest,
-    ExecutionContext,
-    ExecutionScope,
-    ScopeEnforcer,
-    ToolCapability,
-)
-from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 from pramanix.execution_token import (
     ExecutionToken,
     ExecutionTokenSigner,
@@ -145,28 +111,29 @@ from pramanix.expressions import (
     ForAll,
     NestedField,
 )
+from pramanix.fast_path import FastPathRule, SemanticFastPath
 from pramanix.governance_config import GovernanceConfig
 from pramanix.guard import Guard, GuardConfig
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
 from pramanix.helpers.string_enum import StringEnumField
 from pramanix.identity import JWTIdentityLinker
-from pramanix.key_provider import (
-    EnvKeyProvider,
-    FileKeyProvider,
-    KeyProvider,
-    PemKeyProvider,
-)
-from pramanix.exceptions import MigrationError, ResolverConflictError
-from pramanix.fast_path import FastPathRule, SemanticFastPath
 from pramanix.identity.linker import (
     IdentityClaims,
     JWTExpiredError,
     JWTVerificationError,
-    StateLoadError,
     StateLoader,
+    StateLoadError,
 )
 from pramanix.identity.redis_loader import RedisStateLoader
+from pramanix.ifc import (
+    ClassifiedData,
+    FlowDecision,
+    FlowEnforcer,
+    FlowPolicy,
+    FlowRule,
+    TrustLabel,
+)
 from pramanix.integrations.autogen import PramanixToolCallback
 from pramanix.integrations.crewai import PramanixCrewAITool
 from pramanix.integrations.dspy import PramanixGuardedModule
@@ -175,8 +142,42 @@ from pramanix.integrations.langchain import PramanixGuardedTool
 from pramanix.integrations.llamaindex import PramanixFunctionTool, PramanixQueryEngineTool
 from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 from pramanix.integrations.semantic_kernel import PramanixSemanticKernelPlugin
+from pramanix.key_provider import (
+    EnvKeyProvider,
+    FileKeyProvider,
+    KeyProvider,
+    PemKeyProvider,
+)
+from pramanix.lifecycle import (
+    FieldChange,
+    InvariantChange,
+    PolicyDiff,
+    ShadowEvaluator,
+    ShadowResult,
+)
+from pramanix.memory import (
+    MemoryEntry,
+    ScopedMemoryPartition,
+    SecureMemoryStore,
+)
 from pramanix.migration import PolicyMigration
+from pramanix.oversight import (
+    ApprovalDecision,
+    ApprovalRequest,
+    ApprovalStatus,
+    EscalationQueue,
+    InMemoryApprovalWorkflow,
+    OversightRecord,
+)
 from pramanix.policy import Policy, invariant_mixin, model_dump_z3
+from pramanix.privilege import (
+    CapabilityManifest,
+    ExecutionContext,
+    ExecutionScope,
+    ScopeEnforcer,
+    ToolCapability,
+)
+from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.injection_scorer import BuiltinScorer, CalibratedScorer, InjectionScorer
 from pramanix.translator.redundant import ConsensusStrictness

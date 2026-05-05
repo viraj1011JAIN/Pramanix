@@ -377,9 +377,7 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 
         verifier = PramanixVerifier(public_key_pem=public_key_pem)
     except ImportError:
-        print(
-            "ERROR: cryptography package required. pip install cryptography", file=sys.stderr
-        )
+        print("ERROR: cryptography package required. pip install cryptography", file=sys.stderr)
         return 2
     except Exception as e:
         print(f"ERROR: Invalid public key: {e}", file=sys.stderr)

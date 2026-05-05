@@ -16,6 +16,7 @@ Usage::
     plugin = PramanixSemanticKernelPlugin(guard=guard)
     kernel.add_plugin(plugin, plugin_name="pramanix_guard")
 """
+
 from __future__ import annotations
 
 import json
@@ -98,12 +99,14 @@ class PramanixSemanticKernelPlugin:
             _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
             return json.dumps({"error": "Guard error — action blocked", "allowed": False})
 
-        return json.dumps({
-            "allowed": decision.allowed,
-            "status": str(decision.status),
-            "explanation": decision.explanation,
-            "violated_invariants": list(decision.violated_invariants),
-        })
+        return json.dumps(
+            {
+                "allowed": decision.allowed,
+                "status": str(decision.status),
+                "explanation": decision.explanation,
+                "violated_invariants": list(decision.violated_invariants),
+            }
+        )
 
     async def verify_async(
         self,
@@ -127,9 +130,11 @@ class PramanixSemanticKernelPlugin:
             _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
             return json.dumps({"error": "Guard error — action blocked", "allowed": False})
 
-        return json.dumps({
-            "allowed": decision.allowed,
-            "status": str(decision.status),
-            "explanation": decision.explanation,
-            "violated_invariants": list(decision.violated_invariants),
-        })
+        return json.dumps(
+            {
+                "allowed": decision.allowed,
+                "status": str(decision.status),
+                "explanation": decision.explanation,
+                "violated_invariants": list(decision.violated_invariants),
+            }
+        )

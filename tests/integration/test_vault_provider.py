@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import asyncio
 
-import hvac  # type: ignore[import-untyped]
 import pytest
+
+hvac = pytest.importorskip("hvac", reason="hvac not installed")  # type: ignore[assignment]
 
 from pramanix.key_provider import HashiCorpVaultKeyProvider as VaultKeyProvider
 
 from .conftest import requires_docker
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

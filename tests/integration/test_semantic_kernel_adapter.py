@@ -96,7 +96,13 @@ class TestConfigurationErrorWithoutFramework:
 
 # ── semantic-kernel present — full functionality tests ────────────────────────
 
-sk_mod = pytest.importorskip("semantic_kernel", reason="semantic-kernel not installed")
+import importlib.util as _ilu
+_SK_AVAILABLE = _ilu.find_spec("semantic_kernel") is not None
+
+_skip_without_sk = pytest.mark.skipif(
+    not _SK_AVAILABLE,
+    reason="semantic-kernel not installed"
+)
 
 
 @pytest.fixture
@@ -123,6 +129,7 @@ def async_block_plugin():
     return PramanixSemanticKernelPlugin(guard=guard)
 
 
+@_skip_without_sk
 class TestVerifySync:
     def test_allow_returns_valid_json(self, allow_plugin):
         """ALLOW path → verify() returns parseable JSON with allowed=True."""
@@ -194,6 +201,7 @@ class TestVerifySync:
         assert allow_plugin._plugin_name == "pramanix_guard"
 
 
+@_skip_without_sk
 class TestVerifyAsync:
     @pytest.mark.asyncio
     async def test_allow_async_returns_valid_json(self, async_allow_plugin):

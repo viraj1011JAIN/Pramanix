@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 __all__ = ["GovernanceConfig", "GuardConfig"]
 
-from pramanix.governance_config import GovernanceConfig  # noqa: E402
+from pramanix.governance_config import GovernanceConfig
 
 # ── Structlog secrets redaction ───────────────────────────────────────────────
 # Pattern matches any event-dict key that looks like a credential.

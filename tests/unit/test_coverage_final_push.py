@@ -16,7 +16,6 @@ Modules targeted and exact lines:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 import textwrap
@@ -30,9 +29,9 @@ from pydantic import BaseModel
 from tests.helpers.real_protocols import (
     _AliveProcess,
     _CohereChatV5Stub,
+    _CohereLegacyModule,
     _CohereNoMessageChatClient,
     _CohereTypeErrorChatClient,
-    _CohereLegacyModule,
     _DeadProcess,
     _ExecutorStub,
     _GeminiRecordingGenaiModule,
@@ -40,7 +39,6 @@ from tests.helpers.real_protocols import (
     _MistralClientStub,
     _NoProcessesExecutorStub,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared schemas
@@ -203,7 +201,11 @@ class TestPramanixSignerEnvWrongType:
     def test_env_pem_wrong_key_type_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.importorskip("cryptography")
         from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
-        from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+        )
 
         rsa_key = generate_private_key(public_exponent=65537, key_size=2048)
         rsa_pem = rsa_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()).decode()
@@ -218,7 +220,11 @@ class TestPramanixSignerEnvWrongType:
         """Line 133+subsequent: ValueError when bytes PEM is not Ed25519."""
         pytest.importorskip("cryptography")
         from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
-        from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+        )
 
         rsa_key = generate_private_key(public_exponent=65537, key_size=2048)
         rsa_pem = rsa_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
@@ -429,6 +435,7 @@ class TestCohereAttributeErrorFallback:
     async def test_attribute_error_sets_exception_retryable(self) -> None:
         pytest.importorskip("cohere")
         import cohere as _cohere
+
         from pramanix.translator.cohere import CohereTranslator
 
         t = CohereTranslator.__new__(CohereTranslator)
@@ -885,7 +892,8 @@ class TestAuditVerifyFailFastOnHashError:
         pytest.importorskip("cryptography")
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         from cryptography.hazmat.primitives.serialization import (
-            Encoding, NoEncryption, PublicFormat,
+            Encoding,
+            PublicFormat,
         )
         private_key = Ed25519PrivateKey.generate()
         pub_pem = private_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
@@ -1265,7 +1273,7 @@ class TestGeminiTenacityImportError:
         from pramanix.translator.gemini import GeminiTranslator
 
         mock_genai = type(
-            "genai", (), 
+            "genai", (),
             {"configure": lambda **kw: None, "GenerativeModel": object, "GenerationConfig": object}
         )
 
@@ -1273,8 +1281,9 @@ class TestGeminiTenacityImportError:
         t.model = "gemini-1.5-flash"
         t._api_key = "key"
         t._timeout = 30.0
+        t._genai = mock_genai  # provide the genai stub so extract() can proceed to tenacity
 
-        with patch.dict(sys.modules, {"google.generativeai": mock_genai, "tenacity": None}):
+        with patch.dict(sys.modules, {"tenacity": None}):
             with pytest.raises(ConfigurationError, match="tenacity"):
                 await t.extract("pay X 1", _Pay)
 

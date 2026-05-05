@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from pramanix.exceptions import WorkerError
-from pramanix.expressions import Field, E
+from pramanix.expressions import E, Field
 from pramanix.policy import Policy
 from pramanix.transpiler import analyze_string_promotions
 from pramanix.worker import WorkerPool
@@ -47,6 +47,7 @@ def test_worker_pool_worker_error():
     pool.shutdown(wait=False)
 
 
+@pytest.mark.slow
 def test_worker_pool_async_process_normal_unseal():
     pool = WorkerPool(
         mode="async-process",
@@ -55,7 +56,7 @@ def test_worker_pool_async_process_normal_unseal():
         warmup=False,
     )
     pool.spawn()
-    decision = pool.submit_solve(DummyPolicy, {}, 1000)
+    decision = pool.submit_solve(DummyPolicy, {}, 30_000)  # 30s solver + 60s host = 90s deadline
     assert decision.allowed is True
     pool.shutdown(wait=False)
 

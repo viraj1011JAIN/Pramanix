@@ -153,8 +153,6 @@ class CohereTranslator:
                 pass
             raise
 
-        raise AssertionError("unreachable")
-
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
         import inspect

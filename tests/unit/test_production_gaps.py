@@ -158,10 +158,16 @@ class TestConcurrentAsyncSizeCheck:
 
     @pytest.mark.asyncio
     async def test_normal_calls_not_affected_concurrently(self) -> None:
-        """Normal (within-limit) calls proceed normally under concurrent load."""
+        """Normal (within-limit) calls proceed normally under concurrent load.
+
+        We provision max_workers=N so the adaptive concurrency limiter never
+        triggers load-shedding — the test is validating the size-check path,
+        not adaptive load-shedding behaviour.
+        """
         cfg = GuardConfig(
             max_input_bytes=65_536,
             execution_mode="async-thread",
+            max_workers=self.N,  # one slot per concurrent call — no shedding
         )
         guard = Guard(_LimitPolicy, cfg)
 

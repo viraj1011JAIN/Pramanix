@@ -328,9 +328,7 @@ class Decision:
         except Exception:
             import json
 
-            serialized = json.dumps(
-                canonical, sort_keys=True, default=str
-            ).encode()
+            serialized = json.dumps(canonical, sort_keys=True, default=str).encode()
         return hashlib.sha256(serialized).hexdigest()
 
     # ── Serialisation ─────────────────────────────────────────────────────────

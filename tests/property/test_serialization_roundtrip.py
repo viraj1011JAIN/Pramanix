@@ -28,7 +28,11 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pramanix.expressions import Field
+import pytest
+
 from pramanix.transpiler import z3_val, z3_var
+
+pytestmark = pytest.mark.slow
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

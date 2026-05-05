@@ -97,7 +97,14 @@ class TestConfigurationErrorWithoutFramework:
 
 # ── pydantic-ai present — full functionality tests ────────────────────────────
 
-pydantic_ai_mod = pytest.importorskip("pydantic_ai", reason="pydantic-ai not installed")
+import importlib.util as _ilu
+
+_PYDANTIC_AI_AVAILABLE = _ilu.find_spec("pydantic_ai") is not None
+
+_skip_without_pydantic_ai = pytest.mark.skipif(
+    not _PYDANTIC_AI_AVAILABLE,
+    reason="pydantic-ai not installed"
+)
 
 
 @pytest.fixture
@@ -124,6 +131,7 @@ def async_block_validator():
     return PramanixPydanticAIValidator(guard=guard)
 
 
+@_skip_without_pydantic_ai
 class TestCheckSync:
     def test_allow_returns_decision(self, allow_validator):
         decision = allow_validator.check(
@@ -164,6 +172,7 @@ class TestCheckSync:
         assert decision.violated_invariants
 
 
+@_skip_without_pydantic_ai
 class TestCheckAsync:
     @pytest.mark.asyncio
     async def test_allow_async_returns_decision(self, async_allow_validator):
@@ -192,6 +201,7 @@ class TestCheckAsync:
         assert decision.allowed
 
 
+@_skip_without_pydantic_ai
 class TestGuardToolDecorator:
     @pytest.mark.asyncio
     async def test_guard_tool_allows_and_calls_wrapped_fn(self, allow_validator):

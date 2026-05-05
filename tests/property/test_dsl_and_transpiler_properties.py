@@ -35,6 +35,8 @@ from hypothesis import strategies as st
 from pramanix.expressions import E, Field
 from pramanix.solver import solve
 
+pytestmark = pytest.mark.slow
+
 # ── Shared field declarations ─────────────────────────────────────────────────
 
 _x = Field("x", Decimal, "Real")

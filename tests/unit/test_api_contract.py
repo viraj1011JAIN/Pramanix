@@ -957,7 +957,9 @@ class TestGovernanceConfigLock:
         from pramanix.exceptions import ConfigurationError
 
         sentinel = object()  # stand-in for an ExecutionScope value
-        with pytest.raises(ConfigurationError, match="execution_scope requires capability_manifest"):
+        with pytest.raises(
+            ConfigurationError, match="execution_scope requires capability_manifest"
+        ):
             GovernanceConfig(execution_scope=sentinel)
 
     def test_execution_scope_with_manifest_accepted(self) -> None:

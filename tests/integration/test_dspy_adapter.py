@@ -220,9 +220,12 @@ class TestEdgeCases:
 
 # ── DSPy framework hierarchy (skipped when dspy not installed) ────────────────
 
-dspy_mod = pytest.importorskip("dspy", reason="dspy not installed")
+import importlib.util as _ilu
+
+_DSPY_AVAILABLE = _ilu.find_spec("dspy") is not None
 
 
+@pytest.mark.skipif(not _DSPY_AVAILABLE, reason="dspy not installed")
 class TestDSPyHierarchy:
     def test_is_subclass_of_dspy_module(self):
         """With dspy installed PramanixGuardedModule must subclass dspy.Module."""

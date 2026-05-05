@@ -837,7 +837,7 @@ class TestVerifyAsyncEdgeCases:
         _unseal_decision is imported locally inside verify_async so we patch
         it at the pramanix.worker module level.
         """
-        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1))
+        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False))
         try:
             def _raise_hmac(*a, **kw): raise ValueError("HMAC mismatch")
             monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_hmac)
@@ -856,7 +856,7 @@ class TestVerifyAsyncEdgeCases:
         """Lines 846-847: async-process WorkerError → Decision.error()."""
         from pramanix.exceptions import WorkerError
 
-        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1))
+        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False))
         try:
             def _raise_worker(*a, **kw): raise WorkerError("worker died")
             monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_worker)
@@ -873,7 +873,7 @@ class TestVerifyAsyncEdgeCases:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         """Lines 848-849: async-process unexpected exception → Decision.error()."""
-        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1))
+        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False))
         try:
             def _raise_rt(*a, **kw): raise RuntimeError("something unexpected")
             monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_rt)

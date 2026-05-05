@@ -13,13 +13,23 @@ Coverage targets:
 """
 from __future__ import annotations
 
-import asyncio
+import importlib.util as _ilu
 from decimal import Decimal
 from typing import Any
 
 import pytest
 import respx
 from pydantic import BaseModel
+
+_MISTRAL_AVAILABLE = _ilu.find_spec("mistralai") is not None
+_COHERE_AVAILABLE = _ilu.find_spec("cohere") is not None
+
+_skip_without_mistral = pytest.mark.skipif(
+    not _MISTRAL_AVAILABLE, reason="mistralai not installed"
+)
+_skip_without_cohere = pytest.mark.skipif(
+    not _COHERE_AVAILABLE, reason="cohere not installed"
+)
 
 
 # ── Shared intent schema ──────────────────────────────────────────────────────
@@ -54,6 +64,7 @@ def _mistral_ok(content: str) -> dict:
 # MistralTranslator
 # ═════════════════════════════════════════════════════════════════════════════
 
+@_skip_without_mistral
 class TestMistralTranslatorReal:
 
     @pytest.mark.asyncio
@@ -91,6 +102,7 @@ class TestMistralTranslatorReal:
     async def test_extract_retry_exhausted_raises_llm_timeout(self):
         """Lines 130-138: all 3 retries fail → LLMTimeoutError raised."""
         import httpx as _httpx
+
         from pramanix.exceptions import LLMTimeoutError
         from pramanix.translator.mistral import MistralTranslator
 
@@ -124,8 +136,6 @@ class TestMistralTranslatorReal:
     @respx.mock
     async def test_single_call_empty_content_retries_to_timeout(self):
         """Lines 134-138: empty response content → raw='', retry exhausted."""
-        import httpx as _httpx
-        from pramanix.exceptions import LLMTimeoutError
         from pramanix.translator.mistral import MistralTranslator
 
         # Return empty string — the retry loop will eventually exhaust
@@ -141,6 +151,7 @@ class TestMistralTranslatorReal:
     def test_init_raises_config_error_without_package(self):
         """ImportError when mistralai is absent → ConfigurationError."""
         import sys
+
         from pramanix.exceptions import ConfigurationError
 
         orig_mistralai = sys.modules.get("mistralai")
@@ -157,6 +168,7 @@ class TestMistralTranslatorReal:
         try:
             with pytest.raises(ConfigurationError, match="mistralai"):
                 import importlib
+
                 import pramanix.translator.mistral as _m
                 importlib.reload(_m)
                 _m.MistralTranslator("test-model")
@@ -223,6 +235,7 @@ def _cohere_ok(text: str) -> dict:
 # CohereTranslator
 # ═════════════════════════════════════════════════════════════════════════════
 
+@_skip_without_cohere
 class TestCohereTranslatorReal:
 
     @pytest.mark.asyncio
@@ -243,6 +256,7 @@ class TestCohereTranslatorReal:
     async def test_extract_retry_exhausted_raises_llm_timeout(self):
         """Lines 135-140: all retries fail → LLMTimeoutError."""
         import httpx as _httpx
+
         from pramanix.exceptions import LLMTimeoutError
         from pramanix.translator.cohere import CohereTranslator
 
@@ -270,6 +284,7 @@ class TestCohereTranslatorReal:
     def test_init_raises_config_error_without_cohere(self):
         """ConfigurationError when cohere package is absent."""
         import sys
+
         from pramanix.exceptions import ConfigurationError
 
         orig = {k: v for k, v in sys.modules.items() if k.startswith("cohere")}
@@ -280,6 +295,7 @@ class TestCohereTranslatorReal:
         try:
             with pytest.raises(ConfigurationError, match="cohere"):
                 import importlib
+
                 import pramanix.translator.cohere as _cm
                 importlib.reload(_cm)
                 _cm.CohereTranslator("command-r-plus")
@@ -323,6 +339,7 @@ class TestCohereTranslatorReal:
     async def test_cohere_older_sdk_attribute_error_uses_generic_retryable(self):
         """Lines 112-114: AttributeError on cohere.errors → _retryable=(Exception,)."""
         import cohere as cohere_mod
+
         from pramanix.translator.cohere import CohereTranslator
 
         # Temporarily hide the errors submodule to trigger the AttributeError branch
@@ -345,7 +362,7 @@ class TestCohereTranslatorReal:
     async def test_cohere_retryable_error_exhausted_raises(self):
         """Lines 99-100, 135-140: tenacity retry exhausts on repeated cohere errors."""
         import httpx as _httpx
-        from pramanix.exceptions import LLMTimeoutError
+
         from pramanix.translator.cohere import CohereTranslator
 
         # Force 3 connection errors to exhaust retries
@@ -429,7 +446,6 @@ class TestLlamaCppTranslatorReal:
     @pytest.mark.asyncio
     async def test_extract_happy_path(self):
         """Lines 137-145, 99, 101, 112-115, 125-128: inference returns valid JSON."""
-        from pramanix.translator.llamacpp import LlamaCppTranslator
 
         class _FakeLlama:
             def create_chat_completion(

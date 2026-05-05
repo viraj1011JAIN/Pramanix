@@ -128,8 +128,6 @@ class AnthropicTranslator:
                 f"[{self.model}] Anthropic API error {exc.status_code}: {exc.message}"
             ) from exc
 
-        raise AssertionError("unreachable")
-
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
         await self._client.close()

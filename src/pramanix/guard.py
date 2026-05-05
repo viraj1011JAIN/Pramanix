@@ -454,7 +454,7 @@ class Guard:
         state_values: dict[str, Any],
         decision_safe: Decision,
         decision_id: str,
-    ) -> "Decision | None":
+    ) -> Decision | None:
         """Apply inline governance gates after a Z3 SAFE result.
 
         Returns a :meth:`~pramanix.decision.Decision.governance_blocked` Decision
@@ -492,14 +492,12 @@ class Guard:
 
         # ── Step 7: Privilege scope gate ──────────────────────────────────────
         if gov.capability_manifest is not None:
-            _tool = str(
-                intent_values.get("tool") or intent_values.get("_tool") or ""
-            )
+            _tool = str(intent_values.get("tool") or intent_values.get("_tool") or "")
             if _tool:
-                from pramanix.exceptions import (  # noqa: PLC0415
+                from pramanix.exceptions import (
                     PrivilegeEscalationError,
                 )
-                from pramanix.privilege.scope import (  # noqa: PLC0415
+                from pramanix.privilege.scope import (
                     ExecutionContext,
                     ExecutionScope,
                     ScopeEnforcer,
@@ -535,7 +533,7 @@ class Guard:
 
         # ── Step 8: Human oversight gate ──────────────────────────────────────
         if gov.oversight_workflow is not None:
-            from pramanix.oversight.workflow import (  # noqa: PLC0415
+            from pramanix.oversight.workflow import (
                 OversightRequiredError,
             )
 
@@ -565,9 +563,7 @@ class Guard:
                     gov.oversight_workflow.request_approval(
                         principal_id=str(intent_values.get("principal_id", "")),
                         action=str(
-                            intent_values.get("tool")
-                            or intent_values.get("action")
-                            or "unknown"
+                            intent_values.get("tool") or intent_values.get("action") or "unknown"
                         ),
                         decision_id=decision_safe.decision_id,
                         policy_hash=self._policy_hash,
@@ -603,9 +599,9 @@ class Guard:
                 and _src_label_raw is not None
                 and _snk_label_raw is not None
             ):
-                from pramanix.exceptions import FlowViolationError  # noqa: PLC0415
-                from pramanix.ifc.enforcer import FlowEnforcer  # noqa: PLC0415
-                from pramanix.ifc.labels import (  # noqa: PLC0415
+                from pramanix.exceptions import FlowViolationError
+                from pramanix.ifc.enforcer import FlowEnforcer
+                from pramanix.ifc.labels import (
                     ClassifiedData,
                     TrustLabel,
                 )

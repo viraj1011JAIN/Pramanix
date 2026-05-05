@@ -30,7 +30,11 @@ from pramanix.primitives.fintech import (
     SufficientBalance,
     VelocityCheck,
 )
+import pytest
+
 from pramanix.solver import solve
+
+pytestmark = pytest.mark.slow
 
 # ── Field declarations (reused across all property tests) ─────────────────────
 

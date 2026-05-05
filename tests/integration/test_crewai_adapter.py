@@ -220,9 +220,12 @@ class TestEdgeCases:
 
 # ── CrewAI framework hierarchy (skipped when crewai not installed) ────────────
 
-crewai_mod = pytest.importorskip("crewai", reason="crewai not installed")
+import importlib.util as _ilu
+
+_CREWAI_AVAILABLE = _ilu.find_spec("crewai") is not None
 
 
+@pytest.mark.skipif(not _CREWAI_AVAILABLE, reason="crewai not installed")
 class TestCrewAIHierarchy:
     def test_is_subclass_of_base_tool(self):
         """With crewai installed PramanixCrewAITool must be a BaseTool subclass."""
