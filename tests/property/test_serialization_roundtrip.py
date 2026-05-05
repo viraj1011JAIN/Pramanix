@@ -27,6 +27,8 @@ import z3
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+import gc
+
 from pramanix.expressions import Field
 import pytest
 
@@ -71,15 +73,22 @@ def test_decimal_z3_roundtrip(value: Decimal) -> None:
     """
     field = Field("x", Decimal, "Real")
     ctx = _fresh_ctx()
+    try:
+        var = z3_var(field, ctx)
+        val = z3_val(field, value, ctx)
 
-    var = z3_var(field, ctx)
-    val = z3_val(field, value, ctx)
+        solver = z3.Solver(ctx=ctx)
+        solver.add(var == val)
 
-    solver = z3.Solver(ctx=ctx)
-    solver.add(var == val)
-
-    result = solver.check()
-    assert result == z3.sat, (
-        f"Expected SAT for Decimal({value!r}) but Z3 returned {result!r}. "
-        "This indicates a precision error in the z3_val() encoding pipeline."
-    )
+        result = solver.check()
+        assert result == z3.sat, (
+            f"Expected SAT for Decimal({value!r}) but Z3 returned {result!r}. "
+            "This indicates a precision error in the z3_val() encoding pipeline."
+        )
+    finally:
+        # Explicit cleanup so Z3_del_context runs in this thread via refcounting,
+        # not deferred to the Python 3.13 background GC thread which would race
+        # with Z3_set_error_handler on the next iteration.
+        del solver, var, val
+        del ctx
+        gc.collect(0)

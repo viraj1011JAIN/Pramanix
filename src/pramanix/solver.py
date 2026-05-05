@@ -26,6 +26,8 @@ Fail-safe behaviour
 from __future__ import annotations
 
 import contextlib
+import gc
+import sys
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -390,9 +392,18 @@ def solve(
     # Raises ValueError on overflow — caught by Guard and converted to Decision.block().
     invariants, values = _preprocess_invariants(invariants, values)
 
+    # Python 3.13 can run GC-driven __del__ (Z3_del_context) from a background
+    # thread concurrently with Z3_set_error_handler on the main thread.  Z3 is
+    # not thread-safe for concurrent context create/delete on Windows.  Force
+    # synchronous GC here so any pending Z3 context finalizations complete in
+    # this thread before we create a new context.
+    if sys.version_info >= (3, 13):
+        gc.collect()
+
     # Create a per-call Z3 context so this function is safe to call from
     # multiple threads simultaneously.  Z3's global default context is NOT
     # thread-safe; sharing it across threads causes access violations.
+    bindings: dict = {}
     ctx = z3.Context()
     try:
         # Analyse String fields eligible for Int promotion (enumeration-style
@@ -426,4 +437,9 @@ def solve(
             solver_time_ms=(time.perf_counter() - start) * 1000.0,
         )
     finally:
-        del ctx  # release Z3 context memory
+        # Clear Z3 AST references before freeing the context.  bindings holds
+        # ExprRef objects that keep ctx alive; clearing them first lets
+        # Z3_del_context run immediately via refcounting instead of being
+        # deferred to the GC (which may run from a background thread on 3.13+).
+        bindings.clear()
+        del ctx

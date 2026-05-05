@@ -253,14 +253,17 @@ def _warmup_worker() -> None:
 
     Also starts the PPID watchdog daemon thread (process mode only).
     """
+    import multiprocessing
     import threading
 
     import z3  # — intentional local import inside worker
 
-    # Start PPID watchdog so orphaned worker processes self-terminate.
-    # Only meaningful in process mode; harmless in thread mode.
-    _wdog = threading.Thread(target=_ppid_watchdog, daemon=True, name="ppid-watchdog")
-    _wdog.start()
+    # Start PPID watchdog only in subprocess workers.  In thread-mode pools the
+    # watchdog runs inside the parent process where os.getppid() never changes,
+    # so it serves no purpose but consumes a thread handle per warm-up call.
+    if multiprocessing.current_process().name != "MainProcess":
+        _wdog = threading.Thread(target=_ppid_watchdog, daemon=True, name="ppid-watchdog")
+        _wdog.start()
 
     ctx = z3.Context()
     try:
