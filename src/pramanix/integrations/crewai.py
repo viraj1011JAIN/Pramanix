@@ -23,6 +23,7 @@ Usage::
 
     agent = Agent(tools=[safe_tool], ...)
 """
+
 from __future__ import annotations
 
 import logging
@@ -171,10 +172,7 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
         if not decision.allowed:
             if st.block_message:
                 return f"{_SAFE_FAILURE_PREFIX} {st.block_message}"
-            return (
-                f"{_SAFE_FAILURE_PREFIX} "
-                + format_block_feedback(decision, {})
-            )
+            return f"{_SAFE_FAILURE_PREFIX} " + format_block_feedback(decision, {})
 
         if st.underlying_fn is not None:
             return str(st.underlying_fn(tool_input))

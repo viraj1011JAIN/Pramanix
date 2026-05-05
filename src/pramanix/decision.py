@@ -55,10 +55,10 @@ try:
             option=_orjson.OPT_SORT_KEYS | _orjson.OPT_NON_STR_KEYS,
         )
 
-except ImportError:  # pragma: no cover
+except ImportError:
     import json as _json
 
-    def _canonical_bytes(payload: dict[str, Any]) -> bytes:  # pragma: no cover
+    def _canonical_bytes(payload: dict[str, Any]) -> bytes:
         """Deterministic canonical bytes via stdlib json (sorted keys)."""
         return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
@@ -147,8 +147,8 @@ def _build_decision_canonical(
 # ---------------------------------------------------------------------------
 try:
     from dataclasses import FrozenInstanceError  # type: ignore[attr-defined,unused-ignore]
-except ImportError:  # Python 3.10  # pragma: no cover
-    FrozenInstanceError = AttributeError  # type: ignore[assignment, misc]  # pragma: no cover
+except ImportError:  # Python 3.10
+    FrozenInstanceError = AttributeError  # type: ignore[assignment, misc]
 
 
 # ── SolverStatus ──────────────────────────────────────────────────────────────
@@ -325,10 +325,10 @@ class Decision:
         )
         try:
             serialized = _canonical_bytes(canonical)
-        except Exception:  # pragma: no cover
-            import json  # pragma: no cover
+        except Exception:
+            import json
 
-            serialized = json.dumps(  # pragma: no cover
+            serialized = json.dumps(
                 canonical, sort_keys=True, default=str
             ).encode()
         return hashlib.sha256(serialized).hexdigest()

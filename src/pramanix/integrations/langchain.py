@@ -20,7 +20,7 @@ try:
     from langchain_core.tools import BaseTool
 
     _LANGCHAIN_AVAILABLE = True
-except ImportError:  # pragma: no cover
+except ImportError:
     _LANGCHAIN_AVAILABLE = False
     BaseTool = object  # type: ignore[assignment, misc]
 
@@ -30,7 +30,7 @@ try:
     from pydantic import ConfigDict as _ConfigDict
 
     _PRAMANIX_MODEL_CONFIG = _ConfigDict(arbitrary_types_allowed=True)
-except ImportError:  # pragma: no cover
+except ImportError:
     _PRAMANIX_MODEL_CONFIG = None  # type: ignore[assignment]
 
 __all__ = ["PramanixGuardedTool", "wrap_tools"]
@@ -63,7 +63,7 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         state_provider: Callable[[], Any],
         execute_fn: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
-        if not _LANGCHAIN_AVAILABLE:  # pragma: no cover
+        if not _LANGCHAIN_AVAILABLE:
             self.name = name
             self.description = description
         else:

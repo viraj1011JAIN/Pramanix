@@ -476,7 +476,7 @@ class TestSystem1InjectionFilter:
             model = "any"
 
             async def extract(self, _text, _intent_schema, _context=None):
-                return {"amount": "50", "recipient": "alice"}  # pragma: no cover
+                return {"amount": "50", "recipient": "alice"}
 
         with pytest.raises(InjectionBlockedError, match="System 1 injection filter"):
             await extract_with_consensus(
@@ -494,7 +494,7 @@ class TestSystem1InjectionFilter:
             model = "any"
 
             async def extract(self, _text, _intent_schema, _context=None):
-                return {"amount": "50", "recipient": "alice"}  # pragma: no cover
+                return {"amount": "50", "recipient": "alice"}
 
         with pytest.raises(InjectionBlockedError, match="System 1 injection filter"):
             await extract_with_consensus(

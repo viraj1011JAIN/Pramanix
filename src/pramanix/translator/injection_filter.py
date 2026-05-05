@@ -127,7 +127,7 @@ class InjectionFilter:
                     )
 
             # Fallback: combined matched but no individual did.
-            return True, "injection_pattern_detected label='unknown'"  # pragma: no cover
+            return True, "injection_pattern_detected label='unknown'"
 
         except Exception as exc:
             # Fail-open: never block legitimate requests on a filter bug.
@@ -154,6 +154,6 @@ class InjectionFilter:
                 m = pattern.search(text)
                 if m:
                     results.append((label, m.group()))
-        except Exception:  # pragma: no cover
+        except Exception:
             pass
         return results

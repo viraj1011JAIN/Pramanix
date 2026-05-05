@@ -796,7 +796,7 @@ class InvariantASTCache:
     _max_size: int = 512
     _lock: Any = _threading.Lock()
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:  # pragma: no cover
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
 
     @classmethod

@@ -29,6 +29,7 @@ Usage::
     # DSPy call
     result = safe_module(amount=500.0, recipient="alice")
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable

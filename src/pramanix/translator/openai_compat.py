@@ -106,7 +106,7 @@ class OpenAICompatTranslator:
         attempts = 0
 
         try:
-            async for attempt in AsyncRetrying(  # pragma: no branch
+            async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
                 retry=retry_if_exception_type(self._retryable),

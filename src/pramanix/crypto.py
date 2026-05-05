@@ -141,8 +141,8 @@ class PramanixSigner:
                 PublicFormat,
                 load_pem_private_key,
             )
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(  # pragma: no cover
+        except ImportError as e:
+            raise ImportError(
                 "The 'cryptography' package is required for Ed25519 signing. "
                 "Install it: pip install 'pramanix[crypto]'"
             ) from e
@@ -327,8 +327,8 @@ class PramanixVerifier:
             from cryptography.hazmat.primitives.serialization import (
                 load_pem_public_key,
             )
-        except ImportError as e:  # pragma: no cover
-            raise ImportError(  # pragma: no cover
+        except ImportError as e:
+            raise ImportError(
                 "The 'cryptography' package is required for verification. "
                 "pip install cryptography"
             ) from e

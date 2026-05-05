@@ -727,7 +727,7 @@ class Guard:
         _metric_status = "error"  # overwritten before every return
         try:
             with _span("pramanix.guard.verify") as span:
-                if span is not None:  # pragma: no branch
+                if span is not None:
                     # Attach audit-trail metadata so SREs can correlate this
                     # span with a specific policy evaluation in any OTel backend.
                     span.set_attribute("pramanix.decision_id", decision_id)

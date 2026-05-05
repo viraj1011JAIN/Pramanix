@@ -29,6 +29,7 @@ Hierarchy::
     ├── ConfigurationError              # Guard / Policy misconfiguration
     └── IntegrityError                  # HMAC / cryptographic artifact verification failure
 """
+
 from __future__ import annotations
 
 __all__ = [
@@ -63,7 +64,6 @@ __all__ = [
     "ValidationError",
     "WorkerError",
 ]
-
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────
@@ -242,10 +242,13 @@ class GuardViolationError(GuardError):
 
     def __init__(self, decision: object) -> None:
         # Avoid importing Decision at class definition time (circular risk).
+        # Use getattr defensively so a partially-constructed decision object
+        # (e.g. passed from user code) never causes AttributeError during
+        # exception construction — a double-fault that buries the original error.
         self.decision = decision
-        super().__init__(
-            f"Guard blocked action: {decision.status!s} — {decision.explanation}"
-        )
+        status = getattr(decision, "status", None)
+        explanation = getattr(decision, "explanation", "")
+        super().__init__(f"Guard blocked action: {status!s} — {explanation}")
 
 
 # ── Configuration errors ──────────────────────────────────────────────────────

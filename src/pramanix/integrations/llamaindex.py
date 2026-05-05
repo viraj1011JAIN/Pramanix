@@ -39,7 +39,7 @@ __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 # type-check against ToolMetadata/ToolOutput would silently get the fake.
 # Raise ImportError on import so the dependency requirement is clear.
 
-try:  # pragma: no cover
+try:
     from llama_index.core.tools import FunctionTool as _LlamaFunctionTool  # noqa: F401
     from llama_index.core.tools import QueryEngineTool as _LlamaQueryEngineTool  # noqa: F401
     from llama_index.core.tools.types import ToolMetadata, ToolOutput

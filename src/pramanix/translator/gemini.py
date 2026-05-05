@@ -104,7 +104,7 @@ class GeminiTranslator:
         """
         try:
             import google.generativeai as genai
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ConfigurationError(
                 "google-generativeai is required for GeminiTranslator. "
                 "Install it with: pip install 'pramanix[gemini]'"
@@ -174,7 +174,7 @@ class GeminiTranslator:
                 pass
             raise
 
-        raise AssertionError("unreachable")  # pragma: no cover
+        raise AssertionError("unreachable")
 
     async def _single_call(self, *, prompt: str) -> str:
         """Make a single GenerateContent call and return the raw text."""

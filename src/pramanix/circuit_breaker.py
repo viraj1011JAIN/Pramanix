@@ -322,7 +322,7 @@ class AdaptiveCircuitBreaker:
             )
             self._metrics_available = True
             self._update_prometheus()
-        except ImportError:  # pragma: no cover
+        except ImportError:
             self._metrics_available = False
         except ValueError:
             # Metrics already registered (e.g., multiple instances in same process).
@@ -346,7 +346,7 @@ class AdaptiveCircuitBreaker:
 
     def _update_prometheus(self) -> None:
         if not self._metrics_available:
-            return  # pragma: no cover
+            return
         try:
             for s in CircuitState:
                 self._state_gauge.labels(
@@ -358,7 +358,7 @@ class AdaptiveCircuitBreaker:
 
     def _increment_pressure_metric(self) -> None:
         if not self._metrics_available:
-            return  # pragma: no cover
+            return
         with contextlib.suppress(Exception):
             self._pressure_counter.labels(namespace=self._config.namespace).inc()
 
@@ -601,7 +601,7 @@ class DistributedCircuitBreaker:
             )
             self._metrics_available = True
             self._update_prometheus()
-        except ImportError:  # pragma: no cover
+        except ImportError:
             self._metrics_available = False
         except ValueError:
             try:
@@ -623,7 +623,7 @@ class DistributedCircuitBreaker:
 
     def _update_prometheus(self) -> None:
         if not self._metrics_available:
-            return  # pragma: no cover
+            return
         try:
             for s in CircuitState:
                 self._state_gauge.labels(

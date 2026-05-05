@@ -181,7 +181,7 @@ class NestedField:
     def __getattr__(self, name: str) -> Field | NestedField:
         try:
             from pydantic import BaseModel as _BaseModel
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError("NestedField requires pydantic. pip install pydantic") from exc
 
         model_type: type = object.__getattribute__(self, "_model_type")

@@ -293,7 +293,7 @@ class AwsKmsKeyProvider:
     ) -> None:
         try:
             import boto3
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError(
                 "AwsKmsKeyProvider requires 'boto3'. "
                 "Install it: pip install 'pramanix[aws]'"
@@ -401,7 +401,7 @@ class AzureKeyVaultKeyProvider:
         try:
             from azure.identity import DefaultAzureCredential
             from azure.keyvault.secrets import SecretClient
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError(
                 "AzureKeyVaultKeyProvider requires 'azure-keyvault-secrets' and "
                 "'azure-identity'. Install them: pip install 'pramanix[azure]'"
@@ -498,7 +498,7 @@ class GcpKmsKeyProvider:
     ) -> None:
         try:
             from google.cloud import secretmanager
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError(
                 "GcpKmsKeyProvider requires 'google-cloud-secret-manager'. "
                 "Install it: pip install 'pramanix[gcp]'"
@@ -600,7 +600,7 @@ class HashiCorpVaultKeyProvider:
     ) -> None:
         try:
             import hvac
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError(
                 "HashiCorpVaultKeyProvider requires 'hvac'. "
                 "Install it: pip install 'pramanix[vault]'"
@@ -689,7 +689,7 @@ def _derive_public_pem(private_pem: bytes) -> bytes:
             PublicFormat,
             load_pem_private_key,
         )
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:
         raise ImportError(
             "The 'cryptography' package is required. "
             "Install it: pip install 'pramanix[crypto]'"

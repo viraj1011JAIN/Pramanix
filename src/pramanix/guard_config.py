@@ -88,21 +88,21 @@ _log = structlog.get_logger("pramanix.guard")
 # absent, so there is zero overhead on deployments that do not use tracing.
 
 try:
-    from opentelemetry import trace as _otel_trace  # pragma: no cover
+    from opentelemetry import trace as _otel_trace
 
-    def _span(name: str) -> Any:  # pragma: no cover
+    def _span(name: str) -> Any:
         """Return a live OTel span context-manager."""
         return _otel_trace.get_tracer("pramanix.guard").start_as_current_span(name)
 
-    _OTEL_AVAILABLE = True  # pragma: no cover
+    _OTEL_AVAILABLE = True
 
-except ImportError:  # pragma: no cover
+except ImportError:
 
-    def _span(name: str) -> Any:  # pragma: no cover
+    def _span(name: str) -> Any:
         """No-op span when opentelemetry is not installed."""
         return contextlib.nullcontext()
 
-    _OTEL_AVAILABLE = False  # pragma: no cover
+    _OTEL_AVAILABLE = False
 
 
 # ── Prometheus — graceful optional dependency ─────────────────────────────────
@@ -135,12 +135,12 @@ try:
     )
     _PROM_AVAILABLE = True
 
-except ImportError:  # pragma: no cover
-    _PROM_AVAILABLE = False  # pragma: no cover
-    _decisions_total = None  # type: ignore[assignment]  # pragma: no cover
-    _decision_latency = None  # type: ignore[assignment]  # pragma: no cover
-    _solver_timeouts_total = None  # type: ignore[assignment]  # pragma: no cover
-    _validation_failures_total = None  # type: ignore[assignment]  # pragma: no cover
+except ImportError:
+    _PROM_AVAILABLE = False
+    _decisions_total = None  # type: ignore[assignment]
+    _decision_latency = None  # type: ignore[assignment]
+    _solver_timeouts_total = None  # type: ignore[assignment]
+    _validation_failures_total = None  # type: ignore[assignment]
 
 
 # ── Module-level resolver registry ───────────────────────────────────────────

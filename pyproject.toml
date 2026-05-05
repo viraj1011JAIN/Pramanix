@@ -74,6 +74,7 @@ crewai = {version = ">=0.55", optional = true}
 pydantic-ai = {version = ">=0.0.9", optional = true}
 semantic-kernel = {version = ">=1.0", optional = true}
 haystack-ai = {version = ">=2.0", optional = true}
+scikit-learn = {version = ">=1.3", optional = true}
 
 [tool.poetry.extras]
 translator = ["httpx", "openai", "anthropic", "tenacity"]
@@ -108,7 +109,8 @@ crewai = ["crewai"]
 pydantic-ai = ["pydantic-ai"]
 semantic-kernel = ["semantic-kernel"]
 haystack = ["haystack-ai"]
-all = ["prometheus-client", "orjson", "httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2", "cohere", "mistralai", "google-generativeai", "llama-cpp-python", "asyncpg", "dspy-ai", "crewai", "pydantic-ai", "semantic-kernel", "haystack-ai"]
+sklearn = ["scikit-learn"]
+all = ["prometheus-client", "orjson", "httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2", "cohere", "mistralai", "google-generativeai", "llama-cpp-python", "asyncpg", "dspy-ai", "crewai", "pydantic-ai", "semantic-kernel", "haystack-ai", "scikit-learn"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
@@ -351,22 +353,14 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["src/pramanix"]
 branch = true
-omit = [
-    # Optional-extra integration modules — require packages not installed in the
-    # base dev environment (langchain, fastapi, autogen, llama-index, pyautogen).
-    # Covered by integration tests when extras are installed; excluded from the
-    # base coverage gate to avoid false failures in CI without the extras.
-    "src/pramanix/integrations/*.py",
-]
+omit = []
 
 [tool.coverage.report]
-fail_under = 95
+fail_under = 98
 show_missing = true
 exclude_lines = [
-    "pragma: no cover",
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.",
     "@overload",
-    "pragma: abstract",
     "\\.\\.\\.",
 ]

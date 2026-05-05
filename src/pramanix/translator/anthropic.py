@@ -47,7 +47,7 @@ class AnthropicTranslator:
     ) -> None:
         try:
             import anthropic
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError(
                 "anthropic package is required for AnthropicTranslator. "
                 "Install it with: pip install 'pramanix[translator]'"
@@ -91,7 +91,7 @@ class AnthropicTranslator:
                 stop_after_attempt,
                 wait_exponential,
             )
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError(
                 "tenacity package is required for retry support. "
                 "Install it with: pip install 'pramanix[translator]'"
@@ -128,7 +128,7 @@ class AnthropicTranslator:
                 f"[{self.model}] Anthropic API error {exc.status_code}: {exc.message}"
             ) from exc
 
-        raise AssertionError("unreachable")  # pragma: no cover
+        raise AssertionError("unreachable")
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""

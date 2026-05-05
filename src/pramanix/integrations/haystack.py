@@ -23,6 +23,7 @@ Usage::
     pipeline.add_component("guard", guard_component)
     pipeline.connect("retriever.documents", "guard.documents")
 """
+
 from __future__ import annotations
 
 import logging

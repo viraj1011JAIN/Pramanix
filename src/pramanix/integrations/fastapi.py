@@ -41,7 +41,7 @@ from pramanix.exceptions import GuardViolationError, PolicyCompilationError
 from pramanix.guard import Guard, GuardConfig
 
 
-class JSONResponse:  # pragma: no cover
+class JSONResponse:
     """Fallback stub — replaced by starlette import when available."""
 
     headers: dict[str, str]
@@ -59,7 +59,7 @@ try:
 
     _STARLETTE_AVAILABLE = True
     _BaseHTTPMiddleware: type = BaseHTTPMiddleware
-except ImportError:  # pragma: no cover
+except ImportError:
     _STARLETTE_AVAILABLE = False
     _BaseHTTPMiddleware = object
 

@@ -231,25 +231,25 @@ def _ppid_watchdog() -> None:
     import sys
     import time as _t
 
-    if not hasattr(os, "getpid"):  # pragma: no cover
+    if not hasattr(os, "getpid"):
         return  # should never happen, but guard against exotic runtimes
 
     use_getppid = hasattr(os, "getppid")
     if use_getppid:
         initial_ppid = os.getppid()
-    else:  # pragma: no cover
+    else:
         # Windows fallback: pass the parent PID in explicitly via os.getpid()
         # called in the *parent* process before spawn, or use ctypes to call
         # the Windows NtQueryInformationProcess API for the parent PID.
         # os.getppid() is available on Python 3.8+ on Windows, so the else
         # branch is only reached on exotic runtimes.
-        initial_ppid = None  # pragma: no cover
-        try:  # pragma: no cover
-            import ctypes  # pragma: no cover
-            import ctypes.wintypes  # pragma: no cover
+        initial_ppid = None
+        try:
+            import ctypes
+            import ctypes.wintypes
 
-            class _PROCESS_BASIC_INFORMATION(ctypes.Structure):  # pragma: no cover
-                _fields_ = [  # pragma: no cover
+            class _PROCESS_BASIC_INFORMATION(ctypes.Structure):
+                _fields_ = [
                     ("ExitStatus", ctypes.c_ulong),
                     ("PebBaseAddress", ctypes.c_void_p),
                     ("AffinityMask", ctypes.c_ulong),
@@ -258,35 +258,35 @@ def _ppid_watchdog() -> None:
                     ("InheritedFromUniqueProcessId", ctypes.c_ulong),
                 ]
 
-            ntdll = ctypes.windll.ntdll  # pragma: no cover
-            pbi = _PROCESS_BASIC_INFORMATION()  # pragma: no cover
-            ret = ntdll.NtQueryInformationProcess(  # pragma: no cover
+            ntdll = ctypes.windll.ntdll
+            pbi = _PROCESS_BASIC_INFORMATION()
+            ret = ntdll.NtQueryInformationProcess(
                 ctypes.windll.kernel32.GetCurrentProcess(),
                 0,  # ProcessBasicInformation
                 ctypes.byref(pbi),
                 ctypes.sizeof(pbi),
                 None,
             )
-            if ret == 0:  # pragma: no cover
+            if ret == 0:
                 initial_ppid = int(pbi.InheritedFromUniqueProcessId)
-        except Exception:  # pragma: no cover
+        except Exception:
             return  # cannot determine PPID on this platform — skip watchdog
 
-    while True:  # pragma: no cover
-        _t.sleep(2.0)  # pragma: no cover
-        try:  # pragma: no cover
-            if use_getppid:  # pragma: no cover
-                if os.getppid() != initial_ppid:  # pragma: no cover
-                    sys.exit(0)  # pragma: no cover
-            else:  # pragma: no cover
+    while True:
+        _t.sleep(2.0)
+        try:
+            if use_getppid:
+                if os.getppid() != initial_ppid:
+                    sys.exit(0)
+            else:
                 # Windows: try zero-signal to test if parent is still alive
-                try:  # pragma: no cover
-                    os.kill(initial_ppid, 0)  # type: ignore[arg-type]  # pragma: no cover
-                except OSError:  # pragma: no cover
-                    sys.exit(0)  # pragma: no cover
-        except SystemExit:  # pragma: no cover
-            raise  # pragma: no cover
-        except Exception:  # pragma: no cover
+                try:
+                    os.kill(initial_ppid, 0)  # type: ignore[arg-type]
+                except OSError:
+                    sys.exit(0)
+        except SystemExit:
+            raise
+        except Exception:
             pass  # don't let watchdog errors kill the worker
 
 
@@ -563,8 +563,8 @@ def _force_kill_processes(executor: ProcessPoolExecutor) -> None:
                     _log.warning("worker.drain: killed hung process pid=%s", proc.pid)
                 except Exception as exc:
                     _log.error("worker.drain: failed to kill pid=%s: %s", proc.pid, exc)
-    except Exception as exc:  # pragma: no cover
-        _log.error("worker.drain: unexpected error during force-kill: %s", exc)  # pragma: no cover
+    except Exception as exc:
+        _log.error("worker.drain: unexpected error during force-kill: %s", exc)
 
 
 # ── WorkerPool ────────────────────────────────────────────────────────────────

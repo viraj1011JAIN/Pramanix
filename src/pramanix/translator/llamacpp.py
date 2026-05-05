@@ -90,8 +90,8 @@ class LlamaCppTranslator:
         cache_key = (self._model_path, self._n_ctx, self._n_gpu_layers)
         with _MODEL_CACHE_LOCK:
             if cache_key not in _MODEL_CACHE:
-                from llama_cpp import Llama  # pragma: no cover
-                _MODEL_CACHE[cache_key] = Llama(  # pragma: no cover
+                from llama_cpp import Llama
+                _MODEL_CACHE[cache_key] = Llama(
                     model_path=self._model_path,
                     n_ctx=self._n_ctx,
                     n_gpu_layers=self._n_gpu_layers,

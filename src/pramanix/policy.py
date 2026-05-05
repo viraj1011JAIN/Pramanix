@@ -679,7 +679,7 @@ def model_dump_z3(
     """
     try:
         from pydantic import BaseModel as _BaseModel
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:
         raise ImportError("pydantic is required for model_dump_z3") from exc
 
     if not isinstance(model, _BaseModel):

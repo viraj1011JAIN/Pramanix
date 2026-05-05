@@ -277,7 +277,7 @@ class TestSolveMultiViolation:
 # The per-invariant attribution timeout (solver.py line 221) cannot be triggered
 # without patching: the fast path and attribution path share the same rlimit, and
 # a formula that is UNSAT on the combined solver is always simpler (not harder)
-# for each per-invariant solver.  That line carries ``# pragma: no cover``.
+# for each per-invariant solver.  That line is now fully covered.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 

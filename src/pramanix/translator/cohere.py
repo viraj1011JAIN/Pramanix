@@ -71,7 +71,7 @@ class CohereTranslator:
                 cohere.errors.ServiceUnavailableError,
                 cohere.errors.GatewayTimeoutError,
             )
-        except AttributeError:  # pragma: no cover — older SDK fallback
+        except AttributeError:  # older SDK fallback
             try:
                 self._retryable = (cohere.core.api_error.ApiError,)
             except AttributeError:
@@ -153,7 +153,7 @@ class CohereTranslator:
                 pass
             raise
 
-        raise AssertionError("unreachable")  # pragma: no cover
+        raise AssertionError("unreachable")
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
