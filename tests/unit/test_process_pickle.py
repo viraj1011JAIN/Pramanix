@@ -8,6 +8,7 @@ Gate condition (from engineering plan):
     #   reason='unpicklable_intent').
     # PicklingError must never propagate to the caller.
 """
+
 from __future__ import annotations
 
 import threading
@@ -58,9 +59,7 @@ class TestProcessPickleSafety:
         )
 
     @pytest.mark.asyncio
-    async def test_non_picklable_intent_returns_error_decision(
-        self, process_guard: Guard
-    ) -> None:
+    async def test_non_picklable_intent_returns_error_decision(self, process_guard: Guard) -> None:
         d = await process_guard.verify_async(
             intent={"amount": _NON_PICKLABLE},
             state={"balance": Decimal("500")},
@@ -69,9 +68,7 @@ class TestProcessPickleSafety:
         assert "unpicklable_intent" in d.explanation
 
     @pytest.mark.asyncio
-    async def test_non_picklable_state_returns_error_decision(
-        self, process_guard: Guard
-    ) -> None:
+    async def test_non_picklable_state_returns_error_decision(self, process_guard: Guard) -> None:
         d = await process_guard.verify_async(
             intent={"amount": Decimal("100")},
             state={"balance": _NON_PICKLABLE},
@@ -80,9 +77,7 @@ class TestProcessPickleSafety:
         assert "unpicklable_intent" in d.explanation
 
     @pytest.mark.asyncio
-    async def test_pickling_error_never_propagates(
-        self, process_guard: Guard
-    ) -> None:
+    async def test_pickling_error_never_propagates(self, process_guard: Guard) -> None:
         """PicklingError must be caught — never bubble up to the caller."""
         try:
             d = await process_guard.verify_async(
@@ -94,9 +89,7 @@ class TestProcessPickleSafety:
         assert d.allowed is False
 
     @pytest.mark.asyncio
-    async def test_error_decision_names_non_picklable_field(
-        self, process_guard: Guard
-    ) -> None:
+    async def test_error_decision_names_non_picklable_field(self, process_guard: Guard) -> None:
         d = await process_guard.verify_async(
             intent={"amount": _NON_PICKLABLE},
             state={"balance": Decimal("500")},
@@ -104,9 +97,7 @@ class TestProcessPickleSafety:
         assert "amount" in d.explanation
 
     @pytest.mark.asyncio
-    async def test_error_decision_has_remediation_hint(
-        self, process_guard: Guard
-    ) -> None:
+    async def test_error_decision_has_remediation_hint(self, process_guard: Guard) -> None:
         d = await process_guard.verify_async(
             intent={"amount": _NON_PICKLABLE},
             state={"balance": Decimal("500")},
@@ -114,9 +105,7 @@ class TestProcessPickleSafety:
         assert "model_dump" in d.explanation
 
     @pytest.mark.asyncio
-    async def test_picklable_values_are_not_blocked(
-        self, process_guard: Guard
-    ) -> None:
+    async def test_picklable_values_are_not_blocked(self, process_guard: Guard) -> None:
         """Picklable Decimals must pass through to the solver normally."""
         d = await process_guard.verify_async(
             intent={"amount": Decimal("100")},
@@ -172,9 +161,7 @@ class TestAssertProcessSafe:
     def test_multiple_bad_fields_all_listed(self) -> None:
         g = self._guard()
         with pytest.raises(ValueError) as exc_info:
-            g.assert_process_safe(
-                {"amount": _NON_PICKLABLE, "balance": _NON_PICKLABLE}
-            )
+            g.assert_process_safe({"amount": _NON_PICKLABLE, "balance": _NON_PICKLABLE})
         msg = str(exc_info.value)
         assert "amount" in msg
         assert "balance" in msg

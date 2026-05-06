@@ -203,19 +203,22 @@ def test_cohere_aclose_releases_client() -> None:
 
 
 def test_cohere_missing_package_raises_configuration_error() -> None:
-    """ConfigurationError when the cohere package is not installed."""
+    """ConfigurationError is raised at instantiation when cohere is absent.
+
+    CohereTranslator uses a lazy ``import cohere`` inside ``__init__``, so the
+    module can be imported normally.  We simulate the absent package by
+    inserting ``None`` into sys.modules for the duration of the test — Python
+    treats that as a deliberate block and raises ImportError on the inner
+    import, which the constructor converts to ConfigurationError.
+    """
     import sys
     from unittest.mock import patch
 
+    from pramanix.translator.cohere import CohereTranslator
+
     with patch.dict(sys.modules, {"cohere": None}):  # type: ignore[arg-type]
-        import importlib
-        import pramanix.translator.cohere as _mod
-        importlib.reload(_mod)
-        try:
-            with pytest.raises(ConfigurationError, match="pramanix\\[cohere\\]"):
-                _mod.CohereTranslator("command-r", api_key="k")
-        finally:
-            importlib.reload(_mod)
+        with pytest.raises(ConfigurationError, match="pramanix\\[cohere\\]"):
+            CohereTranslator("command-r", api_key="k")
 
 
 # ── Live tests (require COHERE_API_KEY) ────────────────────────────────────────

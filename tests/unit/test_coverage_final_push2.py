@@ -18,6 +18,7 @@ from tests.helpers.real_protocols import (
 
 def test_analyze_string_promotions_disqualified_continue():
     from pramanix.expressions import ConstraintExpr
+
     s = Field("s", str, "String")
     invariants = [
         ConstraintExpr(E(s) == "ok", label="inv1"),

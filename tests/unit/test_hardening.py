@@ -240,22 +240,29 @@ class TestPPIDWatchdog:
         from pramanix.worker import _ppid_watchdog  # noqa: F401 — import test
 
     def test_warmup_starts_watchdog_daemon_thread(self):
-        """After _warmup_worker runs, a daemon thread named 'ppid-watchdog' exists."""
-        # We cannot call _warmup_worker() directly (it is a subprocess initializer),
-        # so instead verify the thread is correctly configured by inspecting
-        # the function's logic: call it and check a daemon thread is started.
-        # Since warmup triggers the real Z3, run it in a thread to avoid
-        # polluting the main process state.
+        """ppid-watchdog starts in subprocess workers but NOT in the main process.
+
+        The watchdog guards against orphaned worker *processes* — it is
+        meaningless (and wasteful) inside the parent/main process where
+        os.getppid() never changes during a test run.  We verify the correct
+        behaviour by patching multiprocessing.current_process() so _warmup_worker
+        thinks it is running inside a subprocess.
+        """
         import threading
+        from unittest.mock import MagicMock, patch
 
         from pramanix.worker import _warmup_worker
+
+        fake_proc = MagicMock()
+        fake_proc.name = "ForkPoolWorker-1"  # any name != "MainProcess"
 
         started_event = threading.Event()
         warmup_error: list[Exception] = []
 
         def run_warmup():
             try:
-                _warmup_worker()
+                with patch("multiprocessing.current_process", return_value=fake_proc):
+                    _warmup_worker()
                 started_event.set()
             except Exception as exc:
                 warmup_error.append(exc)
@@ -266,17 +273,40 @@ class TestPPIDWatchdog:
         started_event.wait(timeout=30)
 
         if warmup_error:
-            pytest.skip(f"warmup not available in this environment: {warmup_error[0]}")
+            raise AssertionError(f"_warmup_worker raised: {warmup_error[0]}") from warmup_error[0]
 
-        # Find daemon threads named ppid-watchdog
         daemon_watchdogs = [
             th
             for th in threading.enumerate()
             if "ppid-watchdog" in th.name and th.daemon
         ]
         assert len(daemon_watchdogs) >= 1, (
-            "No daemon thread named 'ppid-watchdog' found after _warmup_worker(). "
-            "Zombie process protection is missing."
+            "No daemon thread named 'ppid-watchdog' found after _warmup_worker() "
+            "when simulating subprocess context.  Zombie process protection is missing."
+        )
+
+    def test_warmup_no_watchdog_in_main_process(self):
+        """_warmup_worker must NOT start a ppid-watchdog thread in the main process."""
+        import threading
+        from pramanix.worker import _warmup_worker
+
+        before = {th.name for th in threading.enumerate() if "ppid-watchdog" in th.name}
+
+        done = threading.Event()
+
+        def run():
+            _warmup_worker()
+            done.set()
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        done.wait(timeout=30)
+
+        after = {th.name for th in threading.enumerate() if "ppid-watchdog" in th.name}
+        new_watchdogs = after - before
+        assert len(new_watchdogs) == 0, (
+            f"_warmup_worker spawned ppid-watchdog threads in the main process: {new_watchdogs}. "
+            "Watchdog must only run in subprocess workers."
         )
 
 

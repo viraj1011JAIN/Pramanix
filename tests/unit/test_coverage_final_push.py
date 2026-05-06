@@ -14,6 +14,7 @@ Modules targeted and exact lines:
                                        872-874,886-888; 954-971; 986; 994-995; 1012-1013;
                                        1024-1027; 1050-1054; 1102
 """
+
 from __future__ import annotations
 
 import json
@@ -81,9 +82,7 @@ class TestGeminiSingleCall:
         """Lines 164-166: run_in_executor fallback when no generate_content_async."""
         from pramanix.translator.gemini import GeminiTranslator
 
-        genai = _GeminiRecordingGenaiModule(
-            '{"amount":1.0,"recipient":"X"}', sync_only=True
-        )
+        genai = _GeminiRecordingGenaiModule('{"amount":1.0,"recipient":"X"}', sync_only=True)
         t = GeminiTranslator.__new__(GeminiTranslator)
         t.model = "gemini-1.5-flash"
         t._api_key = None
@@ -125,11 +124,14 @@ class TestGeminiSingleCall:
         t._genai = genai
         t._client = None
 
-        with patch.dict(sys.modules, {
-            "google.generativeai": genai,
-            "google.api_core": None,
-            "google.api_core.exceptions": None,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "google.generativeai": genai,
+                "google.api_core": None,
+                "google.api_core.exceptions": None,
+            },
+        ):
             result = await t.extract("pay X 1", _Pay)
         assert result["amount"] == 1.0
 
@@ -148,11 +150,14 @@ class TestGeminiSingleCall:
         t._genai = genai
         t._client = None
 
-        with patch.dict(sys.modules, {
-            "google.generativeai": genai,
-            "google.api_core": None,
-            "google.api_core.exceptions": None,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "google.generativeai": genai,
+                "google.api_core": None,
+                "google.api_core.exceptions": None,
+            },
+        ):
             with pytest.raises(LLMTimeoutError, match="unreachable"):
                 await t.extract("pay X 1", _Pay)
 
@@ -213,6 +218,7 @@ class TestPramanixSignerEnvWrongType:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY_PEM", rsa_pem)
 
         from pramanix.crypto import PramanixSigner
+
         with pytest.raises(ValueError, match="not an Ed25519"):
             PramanixSigner()
 
@@ -230,6 +236,7 @@ class TestPramanixSignerEnvWrongType:
         rsa_pem = rsa_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
 
         from pramanix.crypto import PramanixSigner
+
         with pytest.raises(ValueError, match="not an Ed25519"):
             PramanixSigner(private_key_pem=rsa_pem)
 
@@ -284,9 +291,12 @@ class TestPramanixVerifierWrongType:
         from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
         rsa_key = generate_private_key(public_exponent=65537, key_size=2048)
-        rsa_pub_pem = rsa_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+        rsa_pub_pem = rsa_key.public_key().public_bytes(
+            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        )
 
         from pramanix.crypto import PramanixVerifier
+
         with pytest.raises(ValueError, match="not an Ed25519"):
             PramanixVerifier(public_key_pem=rsa_pub_pem)
 
@@ -300,6 +310,7 @@ class TestPramanixVerifierWrongType:
         verifier = PramanixVerifier(public_key_pem=signer.public_key_pem().decode())
         # Valid sig (line 359: return True)
         from pramanix.decision import Decision
+
         d = Decision.safe()
         sig = signer.sign(d)
         assert verifier.verify(d.decision_hash, sig) is True
@@ -613,9 +624,9 @@ class TestRedisSetStatePipeline:
         )
 
         state = await _redis_backend.get_state("severity_ns")
-        assert state.circuit_state == CircuitState.OPEN.value, (
-            "Conservative merge must keep the more-severe OPEN state"
-        )
+        assert (
+            state.circuit_state == CircuitState.OPEN.value
+        ), "Conservative merge must keep the more-severe OPEN state"
 
     @pytest.mark.asyncio
     async def test_set_state_redis_exception_is_swallowed(self, _redis_backend: Any) -> None:
@@ -758,6 +769,7 @@ class TestCircuitBreakerPrometheusMetricsLookup:
     def test_update_prometheus_exception_silently_swallowed(self) -> None:
         """Lines 331-332: exception in _state_gauge.labels().set() → silently swallowed."""
         from tests.helpers.real_protocols import _ErrorGauge
+
         breaker = self._make_breaker("prom_exc_test")
         # Force metrics available and a broken gauge whose labels().set() raises
         breaker._metrics_available = True
@@ -831,6 +843,7 @@ def _run_cli(args: list[str], capsys: pytest.CaptureFixture) -> tuple[int, str, 
         mp.setattr(sys, "argv", ["pramanix", *args])
         try:
             from pramanix.cli import main
+
             code = main()
         except SystemExit as exc:
             code = exc.code if isinstance(exc.code, int) else 1
@@ -864,26 +877,30 @@ class TestAuditVerifyFailFastOnHashError:
 
     def _write_bad_log(self, tmp_path: Path) -> Path:
         """Write a .jsonl with one bad record (triggers hash-recomputation error)."""
-        bad_record = json.dumps({
-            "decision_id": "err-fail-fast",
-            "decision_hash": "fake_hash",
-            "signature": "",
-            "intent_dump": 42,   # non-dict → _recompute_hash raises
-            "allowed": True,
-            "policy": "Test",
-            "status": "SAT",
-            "violated_invariants": [],
-        })
-        good_record = json.dumps({
-            "decision_id": "good-001",
-            "decision_hash": "fake",
-            "signature": "",
-            "intent_dump": {},
-            "allowed": True,
-            "policy": "Test",
-            "status": "SAT",
-            "violated_invariants": [],
-        })
+        bad_record = json.dumps(
+            {
+                "decision_id": "err-fail-fast",
+                "decision_hash": "fake_hash",
+                "signature": "",
+                "intent_dump": 42,  # non-dict → _recompute_hash raises
+                "allowed": True,
+                "policy": "Test",
+                "status": "SAT",
+                "violated_invariants": [],
+            }
+        )
+        good_record = json.dumps(
+            {
+                "decision_id": "good-001",
+                "decision_hash": "fake",
+                "signature": "",
+                "intent_dump": {},
+                "allowed": True,
+                "policy": "Test",
+                "status": "SAT",
+                "violated_invariants": [],
+            }
+        )
         log_path = tmp_path / "audit.jsonl"
         log_path.write_text(bad_record + "\n" + good_record + "\n", encoding="utf-8")
         return log_path
@@ -895,8 +912,11 @@ class TestAuditVerifyFailFastOnHashError:
             Encoding,
             PublicFormat,
         )
+
         private_key = Ed25519PrivateKey.generate()
-        pub_pem = private_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+        pub_pem = private_key.public_key().public_bytes(
+            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        )
         p = tmp_path / "pub.pem"
         p.write_bytes(pub_pem)
         return p
@@ -943,9 +963,12 @@ class TestSimulateStateBranches:
         code, stdout, _ = _run_cli(
             [
                 "simulate",
-                "--policy", policy_path,
-                "--intent", '{"amount": 100}',
-                "--state", '{"extra_field": "value"}',
+                "--policy",
+                policy_path,
+                "--intent",
+                '{"amount": 100}',
+                "--state",
+                '{"extra_field": "value"}',
             ],
             capsys,
         )
@@ -976,10 +999,16 @@ class TestPolicyMigrateVersionBadFormat:
         state_file.write_text('{"state_version": "1.0.0"}')
 
         code, _, _ = _run_cli(
-            ["policy", "migrate",
-             "--from-version", "1.0.0",
-             "--to-version", "bad-version",
-             "--state", str(state_file)],
+            [
+                "policy",
+                "migrate",
+                "--from-version",
+                "1.0.0",
+                "--to-version",
+                "bad-version",
+                "--state",
+                str(state_file),
+            ],
             capsys,
         )
         assert code == 2
@@ -988,9 +1017,7 @@ class TestPolicyMigrateVersionBadFormat:
 class TestSchemaExportImportException:
     """Lines 766-767, 773-775: schema export policy import errors."""
 
-    def test_import_exception_exits_2(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_import_exception_exits_2(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         """Lines 773-775: import raises Exception → code 2."""
         bad_file = tmp_path / "schema_bad.py"
         bad_file.write_text("raise ValueError('broken import')\n")
@@ -1006,18 +1033,16 @@ class TestSchemaExportImportException:
     ) -> None:
         """Lines 766-767: FileNotFoundError → code 2."""
         code, _, stderr = _run_cli(
-            ["schema", "export", "--policy",
-             str(tmp_path / "nonexistent.py") + ":MyClass"],
+            ["schema", "export", "--policy", str(tmp_path / "nonexistent.py") + ":MyClass"],
             capsys,
         )
         assert code == 2
 
-    def test_schema_export_to_file(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_schema_export_to_file(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         """Exercise the --output path (schema written to file)."""
         policy_file = tmp_path / "schema_ok.py"
-        policy_file.write_text(textwrap.dedent("""\
+        policy_file.write_text(
+            textwrap.dedent("""\
             from decimal import Decimal
             from pramanix import Field, Policy, E
 
@@ -1027,13 +1052,17 @@ class TestSchemaExportImportException:
                 @classmethod
                 def invariants(cls):
                     return [(E(cls.amount) >= 0).named("non_neg")]
-        """))
+        """)
+        )
         output_file = tmp_path / "schema.json"
         code, stdout, _ = _run_cli(
             [
-                "schema", "export",
-                "--policy", f"{policy_file}:MySchema",
-                "--output", str(output_file),
+                "schema",
+                "export",
+                "--policy",
+                f"{policy_file}:MySchema",
+                "--output",
+                str(output_file),
             ],
             capsys,
         )
@@ -1046,46 +1075,60 @@ class TestSchemaExportImportException:
 class TestCalibrateInjectionFitErrors:
     """Lines 872-874, 886-888: CalibratedScorer fit/save exception paths."""
 
-    def test_fit_raises_exits_1(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_fit_raises_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         """Lines 872-874: scorer.fit() raises → code 1."""
         pytest.importorskip("pramanix.translator.injection_scorer")
-        rows = [json.dumps({"text": f"sample {i}", "is_injection": i % 2 == 0}) + "\n"
-                for i in range(250)]
+        rows = [
+            json.dumps({"text": f"sample {i}", "is_injection": i % 2 == 0}) + "\n"
+            for i in range(250)
+        ]
         dataset = tmp_path / "data.jsonl"
         dataset.write_text("".join(rows))
         output = tmp_path / "scorer.pkl"
 
-        with patch("pramanix.translator.injection_scorer.CalibratedScorer.fit",
-                   side_effect=RuntimeError("fit broken")):
+        with patch(
+            "pramanix.translator.injection_scorer.CalibratedScorer.fit",
+            side_effect=RuntimeError("fit broken"),
+        ):
             code, _, stderr = _run_cli(
-                ["calibrate-injection",
-                 "--dataset", str(dataset),
-                 "--output", str(output),
-                 "--min-examples", "200"],
+                [
+                    "calibrate-injection",
+                    "--dataset",
+                    str(dataset),
+                    "--output",
+                    str(output),
+                    "--min-examples",
+                    "200",
+                ],
                 capsys,
             )
         assert code == 1
 
-    def test_save_raises_exits_1(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_save_raises_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         """Lines 886-888: scorer.save() raises → code 1."""
         pytest.importorskip("pramanix.translator.injection_scorer")
-        rows = [json.dumps({"text": f"sample {i}", "is_injection": i % 2 == 0}) + "\n"
-                for i in range(250)]
+        rows = [
+            json.dumps({"text": f"sample {i}", "is_injection": i % 2 == 0}) + "\n"
+            for i in range(250)
+        ]
         dataset = tmp_path / "data.jsonl"
         dataset.write_text("".join(rows))
         output = tmp_path / "scorer.pkl"
 
-        with patch("pramanix.translator.injection_scorer.CalibratedScorer.save",
-                   side_effect=OSError("disk full")):
+        with patch(
+            "pramanix.translator.injection_scorer.CalibratedScorer.save",
+            side_effect=OSError("disk full"),
+        ):
             code, _, stderr = _run_cli(
-                ["calibrate-injection",
-                 "--dataset", str(dataset),
-                 "--output", str(output),
-                 "--min-examples", "200"],
+                [
+                    "calibrate-injection",
+                    "--dataset",
+                    str(dataset),
+                    "--output",
+                    str(output),
+                    "--min-examples",
+                    "200",
+                ],
                 capsys,
             )
         assert code == 1
@@ -1112,9 +1155,7 @@ class TestDoctorSubcommandBranches:
         monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
         code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
-        key_check = next(
-            (c for c in data["checks"] if c["name"] == "signing-key"), None
-        )
+        key_check = next((c for c in data["checks"] if c["name"] == "signing-key"), None)
         assert key_check is not None
         assert key_check["level"] == "OK"
 
@@ -1127,9 +1168,7 @@ class TestDoctorSubcommandBranches:
         with patch.dict(sys.modules, {"redis": None}):
             code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
-        redis_check = next(
-            (c for c in data["checks"] if c["name"] == "redis-ping"), None
-        )
+        redis_check = next((c for c in data["checks"] if c["name"] == "redis-ping"), None)
         # Should be SKIP when redis module is unavailable
         assert redis_check is not None
         assert redis_check["level"] == "SKIP"
@@ -1143,9 +1182,7 @@ class TestDoctorSubcommandBranches:
         monkeypatch.delenv("PRAMANIX_SIGNING_KEY", raising=False)
         code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
-        redis_check = next(
-            (c for c in data["checks"] if c["name"] == "redis-ping"), None
-        )
+        redis_check = next((c for c in data["checks"] if c["name"] == "redis-ping"), None)
         assert redis_check is not None
         assert redis_check["level"] == "ERROR"
 
@@ -1157,8 +1194,11 @@ class TestDoctorSubcommandBranches:
         import z3
 
         class MockSolver:
-            def add(self, *args, **kwargs): pass
-            def check(self): return z3.unsat
+            def add(self, *args, **kwargs):
+                pass
+
+            def check(self):
+                return z3.unsat
 
         mock_solver = MockSolver()
 
@@ -1181,9 +1221,7 @@ class TestDoctorSubcommandBranches:
         with patch.dict(sys.modules, {"pydantic": mock_pydantic}):
             code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
-        pydantic_check = next(
-            (c for c in data["checks"] if c["name"] == "pydantic"), None
-        )
+        pydantic_check = next((c for c in data["checks"] if c["name"] == "pydantic"), None)
         assert pydantic_check is not None
         assert pydantic_check["level"] == "ERROR"
 
@@ -1198,9 +1236,7 @@ class TestDoctorSubcommandBranches:
         with patch.object(struct, "calcsize", return_value=4):
             code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
-        bits_check = next(
-            (c for c in data["checks"] if c["name"] == "platform-bits"), None
-        )
+        bits_check = next((c for c in data["checks"] if c["name"] == "platform-bits"), None)
         assert bits_check is not None
         assert bits_check["level"] == "WARN"
 
@@ -1273,8 +1309,9 @@ class TestGeminiTenacityImportError:
         from pramanix.translator.gemini import GeminiTranslator
 
         mock_genai = type(
-            "genai", (),
-            {"configure": lambda **kw: None, "GenerativeModel": object, "GenerationConfig": object}
+            "genai",
+            (),
+            {"configure": lambda **kw: None, "GenerativeModel": object, "GenerationConfig": object},
         )
 
         t = GeminiTranslator.__new__(GeminiTranslator)
@@ -1319,10 +1356,13 @@ class TestMistralBothImportsFail:
         from pramanix.translator.mistral import MistralTranslator
 
         # Patch before construction — the import failure is in __init__, not extract()
-        with patch.dict(sys.modules, {
-            "mistralai.client": None,   # v2 import fails
-            "mistralai": None,          # v1 import also fails
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "mistralai.client": None,  # v2 import fails
+                "mistralai": None,  # v1 import also fails
+            },
+        ):
             with pytest.raises((ConfigurationError, ImportError)):
                 MistralTranslator("mistral-large-latest", api_key="key")
 
@@ -1349,8 +1389,9 @@ class TestMistralParseNonExtractionError:
 
         t._single_call = _fake_single_call  # type: ignore[method-assign]
 
-        with patch("pramanix.translator.mistral.parse_llm_response",
-                   side_effect=ValueError("unexpected parse error")):
+        with patch(
+            "pramanix.translator.mistral.parse_llm_response",
+            side_effect=ValueError("unexpected parse error"),
+        ):
             with pytest.raises(ExtractionFailureError, match="failed to parse"):
                 await t.extract("pay Z 10", _Pay)
-

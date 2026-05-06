@@ -187,6 +187,11 @@ class ComplianceReport:
             ) from exc
 
         pdf = FPDF()
+        # Regulatory references contain em-dash (—, U+2014, Windows-1252 0x97)
+        # and section signs (§, U+00A7).  cp1252 is a strict superset of latin-1
+        # that covers all Windows-1252 characters; fpdf2 core fonts encode against
+        # this mapping, so setting it avoids FPDFUnicodeEncodingException.
+        pdf.core_fonts_encoding = "cp1252"
         pdf.set_auto_page_break(auto=True, margin=20)
         pdf.add_page()
 
@@ -215,7 +220,10 @@ class ComplianceReport:
 
         def _bullet(text: str) -> None:
             pdf.set_font("Helvetica", "", 10)
-            pdf.cell(8, 7, "\u2022", new_x="RIGHT", new_y="LAST")
+            # Helvetica is a Latin-1 core font; U+2022 (BULLET) is not in
+            # Latin-1.  U+00B7 (MIDDLE DOT) is at 0xB7 in Latin-1 and
+            # renders cleanly as a list marker in all PDF viewers.
+            pdf.cell(8, 7, "\u00b7", new_x="RIGHT", new_y="LAST")
             pdf.multi_cell(0, 7, text, new_x="LMARGIN", new_y="NEXT")
 
         # ── Decision summary ─────────────────────────────────────────────────

@@ -9,6 +9,7 @@ Files targeted:
 - translator/_sanitise.py — truncation, control chars, score edge cases
 - guard.py           — _semantic_post_consensus_check, metrics, verify_async gaps
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -638,7 +639,10 @@ class TestGuardInitCompilePolicyFailure:
 
     def test_compile_policy_failure_propagates(self, monkeypatch: pytest.MonkeyPatch):
         """Lines 474-475: if compile_policy raises, Guard.__init__ re-raises."""
-        def _boom(*a, **kw): raise RuntimeError("boom")
+
+        def _boom(*a, **kw):
+            raise RuntimeError("boom")
+
         monkeypatch.setattr(_transpiler_mod, "compile_policy", _boom)
         with pytest.raises(RuntimeError, match="boom"):
             Guard(SimplePolicy, GuardConfig(execution_mode="sync"))
@@ -784,7 +788,9 @@ class TestVerifyAsyncEdgeCases:
         finally:
             await guard.shutdown()
 
-    async def test_verify_async_thread_pramanix_error_in_validation(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_verify_async_thread_pramanix_error_in_validation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """Line 801: PramanixError (not ValidationError) during validation → Decision.error().
 
         Uses a policy with an intent_model so validate_intent is actually called,
@@ -814,11 +820,12 @@ class TestVerifyAsyncEdgeCases:
                     .explain("Insufficient"),
                 ]
 
-        guard = Guard(
-            _PolicyWithModel, GuardConfig(execution_mode="async-thread", max_workers=1)
-        )
+        guard = Guard(_PolicyWithModel, GuardConfig(execution_mode="async-thread", max_workers=1))
         try:
-            def _raise_cfg(*a, **kw): raise ConfigurationError("cfg error")
+
+            def _raise_cfg(*a, **kw):
+                raise ConfigurationError("cfg error")
+
             monkeypatch.setattr(_guard_mod, "validate_intent", _raise_cfg)
             d = await guard.verify_async(
                 intent={"amount": Decimal("100")},
@@ -837,9 +844,15 @@ class TestVerifyAsyncEdgeCases:
         _unseal_decision is imported locally inside verify_async so we patch
         it at the pramanix.worker module level.
         """
-        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False))
+        guard = Guard(
+            NoVersionPolicy,
+            GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False),
+        )
         try:
-            def _raise_hmac(*a, **kw): raise ValueError("HMAC mismatch")
+
+            def _raise_hmac(*a, **kw):
+                raise ValueError("HMAC mismatch")
+
             monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_hmac)
             d = await guard.verify_async(
                 intent={"amount": Decimal("100")},
@@ -856,9 +869,15 @@ class TestVerifyAsyncEdgeCases:
         """Lines 846-847: async-process WorkerError → Decision.error()."""
         from pramanix.exceptions import WorkerError
 
-        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False))
+        guard = Guard(
+            NoVersionPolicy,
+            GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False),
+        )
         try:
-            def _raise_worker(*a, **kw): raise WorkerError("worker died")
+
+            def _raise_worker(*a, **kw):
+                raise WorkerError("worker died")
+
             monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_worker)
             d = await guard.verify_async(
                 intent={"amount": Decimal("100")},
@@ -873,9 +892,15 @@ class TestVerifyAsyncEdgeCases:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         """Lines 848-849: async-process unexpected exception → Decision.error()."""
-        guard = Guard(NoVersionPolicy, GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False))
+        guard = Guard(
+            NoVersionPolicy,
+            GuardConfig(execution_mode="async-process", max_workers=1, worker_warmup=False),
+        )
         try:
-            def _raise_rt(*a, **kw): raise RuntimeError("something unexpected")
+
+            def _raise_rt(*a, **kw):
+                raise RuntimeError("something unexpected")
+
             monkeypatch.setattr(_worker_mod, "_unseal_decision", _raise_rt)
             d = await guard.verify_async(
                 intent={"amount": Decimal("100")},

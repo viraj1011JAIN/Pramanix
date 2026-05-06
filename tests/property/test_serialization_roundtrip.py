@@ -19,19 +19,18 @@ for any non-NaN, non-Inf Decimal.
 
 Run 1 000 examples:  ``pytest tests/property/ -q``
 """
+
 from __future__ import annotations
 
+import gc
 from decimal import Decimal
 
+import pytest
 import z3
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-import gc
-
 from pramanix.expressions import Field
-import pytest
-
 from pramanix.transpiler import z3_val, z3_var
 
 pytestmark = pytest.mark.slow

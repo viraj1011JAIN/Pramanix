@@ -14,10 +14,12 @@ fails, the primitive is considered unsafe for production deployment.
 Run:
     pytest tests/property/test_fintech_primitive_properties.py -v --tb=short
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
@@ -30,8 +32,6 @@ from pramanix.primitives.fintech import (
     SufficientBalance,
     VelocityCheck,
 )
-import pytest
-
 from pramanix.solver import solve
 
 pytestmark = pytest.mark.slow

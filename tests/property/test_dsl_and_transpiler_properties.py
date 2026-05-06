@@ -24,6 +24,7 @@ Proves via Hypothesis (hundreds to thousands of examples each) that:
 Run:
     pytest tests/property/test_dsl_and_transpiler_properties.py -v --tb=short
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -96,9 +97,9 @@ def test_multiplication_is_commutative(xv: Decimal, yv: Decimal, threshold: Deci
     vals = {"x": xv, "y": yv}
     result_ab = solve(inv_ab, vals, timeout_ms=5_000)
     result_ba = solve(inv_ba, vals, timeout_ms=5_000)
-    assert result_ab.sat == result_ba.sat, (
-        f"Multiplication commutativity violation: x={xv}, y={yv}, t={threshold}"
-    )
+    assert (
+        result_ab.sat == result_ba.sat
+    ), f"Multiplication commutativity violation: x={xv}, y={yv}, t={threshold}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -110,9 +111,7 @@ def test_multiplication_is_commutative(xv: Decimal, yv: Decimal, threshold: Deci
 
 @given(xv=_decimal, tight=_decimal, delta=_positive_decimal)
 @settings(max_examples=500, deadline=None)
-def test_ge_monotone_bound_tightening(
-    xv: Decimal, tight: Decimal, delta: Decimal
-) -> None:
+def test_ge_monotone_bound_tightening(xv: Decimal, tight: Decimal, delta: Decimal) -> None:
     """If x >= tight is SAT, then x >= (tight - delta) is also SAT.
 
     Making the bound easier (lower) can only maintain or improve satisfiability.
@@ -151,9 +150,7 @@ def test_int_ge_monotone(xv: int, tight: int, delta: int) -> None:
 
 @given(xv=_decimal, yv=_decimal, tx=_decimal, ty=_decimal)
 @settings(max_examples=500, deadline=None)
-def test_conjunction_requires_both(
-    xv: Decimal, yv: Decimal, tx: Decimal, ty: Decimal
-) -> None:
+def test_conjunction_requires_both(xv: Decimal, yv: Decimal, tx: Decimal, ty: Decimal) -> None:
     """(x >= tx) & (y >= ty) is SAT iff both individual constraints are SAT."""
     a = (E(_x) >= tx).named("a")
     b = (E(_y) >= ty).named("b")
@@ -215,8 +212,7 @@ def test_negation_is_complement(xv: Decimal, threshold: Decimal) -> None:
     sat_neg = solve([inv_neg], vals, timeout_ms=5_000).sat
 
     assert sat_pos != sat_neg or (sat_pos and sat_neg) is False, (
-        f"Negation not complement: x={xv}, t={threshold}, "
-        f"sat={sat_pos}, sat_neg={sat_neg}"
+        f"Negation not complement: x={xv}, t={threshold}, " f"sat={sat_pos}, sat_neg={sat_neg}"
     )
     # Strict assertion: exactly one of pos/neg must be SAT (they partition truth)
     assert sat_pos ^ sat_neg, (
@@ -236,9 +232,7 @@ def test_int_negation_is_complement(nv: int, threshold: int) -> None:
     sat_pos = solve([inv], vals, timeout_ms=5_000).sat
     sat_neg = solve([inv_neg], vals, timeout_ms=5_000).sat
 
-    assert sat_pos ^ sat_neg, (
-        f"Int negation not complement: n={nv}, t={threshold}"
-    )
+    assert sat_pos ^ sat_neg, f"Int negation not complement: n={nv}, t={threshold}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -323,12 +317,12 @@ def test_bool_field_isolation(flag_val: bool) -> None:
     result_true = solve(inv_true, {"flag": flag_val}, timeout_ms=5_000)
     result_false = solve(inv_false, {"flag": flag_val}, timeout_ms=5_000)
 
-    assert result_true.sat == flag_val, (
-        f"flag=={flag_val}: expected SAT for `flag == True` = {flag_val}, got {result_true.sat}"
-    )
-    assert result_false.sat == (not flag_val), (
-        f"flag=={flag_val}: expected SAT for `flag == False` = {not flag_val}, got {result_false.sat}"
-    )
+    assert (
+        result_true.sat == flag_val
+    ), f"flag=={flag_val}: expected SAT for `flag == True` = {flag_val}, got {result_true.sat}"
+    assert (
+        result_false.sat == (not flag_val)
+    ), f"flag=={flag_val}: expected SAT for `flag == False` = {not flag_val}, got {result_false.sat}"
 
 
 @given(xv=_decimal, flag_val=st.booleans())
@@ -356,9 +350,9 @@ def test_mixed_real_bool_invariants_no_contamination(xv: Decimal, flag_val: bool
 def test_named_twice_uses_final_label() -> None:
     """Calling .named() twice on the same expression uses only the second label."""
     inv = (E(_x) >= Decimal("0")).named("first").named("second")
-    assert inv.label == "second", (
-        f"Expected label 'second' after double .named(), got '{inv.label}'"
-    )
+    assert (
+        inv.label == "second"
+    ), f"Expected label 'second' after double .named(), got '{inv.label}'"
 
 
 def test_named_label_preserved_through_boolean_composition() -> None:
@@ -382,9 +376,9 @@ def test_named_label_preserved_through_boolean_composition() -> None:
 def test_empty_invariant_list_is_always_sat(xv: Decimal) -> None:
     """solve([], ...) with no invariants is always SAT — vacuous truth."""
     result = solve([], {"x": xv}, timeout_ms=5_000)
-    assert result.sat is True, (
-        f"Empty invariant list returned UNSAT — vacuous truth violated: x={xv}"
-    )
+    assert (
+        result.sat is True
+    ), f"Empty invariant list returned UNSAT — vacuous truth violated: x={xv}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -440,14 +434,9 @@ def test_all_failing_invariants_are_attributed(n_failing: int) -> None:
     all fail, all N labels must appear in the result (not just a minimal core).
     """
     # All constraints require x >= 1 but we pass x = 0 so all fail
-    inv = [
-        (E(_x) >= Decimal("1")).named(f"inv_{i}")
-        for i in range(n_failing)
-    ]
+    inv = [(E(_x) >= Decimal("1")).named(f"inv_{i}") for i in range(n_failing)]
     result = solve(inv, {"x": Decimal("0")}, timeout_ms=5_000)
     assert result.sat is False
     violated = {c.label for c in result.violated if c.label is not None}
     expected = {f"inv_{i}" for i in range(n_failing)}
-    assert violated == expected, (
-        f"Attribution incomplete: expected {expected}, got {violated}"
-    )
+    assert violated == expected, f"Attribution incomplete: expected {expected}, got {violated}"

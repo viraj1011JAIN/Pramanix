@@ -247,7 +247,15 @@ class TestComplianceReportToJson:
 
 class TestComplianceReportToPdfImportError:
     def test_to_pdf_raises_import_error_without_fpdf2(self) -> None:
-        """to_pdf() raises ImportError with install hint when fpdf2 absent."""
+        """to_pdf() raises ImportError with install hint when fpdf2 absent.
+
+        fpdf may already be cached in sys.modules from a previous test, so
+        builtins.__import__ patching is insufficient.  Shadow the module at
+        the sys.modules level — Python's import machinery checks sys.modules
+        first and raises ImportError when it finds None.
+        """
+        from unittest.mock import patch
+
         r = ComplianceReport(
             decision_id="d",
             decision_hash="h",
@@ -261,8 +269,9 @@ class TestComplianceReportToPdfImportError:
             regulatory_refs=("ref",),
             explanation="blocked",
         )
-        with pytest.raises(ImportError, match="fpdf2"):
-            r.to_pdf()
+        with patch.dict(sys.modules, {"fpdf": None}):  # type: ignore[arg-type]
+            with pytest.raises(ImportError, match="fpdf2"):
+                r.to_pdf()
 
 
 # ── ComplianceReport.to_pdf() — full generation (fake fpdf2) ─────────────────

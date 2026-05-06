@@ -26,8 +26,7 @@ Fail-safe behaviour
 from __future__ import annotations
 
 import contextlib
-import gc
-import sys
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -54,6 +53,29 @@ if TYPE_CHECKING:
     from pramanix.expressions import Field
 
 __all__: list[str] = []  # internal module
+
+
+# ── Thread-local Z3 context ───────────────────────────────────────────────────
+#
+# Z3 on Windows is not safe for concurrent context creation/deletion.  The GC
+# thread (Python 3.13+) calls Z3_del_context while the main thread calls
+# Z3_set_error_handler, producing a fatal access-violation crash.
+#
+# Fix: one Z3 Context per OS thread, created once and never destroyed.  Threads
+# in the worker pool each get their own isolated context.  No concurrent
+# create/delete, no GC involvement, no race conditions.
+#
+# Z3 variables are looked up by name inside a context — redeclaring the same
+# name in the same context is idempotent, so reusing the context across calls
+# is correct and slightly faster (avoids JIT warm-up on first use per thread).
+_tl_ctx = threading.local()
+
+
+def _thread_ctx() -> z3.Context:
+    """Return the Z3 Context for the current thread, creating it on first call."""
+    if not hasattr(_tl_ctx, "ctx"):
+        _tl_ctx.ctx = z3.Context()
+    return _tl_ctx.ctx
 
 
 # ── OpenTelemetry — graceful optional dependency ──────────────────────────────
@@ -392,54 +414,34 @@ def solve(
     # Raises ValueError on overflow — caught by Guard and converted to Decision.block().
     invariants, values = _preprocess_invariants(invariants, values)
 
-    # Python 3.13 can run GC-driven __del__ (Z3_del_context) from a background
-    # thread concurrently with Z3_set_error_handler on the main thread.  Z3 is
-    # not thread-safe for concurrent context create/delete on Windows.  Force
-    # synchronous GC here so any pending Z3 context finalizations complete in
-    # this thread before we create a new context.
-    if sys.version_info >= (3, 13):
-        gc.collect()
+    # Use the thread-local Z3 context.  Each OS thread owns exactly one Z3
+    # Context for its entire lifetime — no concurrent create/delete, no GC race.
+    ctx = _thread_ctx()
 
-    # Create a per-call Z3 context so this function is safe to call from
-    # multiple threads simultaneously.  Z3's global default context is NOT
-    # thread-safe; sharing it across threads causes access violations.
-    bindings: dict = {}
-    ctx = z3.Context()
-    try:
-        # Analyse String fields eligible for Int promotion (enumeration-style
-        # fields used only in == / is_in comparisons).  Promotion eliminates
-        # Z3 sequence-theory overhead for these fields, yielding a ~5x latency
-        # reduction.  The encoding is alphabetically stable across restarts.
-        promotions = analyze_string_promotions(invariants)
+    # Analyse String fields eligible for Int promotion.
+    promotions = analyze_string_promotions(invariants)
 
-        # Collect all fields referenced across all invariants, then build bindings.
-        all_fields: dict[str, Field] = {}
-        for inv in invariants:
-            all_fields.update(collect_fields(inv.node))
-        bindings = _build_bindings(all_fields, values, ctx, promotions)
+    # Collect all fields referenced across all invariants, then build bindings.
+    all_fields: dict[str, Field] = {}
+    for inv in invariants:
+        all_fields.update(collect_fields(inv.node))
+    bindings = _build_bindings(all_fields, values, ctx, promotions)
 
-        # ── Phase 1: fast path ────────────────────────────────────────────────
-        fast_result = _fast_check(invariants, bindings, timeout_ms, ctx, rlimit, promotions)
+    # ── Phase 1: fast path ────────────────────────────────────────────────────
+    fast_result = _fast_check(invariants, bindings, timeout_ms, ctx, rlimit, promotions)
 
-        if fast_result == z3.sat:
-            return _SolveResult(
-                sat=True,
-                violated=[],
-                solver_time_ms=(time.perf_counter() - start) * 1000.0,
-            )
-
-        # ── Phase 2: attribution path (only reached on unsat) ─────────────────
-        violated = _attribute_violations(invariants, bindings, timeout_ms, ctx, rlimit, promotions)
-
+    if fast_result == z3.sat:
         return _SolveResult(
-            sat=False,
-            violated=violated,
+            sat=True,
+            violated=[],
             solver_time_ms=(time.perf_counter() - start) * 1000.0,
         )
-    finally:
-        # Clear Z3 AST references before freeing the context.  bindings holds
-        # ExprRef objects that keep ctx alive; clearing them first lets
-        # Z3_del_context run immediately via refcounting instead of being
-        # deferred to the GC (which may run from a background thread on 3.13+).
-        bindings.clear()
-        del ctx
+
+    # ── Phase 2: attribution path (only reached on unsat) ─────────────────────
+    violated = _attribute_violations(invariants, bindings, timeout_ms, ctx, rlimit, promotions)
+
+    return _SolveResult(
+        sat=False,
+        violated=violated,
+        solver_time_ms=(time.perf_counter() - start) * 1000.0,
+    )

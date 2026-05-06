@@ -499,49 +499,65 @@ class TestGuardConfigImportErrorBranches:
 class TestGuardOtelSpanAttributes:
     def test_span_attributes_set_when_otel_tracer_configured(self) -> None:
         """Guard.verify() sets pramanix.decision_id and policy attributes on the span."""
+        import opentelemetry.trace as _otel_trace
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         from pramanix import E, Field, Guard, GuardConfig, Policy
 
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
+        # OTel's global TracerProvider is set-once across the process — earlier
+        # tests may have already set one.  Reset the internal Once guard so we
+        # can install our InMemorySpanExporter for this test.
+        _prev_provider = _otel_trace._TRACER_PROVIDER
+        _prev_done = _otel_trace._TRACER_PROVIDER_SET_ONCE._done
+        try:
+            _otel_trace._TRACER_PROVIDER_SET_ONCE._done = False
+            _otel_trace._TRACER_PROVIDER = None
 
-        _amount = Field("amount", Decimal, "Real")
+            exporter = InMemorySpanExporter()
+            provider = TracerProvider()
+            provider.add_span_processor(SimpleSpanProcessor(exporter))
+            trace.set_tracer_provider(provider)
 
-        class _P(Policy):
-            class Meta:
-                version = "1.0"
+            _amount = Field("amount", Decimal, "Real")
 
-            @classmethod
-            def fields(cls):
-                return {"amount": _amount}
+            class _P(Policy):
+                class Meta:
+                    version = "1.0"
 
-            @classmethod
-            def invariants(cls):
-                return [(E(_amount) >= Decimal("0")).named("pos").explain("positive")]
+                @classmethod
+                def fields(cls):
+                    return {"amount": _amount}
 
-        guard = Guard(_P, GuardConfig(execution_mode="sync"))
-        d = guard.verify(
-            intent={"amount": Decimal("10")},
-            state={"state_version": "1.0"},
-        )
+                @classmethod
+                def invariants(cls):
+                    return [(E(_amount) >= Decimal("0")).named("pos").explain("positive")]
 
-        assert d.allowed
-        spans = exporter.get_finished_spans()
-        assert len(spans) > 0
+            guard = Guard(_P, GuardConfig(execution_mode="sync"))
+            d = guard.verify(
+                intent={"amount": Decimal("10")},
+                state={"state_version": "1.0"},
+            )
 
-        # Find the top-level guard span and verify its attributes were populated.
-        guard_spans = [s for s in spans if s.name == "pramanix.guard.verify"]
-        assert len(guard_spans) > 0, "Expected a pramanix.guard.verify span"
+            assert d.allowed
+            spans = exporter.get_finished_spans()
+            assert len(spans) > 0
 
-        attrs = guard_spans[0].attributes or {}
-        assert "pramanix.decision_id" in attrs
-        assert "pramanix.policy.name" in attrs
-        assert attrs["pramanix.policy.name"] == "_P"
+            guard_spans = [s for s in spans if s.name == "pramanix.guard.verify"]
+            assert len(guard_spans) > 0, "Expected a pramanix.guard.verify span"
 
-        # Restore the no-op trace provider so subsequent tests are unaffected.
-        trace.set_tracer_provider(trace.NoOpTracerProvider())
+            attrs = guard_spans[0].attributes or {}
+            assert "pramanix.decision_id" in attrs
+            assert "pramanix.policy.name" in attrs
+            assert attrs["pramanix.policy.name"] == "_P"
+        finally:
+            # Restore the original TracerProvider so subsequent tests are unaffected.
+            _otel_trace._TRACER_PROVIDER_SET_ONCE._done = False
+            _otel_trace._TRACER_PROVIDER = None
+            if _prev_provider is not None:
+                _otel_trace._TRACER_PROVIDER_SET_ONCE._done = False
+                trace.set_tracer_provider(_prev_provider)
+            else:
+                _otel_trace._TRACER_PROVIDER_SET_ONCE._done = _prev_done
+                _otel_trace._TRACER_PROVIDER = _prev_provider

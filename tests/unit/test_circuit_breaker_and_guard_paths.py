@@ -10,9 +10,11 @@ Covers the remaining gaps in:
   guard.py (max_input_bytes, fast_path, redact_violations, metrics),
   audit/archiver.py (_archive_segment exception path).
 """
+
 from __future__ import annotations
 
 import asyncio
+import importlib.util as _ilu
 import threading
 import time
 import types
@@ -20,13 +22,10 @@ from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 
-import importlib.util as _ilu
 import pytest
 
 _ASYNCPG_AVAILABLE = _ilu.find_spec("asyncpg") is not None
-_skip_without_asyncpg = pytest.mark.skipif(
-    not _ASYNCPG_AVAILABLE, reason="asyncpg not installed"
-)
+_skip_without_asyncpg = pytest.mark.skipif(not _ASYNCPG_AVAILABLE, reason="asyncpg not installed")
 
 from tests.helpers.real_protocols import (
     _AnthropicErrorMessagesNS,
@@ -72,13 +71,16 @@ def _make_guard(execution_mode: str = "sync", **kwargs: Any):
 
         @classmethod
         def invariants(cls):
-            return [(E(_amount) >= Decimal("0")).named("pos").explain("Amount must be non-negative")]
+            return [
+                (E(_amount) >= Decimal("0")).named("pos").explain("Amount must be non-negative")
+            ]
 
     return Guard(_P, GuardConfig(execution_mode=execution_mode, **kwargs))
 
 
 def _make_safe_decision():
     from pramanix.decision import Decision, SolverStatus
+
     return Decision(allowed=True, status=SolverStatus.SAFE, violated_invariants=(), explanation="")
 
 
@@ -88,6 +90,7 @@ def _make_safe_decision():
 class TestTranslatorCircuitBreaker:
     def test_state_property(self) -> None:
         from pramanix.circuit_breaker import CircuitState, TranslatorCircuitBreaker
+
         cb = TranslatorCircuitBreaker("m")
         assert cb.state == CircuitState.CLOSED
 
@@ -523,6 +526,7 @@ class TestCryptoSigningFailureCounter:
 class TestKafkaDeliveryCallback:
     def _make_kafka_sink(self, producer: Any, max_queue: int = 10_000) -> Any:
         from pramanix.audit_sink import KafkaAuditSink
+
         sink = KafkaAuditSink.__new__(KafkaAuditSink)
         sink._topic = "test-topic"
         sink._producer = producer
@@ -627,6 +631,7 @@ class TestGrpcWrappedHandlerCalls:
         guard = Guard(PolicyCls, GuardConfig(execution_mode="sync"))
 
         from pramanix.interceptors.grpc import PramanixGrpcInterceptor
+
         return PramanixGrpcInterceptor(
             guard=guard,
             intent_extractor=lambda details, req: {"amount": Decimal("100")},
@@ -655,11 +660,14 @@ class TestGrpcWrappedHandlerCalls:
     def test_unary_stream_blocked(self) -> None:
         """_guarded_unary_stream returns without yielding when guard blocks."""
         interceptor = self._make_interceptor(always_allow=False)
-        captured = self._capture_wrapped(interceptor, {
-            "unary_stream": lambda req, ctx: iter([1, 2, 3]),
-            "stream_unary": None,
-            "stream_stream": None,
-        })
+        captured = self._capture_wrapped(
+            interceptor,
+            {
+                "unary_stream": lambda req, ctx: iter([1, 2, 3]),
+                "stream_unary": None,
+                "stream_stream": None,
+            },
+        )
 
         if "unary_stream" in captured:
             ctx = _RpcContext()
@@ -669,11 +677,14 @@ class TestGrpcWrappedHandlerCalls:
     def test_unary_stream_allowed(self) -> None:
         """_guarded_unary_stream yields from handler when guard allows."""
         interceptor = self._make_interceptor(always_allow=True)
-        captured = self._capture_wrapped(interceptor, {
-            "unary_stream": lambda req, ctx: iter([10, 20]),
-            "stream_unary": None,
-            "stream_stream": None,
-        })
+        captured = self._capture_wrapped(
+            interceptor,
+            {
+                "unary_stream": lambda req, ctx: iter([10, 20]),
+                "stream_unary": None,
+                "stream_stream": None,
+            },
+        )
 
         if "unary_stream" in captured:
             ctx = _RpcContext()
@@ -683,11 +694,14 @@ class TestGrpcWrappedHandlerCalls:
     def test_stream_unary_allowed(self) -> None:
         """_guarded_stream_unary passes combined iterator to handler when allowed."""
         interceptor = self._make_interceptor(always_allow=True)
-        captured = self._capture_wrapped(interceptor, {
-            "unary_stream": None,
-            "stream_unary": lambda requests, ctx: "stream_result",
-            "stream_stream": None,
-        })
+        captured = self._capture_wrapped(
+            interceptor,
+            {
+                "unary_stream": None,
+                "stream_unary": lambda requests, ctx: "stream_result",
+                "stream_stream": None,
+            },
+        )
 
         if "stream_unary" in captured:
             ctx = _RpcContext()
@@ -697,11 +711,14 @@ class TestGrpcWrappedHandlerCalls:
     def test_stream_unary_blocked(self) -> None:
         """_guarded_stream_unary returns None when guard blocks."""
         interceptor = self._make_interceptor(always_allow=False)
-        captured = self._capture_wrapped(interceptor, {
-            "unary_stream": None,
-            "stream_unary": lambda requests, ctx: "x",
-            "stream_stream": None,
-        })
+        captured = self._capture_wrapped(
+            interceptor,
+            {
+                "unary_stream": None,
+                "stream_unary": lambda requests, ctx: "x",
+                "stream_stream": None,
+            },
+        )
 
         if "stream_unary" in captured:
             ctx = _RpcContext()
@@ -711,11 +728,14 @@ class TestGrpcWrappedHandlerCalls:
     def test_stream_stream_allowed(self) -> None:
         """_guarded_stream_stream yields from handler when allowed."""
         interceptor = self._make_interceptor(always_allow=True)
-        captured = self._capture_wrapped(interceptor, {
-            "unary_stream": None,
-            "stream_unary": None,
-            "stream_stream": lambda requests, ctx: iter(["a", "b"]),
-        })
+        captured = self._capture_wrapped(
+            interceptor,
+            {
+                "unary_stream": None,
+                "stream_unary": None,
+                "stream_stream": lambda requests, ctx: iter(["a", "b"]),
+            },
+        )
 
         if "stream_stream" in captured:
             ctx = _RpcContext()
@@ -725,11 +745,14 @@ class TestGrpcWrappedHandlerCalls:
     def test_stream_stream_blocked(self) -> None:
         """_guarded_stream_stream returns without yielding when guard blocks."""
         interceptor = self._make_interceptor(always_allow=False)
-        captured = self._capture_wrapped(interceptor, {
-            "unary_stream": None,
-            "stream_unary": None,
-            "stream_stream": lambda requests, ctx: iter(["x", "y"]),
-        })
+        captured = self._capture_wrapped(
+            interceptor,
+            {
+                "unary_stream": None,
+                "stream_unary": None,
+                "stream_stream": lambda requests, ctx: iter(["x", "y"]),
+            },
+        )
 
         if "stream_stream" in captured:
             ctx = _RpcContext()
@@ -743,6 +766,7 @@ class TestGrpcWrappedHandlerCalls:
 def _make_postgres_verifier(pool: Any) -> Any:
     """Build a PostgresExecutionTokenVerifier without a real DB connection."""
     from pramanix.execution_token import PostgresExecutionTokenVerifier
+
     verifier = PostgresExecutionTokenVerifier.__new__(PostgresExecutionTokenVerifier)
     verifier._key = b"secret-key-min16"
     verifier._dsn = "postgresql://localhost/test"
@@ -761,7 +785,9 @@ def _make_exec_token(key: bytes, *, expired: bool = False, state_version: str | 
     from pramanix.decision import Decision, SolverStatus
     from pramanix.execution_token import ExecutionTokenSigner
 
-    decision = Decision(allowed=True, status=SolverStatus.SAFE, violated_invariants=(), explanation="")
+    decision = Decision(
+        allowed=True, status=SolverStatus.SAFE, violated_invariants=(), explanation=""
+    )
     signer = ExecutionTokenSigner(secret_key=key, ttl_seconds=-1 if expired else 60)
     return signer.mint(decision, state_version=state_version)
 
@@ -794,6 +820,7 @@ class TestPostgresExecutionTokenVerifier:
     def test_consume_unique_violation_returns_false(self) -> None:
         """consume(): asyncpg.UniqueViolationError → False (token already used)."""
         import asyncpg
+
         key = b"secret-key-min16"
         token = _make_exec_token(key, state_version=None)
 
@@ -850,6 +877,7 @@ class TestPostgresExecutionTokenVerifier:
     async def test_consume_within_unique_violation(self) -> None:
         """consume_within() returns False on UniqueViolationError (INSERT)."""
         import asyncpg
+
         key = b"secret-key-min16"
         token = _make_exec_token(key, state_version=None)
 
@@ -902,10 +930,12 @@ class TestRedisScanPagination:
         verifier._prefix = "pramanix:token:"
 
         # Two pages: first page cursor=42 (continue), second page cursor=0 (stop).
-        scan_redis = _SyncScanRedis([
-            (42, ["key1", "key2"]),
-            (0, ["key3"]),
-        ])
+        scan_redis = _SyncScanRedis(
+            [
+                (42, ["key1", "key2"]),
+                (0, ["key3"]),
+            ]
+        )
         verifier._redis = scan_redis
 
         count = verifier.consumed_count()
@@ -1030,8 +1060,9 @@ class TestGuardVerifyAsyncPaths:
 
         guard = Guard(_P, GuardConfig(execution_mode="sync", metrics_enabled=True))
 
-        with patch("pramanix.guard.solve",
-                   side_effect=SolverTimeoutError(label="pos", timeout_ms=100)):
+        with patch(
+            "pramanix.guard.solve", side_effect=SolverTimeoutError(label="pos", timeout_ms=100)
+        ):
             d = guard.verify(
                 intent={"amount": Decimal("100")},
                 state={"state_version": "1.0"},
@@ -1039,6 +1070,7 @@ class TestGuardVerifyAsyncPaths:
 
         assert not d.allowed
         from pramanix.decision import SolverStatus
+
         assert d.status == SolverStatus.TIMEOUT
 
 
@@ -1321,11 +1353,13 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._client = types.SimpleNamespace(secrets=types.SimpleNamespace(
-            kv=types.SimpleNamespace(v2=types.SimpleNamespace(
-                read_secret_version=lambda **kw: None
-            ))
-        ))
+        p._client = types.SimpleNamespace(
+            secrets=types.SimpleNamespace(
+                kv=types.SimpleNamespace(
+                    v2=types.SimpleNamespace(read_secret_version=lambda **kw: None)
+                )
+            )
+        )
         p._secret_path = "pramanix/key"
         p._field = "private_key_pem"
         p._mount_point = "secret"

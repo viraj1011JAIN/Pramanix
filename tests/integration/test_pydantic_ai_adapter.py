@@ -102,8 +102,7 @@ import importlib.util as _ilu
 _PYDANTIC_AI_AVAILABLE = _ilu.find_spec("pydantic_ai") is not None
 
 _skip_without_pydantic_ai = pytest.mark.skipif(
-    not _PYDANTIC_AI_AVAILABLE,
-    reason="pydantic-ai not installed"
+    not _PYDANTIC_AI_AVAILABLE, reason="pydantic-ai not installed"
 )
 
 

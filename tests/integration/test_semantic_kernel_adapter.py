@@ -8,6 +8,7 @@ ConfigurationError immediately (fail-fast contract).
 With semantic-kernel installed (pytest.importorskip): exercises verify()
 and verify_async() with real Guard verifications and JSON response parsing.
 """
+
 from __future__ import annotations
 
 import json
@@ -66,12 +67,14 @@ _STATE_JSON = json.dumps(_STATE)
 
 # ── Fail-fast contract (always runs, even without semantic-kernel) ─────────────
 
+
 class TestConfigurationErrorWithoutFramework:
     def test_init_raises_configuration_error_when_sk_absent(self):
         """If semantic-kernel is not installed PramanixSemanticKernelPlugin.__init__
         must raise ConfigurationError immediately — before any guard logic runs."""
         try:
             import semantic_kernel  # noqa: F401
+
             pytest.skip("semantic-kernel is installed; skip absence test")
         except ImportError:
             pass
@@ -84,6 +87,7 @@ class TestConfigurationErrorWithoutFramework:
         """The error message must include the pip install hint for self-diagnosis."""
         try:
             import semantic_kernel  # noqa: F401
+
             pytest.skip("semantic-kernel is installed; skip absence test")
         except ImportError:
             pass
@@ -97,12 +101,10 @@ class TestConfigurationErrorWithoutFramework:
 # ── semantic-kernel present — full functionality tests ────────────────────────
 
 import importlib.util as _ilu
+
 _SK_AVAILABLE = _ilu.find_spec("semantic_kernel") is not None
 
-_skip_without_sk = pytest.mark.skipif(
-    not _SK_AVAILABLE,
-    reason="semantic-kernel not installed"
-)
+_skip_without_sk = pytest.mark.skipif(not _SK_AVAILABLE, reason="semantic-kernel not installed")
 
 
 @pytest.fixture
@@ -241,6 +243,7 @@ class TestVerifyAsync:
 class TestGuardErrorHandling:
     def test_guard_error_returns_error_json(self):
         """When the Guard raises an exception verify() returns error JSON, never re-raises."""
+
         class _BrokenGuard:
             def verify(self, *, intent, state):
                 raise RuntimeError("Z3 solver internal error")
@@ -258,6 +261,7 @@ class TestGuardErrorHandling:
     @pytest.mark.asyncio
     async def test_async_guard_error_returns_error_json(self):
         """verify_async() guard exception → error JSON, never re-raises."""
+
         class _BrokenGuard:
             async def verify_async(self, *, intent, state):
                 raise RuntimeError("async solver crash")

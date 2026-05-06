@@ -11,6 +11,7 @@ Coverage targets:
   cohere.py    lines 99-100, 112-114, 135-136, 170-173, 186-190, 193
   llamacpp.py  lines 104-106, 116-121, 127-130, 137-145
 """
+
 from __future__ import annotations
 
 import importlib.util as _ilu
@@ -24,15 +25,12 @@ from pydantic import BaseModel
 _MISTRAL_AVAILABLE = _ilu.find_spec("mistralai") is not None
 _COHERE_AVAILABLE = _ilu.find_spec("cohere") is not None
 
-_skip_without_mistral = pytest.mark.skipif(
-    not _MISTRAL_AVAILABLE, reason="mistralai not installed"
-)
-_skip_without_cohere = pytest.mark.skipif(
-    not _COHERE_AVAILABLE, reason="cohere not installed"
-)
+_skip_without_mistral = pytest.mark.skipif(not _MISTRAL_AVAILABLE, reason="mistralai not installed")
+_skip_without_cohere = pytest.mark.skipif(not _COHERE_AVAILABLE, reason="cohere not installed")
 
 
 # ── Shared intent schema ──────────────────────────────────────────────────────
+
 
 class _Payment(BaseModel):
     amount: Decimal
@@ -42,6 +40,7 @@ class _Payment(BaseModel):
 # ── Mistral API endpoint ──────────────────────────────────────────────────────
 
 _MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+
 
 def _mistral_ok(content: str) -> dict:
     return {
@@ -64,9 +63,9 @@ def _mistral_ok(content: str) -> dict:
 # MistralTranslator
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @_skip_without_mistral
 class TestMistralTranslatorReal:
-
     @pytest.mark.asyncio
     @respx.mock
     async def test_extract_happy_path(self):
@@ -107,9 +106,7 @@ class TestMistralTranslatorReal:
         from pramanix.translator.mistral import MistralTranslator
 
         # Return 500 on every attempt so every retry fails
-        respx.post(_MISTRAL_URL).mock(
-            side_effect=_httpx.ConnectError("connection refused")
-        )
+        respx.post(_MISTRAL_URL).mock(side_effect=_httpx.ConnectError("connection refused"))
         t = MistralTranslator(
             "mistral-large-latest",
             api_key="sk-test",
@@ -125,9 +122,7 @@ class TestMistralTranslatorReal:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.mistral import MistralTranslator
 
-        respx.post(_MISTRAL_URL).respond(
-            200, json=_mistral_ok("THIS IS NOT JSON AT ALL @@##$$")
-        )
+        respx.post(_MISTRAL_URL).respond(200, json=_mistral_ok("THIS IS NOT JSON AT ALL @@##$$"))
         t = MistralTranslator("mistral-large-latest", api_key="sk-test")
         with pytest.raises(ExtractionFailureError):
             await t.extract("Pay Alice 100", _Payment)
@@ -139,9 +134,7 @@ class TestMistralTranslatorReal:
         from pramanix.translator.mistral import MistralTranslator
 
         # Return empty string — the retry loop will eventually exhaust
-        respx.post(_MISTRAL_URL).respond(
-            200, json=_mistral_ok("")
-        )
+        respx.post(_MISTRAL_URL).respond(200, json=_mistral_ok(""))
         t = MistralTranslator("mistral-large-latest", api_key="sk-test")
         # Empty content parses to empty string, parse_llm_response will raise,
         # which is caught by the retry loop, eventually raising LLMTimeoutError
@@ -170,6 +163,7 @@ class TestMistralTranslatorReal:
                 import importlib
 
                 import pramanix.translator.mistral as _m
+
                 importlib.reload(_m)
                 _m.MistralTranslator("test-model")
         finally:
@@ -194,8 +188,18 @@ class TestMistralTranslatorReal:
         from pramanix.translator.mistral import MistralTranslator
 
         t = MistralTranslator("mistral-large-latest", api_key="sk-test")
-        result = await t.extract("Pay Carol 75", _Payment, context=None)
-        assert result["recipient"] == "Carol"
+        try:
+            result = await t.extract("Pay Carol 75", _Payment, context=None)
+            assert result["recipient"] == "Carol"
+        finally:
+            # Close the underlying Mistral SDK client to avoid an unclosed-
+            # coroutine RuntimeWarning when the GC fires aclose() implicitly.
+            c = getattr(t, "_client", None)
+            if c is not None:
+                if hasattr(c, "__aexit__"):
+                    await c.__aexit__(None, None, None)
+                elif hasattr(c, "aclose"):
+                    await c.aclose()
 
     @pytest.mark.asyncio
     @respx.mock
@@ -235,9 +239,9 @@ def _cohere_ok(text: str) -> dict:
 # CohereTranslator
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 @_skip_without_cohere
 class TestCohereTranslatorReal:
-
     @pytest.mark.asyncio
     @respx.mock
     async def test_extract_happy_path_v5(self):
@@ -260,9 +264,7 @@ class TestCohereTranslatorReal:
         from pramanix.exceptions import LLMTimeoutError
         from pramanix.translator.cohere import CohereTranslator
 
-        respx.post(_COHERE_URL).mock(
-            side_effect=_httpx.ConnectError("connection refused")
-        )
+        respx.post(_COHERE_URL).mock(side_effect=_httpx.ConnectError("connection refused"))
         async with CohereTranslator("command-r-plus", api_key="test-key") as t:
             with pytest.raises((LLMTimeoutError, Exception)):
                 await t.extract("Pay Alice 100", _Payment)
@@ -274,9 +276,7 @@ class TestCohereTranslatorReal:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.cohere import CohereTranslator
 
-        respx.post(_COHERE_URL).respond(
-            200, json=_cohere_ok("NOT JSON AT ALL")
-        )
+        respx.post(_COHERE_URL).respond(200, json=_cohere_ok("NOT JSON AT ALL"))
         async with CohereTranslator("command-r-plus", api_key="test-key") as t:
             with pytest.raises(ExtractionFailureError):
                 await t.extract("Pay Alice 100", _Payment)
@@ -297,6 +297,7 @@ class TestCohereTranslatorReal:
                 import importlib
 
                 import pramanix.translator.cohere as _cm
+
                 importlib.reload(_cm)
                 _cm.CohereTranslator("command-r-plus")
         finally:
@@ -313,9 +314,7 @@ class TestCohereTranslatorReal:
         """Lines 188-190: older SDK → response.text fallback."""
         from pramanix.translator.cohere import CohereTranslator
 
-        respx.post(_COHERE_URL).respond(
-            200, json=_cohere_ok('{"amount": 30, "recipient": "Eve"}')
-        )
+        respx.post(_COHERE_URL).respond(200, json=_cohere_ok('{"amount": 30, "recipient": "Eve"}'))
         async with CohereTranslator("command-r-plus", api_key="test-key") as t:
             result = await t.extract("Pay Eve 30", _Payment)
         assert result["recipient"] == "Eve"
@@ -327,9 +326,7 @@ class TestCohereTranslatorReal:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.cohere import CohereTranslator
 
-        respx.post(_COHERE_URL).respond(
-            200, json=_cohere_ok("")
-        )
+        respx.post(_COHERE_URL).respond(200, json=_cohere_ok(""))
         async with CohereTranslator("command-r-plus", api_key="test-key") as t:
             with pytest.raises((ExtractionFailureError, Exception)):
                 await t.extract("Pay Alice 100", _Payment)
@@ -366,9 +363,7 @@ class TestCohereTranslatorReal:
         from pramanix.translator.cohere import CohereTranslator
 
         # Force 3 connection errors to exhaust retries
-        respx.post(_COHERE_URL).mock(
-            side_effect=_httpx.ConnectError("timeout")
-        )
+        respx.post(_COHERE_URL).mock(side_effect=_httpx.ConnectError("timeout"))
         async with CohereTranslator("command-r-plus", api_key="test-key") as t:
             with pytest.raises(Exception):
                 await t.extract("Pay Alice 100", _Payment)
@@ -422,6 +417,7 @@ class TestCohereTranslatorReal:
 # LlamaCppTranslator — without the heavy C extension
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestLlamaCppTranslatorReal:
     """Lines 104-106, 116-121, 127-130, 137-145.
 
@@ -448,13 +444,9 @@ class TestLlamaCppTranslatorReal:
         """Lines 137-145, 99, 101, 112-115, 125-128: inference returns valid JSON."""
 
         class _FakeLlama:
-            def create_chat_completion(
-                self, messages, max_tokens, temperature
-            ) -> dict:
+            def create_chat_completion(self, messages, max_tokens, temperature) -> dict:
                 return {
-                    "choices": [
-                        {"message": {"content": '{"amount": 50, "recipient": "Grace"}'}}
-                    ]
+                    "choices": [{"message": {"content": '{"amount": 50, "recipient": "Grace"}'}}]
                 }
 
         t = self._make_translator(_FakeLlama())
@@ -464,18 +456,15 @@ class TestLlamaCppTranslatorReal:
     @pytest.mark.asyncio
     async def test_extract_with_context_extra(self):
         """Lines 104-106: context.extra_context appended to user_content."""
+
         class _FakeLlama:
             def __init__(self):
                 self.last_messages: list = []
 
-            def create_chat_completion(
-                self, messages, max_tokens, temperature
-            ) -> dict:
+            def create_chat_completion(self, messages, max_tokens, temperature) -> dict:
                 self.last_messages = messages
                 return {
-                    "choices": [
-                        {"message": {"content": '{"amount": 25, "recipient": "Hank"}'}}
-                    ]
+                    "choices": [{"message": {"content": '{"amount": 25, "recipient": "Hank"}'}}]
                 }
 
         llm = _FakeLlama()
@@ -493,6 +482,7 @@ class TestLlamaCppTranslatorReal:
     @pytest.mark.asyncio
     async def test_extract_context_no_extra_context_skips_append(self):
         """Line 105->110: context is not None but extra_context is None → no append."""
+
         class _FakeLlama:
             def create_chat_completion(self, messages, max_tokens, temperature):
                 return {"choices": [{"message": {"content": '{"amount": 5, "recipient": "Ivy"}'}}]}

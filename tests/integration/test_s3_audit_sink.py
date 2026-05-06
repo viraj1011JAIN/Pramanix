@@ -10,6 +10,7 @@ These tests validate behaviour that boto3 fakes cannot replicate:
   - Real network timeout behaviour
   - Bucket does-not-exist → real ClientError
 """
+
 from __future__ import annotations
 
 import json
@@ -224,6 +225,7 @@ def test_s3_sink_configuration_error_without_boto3() -> None:
         import importlib
 
         import pramanix.audit_sink as _sink_mod
+
         importlib.reload(_sink_mod)
         try:
             with pytest.raises(ConfigurationError, match="boto3"):

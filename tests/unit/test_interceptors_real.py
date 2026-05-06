@@ -19,6 +19,7 @@ grpc.py missing lines:
   118-124 _guarded_unary guard exception path
   135     _guarded_unary allowed → calls original_unary
 """
+
 from __future__ import annotations
 
 import importlib.util as _ilu
@@ -39,6 +40,7 @@ from tests.helpers.real_protocols import _RpcContext
 
 # ── Minimal policy + guard ────────────────────────────────────────────────────
 
+
 class _AmtPol(Policy):
     amount = Field("amount", Decimal, "Real")
 
@@ -54,6 +56,7 @@ _GUARD = Guard(_AmtPol, GuardConfig(execution_mode="sync"))
 # These implement the real confluent_kafka.Message interface without connecting
 # to a broker.  The confluent_kafka.Message class is a C extension that cannot
 # be instantiated directly; the protocol is duck-typed in the interceptor.
+
 
 class _FakeMessage:
     def __init__(self, value: bytes, *, topic: str = "test", offset: int = 0, error=None):
@@ -118,8 +121,8 @@ class _FakeConsumer:
 # PramanixKafkaConsumer — operational paths
 # ═════════════════════════════════════════════════════════════════════════════
 
-class TestKafkaConsumerRealPaths:
 
+class TestKafkaConsumerRealPaths:
     def _make_consumer(self, messages, **kwargs) -> Any:
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
@@ -295,8 +298,8 @@ class TestKafkaConsumerRealPaths:
 # PramanixGrpcInterceptor — real grpcio paths
 # ═════════════════════════════════════════════════════════════════════════════
 
-class TestGrpcInterceptorRealPaths:
 
+class TestGrpcInterceptorRealPaths:
     def _make_interceptor(self, **kwargs) -> Any:
         from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
@@ -313,6 +316,7 @@ class TestGrpcInterceptorRealPaths:
     def test_constructor_sets_permission_denied_when_no_code_given(self):
         """Line 87: denied_status_code=None → grpc.StatusCode.PERMISSION_DENIED."""
         import grpc as _grpc
+
         interceptor = self._make_interceptor()
         assert interceptor._denied_code == _grpc.StatusCode.PERMISSION_DENIED
 
@@ -346,7 +350,6 @@ class TestGrpcInterceptorRealPaths:
     def test_guarded_unary_allows_valid_request(self):
         """Line 135: allowed request calls original_unary and returns its result."""
         import collections
-
 
         interceptor = self._make_interceptor(
             intent_extractor=lambda hcd, req: {"amount": Decimal("50")},

@@ -31,6 +31,7 @@ Critical design invariants
    any surviving ``multiprocessing.Process`` objects.  The event loop
    is **never** blocked.
 """
+
 from __future__ import annotations
 
 import collections
@@ -39,9 +40,11 @@ import hmac as _hmac_mod
 import json as _json_mod
 import logging
 import secrets as _secrets_mod
+import sys as _sys
 import threading
 import time as _time_module
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -346,6 +349,7 @@ def _warmup_worker() -> None:
         )
         try:
             from prometheus_client import Counter as _PCounter
+
             _wc = _PCounter(
                 "pramanix_worker_warmup_failures_total",
                 "Number of Z3 worker warmup failures",
@@ -603,16 +607,35 @@ class WorkerPool:
         except Exception as exc:
             _log.error("WorkerPool.shutdown error: %s", exc)
 
-    def __del__(self) -> None:
-        if getattr(self, "_alive", False):
-            _log.warning(
-                "WorkerPool GC'd without explicit shutdown() — calling shutdown(wait=False). "
-                "Call WorkerPool.shutdown() explicitly to avoid this warning."
-            )
+    def __del__(
+        self,
+        # Default arg captures sys.is_finalizing at class-definition time.
+        # During interpreter shutdown all globals (including `_sys`) may be
+        # cleared; a default arg holds a direct reference to the C function
+        # and survives even when sys.meta_path is None (which makes `import`
+        # fail for every module, including `sys` itself).
+        _is_finalizing: "Any" = _sys.is_finalizing,
+    ) -> None:
+        if not getattr(self, "_alive", False):
+            return
+        if _is_finalizing():
             try:
                 self.shutdown(wait=False)
             except Exception:
                 pass
+            return
+        try:
+            _log.warning(
+                "WorkerPool GC'd without explicit shutdown() — "
+                "calling shutdown(wait=False).  "
+                "Call WorkerPool.shutdown() explicitly to avoid this warning."
+            )
+        except Exception:
+            pass
+        try:
+            self.shutdown(wait=False)
+        except Exception:
+            pass
 
     # ── Public solve interface ─────────────────────────────────────────────────
 

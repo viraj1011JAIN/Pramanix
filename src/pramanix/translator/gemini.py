@@ -27,9 +27,26 @@ __all__ = ["GeminiTranslator"]
 # Temperature 0 ≡ deterministic mode — critical for reproducible consensus.
 _TEMPERATURE = 0.0
 
+# Suppress google-generativeai deprecation warnings globally.  The package
+# emits a FutureWarning attributed to the caller's frame (our gemini.py import
+# site) with a message beginning with "\n\n  All support...".  Python's
+# warnings.filterwarnings uses re.match (anchored to start), and ".*" does not
+# match newlines by default, so we use the inline (?s) / DOTALL flag to ensure
+# the pattern matches across the leading newlines.
+import warnings as _w
+
+_w.filterwarnings("ignore", message=r"(?s).*google\.generativeai.*", category=FutureWarning)
+_w.filterwarnings("ignore", message=r"(?s).*google\.generativeai.*", category=DeprecationWarning)
+del _w
+
 # M-12: serialises genai.configure() calls for older SDK versions that only
 # support global key configuration (not per-instance clients).
-_GEMINI_CONFIGURE_LOCK = asyncio.Lock()
+# threading.Lock (not asyncio.Lock) so it is safe across event-loop boundaries;
+# different pytest tests each run with a fresh event loop.
+import threading as _thr
+
+_GEMINI_CONFIGURE_LOCK = _thr.Lock()
+del _thr
 
 
 class GeminiTranslator:
@@ -57,6 +74,23 @@ class GeminiTranslator:
         timeout: float = 30.0,
     ) -> None:
         try:
+            # proto-plus (a transitive dependency of google-generativeai) accesses
+            # ``google.protobuf.__version__`` via the google namespace attribute.
+            # Python's import short-circuit (sys.modules hit) skips the setattr
+            # that registers subpackages on their parent namespace.  If the google
+            # namespace was recreated after google.protobuf was first imported
+            # (e.g. a test that temporarily pops sys.modules["google"]), the
+            # attribute is absent and proto/message.py raises AttributeError.
+            # We force-set the attribute here so the import chain always finds it.
+            try:
+                import google as _g
+                import google.protobuf as _gp
+
+                if not hasattr(_g, "protobuf"):
+                    _g.protobuf = _gp
+                del _gp, _g
+            except ImportError:
+                pass
             import google.generativeai  # noqa: F401
         except ImportError as exc:
             raise ConfigurationError(
@@ -187,7 +221,7 @@ class GeminiTranslator:
             raw_text: str = response.text
         else:
             if self._api_key:
-                async with _GEMINI_CONFIGURE_LOCK:
+                with _GEMINI_CONFIGURE_LOCK:
                     genai.configure(api_key=self._api_key)
                     model_client = genai.GenerativeModel(
                         model_name=self.model,

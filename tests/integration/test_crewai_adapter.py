@@ -208,7 +208,9 @@ class TestEdgeCases:
         """Attributes must be readable for CrewAI tool discovery."""
         tool = _make_tool(_ALLOW_GUARD, name="audit_tool")
         assert tool.name == "audit_tool"
-        assert tool.description == "Move money between accounts"
+        # CrewAI >=0.100 _generate_description() prepends tool name and JSON
+        # schema to the description, so exact equality no longer holds.
+        assert "Move money between accounts" in tool.description
 
     def test_different_tool_instances_do_not_share_guard_state(self):
         """Two tool instances must be fully independent."""

@@ -14,6 +14,7 @@ Targets (by file):
   expressions.py          branch 200->207
   transpiler.py           line 345
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +31,7 @@ from pramanix.policy import Policy
 
 # ── Shared minimal policy ─────────────────────────────────────────────────────
 
+
 class _AmtPolicy(Policy):
     amount = Field("amount", Decimal, "Real")
 
@@ -41,6 +43,7 @@ class _AmtPolicy(Policy):
 # ═════════════════════════════════════════════════════════════════════════════
 # policy.py  lines 235-246 — MRO walk when subclass has no invariants()
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestPolicyMROWalk:
     """Policy.__init_subclass__ MRO walk when subclass has no invariants()."""
@@ -97,6 +100,7 @@ class TestPolicyMROWalk:
 # guard.py  line 659 — solver timeout metric, lines 704-709 — min_response_ms
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestGuardMetricsAndTiming:
     """Lines 659, 704-709."""
 
@@ -116,9 +120,7 @@ class TestGuardMetricsAndTiming:
             ),
         )
         start = time.perf_counter()
-        decision = asyncio.run(
-            guard.verify_async(intent={"amount": Decimal("10")}, state={})
-        )
+        decision = asyncio.run(guard.verify_async(intent={"amount": Decimal("10")}, state={}))
         elapsed_ms = (time.perf_counter() - start) * 1000
         assert decision.allowed is True
         assert elapsed_ms >= 45.0  # 50 ms floor with 5 ms tolerance
@@ -133,9 +135,7 @@ class TestGuardMetricsAndTiming:
                 metrics_enabled=False,
             ),
         )
-        decision = asyncio.run(
-            guard.verify_async(intent={"amount": Decimal("5")}, state={})
-        )
+        decision = asyncio.run(guard.verify_async(intent={"amount": Decimal("5")}, state={}))
         assert decision.allowed is True
 
     def test_solver_timeout_metric_incremented(self) -> None:
@@ -165,6 +165,7 @@ class TestGuardMetricsAndTiming:
 # worker.py  lines 142, 633, 660, 669-670, 729 (WorkerPool internals)
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestWorkerPoolInternals:
     """WorkerPool latency-window eviction, process mode, recycle."""
 
@@ -190,12 +191,9 @@ class TestWorkerPoolInternals:
         """Line 660: async-process mode runs _worker_solve_sealed and converts result."""
         guard = Guard(
             _AmtPolicy,
-            GuardConfig(execution_mode="async-process", metrics_enabled=False,
-                        worker_warmup=False),
+            GuardConfig(execution_mode="async-process", metrics_enabled=False, worker_warmup=False),
         )
-        decision = asyncio.run(
-            guard.verify_async(intent={"amount": Decimal("10")}, state={})
-        )
+        decision = asyncio.run(guard.verify_async(intent={"amount": Decimal("10")}, state={}))
         assert decision.allowed is True
 
     def test_worker_pool_recycle_after_max_decisions(self) -> None:
@@ -253,6 +251,7 @@ class TestWorkerPoolInternals:
 # helpers/serialization.py  lines 101, 160-161
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestSerializationEdgeCases:
     """Lines 101 (circular ref), 160-161 (unpicklable)."""
 
@@ -291,6 +290,7 @@ class TestSerializationEdgeCases:
 # helpers/policy_auditor.py  lines 103-104
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestPolicyAuditorZ3Exception:
     """Lines 103-104: Z3 type-conversion exception is silently ignored."""
 
@@ -325,6 +325,7 @@ class TestPolicyAuditorZ3Exception:
 # identity/redis_loader.py  lines 50-51 — Redis error path
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestRedisLoaderErrorPath:
     """Lines 50-51: Redis.get() raises → StateLoadError."""
 
@@ -349,6 +350,7 @@ class TestRedisLoaderErrorPath:
 # ═════════════════════════════════════════════════════════════════════════════
 # translator/_cache.py  lines 153->155 (empty scan), 210-211 (ping failure)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestTranslatorCacheEdgeCases:
     """_RedisCache.clear() with no keys; IntentCache fallback on Redis ping failure."""
@@ -385,6 +387,7 @@ class TestTranslatorCacheEdgeCases:
 # translator/_sanitise.py  line 141 — injection pattern warning appended
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 class TestSanitiseInjectionWarning:
     """Line 141: injection_patterns_detected warning added to warnings list."""
 
@@ -398,6 +401,7 @@ class TestSanitiseInjectionWarning:
 # ═════════════════════════════════════════════════════════════════════════════
 # translator/injection_filter.py  line 209 — early-return branch
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestInjectionFilterMissingBranch:
     """Line 209: early-return when blocked=True."""
@@ -414,6 +418,7 @@ class TestInjectionFilterMissingBranch:
 # ═════════════════════════════════════════════════════════════════════════════
 # transpiler.py  line 345 — String field equality transpilation
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestTranspilerStringEquality:
     """Line 345: String z3_type == literal comparison transpilation."""
@@ -435,6 +440,7 @@ class TestTranspilerStringEquality:
 # ═════════════════════════════════════════════════════════════════════════════
 # expressions.py  branch 200->207 — DatetimeField.within_seconds valid path
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 class TestExpressionsDatetimeBranch:
     """Branch 200->207: valid int → fast path to build constraint."""

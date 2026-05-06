@@ -11,6 +11,7 @@ Targets (all files that were below 96%):
   audit/archiver.py, migration.py, translator/redundant.py,
   circuit_breaker.py, crypto.py, execution_token.py, cli.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -49,12 +50,14 @@ class TestIsMusl:
     def test_non_linux_returns_false(self) -> None:
         """Non-Linux sys.platform short-circuits immediately — returns False."""
         import pramanix._platform as _p
+
         with patch("sys.platform", "win32"):
             assert _p.is_musl() is False
 
     def test_linux_glob_found_returns_true(self) -> None:
         """sys.platform=linux + musl glob hit → is_musl() returns True (line 32-33)."""
         import pramanix._platform as _p
+
         with patch("sys.platform", "linux"):
             with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
                 assert _p.is_musl() is True
@@ -62,6 +65,7 @@ class TestIsMusl:
     def test_linux_no_glob_ctypes_fails_returns_true(self) -> None:
         """sys.platform=linux + empty glob + ctypes.CDLL OSError → True (lines 35-40)."""
         import pramanix._platform as _p
+
         with patch("sys.platform", "linux"):
             with patch("glob.glob", return_value=[]):
                 with patch("ctypes.CDLL", side_effect=OSError("not found")):
@@ -70,6 +74,7 @@ class TestIsMusl:
     def test_linux_no_glob_ctypes_ok_returns_false(self) -> None:
         """sys.platform=linux + empty glob + ctypes.CDLL success → False (line 42)."""
         import pramanix._platform as _p
+
         with patch("sys.platform", "linux"):
             with patch("glob.glob", return_value=[]):
                 with patch("ctypes.CDLL", return_value=object()):
@@ -214,14 +219,13 @@ class TestOllamaTranslatorLifecycle:
 
 
 class TestOpenAICompatCoverage:
-    def test_missing_openai_raises_import_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_openai_raises_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setitem(sys.modules, "openai", None)
         if "pramanix.translator.openai_compat" in sys.modules:
             del sys.modules["pramanix.translator.openai_compat"]
         with pytest.raises(ImportError, match="openai"):
             from pramanix.translator.openai_compat import OpenAICompatTranslator
+
             OpenAICompatTranslator("gpt-4o")
 
     @pytest.mark.asyncio
@@ -263,6 +267,7 @@ class TestOpenAICompatCoverage:
 class TestCohereTranslatorCoverage:
     def test_cohere_error_fallback_when_core_missing(self) -> None:
         """CohereError generic fallback when cohere.core.api_error missing."""
+
         # Real module substitute — no 'errors' or 'core' attr, but has CohereError.
         # This tests the AttributeError fallback branch in CohereTranslator.__init__.
         class _CohereModNoErrors:
@@ -333,29 +338,42 @@ class TestCohereTranslatorCoverage:
 
 
 class TestLlamaCppCoverage:
-    def test_get_llm_loads_from_cache(self) -> None:
-        """_get_llm() returns from module cache without re-loading."""
-        from pramanix.translator import llamacpp as _llamacpp_mod
+    def test_get_llm_loads_from_cache(self, tmp_path: "pytest.fixture") -> None:  # type: ignore[type-arg]
+        """_get_llm() returns the cached model without calling Llama().
 
-        # Real sentinel object — no MagicMock, just a distinct identity token.
+        Uses importlib.import_module to get a single canonical module reference —
+        avoiding the sys.modules/package-attribute split that occurs when other
+        tests delete and reload pramanix.translator.llamacpp inside patch.dict
+        blocks (which restores sys.modules but NOT the parent package attribute).
+
+        Uses tmp_path so the cache key is a real OS path unique to this test.
+        """
+        import importlib
+
+        _llamacpp_mod = importlib.import_module("pramanix.translator.llamacpp")
+        LlamaCppTranslator = _llamacpp_mod.LlamaCppTranslator
+
         class _FakeLlm:
             pass
 
         fake_llm = _FakeLlm()
-        cache_key = ("/tmp/fake.gguf", 4096, 0)
+        fake_path = str(tmp_path / "sentinel.gguf")
+        cache_key = (fake_path, 4096, 0)
+
+        _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
         _llamacpp_mod._MODEL_CACHE[cache_key] = fake_llm
 
-        from pramanix.translator.llamacpp import LlamaCppTranslator
-
         t = LlamaCppTranslator.__new__(LlamaCppTranslator)
-        t._model_path = "/tmp/fake.gguf"
+        t._model_path = fake_path
         t._n_ctx = 4096
         t._n_gpu_layers = 0
         t._llm = None
 
         result = t._get_llm()
-        assert result is fake_llm
-        del _llamacpp_mod._MODEL_CACHE[cache_key]
+        assert result is fake_llm, (
+            "_get_llm() must return the cached sentinel without calling Llama()"
+        )
+        _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
 
     @pytest.mark.asyncio
     async def test_non_extraction_parse_exception_wrapped(self) -> None:
@@ -424,6 +442,7 @@ class TestGeminiTranslatorCoverage:
             del sys.modules["pramanix.translator.gemini"]
         with pytest.raises((ConfigurationError, ImportError)):
             from pramanix.translator.gemini import GeminiTranslator
+
             GeminiTranslator("gemini-pro")
 
     def test_no_api_key_sets_client_to_none(self) -> None:
@@ -512,9 +531,13 @@ class TestInjectionFilterException:
         with patch(
             "pramanix.translator.injection_filter._COMBINED_RE",
             new_callable=lambda: type(
-                "_FakePat", (), {"search": staticmethod(
-                    lambda t: (_ for _ in ()).throw(RuntimeError("regex crash"))
-                )}
+                "_FakePat",
+                (),
+                {
+                    "search": staticmethod(
+                        lambda t: (_ for _ in ()).throw(RuntimeError("regex crash"))
+                    )
+                },
             ),
         ):
             detected, reason = f.is_injection("some text")
@@ -544,6 +567,7 @@ class TestGrpcInterceptorCoverage:
             if "pramanix.interceptors.grpc" in sys.modules:
                 del sys.modules["pramanix.interceptors.grpc"]
             import pramanix.interceptors.grpc as _grpc_mod
+
             assert _grpc_mod._GRPC_AVAILABLE is False
 
     def test_intercept_service_none_handler(self) -> None:
@@ -554,10 +578,12 @@ class TestGrpcInterceptorCoverage:
 
     def test_wrap_handler_no_grpc_returns_original(self) -> None:
         from pramanix.interceptors import grpc as _grpc_mod
+
         original_available = _grpc_mod._GRPC_AVAILABLE
         try:
             _grpc_mod._GRPC_AVAILABLE = False
             from pramanix.interceptors.grpc import PramanixGrpcInterceptor
+
             interceptor = PramanixGrpcInterceptor.__new__(PramanixGrpcInterceptor)
             interceptor._guard = make_allow_guard()
             interceptor._intent_extractor = lambda d, r: {}
@@ -671,6 +697,7 @@ class TestKafkaConsumerCoverage:
             if "pramanix.interceptors.kafka" in sys.modules:
                 del sys.modules["pramanix.interceptors.kafka"]
             import pramanix.interceptors.kafka as _kafka_mod
+
             assert _kafka_mod._KAFKA_AVAILABLE is False
 
     def _make_consumer(self) -> object:
@@ -689,7 +716,6 @@ class TestKafkaConsumerCoverage:
         return c
 
     def test_dead_letter_with_dlq_exception_swallowed(self) -> None:
-
         c = self._make_consumer()
         # Real DLQ producer configured to raise — exception must be swallowed.
         c._dlq_producer = _KafkaDLQProducer(produce_raises=Exception("kafka error"))
@@ -798,6 +824,7 @@ class TestAuditSinkCoverage:
             callback("delivery failed", None)
 
         import types
+
         sink._producer = types.SimpleNamespace(produce=fake_produce)
 
         d = Decision(
@@ -819,9 +846,7 @@ class TestAuditSinkCoverage:
         # Must not raise
         sink.flush()
 
-    def test_splunk_sink_config_error_without_httpx(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_splunk_sink_config_error_without_httpx(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.exceptions import ConfigurationError
 
         monkeypatch.setitem(sys.modules, "httpx", None)
@@ -829,6 +854,7 @@ class TestAuditSinkCoverage:
             del sys.modules["pramanix.audit_sink"]
         with pytest.raises((ConfigurationError, ImportError)):
             from pramanix.audit_sink import SplunkHecAuditSink
+
             SplunkHecAuditSink("http://splunk:8088/services/collector", "token")
 
     def test_splunk_sink_close(self) -> None:
@@ -906,9 +932,7 @@ class TestKeyProviderCoverage:
         with pytest.raises(NotImplementedError, match="rotation"):
             p.rotate_key()
 
-    def test_env_key_provider_rotate_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_key_provider_rotate_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.key_provider import EnvKeyProvider
 
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY_PEM", "fake-pem")
@@ -961,9 +985,9 @@ class TestKeyProviderCoverage:
         recorder = _RotateSecretRecorder()
         p._client = recorder
         p.rotate_key()
-        assert recorder.rotate_secret_calls == [p._secret_arn], (
-            "rotate_key() must call client.rotate_secret(SecretId=_secret_arn)"
-        )
+        assert recorder.rotate_secret_calls == [
+            p._secret_arn
+        ], "rotate_key() must call client.rotate_secret(SecretId=_secret_arn)"
         assert p._cache_expires == 0.0
 
     def test_azure_key_vault_rotate_raises(self) -> None:
@@ -1175,9 +1199,7 @@ class TestGuardCoverage:
             @classmethod
             def invariants(cls):
                 return [
-                    (E(_amount) >= Decimal("0"))
-                    .named("non_negative")
-                    .explain("Negative amount")
+                    (E(_amount) >= Decimal("0")).named("non_negative").explain("Negative amount")
                 ]
 
         # FastPathRule = Callable returning str|None; str means blocked
@@ -1220,8 +1242,7 @@ class TestWorkerCoverage:
         """WorkerPool.__del__ calls shutdown(wait=False) when _alive=True."""
         from pramanix.worker import WorkerPool
 
-        pool = WorkerPool(mode="thread", max_workers=1,
-                          max_decisions_per_worker=10, warmup=False)
+        pool = WorkerPool(mode="thread", max_workers=1, max_decisions_per_worker=10, warmup=False)
         pool._alive = True
         pool.__del__()
         # Pool is already closed by __del__; second shutdown is a no-op
@@ -1241,9 +1262,7 @@ class TestWorkerCoverage:
 
 
 class TestArchiverCoverage:
-    def test_verify_archive_invalid_json_returns_false(
-        self, tmp_path: object
-    ) -> None:
+    def test_verify_archive_invalid_json_returns_false(self, tmp_path: object) -> None:
         import pathlib
 
         from pramanix.audit.archiver import MerkleArchiver

@@ -9,6 +9,7 @@ Validates behaviour that in-memory fakes cannot replicate:
   - Real TIMESTAMPTZ expiry semantics
   - consume_within() with real asyncpg connection in caller-managed transaction
 """
+
 from __future__ import annotations
 
 import threading

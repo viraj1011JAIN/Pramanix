@@ -40,7 +40,9 @@ from pramanix.translator.redundant import (
 )
 from tests.helpers.real_protocols import _FakeEntryPoint
 
-_GEMINI_AVAILABLE = _ilu.find_spec("google") is not None and _ilu.find_spec("google.generativeai") is not None
+_GEMINI_AVAILABLE = (
+    _ilu.find_spec("google") is not None and _ilu.find_spec("google.generativeai") is not None
+)
 _COHERE_AVAILABLE = _ilu.find_spec("cohere") is not None
 _MISTRAL_AVAILABLE = _ilu.find_spec("mistralai") is not None
 
@@ -66,9 +68,7 @@ class _TransferWithOptional(BaseModel):
 class _FixedTranslator:
     """Returns a pre-configured dict, raising on demand."""
 
-    def __init__(
-        self, result: dict[str, Any] | BaseException, model: str = "fixed"
-    ) -> None:
+    def __init__(self, result: dict[str, Any] | BaseException, model: str = "fixed") -> None:
         self._result = result
         self.model = model
 
@@ -102,28 +102,17 @@ class TestSemanticFieldEqual:
     # ── Bool via schema annotation (lines 143-164) ────────────────────────────
     def test_bool_schema_true_variants_equal(self):
         """Lines 143-164: bool comparison via schema annotation."""
-        assert _semantic_field_equal(
-            True, True, schema=_Transfer, field_name="approved"
-        )
-        assert _semantic_field_equal(
-            True, "true", schema=_Transfer, field_name="approved"
-        )
+        assert _semantic_field_equal(True, True, schema=_Transfer, field_name="approved")
+        assert _semantic_field_equal(True, "true", schema=_Transfer, field_name="approved")
         assert _semantic_field_equal(True, 1, schema=_Transfer, field_name="approved")
 
     def test_bool_schema_false_variants_equal(self):
-        assert _semantic_field_equal(
-            False, "false", schema=_Transfer, field_name="approved"
-        )
-        assert _semantic_field_equal(
-            False, "0", schema=_Transfer, field_name="approved"
-        )
+        assert _semantic_field_equal(False, "false", schema=_Transfer, field_name="approved")
+        assert _semantic_field_equal(False, "0", schema=_Transfer, field_name="approved")
         assert _semantic_field_equal(False, 0, schema=_Transfer, field_name="approved")
 
     def test_bool_schema_true_vs_false_not_equal(self):
-        assert (
-            _semantic_field_equal(True, False, schema=_Transfer, field_name="approved")
-            is False
-        )
+        assert _semantic_field_equal(True, False, schema=_Transfer, field_name="approved") is False
 
     def test_bool_unrecognized_string_falls_back_to_eq(self):
         """Line 164: unrecognised bool string falls back to == comparison."""
@@ -138,9 +127,7 @@ class TestSemanticFieldEqual:
     # ── Numeric via schema annotation (lines 166-175) ─────────────────────────
     def test_numeric_schema_decimal_equals_float(self):
         """Lines 169-175: schema says Decimal → Decimal comparison."""
-        assert _semantic_field_equal(
-            Decimal("500"), 500.0, schema=_Transfer, field_name="amount"
-        )
+        assert _semantic_field_equal(Decimal("500"), 500.0, schema=_Transfer, field_name="amount")
 
     def test_numeric_runtime_int_float(self):
         """Lines 170-175: runtime isinstance numeric values."""
@@ -158,10 +145,7 @@ class TestSemanticFieldEqual:
         """Lines 181-186: schema=str, numeric-looking strings compared as Decimal."""
         # recipient is str type; "500" and "500.0" parse as Decimal → equal
         assert (
-            _semantic_field_equal(
-                "500", "500.0", schema=_Transfer, field_name="recipient"
-            )
-            is True
+            _semantic_field_equal("500", "500.0", schema=_Transfer, field_name="recipient") is True
         )
         assert _semantic_field_equal("500", "500.00") is True
 
@@ -201,9 +185,7 @@ class TestSemanticFieldEqual:
     def test_field_not_in_schema_skips_annotation_lookup(self):
         """Line 131->143: field_name not in schema → branch jumps to bool check."""
         # 'nonexistent' field is not in _Transfer → field_info is None → skip to 143
-        result = _semantic_field_equal(
-            "hello", "hello", schema=_Transfer, field_name="nonexistent"
-        )
+        result = _semantic_field_equal("hello", "hello", schema=_Transfer, field_name="nonexistent")
         assert result is True  # casefold comparison
 
     # ── Lines 136-139: Optional[X] unwrapping ────────────────────────────────
@@ -211,15 +193,11 @@ class TestSemanticFieldEqual:
         """Lines 136-139: Optional[str] has __origin__ → unwrapped to str."""
         # note is Optional[str] — annotation has __origin__ = Union
         assert (
-            _semantic_field_equal(
-                "hello", "HELLO", schema=_TransferWithOptional, field_name="note"
-            )
+            _semantic_field_equal("hello", "HELLO", schema=_TransferWithOptional, field_name="note")
             is True
         )
         assert (
-            _semantic_field_equal(
-                None, None, schema=_TransferWithOptional, field_name="note"
-            )
+            _semantic_field_equal(None, None, schema=_TransferWithOptional, field_name="note")
             is True
         )
 
@@ -227,22 +205,14 @@ class TestSemanticFieldEqual:
     def test_bool_field_non_normalizable_value_falls_back_to_eq(self):
         """Lines 158, 164: val not bool/int/str → _norm_bool returns None → fallback ==."""
         # field_type is bool, but values are dicts → _norm_bool returns None → line 164
-        assert (
-            _semantic_field_equal({}, {}, schema=_Transfer, field_name="approved")
-            is True
-        )
-        assert (
-            _semantic_field_equal({}, {"x": 1}, schema=_Transfer, field_name="approved")
-            is False
-        )
+        assert _semantic_field_equal({}, {}, schema=_Transfer, field_name="approved") is True
+        assert _semantic_field_equal({}, {"x": 1}, schema=_Transfer, field_name="approved") is False
 
     # ── Lines 174-175: numeric schema type but non-numeric string value ───────
     def test_numeric_schema_non_numeric_string_hits_invalid_operation(self):
         """Lines 174-175: schema says Decimal, value is non-numeric → Decimal raises."""
         # field_type=Decimal (is_numeric_type=True), Decimal("abc") → InvalidOperation
-        result = _semantic_field_equal(
-            "abc", "abc", schema=_Transfer, field_name="amount"
-        )
+        result = _semantic_field_equal("abc", "abc", schema=_Transfer, field_name="amount")
         # Falls through to string comparison after InvalidOperation
         assert isinstance(result, bool)
 
@@ -428,9 +398,7 @@ class TestExtractWithConsensus:
     def test_lenient_mode_non_critical_disagreement_returns_a(self):
         """Line 429 region: lenient mode non-critical disagreement → returns A."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": True})
-        tb = _FixedTranslator(
-            {"amount": "100", "recipient": "Alice", "approved": False}
-        )
+        tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
         result = self._run(
             extract_with_consensus(
                 "Pay Alice 100",
@@ -481,12 +449,8 @@ class TestExtractWithConsensus:
             )
 
     def test_unanimous_mode_full_agreement(self):
-        ta = _FixedTranslator(
-            {"amount": "100", "recipient": "Alice", "approved": False}
-        )
-        tb = _FixedTranslator(
-            {"amount": "100", "recipient": "Alice", "approved": False}
-        )
+        ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
+        tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
         result = self._run(
             extract_with_consensus(
                 "Pay Alice 100",
@@ -659,9 +623,7 @@ class TestRedundantTranslator:
 
     def test_extract_lenient_mode(self):
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": True})
-        tb = _FixedTranslator(
-            {"amount": "100", "recipient": "Alice", "approved": False}
-        )
+        tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
         rt = RedundantTranslator(
             ta,
             tb,

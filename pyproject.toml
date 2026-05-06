@@ -340,8 +340,15 @@ markers = [
 filterwarnings = [
     # Cohere SDK v5 uses deprecated Pydantic V1 internal APIs — upstream issue.
     "ignore::pydantic.warnings.PydanticDeprecatedSince20",
-    # google-generativeai emits FutureWarning about API surface changes — upstream.
-    "ignore::FutureWarning:google",
+    # google-generativeai emits FutureWarning about its own deprecation.
+    # The message begins with "\n\n  All support..." so we must use (?s) (DOTALL)
+    # because Python's warnings.filterwarnings compiles the pattern with re.match
+    # (anchored to position 0) and ".*" does not cross newlines by default.
+    "ignore:(?s).*google.generativeai.*:FutureWarning",
+    # Cohere/Mistral SDK internals schedule AsyncClient.aclose() via __del__ but
+    # the coroutine is never awaited when the GC collects the client object.
+    # This is an upstream SDK issue; suppress to keep the test output clean.
+    "ignore:coroutine 'AsyncClient.aclose' was never awaited:RuntimeWarning",
     # InMemoryExecutionTokenVerifier intentionally warns in tests that use it;
     # the warning is the expected behaviour under test.
     "ignore:InMemoryExecutionTokenVerifier:UserWarning",

@@ -72,6 +72,7 @@ from pramanix.translator.ollama import OllamaTranslator
 _OLLAMA_BASE = "http://localhost:11434"
 _OLLAMA_AVAILABLE = False
 _LLAMA3_AVAILABLE = False
+_LLAMA3_WORKS = False  # smoke-tested: model runner actually responds
 
 try:
     _r = httpx.get(f"{_OLLAMA_BASE}/api/version", timeout=2.0)
@@ -80,14 +81,23 @@ try:
         _tags = httpx.get(f"{_OLLAMA_BASE}/api/tags", timeout=5.0)
         _models = [m["name"] for m in _tags.json().get("models", [])]
         _LLAMA3_AVAILABLE = any("llama3.2" in m for m in _models)
+        if _LLAMA3_AVAILABLE:
+            # Verify the model runner actually handles requests; it can be listed
+            # but the process may have crashed (Ollama returns HTTP 500).
+            _probe = httpx.post(
+                f"{_OLLAMA_BASE}/api/generate",
+                json={"model": "llama3.2", "prompt": "1", "stream": False},
+                timeout=20.0,
+            )
+            _LLAMA3_WORKS = _probe.status_code == 200
 except Exception:
     pass
 
 _needs_ollama = pytest.mark.skipif(
-    not (_OLLAMA_AVAILABLE and _LLAMA3_AVAILABLE),
+    not (_OLLAMA_AVAILABLE and _LLAMA3_AVAILABLE and _LLAMA3_WORKS),
     reason=(
-        "Ollama with llama3.2 not running at localhost:11434 — "
-        "start Ollama and run: ollama pull llama3.2"
+        "Ollama with working llama3.2 not available at localhost:11434 — "
+        "start Ollama, run: ollama pull llama3.2, and ensure the runner is healthy"
     ),
 )
 

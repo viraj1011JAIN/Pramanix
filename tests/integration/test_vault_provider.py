@@ -10,6 +10,7 @@ Validates behaviour that hvac fakes cannot replicate:
   - Real token lease expiry semantics
   - Real key rotation: write new version, read it back
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -68,9 +69,11 @@ def test_vault_provider_reads_key(vault_addr_and_token: tuple[str, str]) -> None
         token=token,
         mount_point=_SECRET_MOUNT,
     )
-    pem = asyncio.run(provider.private_key_pem()) if asyncio.iscoroutinefunction(
-        provider.private_key_pem
-    ) else provider.private_key_pem()
+    pem = (
+        asyncio.run(provider.private_key_pem())
+        if asyncio.iscoroutinefunction(provider.private_key_pem)
+        else provider.private_key_pem()
+    )
 
     assert b"-----BEGIN PRIVATE KEY-----" in pem
 
@@ -139,9 +142,7 @@ def test_vault_provider_key_rotation(
     )
 
     # Latest version should be v2
-    result = client.secrets.kv.v2.read_secret_version(
-        path=rot_path, mount_point=_SECRET_MOUNT
-    )
+    result = client.secrets.kv.v2.read_secret_version(path=rot_path, mount_point=_SECRET_MOUNT)
     pem_read = result["data"]["data"]["private_key_pem"].encode()
     assert b"VERSION2" in pem_read
     assert result["data"]["metadata"]["version"] == 2
