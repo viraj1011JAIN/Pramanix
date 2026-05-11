@@ -159,6 +159,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contracts and known-gap references. Fixed bare `KNOWN_GAPS.md` references
   to use section numbers.
 
+### Security (BUG-03, BUG-10, BUG-11, BUG-12 — JWT and oversight hardening)
+
+- **BUG-03 — `OversightRecord.__slots__` added:** `OversightRecord` had no
+  `__slots__`, allowing arbitrary attribute injection on a type whose value
+  is a tamper-evident audit record. Added
+  `__slots__ = ("request", "decision", "_key", "_tag")`.
+
+- **BUG-10 — JWT algorithm confusion attack prevention:**
+  `JWTIdentityLinker._verify_token()` previously decoded the JWT payload
+  before validating the `alg` header. An attacker could craft a token with
+  `alg: "RS256"` and an HMAC-SHA256 signature computed with the shared
+  secret, bypassing the asymmetric-key check (CVE-2015-9235 family). Fixed:
+  the header is decoded and `alg` is validated as `"HS256"` **before**
+  signature computation. Any other algorithm value raises
+  `JWTVerificationError` immediately.
+
+- **BUG-11 — JWT `nbf` (not-before) claim not enforced:**
+  `_verify_token()` ignored the `nbf` claim. Tokens with a future `nbf`
+  were accepted and could be used to pre-issue credentials that are valid
+  before the intended activation time. Added: after payload decode,
+  `if nbf is not None and now < int(nbf) - self._skew: raise
+  JWTVerificationError(...)`.
+
+- **BUG-12 — JWT empty or missing `sub` claim accepted:**
+  A token with `"sub": ""` or no `sub` key was accepted, producing an
+  empty-identity principal. Any state loaded via that empty sub key would
+  be controlled by whoever set the `""` state key in Redis. Added:
+  `if not sub: raise JWTVerificationError("JWT 'sub' claim is required and
+  must be non-empty")`.
+
+### Fixed (BUG-01, BUG-02, BUG-04–BUG-09, BUG-13, BUG-14 — correctness and resource)
+
+- **BUG-01 — `hmac.HMAC` canonical form in `OversightRecord`:**
+  `OversightRecord._compute_tag()` used `hmac.new()`, which is an
+  undocumented internal alias. Changed to `hmac.HMAC()` (the canonical
+  class). No behaviour change; removes reliance on the alias.
+
+- **BUG-02 — `EscalationQueue.expire_stale()` return type corrected:**
+  Previously returned `list[str]` (request IDs only), discarding the
+  `ApprovalRequest` objects needed by `_auto_reject()` downstream. Changed
+  to return `list[ApprovalRequest]`. Callers that iterated IDs must update
+  to iterate objects; `request_id` is available as `.request_id`.
+
+- **BUG-04 — `InMemoryApprovalWorkflow` background sweeper,
+  idempotent `_auto_reject()`, and `ApprovalWorkflow` Protocol:**
+  1. Without a sweeper, timed-out requests sat in the queue indefinitely
+     — `pending()` returned stale entries and memory grew without bound.
+     Added a daemon thread (`pramanix-oversight-sweeper`, configurable
+     interval `sweep_interval_s=60.0`) that calls
+     `expire_stale()` + `_auto_reject()` on each cycle.
+     `stop_sweeper()` signals clean shutdown via `threading.Event`.
+  2. `_auto_reject()` was not idempotent. A concurrent `check()` and the
+     sweeper could both read the same expired request and write two
+     `OversightRecord` entries. Fixed: `_auto_reject()` checks
+     `if req.request_id in self._decisions: return` under lock before
+     writing.
+  3. `ApprovalWorkflow` `@runtime_checkable` Protocol added and exported
+     in `__all__`. Custom backends can now be type-checked and
+     `isinstance()`-tested against the protocol.
+
+- **BUG-05 — `FlowPolicy.regulated()` preset: explicit deny rules for
+  REGULATED→CUSTOMER and REGULATED→CONFIDENTIAL:** Both flows fell through
+  to `default_deny=True` without a matching `FlowRule`, producing a generic
+  "no matching rule" error. Added explicit
+  `FlowRule(REGULATED, CUSTOMER, permitted=False, reason="REGULATED data
+  must not flow to CUSTOMER sinks.")` and the equivalent for `CONFIDENTIAL`.
+  Violations now surface the specific reason in `FlowViolationError`.
+
+- **BUG-06 — `FlowEnforcer` bounded audit log:** `_audit_log` was an
+  unbounded list. A long-running process enforcing high-frequency flows
+  would grow it without limit. Added `max_audit_log_size: int = 10_000`
+  constructor parameter with LRU eviction (`list.pop(0)` when the cap is
+  reached).
+
+- **BUG-07 — gRPC stream interceptors: abort on empty stream:**
+  `_guarded_stream_unary` and `_guarded_stream_stream` caught `StopIteration`
+  on an empty stream and returned without calling `context.abort()`. gRPC
+  requires either a response or an explicit abort — a silent return leaves
+  the RPC in an undefined state. Both handlers now call
+  `context.abort(grpc.StatusCode.INVALID_ARGUMENT, "empty request stream")`
+  before returning.
+
+- **BUG-08 — `PramanixKafkaConsumer.safe_poll()`: `continue` on transient
+  `msg.error()`:** `msg.error()` (e.g. `_PARTITION_EOF`) previously called
+  `return` from the generator, permanently terminating the poll loop after
+  the first transient error. Changed to `continue` so the loop calls
+  `consumer.poll()` again. Only `msg is None` (no messages available within
+  the timeout) stops the poll.
+
+- **BUG-09 — `PramanixKafkaConsumer` DLQ flush batching and defensive
+  `close()`:**
+  1. `_dead_letter()` previously called `producer.flush()` after every
+     blocked message. On a high-violation-rate topic this blocks the poll
+     loop synchronously after every message. Added `dlq_flush_interval: int
+     = 100` constructor parameter: flush is deferred until 100 pending DLQ
+     messages accumulate; `producer.poll(0)` drains delivery callbacks
+     between flushes without blocking. `close()` flushes any remaining
+     pending DLQ messages before shutting down.
+  2. `close()` accessed `self._consumer` and `self._dlq_producer` with
+     direct attribute access. Instances created via `__new__` (bypassing
+     `__init__`) raised `AttributeError`. All attribute reads in `close()`
+     and `__del__` now use `getattr(self, attr, default)`.
+
+- **BUG-13 — LlamaIndex coroutine-across-event-loops crash:**
+  `PramanixFunctionTool.call()` and `PramanixQueryEngineTool.call()` called
+  `executor.submit(asyncio.run, self.acall(...))`. The coroutine object was
+  created in the calling thread's event loop; `asyncio.run()` in the worker
+  thread attempted to run a coroutine bound to a different loop, raising
+  `RuntimeError`. Fixed by wrapping in a lambda:
+  `executor.submit(lambda: asyncio.run(self.acall(...)))`. The lambda
+  defers coroutine creation to the worker thread's own execution context.
+
+- **BUG-14 — `HaystackGuardedComponent` `@component` registration failure
+  now logged:** Class-definition-time Haystack `@component` registration was
+  wrapped in `try/except Exception: pass`. A failed registration produced no
+  diagnostic output. Changed to
+  `_log.warning("Haystack @component registration failed: %s", exc,
+  exc_info=True)`.
+
+### Documentation (BUG-15)
+
+- **BUG-15 — `PramanixSigner._private_pem` security documentation:**
+  `_private_pem` holds an unencrypted PKCS8 PEM in process memory for the
+  signer's lifetime. This is unavoidable for a software signer. Added
+  in-code documentation at the assignment site explaining the exposure
+  boundary and requiring callers not to log, transmit, or serialize the
+  value. Updated `private_key_pem()` docstring with a `WARNING` block.
+
 ## [1.0.0] - 2026-04-22
 
 ### Fixed

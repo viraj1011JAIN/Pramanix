@@ -125,8 +125,20 @@ class JWTIdentityLinker:
 
         header_b64, payload_b64, sig_b64 = parts
 
+        # BUG-10: validate alg header before computing signature to prevent
+        # algorithm confusion attacks (CVE-2015-9235 family).
+        try:
+            header = json.loads(self._b64url_decode(header_b64))
+        except Exception as e:
+            raise JWTVerificationError(f"JWT header decode failed: {e}") from e
+        alg = header.get("alg")
+        if alg != "HS256":
+            raise JWTVerificationError(
+                f"Unsupported algorithm: {alg!r}. Only HS256 is accepted."
+            )
+
         signing_input = f"{header_b64}.{payload_b64}"
-        expected_sig = hmac.new(self._secret, signing_input.encode(), hashlib.sha256).digest()
+        expected_sig = hmac.HMAC(self._secret, signing_input.encode(), hashlib.sha256).digest()
         expected_b64 = self._b64url(expected_sig)
 
         if not hmac.compare_digest(sig_b64.encode(), expected_b64.encode()):
@@ -138,12 +150,27 @@ class JWTIdentityLinker:
             raise JWTVerificationError(f"JWT payload decode failed: {e}") from e
 
         now = int(time.time())
+
+        # BUG-11: enforce nbf (not-before) claim.
+        nbf = payload.get("nbf")
+        if nbf is not None and now < int(nbf) - self._skew:
+            raise JWTVerificationError(
+                f"JWT not yet valid (nbf={nbf}, now={now})"
+            )
+
         exp = payload.get("exp", 0)
         if exp and now > exp + self._skew:
             raise JWTExpiredError(f"JWT expired at {exp}, current time {now}")
 
+        # BUG-12: reject missing or empty sub to prevent empty-identity spoofing.
+        sub = payload.get("sub")
+        if not sub:
+            raise JWTVerificationError(
+                "JWT 'sub' claim is required and must be non-empty"
+            )
+
         return IdentityClaims(
-            sub=str(payload.get("sub", "")),
+            sub=str(sub),
             roles=list(payload.get("roles", [])),
             exp=int(payload.get("exp", 0)),
             iat=int(payload.get("iat", 0)),

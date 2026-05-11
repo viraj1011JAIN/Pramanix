@@ -386,9 +386,20 @@ These are library code — they define invariants but own no state and make no e
 **Owns:** Lattice-based information-flow enforcement between trust levels.
 
 **Components:**
-- `FlowPolicy` — defines `FlowRule` entries mapping `(source_label, dest_label)` pairs to `ALLOW` or `DENY`.
+
+- `FlowPolicy` — defines `FlowRule` entries mapping `(source_label, dest_label)` pairs to `ALLOW` or `DENY`. Rules are evaluated in declaration order; first match wins.
 - `FlowEnforcer` — evaluates a `ClassifiedData` object against a `FlowPolicy`. Returns `FlowDecision`.
-- `TrustLabel` — string-typed enum of security classification levels (e.g. `"PUBLIC"`, `"CONFIDENTIAL"`, `"SECRET"`).
+- `TrustLabel` — string-typed enum of security classification levels (e.g. `"PUBLIC"`, `"CONFIDENTIAL"`, `"SECRET"`, `"REGULATED"`).
+
+**`regulated()` preset rules (explicit):**
+
+- `REGULATED → INTERNAL`: `permitted=False` — regulated data must not flow to internal systems.
+- `REGULATED → CUSTOMER`: `permitted=False` — regulated data must not flow to customer-facing sinks. Explicit rule; violation reason surfaced in `FlowViolationError`.
+- `REGULATED → CONFIDENTIAL`: `permitted=False` — regulated data must not flow to confidential sinks. Explicit rule; violation reason surfaced in `FlowViolationError`.
+
+Previously, `REGULATED → CUSTOMER` and `REGULATED → CONFIDENTIAL` fell through to `default_deny=True` without a matching rule, producing a generic "no rule matched" error with no diagnostic context.
+
+**Bounded audit log:** `FlowEnforcer` accepts `max_audit_log_size: int = 10_000` at construction. The internal audit log is capped at this size with LRU eviction (`list.pop(0)`). Without this cap, a long-running service enforcing high-frequency flows would grow the log without bound.
 
 **Boundary:** `FlowEnforcer` operates independently of `Guard`. It is the caller's responsibility to consult `FlowEnforcer` before allowing data to cross a trust boundary. No automatic coupling to `Guard.verify()` exists.
 
@@ -416,9 +427,16 @@ These are library code — they define invariants but own no state and make no e
 **Owns:** Approval workflows for actions that require a human decision before execution.
 
 **Components:**
-- `InMemoryApprovalWorkflow` — stores pending `ApprovalRequest` objects in memory. `approve()` / `reject()` transition them to `ApprovalDecision`.
-- `EscalationQueue` — ordered queue for time-sensitive approval requests.
-- `OversightRecord` — immutable record of the approval decision and approver identity.
+- `ApprovalWorkflow` — `@runtime_checkable` Protocol. Defines the interface all workflow backends must implement: `request_approval()`, `approve()`, `reject()`, `check()`, `records()`. Custom backends (Slack, PagerDuty, JIRA) implement this and are `isinstance()`-testable at runtime.
+- `InMemoryApprovalWorkflow` — in-process reference implementation. Stores pending `ApprovalRequest` objects in a `threading.Lock`-guarded dict. `approve()` / `reject()` write an HMAC-signed `OversightRecord` to the audit trail.
+- `EscalationQueue` — thread-safe, TTL-aware queue of pending approval requests sorted oldest-first.
+- `OversightRecord` — HMAC-signed record of the approval decision and approver identity. `__slots__` restricts attribute injection. `verify()` checks the HMAC tag in-process; it does not protect against memory tampering by the host process.
+
+**Background sweeper:** `InMemoryApprovalWorkflow` starts a daemon thread (`pramanix-oversight-sweeper`) at construction time. The thread calls `expire_stale()` + `_auto_reject()` on a configurable interval (`sweep_interval_s=60.0`). Expired requests are recorded with `ApprovalStatus.TIMEOUT`. `stop_sweeper()` sets a `threading.Event` that the sweep loop checks and joins the thread.
+
+**Idempotent auto-rejection:** `_auto_reject()` checks `if req.request_id in self._decisions: return` under the workflow lock before writing. A concurrent `check()` call and the sweeper can both trigger `_auto_reject()` for the same request; only the first write lands.
+
+**`OversightRecord` HMAC signing:** Uses `hmac.HMAC(key, data, hashlib.sha256)` over a deterministic serialisation of `(request_id, action, status, reviewer_id)`. The signing key defaults to `os.urandom(32)` per workflow instance. This provides tamper detection within a single process instance — audit records from different instances cannot be cross-verified without a shared signing key.
 
 **Boundary:** `OversightRequiredError` is raised when an action reaches the oversight gate without a valid approval. Guard does not consult the oversight subsystem — callers must wire it in.
 
@@ -469,6 +487,23 @@ These are library code — they define invariants but own no state and make no e
 
 ---
 
+### Identity (`identity/`)
+
+**Owns:** Zero-trust JWT identity linking. Maps a verified JWT `sub` claim to application state via a pluggable `StateLoader`.
+
+**Security properties of `JWTIdentityLinker._verify_token()`:**
+
+1. **Algorithm pinned before signature.** Header is decoded first. If `alg != "HS256"`, `JWTVerificationError` is raised immediately — before any signature computation. Prevents algorithm-confusion attacks (CVE-2015-9235 family).
+2. **Signature verified before claims.** HMAC-SHA256 over `header_b64.payload_b64` is compared via `hmac.compare_digest`. Payload JSON is not parsed until after the signature check passes.
+3. **`exp` enforced** with configurable clock skew (`self._skew`).
+4. **`nbf` enforced** with the same skew. Tokens not yet valid are rejected.
+5. **Non-empty `sub` required.** `"sub": ""` or absent `sub` raises `JWTVerificationError`. An empty `sub` maps to a Redis key of `""` which is attacker-controlled.
+6. **Caller state ignored.** State is loaded exclusively via the verified `sub` through `StateLoader.load(claims)`. Request-body state is never used.
+
+**Boundary:** `JWTIdentityLinker` is not called by `Guard` automatically. The caller extracts the JWT from the `Authorization` header, calls `linker.extract_and_load(request)`, and passes the returned state dict into `guard.verify_async(intent=..., state=state)`.
+
+---
+
 ## Cross-Cutting Invariants
 
 1. `Guard.verify()` never raises. Always returns `Decision`.
@@ -483,6 +518,9 @@ These are library code — they define invariants but own no state and make no e
 10. HMAC-sealed IPC: worker results in `async-process` mode are tagged with an ephemeral key. The host verifies the tag before trusting `allowed`. A forged `allowed=True` from a compromised worker requires knowledge of the in-process ephemeral key.
 11. `ConstraintExpr.__bool__` raises `PolicyCompilationError` — accidental `and`/`or` in a policy is caught at compile time, not silently mis-evaluated.
 12. `min_response_ms` timing pad is applied unconditionally to both ALLOW and BLOCK — not just BLOCK — to prevent timing oracle attacks.
+13. `JWTIdentityLinker` validates `alg` header before signature computation — algorithm confusion is impossible without subverting the pinning check.
+14. `PramanixKafkaConsumer.safe_poll()` continues on transient `msg.error()` — a single `_PARTITION_EOF` does not terminate the poll loop.
+15. `InMemoryApprovalWorkflow._auto_reject()` is idempotent under concurrent calls — concurrent sweeper and `check()` cannot produce duplicate `OversightRecord` entries for the same request.
 
 ---
 

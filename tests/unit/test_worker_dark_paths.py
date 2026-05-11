@@ -363,10 +363,11 @@ class TestForceKillProcesses:
         proc.start()
         # Poll until dead — more robust than a fixed join timeout under load on
         # Windows where spawning a new Python interpreter can take several seconds.
-        deadline = time.monotonic() + 30.0
+        # 120 s covers even the slowest coverage-instrumented full-suite runs.
+        deadline = time.monotonic() + 120.0
         while proc.is_alive() and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert not proc.is_alive(), "No-op process did not exit within 30 s"
+        assert not proc.is_alive(), "No-op process did not exit within 120 s"
 
         container = types.SimpleNamespace(_processes={proc.pid: proc})
         _force_kill_processes(container)  # type: ignore[arg-type]  # Must not raise

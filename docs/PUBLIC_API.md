@@ -287,6 +287,13 @@ from pramanix.interceptors.grpc  import PramanixGrpcInterceptor
 from pramanix.interceptors.kafka import PramanixKafkaConsumer
 ```
 
+`PramanixKafkaConsumer` behavioral contract:
+
+- `safe_poll()` calls `consumer.poll()` in a loop. `msg is None` (no message within timeout) stops the generator. Transient errors (`msg.error()` is truthy, e.g. `_PARTITION_EOF`) emit a warning log and `continue` — they do not terminate the loop.
+- `_dead_letter()` batches DLQ flushes: `producer.flush()` is called every `dlq_flush_interval` (default 100) dead-lettered messages. Between flushes, `producer.poll(0)` drains delivery callbacks without blocking. `close()` flushes any remaining pending messages.
+- `close()` and `__del__` use `getattr(self, attr, default)` for all attribute reads. Instances created via `__new__` (bypassing `__init__`) do not raise `AttributeError`.
+- `PramanixGrpcInterceptor` aborts stream RPCs with `INVALID_ARGUMENT` if the request stream is empty (`StopIteration` on first `next()`). Silent return on empty stream is not permitted by the gRPC protocol.
+
 **Kubernetes admission webhook:**
 
 ```python
@@ -319,7 +326,14 @@ from pramanix.identity.linker       import JWTIdentityLinker, IdentityClaims, St
 from pramanix.identity.redis_loader import RedisStateLoader
 ```
 
-Zero-trust constraint: `JWTIdentityLinker` verifies the JWT signature before decoding any claims. Caller-provided request body state is always ignored; state is loaded exclusively via the verified `sub` claim.
+`JWTIdentityLinker` enforces the following security properties in `_verify_token()`:
+
+1. **Algorithm pinning before signature.** The JWT header is decoded first. If `alg` is not `"HS256"`, `JWTVerificationError` is raised before any signature computation. This prevents algorithm-confusion attacks (CVE-2015-9235 family) where an attacker substitutes `alg: "RS256"` in the header while keeping an HMAC-SHA256 body signed with the shared secret.
+2. **Signature verified before claims.** HMAC-SHA256 is computed over `header_b64.payload_b64` and compared via `hmac.compare_digest` before the payload JSON is parsed or any claim is trusted.
+3. **`exp` enforced with configurable skew.** Tokens past their expiry raise `JWTExpiredError`.
+4. **`nbf` (not-before) enforced with configurable skew.** Tokens not yet valid raise `JWTVerificationError`.
+5. **Non-empty `sub` required.** A token with `"sub": ""` or no `sub` key raises `JWTVerificationError`. An empty `sub` creates an empty-identity principal whose state key in Redis is `""`, which any attacker can populate.
+6. **Caller state ignored.** State is loaded exclusively via the verified `sub` claim through the `StateLoader`. Request-body state is never read.
 
 ---
 
@@ -331,11 +345,32 @@ These six subsystems ship in 1.0.0 at `beta` stability. No integration tests aga
 from pramanix.ifc.enforcer       import FlowEnforcer
 from pramanix.ifc.flow_policy    import FlowPolicy, FlowRule, FlowDecision, TrustLabel, ClassifiedData
 from pramanix.privilege.scope    import ExecutionScope, ExecutionContext, ScopeEnforcer
-from pramanix.oversight.workflow import InMemoryApprovalWorkflow, ApprovalRequest, ApprovalDecision
+from pramanix.oversight.workflow import (
+    InMemoryApprovalWorkflow,
+    ApprovalRequest,
+    ApprovalDecision,
+    ApprovalWorkflow,   # @runtime_checkable Protocol — type-hint custom backends against this
+    ApprovalStatus,
+    EscalationQueue,
+    OversightRecord,
+)
 from pramanix.memory.store       import SecureMemoryStore, ScopedMemoryPartition
 from pramanix.lifecycle.diff     import PolicyDiff, ShadowEvaluator
 from pramanix.provenance         import ProvenanceRecord, ProvenanceChain
 ```
+
+**`ApprovalWorkflow` Protocol** (`@runtime_checkable`): defines the interface for custom approval backends. Methods: `request_approval()`, `approve()`, `reject()`, `check()`, `records()`. Use `isinstance(wf, ApprovalWorkflow)` to validate custom implementations at runtime.
+
+**`InMemoryApprovalWorkflow` operational notes:**
+
+- Runs a daemon background sweeper thread (`pramanix-oversight-sweeper`) that expires timed-out requests on a configurable interval (`sweep_interval_s=60.0`, default). Expired requests are auto-rejected and written to the audit trail as `ApprovalStatus.TIMEOUT`.
+- `stop_sweeper()` signals the sweeper thread to stop and joins it. Call this during graceful shutdown to avoid daemon thread interference with test teardown.
+- `_auto_reject()` is idempotent under concurrent calls: if two callsites (e.g. a concurrent `check()` and the sweeper) race on the same expired request, the second call is a no-op under lock. Only one `OversightRecord` is written per request.
+- **Not persistent.** In-memory only. A process restart loses all pending requests and their audit records.
+
+**`FlowEnforcer` constructor parameter:** `max_audit_log_size: int = 10_000`. The internal audit log is capped at this size; oldest entries are evicted when the cap is reached. Default is sufficient for most deployments; lower for memory-constrained services.
+
+**`FlowPolicy.regulated()` preset:** Defines explicit `DENY` rules for `REGULATED → CUSTOMER` and `REGULATED → CONFIDENTIAL` in addition to the existing `REGULATED → INTERNAL` deny. Both flows were previously handled by `default_deny=True` without a matching rule, producing generic "no rule matched" errors. Violations now surface the specific reason string in `FlowViolationError`.
 
 All six are also re-exported from `pramanix` top-level (see `__init__.py`).
 

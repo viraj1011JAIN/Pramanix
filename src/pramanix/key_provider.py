@@ -339,7 +339,8 @@ class AwsKmsKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            return self._cached_pem  # type: ignore[return-value]
+            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            return self._cached_pem
 
     def public_key_pem(self) -> bytes:
         """Derive and return the public key from the AWS-sourced private key."""
@@ -443,7 +444,8 @@ class AzureKeyVaultKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            return self._cached_pem  # type: ignore[return-value]
+            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            return self._cached_pem
 
     def public_key_pem(self) -> bytes:
         """Derive and return the public key from the Azure-sourced private key."""
@@ -541,7 +543,8 @@ class GcpKmsKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            return self._cached_pem  # type: ignore[return-value]
+            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            return self._cached_pem
 
     def public_key_pem(self) -> bytes:
         """Derive and return the public key from the GCP-sourced private key."""
@@ -651,7 +654,8 @@ class HashiCorpVaultKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            return self._cached_pem  # type: ignore[return-value]
+            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            return self._cached_pem
 
     def public_key_pem(self) -> bytes:
         """Derive and return the public key from the Vault-sourced private key."""

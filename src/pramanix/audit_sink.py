@@ -297,7 +297,6 @@ class S3AuditSink:
         self._prefix = prefix
         self._timeout = timeout
         self._s3: Any = boto3.client("s3", **boto3_kwargs)
-        self._executor = threading.Thread  # type annotation placeholder
         import concurrent.futures
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="pramanix-s3"

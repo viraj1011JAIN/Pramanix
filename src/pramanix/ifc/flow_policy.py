@@ -255,6 +255,18 @@ class FlowPolicy:
                 permitted=False,
                 reason="REGULATED data must not flow to INTERNAL sinks.",
             ),
+            FlowRule(
+                TrustLabel.REGULATED,
+                TrustLabel.CUSTOMER,
+                permitted=False,
+                reason="REGULATED data must not flow to CUSTOMER sinks.",
+            ),
+            FlowRule(
+                TrustLabel.REGULATED,
+                TrustLabel.CONFIDENTIAL,
+                permitted=False,
+                reason="REGULATED data must not flow to CONFIDENTIAL sinks.",
+            ),
             # UNTRUSTED: never to low-trust outputs
             FlowRule(
                 TrustLabel.UNTRUSTED,

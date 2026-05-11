@@ -39,7 +39,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from pramanix.exceptions import OversightRequiredError
 
@@ -47,6 +47,7 @@ __all__ = [
     "ApprovalDecision",
     "ApprovalRequest",
     "ApprovalStatus",
+    "ApprovalWorkflow",
     "EscalationQueue",
     "InMemoryApprovalWorkflow",
     "OversightRecord",
@@ -155,6 +156,8 @@ class OversightRecord:
         assert record.verify()
     """
 
+    __slots__ = ("request", "decision", "_key", "_tag")
+
     def __init__(
         self,
         request: ApprovalRequest,
@@ -167,7 +170,16 @@ class OversightRecord:
         self._tag: str = self._compute_tag()
 
     def verify(self) -> bool:
-        """Return True when the record has not been tampered with."""
+        """Return True when the record has not been tampered with.
+
+        Protection boundary: detects in-process field mutation on the
+        ``request`` and ``decision`` objects bound at construction time.
+        Does NOT provide cross-process tamper detection — callers that
+        persist records via :meth:`to_dict` must re-create the
+        ``OversightRecord`` with the original signing key to verify
+        offline.  The ``hmac_tag`` field in the serialised dict is only
+        meaningful when paired with the key used to produce it.
+        """
         expected = self._compute_tag()
         return hmac.compare_digest(self._tag, expected)
 
@@ -201,7 +213,7 @@ class OversightRecord:
             f"{self.decision.reviewer_id}|"
             f"{self.decision.decided_at}"
         ).encode()
-        return hmac.new(self._key, payload, hashlib.sha256).hexdigest()
+        return hmac.HMAC(self._key, payload, hashlib.sha256).hexdigest()
 
 
 # ── Escalation queue ─────────────────────────────────────────────────────────
@@ -254,20 +266,83 @@ class EscalationQueue:
                 key=lambda r: r.created_at,
             )
 
-    def expire_stale(self) -> list[str]:
-        """Remove and return request IDs that have exceeded their TTL."""
+    def expire_stale(self) -> list[ApprovalRequest]:
+        """Remove and return requests that have exceeded their TTL."""
         with self._lock:
-            expired = [
-                rid for rid, r in self._requests.items() if r.is_expired()
-            ]
-            for rid in expired:
-                del self._requests[rid]
+            expired = [r for r in self._requests.values() if r.is_expired()]
+            for r in expired:
+                del self._requests[r.request_id]
         return expired
 
     def size(self) -> int:
         """Number of requests currently in the queue (including expired)."""
         with self._lock:
             return len(self._requests)
+
+
+# ── Approval workflow Protocol ────────────────────────────────────────────────
+
+
+@runtime_checkable
+class ApprovalWorkflow(Protocol):
+    """Pluggable backend protocol for human-in-the-loop oversight workflows.
+
+    Implement this interface to provide a persistent workflow backend (e.g.
+    a Slack bot, PagerDuty escalation, or JIRA ticket system) that can be
+    swapped in wherever :class:`InMemoryApprovalWorkflow` is used.
+
+    All conforming backends must:
+    * Raise :exc:`~pramanix.exceptions.OversightRequiredError` from
+      :meth:`request_approval` so callers can retrieve the ``request_id``.
+    * Return an :class:`OversightRecord` from :meth:`approve` and
+      :meth:`reject`.
+    * Return ``True`` from :meth:`check` only when the request was explicitly
+      approved (not just decided).
+    """
+
+    def request_approval(
+        self,
+        *,
+        principal_id: str,
+        action: str,
+        decision_id: str,
+        policy_hash: str,
+        intent_dump: dict[str, Any] | None,
+        required_scopes: list[str] | None,
+        blast_radius: str,
+        reason: str,
+        metadata: dict[str, Any] | None,
+    ) -> str:
+        """Submit a new approval request and raise OversightRequiredError."""
+        ...
+
+    def approve(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str,
+    ) -> OversightRecord:
+        """Record an approval and return the signed OversightRecord."""
+        ...
+
+    def reject(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str,
+    ) -> OversightRecord:
+        """Record a rejection and return the signed OversightRecord."""
+        ...
+
+    def check(self, request_id: str) -> bool:
+        """Return True if the request was APPROVED; False otherwise."""
+        ...
+
+    def records(self) -> list[OversightRecord]:
+        """Return the full audit trail of oversight decisions."""
+        ...
 
 
 # ── Approval workflow ─────────────────────────────────────────────────────────
@@ -312,6 +387,7 @@ class InMemoryApprovalWorkflow:
         signing_key: bytes | None = None,
         *,
         auto_reject_after_s: float = 300.0,
+        sweep_interval_s: float = 60.0,
     ) -> None:
         self._key = signing_key or _process_key()
         self._ttl = auto_reject_after_s
@@ -319,6 +395,14 @@ class InMemoryApprovalWorkflow:
         self._decisions: dict[str, ApprovalDecision] = {}
         self._records: list[OversightRecord] = []
         self._lock = threading.Lock()
+        self._stop_sweeper = threading.Event()
+        self._sweeper = threading.Thread(
+            target=self._run_sweeper,
+            args=(sweep_interval_s,),
+            name="pramanix-oversight-sweeper",
+            daemon=True,
+        )
+        self._sweeper.start()
 
     def request_approval(
         self,
@@ -424,7 +508,28 @@ class InMemoryApprovalWorkflow:
         with self._lock:
             return list(self._records)
 
+    def stop_sweeper(self) -> None:
+        """Stop the background expiry-sweeper thread.
+
+        Call this during application shutdown to allow the thread to exit
+        cleanly.  The sweeper is a daemon thread and will be reclaimed
+        automatically when the process exits, but explicit shutdown avoids
+        spurious warnings in test environments.
+        """
+        self._stop_sweeper.set()
+
     # ── Internal ──────────────────────────────────────────────────────────
+
+    def _run_sweeper(self, interval: float) -> None:
+        """Background loop: expire stale requests every *interval* seconds."""
+        while not self._stop_sweeper.wait(interval):
+            self._sweep_expired()
+
+    def _sweep_expired(self) -> None:
+        """Auto-reject all requests that have exceeded their TTL."""
+        expired = self._queue.expire_stale()
+        for req in expired:
+            self._auto_reject(req)
 
     def _decide(
         self,
@@ -463,6 +568,7 @@ class InMemoryApprovalWorkflow:
         return record
 
     def _auto_reject(self, req: ApprovalRequest) -> None:
+        # Dequeue is a no-op when the sweeper already removed it via expire_stale.
         self._queue.dequeue(req.request_id)
         dec = ApprovalDecision(
             request_id=req.request_id,
@@ -472,6 +578,8 @@ class InMemoryApprovalWorkflow:
         )
         record = OversightRecord(req, dec, signing_key=self._key)
         with self._lock:
+            if req.request_id in self._decisions:
+                return  # Already decided — idempotent under concurrent calls.
             self._decisions[req.request_id] = dec
             self._records.append(record)
 

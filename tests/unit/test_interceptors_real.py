@@ -83,12 +83,18 @@ class _FakeDLQProducer:
 
     def __init__(self):
         self.produced: list[dict] = []
+        self.flush_count: int = 0
+        self.poll_count: int = 0
 
     def produce(self, topic: str, *, value: bytes, headers: list) -> None:
         self.produced.append({"topic": topic, "value": value, "headers": headers})
 
     def flush(self) -> None:
-        pass
+        self.flush_count += 1
+
+    def poll(self, timeout: float = 0) -> int:
+        self.poll_count += 1
+        return 0
 
 
 class _FakeConsumer:

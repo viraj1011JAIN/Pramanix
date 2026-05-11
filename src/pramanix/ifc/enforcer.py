@@ -68,11 +68,12 @@ class FlowEnforcer:
         policy: FlowPolicy,
         *,
         audit_sink: Callable[[ClassifiedData, str, bool], None] | None = None,
+        max_audit_log_size: int = 10_000,
     ) -> None:
         self._policy = policy
         self._audit_sink = audit_sink
         self._lock = threading.Lock()
-        # Audit trail: list of (source_label, sink_label, sink_component, permitted)
+        self._max_audit_log_size = max_audit_log_size
         self._audit_log: list[dict[str, object]] = []
 
     # ── Core gate ─────────────────────────────────────────────────────────
@@ -205,6 +206,8 @@ class FlowEnforcer:
         }
         with self._lock:
             self._audit_log.append(entry)
+            if len(self._audit_log) > self._max_audit_log_size:
+                self._audit_log.pop(0)
         if self._audit_sink is not None:
             try:
                 self._audit_sink(data, sink_component, permitted)

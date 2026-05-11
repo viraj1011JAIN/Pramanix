@@ -190,7 +190,13 @@ class PramanixSigner:
 
         self._public_key: Ed25519PublicKey = self._private_key.public_key()
 
-        # Cache PEM exports
+        # Cache PEM exports.
+        # SECURITY: _private_pem holds unencrypted PKCS8 PEM in process memory.
+        # This is unavoidable for a software signer — the key must be in memory
+        # to sign.  Callers MUST NOT log, serialize, or transmit this value.
+        # Use private_key_pem() only for key backup/export to a secrets manager.
+        # For HSM-backed deployments, replace PramanixSigner with an
+        # HSM-resident signer that never exposes the private key bytes.
         self._private_pem = self._private_key.private_bytes(
             encoding=Encoding.PEM,
             format=PrivateFormat.PKCS8,
@@ -274,7 +280,12 @@ class PramanixSigner:
         return self._public_pem
 
     def private_key_pem(self) -> bytes:
-        """Return private key in PEM format. NEVER LOG THIS."""
+        """Return private key in PEM format.
+
+        WARNING: NEVER log, print, transmit, or store this value in plaintext.
+        Use only to export the key to a secrets manager (AWS KMS, HashiCorp
+        Vault, Kubernetes Secret, etc.) immediately after generation.
+        """
         return self._private_pem
 
     def key_id(self) -> str:

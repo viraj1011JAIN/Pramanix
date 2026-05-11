@@ -184,6 +184,7 @@ class TestConcurrentAsyncSizeCheck:
         normal_cfg = GuardConfig(
             max_input_bytes=65_536,
             execution_mode="async-thread",
+            max_workers=25,  # match concurrency — prevents load-shedder from triggering
         )
         small_guard = Guard(
             _LimitPolicy,

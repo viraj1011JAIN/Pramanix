@@ -355,6 +355,9 @@ filterwarnings = [
     # GuardConfig emits a production-mode advisory when PRAMANIX_ENV=production;
     # tests that set this env var are explicitly testing that path.
     "ignore:GuardConfig:UserWarning",
+    # requests library version-mismatch advisory — upstream environment issue, not
+    # a Pramanix defect.  Suppressed so pytest output stays signal-only.
+    "ignore:.*doesn't match a supported version:Warning",
 ]
 
 [tool.coverage.run]

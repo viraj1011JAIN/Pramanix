@@ -82,12 +82,15 @@ class PramanixKafkaConsumer:
         state_provider: Callable[[], dict[str, Any]],
         dlq_producer: Any | None = None,
         dlq_topic: str = "pramanix.dlq",
+        dlq_flush_interval: int = 100,
     ) -> None:
         self._guard = guard
         self._intent_extractor = intent_extractor
         self._state_provider = state_provider
         self._dlq_producer = dlq_producer
         self._dlq_topic = dlq_topic
+        self._dlq_flush_interval = dlq_flush_interval
+        self._dlq_pending: int = 0
         self._consumer: Any = None
 
         if _KAFKA_AVAILABLE:
@@ -115,7 +118,7 @@ class PramanixKafkaConsumer:
                 return
             if msg.error():
                 _log.warning("pramanix.kafka.consumer_error: %s", msg.error())
-                return
+                continue
 
             try:
                 intent = self._intent_extractor(msg)
@@ -155,7 +158,13 @@ class PramanixKafkaConsumer:
                 value=msg.value(),
                 headers=headers,
             )
-            self._dlq_producer.flush()
+            self._dlq_pending += 1
+            if self._dlq_pending >= self._dlq_flush_interval:
+                self._dlq_producer.flush()
+                self._dlq_pending = 0
+            else:
+                # Non-blocking drain to process delivery callbacks without stalling.
+                self._dlq_producer.poll(0)
         except Exception as exc:
             _log.exception("pramanix.kafka.dlq_produce_error: %s", exc)
 
@@ -166,8 +175,15 @@ class PramanixKafkaConsumer:
             _log.warning("pramanix.kafka.commit_error: %s", exc)
 
     def close(self) -> None:
-        """Close the underlying Kafka consumer."""
-        if self._consumer is not None:
+        """Close the underlying Kafka consumer and flush any pending DLQ messages."""
+        dlq = getattr(self, "_dlq_producer", None)
+        if dlq is not None and getattr(self, "_dlq_pending", 0) > 0:
+            try:
+                dlq.flush()
+                self._dlq_pending = 0
+            except Exception as exc:
+                _log.warning("pramanix.kafka.dlq_flush_on_close_error: %s", exc)
+        if getattr(self, "_consumer", None) is not None:
             self._consumer.close()
 
     def __del__(self) -> None:

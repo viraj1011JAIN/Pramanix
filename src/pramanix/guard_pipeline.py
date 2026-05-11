@@ -16,6 +16,7 @@ Contents
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from pramanix.exceptions import SemanticPolicyViolation
@@ -23,6 +24,8 @@ from pramanix.exceptions import SemanticPolicyViolation
 if TYPE_CHECKING:
     from pramanix.expressions import ConstraintExpr
     from pramanix.policy import Policy
+
+_log = logging.getLogger(__name__)
 
 
 # ── Semantic post-consensus check ─────────────────────────────────────────────
@@ -84,8 +87,8 @@ def _semantic_post_consensus_check(
                     )
             except SemanticPolicyViolation:
                 raise
-            except Exception:
-                pass  # Non-numeric balance — let Z3 enforce the invariant
+            except Exception as _exc:
+                _log.debug("balance check skipped — non-numeric value", exc_info=_exc)
 
         # Daily limit check
         raw_daily_limit = state_values.get("daily_limit")
@@ -100,8 +103,8 @@ def _semantic_post_consensus_check(
                     )
             except SemanticPolicyViolation:
                 raise
-            except Exception:
-                pass  # Let Z3 handle non-numeric daily fields
+            except Exception as _exc:
+                _log.debug("daily-limit check skipped — non-numeric value", exc_info=_exc)
 
     # ── Healthcare: dosage checks ────────────────────────────────────────
     raw_dosage = intent_dict.get("dosage")
@@ -124,12 +127,12 @@ def _semantic_post_consensus_check(
                         )
                 except SemanticPolicyViolation:
                     raise
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("dosage limit check skipped — non-numeric value", exc_info=_exc)
         except SemanticPolicyViolation:
             raise
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("dosage check skipped — non-numeric value", exc_info=_exc)
 
     # ── Infra: resource request vs limit checks ──────────────────────────
     raw_requested_replicas = intent_dict.get("requested_replicas") or intent_dict.get("replica_count")
@@ -150,12 +153,12 @@ def _semantic_post_consensus_check(
                         )
                 except SemanticPolicyViolation:
                     raise
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    _log.debug("replica limit check skipped — non-numeric value", exc_info=_exc)
         except SemanticPolicyViolation:
             raise
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("replica check skipped — non-numeric value", exc_info=_exc)
 
     raw_cpu_request = intent_dict.get("cpu_request")
     raw_cpu_limit = state_values.get("cpu_limit")
@@ -169,8 +172,8 @@ def _semantic_post_consensus_check(
                 )
         except SemanticPolicyViolation:
             raise
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("cpu check skipped — non-numeric value", exc_info=_exc)
 
     raw_mem_request = intent_dict.get("memory_request")
     raw_mem_limit = state_values.get("memory_limit")
@@ -184,8 +187,8 @@ def _semantic_post_consensus_check(
                 )
         except SemanticPolicyViolation:
             raise
-        except Exception:
-            pass
+        except Exception as _exc:
+            _log.debug("memory check skipped — non-numeric value", exc_info=_exc)
 
 
 # ── Policy fingerprint ────────────────────────────────────────────────────────

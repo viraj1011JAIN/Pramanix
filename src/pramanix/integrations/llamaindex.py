@@ -232,7 +232,10 @@ class PramanixFunctionTool:
             return asyncio.run(self.acall(input, **kwargs))
 
         # Already inside an async context — reuse the shared executor.
-        future = self._executor.submit(asyncio.run, self.acall(input, **kwargs))
+        # Use a lambda so the coroutine is created in the worker thread's own
+        # event loop, not the calling loop (which would raise "attached to a
+        # different loop" on Python 3.10+).
+        future = self._executor.submit(lambda: asyncio.run(self.acall(input, **kwargs)))
         return future.result()
 
     def close(self) -> None:
@@ -470,7 +473,9 @@ class PramanixQueryEngineTool:
         import concurrent.futures
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(asyncio.run, self.acall(input, **kwargs))
+            # Lambda defers coroutine creation to the worker thread so it is
+            # bound to that thread's new event loop, not the calling loop.
+            future = pool.submit(lambda: asyncio.run(self.acall(input, **kwargs)))
             return future.result()
 
     # ── State retrieval ───────────────────────────────────────────────────────

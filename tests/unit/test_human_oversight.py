@@ -203,7 +203,7 @@ class TestEscalationQueue:
         assert pending[0].request_id == r1.request_id
         assert pending[1].request_id == r2.request_id
 
-    def test_expire_stale_returns_ids(self):
+    def test_expire_stale_returns_requests(self):
         q = EscalationQueue()
         expired = ApprovalRequest(
             principal_id="a",
@@ -212,8 +212,8 @@ class TestEscalationQueue:
             ttl_seconds=300.0,
         )
         q.enqueue(expired)
-        stale_ids = q.expire_stale()
-        assert expired.request_id in stale_ids
+        stale = q.expire_stale()
+        assert any(r.request_id == expired.request_id for r in stale)
         assert q.size() == 0
 
     def test_expire_stale_leaves_fresh(self):

@@ -142,6 +142,11 @@ def _is_picklable(obj: Any) -> bool:
 
 # ── Translator metric helper ──────────────────────────────────────────────────
 
+# Module-level cache so Counter() is created once per process.  Avoids the
+# prometheus_client "duplicate metric" ValueError on re-import or hot-reload,
+# and removes the need to reach into the private _names_to_collectors internal.
+_translator_counters: dict[str, Any] = {}
+
 
 def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[str]) -> None:
     """Emit a Prometheus counter for LLM extraction / consensus failures (M-46).
@@ -165,14 +170,12 @@ def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[st
             if failure_type == "extraction_failure"
             else "Total dual-model consensus failures by model pair"
         )
-        try:
-            _c = Counter(counter_name, description, ["model"])
-        except ValueError:
-            from prometheus_client import REGISTRY
-
-            _c = REGISTRY._names_to_collectors.get(counter_name)  # type: ignore[union-attr]
-            if _c is None:
-                return
+        if counter_name not in _translator_counters:
+            try:
+                _translator_counters[counter_name] = Counter(counter_name, description, ["model"])
+            except ValueError:
+                return  # Counter registered externally; skip rather than crash.
+        _c = _translator_counters[counter_name]
         for model in models:
             _c.labels(model=model).inc()
     except Exception:
@@ -609,7 +612,7 @@ class Guard:
                 try:
                     _src_label = TrustLabel(int(_src_label_raw))
                     _snk_label = TrustLabel(int(_snk_label_raw))
-                    _data = ClassifiedData(label=_src_label, source=_src_comp)
+                    _data = ClassifiedData(data=intent_values, label=_src_label, source=_src_comp)
                     FlowEnforcer(gov.ifc_policy).gate(
                         _data,
                         sink_label=_snk_label,
