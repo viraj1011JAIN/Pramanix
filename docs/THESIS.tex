@@ -190,8 +190,8 @@ the LLM's output can cause.
         in \fname{docs/KNOWN\_GAPS.md}.
 \end{itemize}
 
-\textbf{Test suite state} (Python~3.13.7, pytest~7.4.4): \textbf{3,984 passed},
-130 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
+\textbf{Test suite state} (Python~3.13.7, pytest~7.4.4): \textbf{3,925 passed},
+120 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
 passing).
 
 \textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
@@ -890,7 +890,7 @@ After Phase~12 metric-registry and coverage fixes: 3,923 passed, 81 skipped,
 time: 867\,s.
 
 After Phase~2 (Natural Policy Engine) additions and test-suite bug fixes:
-\textbf{3,984 passed}, \textbf{130 skipped}, \textbf{0 failed}.  Coverage:
+\textbf{3,925 passed}, \textbf{120 skipped}, \textbf{0 failed}.  Coverage:
 \textbf{98.26\,\%} (gate: \textbf{passing}).  Wall time: $\approx$\,430\,s.
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -942,22 +942,27 @@ extended without touching the others.
 
 \item[\code{NaturalPolicySchema}]
   A Pydantic v2 model produced by the LLM from the natural-language input.
-  Fields include: \code{field} (the transaction attribute being constrained),
-  \code{operator} (one of \code{lt / le / eq / ge / gt / ne}), \code{value}
-  (the threshold), \code{value\_type} (\code{REAL / INT / BOOL / STRING}),
-  and optional \code{name} / \code{description} metadata.  All fields are
-  validated at construction time; an invalid schema raises \code{ValueError}
-  before any Z3 object is created.
+  Top-level fields: \code{policy\_name} (short human-readable label),
+  \code{original\_english} (verbatim CISO text used by the meta-verifier),
+  \code{fields} (list of \code{FieldDeclaration} each carrying \code{name},
+  \code{z3\_type} $\in$ \{\code{Real}/\code{Int}/\code{Bool}/\code{String}\},
+  and \code{description}), and \code{constraints} (a discriminated-union list
+  of \code{comparison}, \code{and}, \code{or}, \code{not} nodes keyed by
+  \code{kind}).  All fields are Pydantic-validated at construction time;
+  constraint labels must match \code{\^{}[a-z][a-z0-9\_]*\$} (snake\_case)
+  to serve as valid Python identifiers and prevent label injection.
 
 \item[\code{ASTBuilder}]
   A stateless transformer that converts a \code{NaturalPolicySchema} into a
-  \code{ConstraintExpr} node using the existing Z3 DSL.  The type bridge
-  \code{\_Z3\_TO\_PYTHON} maps each \code{value\_type} token to its Python
-  counterpart: \code{REAL}→\code{Decimal}, \code{INT}→\code{int},
-  \code{BOOL}→\code{bool}, \code{STRING}→\code{str}.  The builder
-  validates that the supplied threshold value is coercible to the declared
-  type; a mismatch raises \code{TypeError} with a helpful message before any
-  Z3 context is entered.
+  list of \code{ConstraintExpr} objects using the existing Z3 DSL.  The
+  module-level \code{\_Z3\_TO\_PYTHON} map converts each
+  \code{FieldDeclaration.z3\_type} (a \code{Z3TypeEnum} value) to the
+  corresponding Python type: \code{Real}→\code{Decimal}, \code{Int}→\code{int},
+  \code{Bool}→\code{bool}, \code{String}→\code{str}.  The builder enforces
+  type-operator legality: arithmetic operators (\code{+/-/*//}) are rejected
+  on \code{Bool}/\code{String} fields, and ordering operators
+  (\code{<}, \code{<=}, \code{>}, \code{>=}) are similarly rejected.  Any
+  violation raises \code{FieldTypeError} before any Z3 context is entered.
 
 \item[\code{NaturalPolicyCompiler}]
   The public entry point.  Given a \code{NaturalPolicySchema} (or a
@@ -968,22 +973,28 @@ extended without touching the others.
   \code{RuntimeError} (Z3 refutation) on any failure.
 
 \item[\code{MetaVerifier}]
-  Runs two Z3 checks on the compiled constraint before the policy is
-  accepted.  First, \emph{satisfiability}: the constraint must be satisfiable
-  (a policy that is always \textsc{deny} regardless of input is rejected as
-  logically vacuous).  Second, \emph{monotonicity}: tightening the threshold
-  by a small $\varepsilon$ must produce a strictly more restrictive constraint
-  (catches polarity inversions where ``allow amounts under \$100'' was
-  accidentally compiled as ``allow amounts over \$100'').  Behaviour is
-  governed by \code{VerificationMode}: \code{STRICT} (raise), \code{WARN}
-  (log and continue), or \code{SKIP} (no check).
+  Performs \emph{structural} (not Z3-semantic) anti-hallucination checks on
+  the compiled AST.  For each constraint node the verifier reconstructs a
+  canonical algebraic expression (e.g.\ \code{amount <= 50000}) from the
+  compiled \code{ConstraintExpr} and compares it token-by-token against the
+  LLM's \code{natural\_language} annotation, checking field names, operator
+  synonyms (``at least'', ``not exceed'', etc.), and numeric values.  A
+  mismatch indicates either an LLM hallucination (wrong operator or threshold)
+  or a compiler bug (operator transposition).  Behaviour is governed by
+  \code{VerificationMode}: \code{STRICT} raises \code{PolicyCompilationError},
+  \code{WARN} records mismatches in \code{MetaVerificationResult.mismatches}
+  without raising, and \code{SKIP} bypasses all checks.
 
 \item[\code{CompiledPolicy}]
-  An immutable dataclass holding the original \code{NaturalPolicySchema}, the
-  compiled \code{ConstraintExpr}, optional Z3 satisfiability evidence, and a
-  SHA-256 digest of the schema for audit traceability.  It exposes a
-  \code{to\_policy\_config()} helper that wraps the constraint in a
-  \code{PolicyConfig} ready to be passed directly to \code{Guard}.
+  A frozen dataclass with four attributes: \code{fields}
+  (\code{dict[str, Field]} mapping each declared field name to its
+  \code{Field} descriptor), \code{constraints}
+  (\code{list[ConstraintExpr]} ready to be returned from
+  \code{Policy.invariants()}), \code{verification}
+  (\code{MetaVerificationResult} — full audit trail of the meta-verification
+  pass), and \code{schema} (the \code{NaturalPolicySchema} intermediate
+  representation produced by the LLM).  Attempting to mutate any field raises
+  \code{FrozenInstanceError}.
 
 \end{description}
 
@@ -1018,35 +1029,117 @@ Phase~2 ships \fname{tests/unit/test\_natural\_policy.py} — 61 new unit tests
 across 9 test classes:
 
 \begin{enumerate}
-\item \code{TestNaturalPolicySchemaValidation} (12 tests) — field-level
-  Pydantic validation, operator enumeration, value-type enumeration, and
-  reject-on-missing-required-field.
-\item \code{TestASTBuilderTypeConversion} (8 tests) — each
-  \code{value\_type}→Python type mapping, bad-type rejection, and operator
-  round-trip.
-\item \code{TestASTBuilderConstraintGeneration} (8 tests) — operator
-  semantics (\code{lt}, \code{le}, \code{eq}, \code{ge}, \code{gt},
-  \code{ne}) and string field support.
-\item \code{TestNaturalPolicyCompilerHappyPath} (7 tests) — end-to-end
-  compilation of realistic policies (``amounts under \$10{,}000'', KYC tier,
-  PEP boolean, currency equality).
-\item \code{TestNaturalPolicyCompilerEdgeCases} (6 tests) — dict input
-  coercion, missing \code{name}/\code{description} defaulting, large
-  threshold values.
-\item \code{TestMetaVerifierModes} (6 tests) — \code{STRICT} raises on
-  unsatisfiable policy; \code{WARN} logs and returns
-  \code{MetaVerificationResult.passed=False}; \code{SKIP} short-circuits
-  without calling Z3.
-\item \code{TestCompiledPolicyInterface} (5 tests) — immutability, digest
-  stability, \code{to\_policy\_config()} integration, repr string.
-\item \code{TestEndToEndPolicyApplication} (5 tests) — compiled policy
-  applied to a real \code{Guard} instance; correct allow/deny decisions.
-\item \code{TestNaturalPolicyRejections} (4 tests) — invalid operator string,
-  type coercion failure, contradictory constraint (always false), polarity
-  inversion detection.
+\item \code{TestZ3ToPythonMap} (5 tests) — verifies that all four
+  \code{Z3TypeEnum} entries (\code{Real}, \code{Int}, \code{Bool},
+  \code{String}) are present and map to the correct Python types (\code{Decimal},
+  \code{int}, \code{bool}, \code{str}).
+\item \code{TestNaturalPolicySchema} (8 tests) — Pydantic v2 validation:
+  valid schema construction, duplicate field-name rejection, undeclared field
+  reference in a constraint, invalid snake\_case label, \code{Bool} RHS with
+  an arithmetic operator, dotted field names, empty \code{policy\_name}.
+\item \code{TestASTBuilder} (14 tests) — comparison operators
+  (\code{<=}/\code{>=}/\code{>}/\code{<}), \code{AND}/\code{OR}/\code{NOT}
+  compositions, \code{ArithmeticLHS} (\code{balance - amount >= 0}),
+  \code{FieldTypeError} on arithmetic with Bool/String fields,
+  unknown-field rejection, field registry property, and multi-constraint
+  parallel annotation.
+\item \code{TestMetaVerifier} (10 tests) — \code{STRICT} passes on clean
+  constraint; \code{SKIP} bypasses without calling helpers; \code{WARN}
+  records mismatches in \code{MetaVerificationResult.mismatches} without
+  raising; \code{STRICT} raises on hallucinated value; mismatched constraint
+  lengths; per-constraint \code{ConstraintVerificationDetail} population;
+  private helpers \code{\_get\_op\_synonyms} (``at least'',
+  ``not exceed'') and \code{\_tokenise} (stop-word removal).
+\item \code{TestNaturalPolicyCompiler} (10 tests, \code{async}) — async
+  compilation with a mocked \code{Translator}: happy path,
+  \code{ExtractionFailureError} on invalid JSON,
+  \code{PolicyCompilationError} on undeclared field, \code{FieldTypeError}
+  on type mismatch, \code{STRICT} verification integration, multiple
+  field types and boolean combinators.
+\item \code{TestCompileFromSchema} (3 tests) — synchronous
+  \code{NaturalPolicyCompiler.compile\_from\_schema()} path with and without
+  verification; \code{FieldTypeError} propagation.
+\item \code{TestCompiledPolicy} (4 tests) — frozen dataclass mutation raises
+  \code{FrozenInstanceError}; \code{verification} is a
+  \code{MetaVerificationResult}; \code{schema} is a
+  \code{NaturalPolicySchema}; \code{fields} contains \code{Field} instances.
+\item \code{TestVerificationMode} (2 tests) — all three enum values
+  (\code{STRICT}/\code{WARN}/\code{SKIP}) exist and are \code{str}
+  subclasses.
+\item \code{TestVerifierHelpers} (5 tests) — \code{\_reconstruct\_constraint}
+  round-trips \code{>=}/\code{<=} and \code{ArithmeticLHS} nodes;
+  \code{\_tokenise} removes stop words and is case-insensitive.
 \end{enumerate}
 
 All 61 tests pass in isolation and as part of the full suite.
+
+\paragraph{Compile-Policy CLI Subcommand.}
+Phase~2 adds a \code{compile-policy} subcommand to the \code{pramanix} CLI
+(\fname{src/pramanix/cli.py}):
+
+\begin{verbatim}
+pramanix compile-policy POLICY_FILE [--verify {strict,warn,skip}] [--json]
+pramanix compile-policy --example
+\end{verbatim}
+
+The subcommand reads a YAML or JSON file conforming to
+\code{NaturalPolicySchema}, validates it with
+\code{NaturalPolicySchema.model\_validate()}, compiles it via
+\code{NaturalPolicyCompiler.compile\_from\_schema()}, and prints a
+human-readable (or JSON) summary.  The \code{--example} flag prints a
+self-contained YAML template to stdout and exits~0, allowing users to
+bootstrap a schema without consulting the documentation.
+
+\begin{itemize}
+  \item \textbf{Verification mode}: \code{--verify strict} exits~0 if and
+        only if \code{MetaVerificationResult.verified} is \code{True};
+        \code{--verify warn} (default) exits~0 on any successfully compiled
+        policy, printing mismatch warnings to stderr;
+        \code{--verify skip} bypasses all meta-verification.
+  \item \textbf{JSON output}: \code{--json} emits a structured object with
+        keys \code{ok}, \code{policy\_name}, \code{rules\_compiled},
+        \code{verification\_mode}, \code{verification\_passed}, and
+        \code{verification\_warnings}.  Compilation errors also surface as
+        JSON (\code{ok: false}) for machine-readable pipeline consumption.
+  \item \textbf{Exit codes}: 0~(compiled + verified), 1~(compilation or
+        verification failure), 2~(usage error — no file, no \code{--example}).
+\end{itemize}
+
+Because \code{compile\_from\_schema()} requires no LLM call, the subcommand
+is suitable for CI pipelines that pre-validate natural-language policy files.
+Eight unit tests in \fname{tests/unit/test\_cli\_compile\_policy.py} cover:
+\code{--example} output, valid YAML compilation, \code{--json} output format,
+all three verification modes, missing-file error, no-argument error, and JSON
+error output on a malformed schema.
+
+\paragraph{Injection Filter Hardening.}
+Six new pattern tuples were added to
+\fname{src/pramanix/translator/\_injection\_patterns.py}, covering two attack
+classes absent from the original pattern set:
+
+\begin{itemize}
+  \item \textbf{\code{constraint\_override}} (5 patterns) — phrases that
+        instruct the LLM to discard, ignore, override, or forget its operative
+        constraints: \emph{discard (all) (previous) constraints/rules},
+        \emph{ignore (all) constraints/policies/limits},
+        \emph{override (all) constraints/policies/rules},
+        \emph{forget (the) constraints/rules/guidelines},
+        \emph{no (more) restrictions/constraints/limits/rules/policies}.
+  \item \textbf{\code{policy\_bypass}} (1 pattern) — phrases explicitly
+        requesting bypass of the governing policy or safety filters:
+        \emph{bypass (the) policy/policies/filter/filters/constraints/safety}.
+\end{itemize}
+
+All six patterns use IGNORECASE-anchored regular expressions compiled once at
+import time.  Ten new tests were added to \code{TestInjectionFilter} in
+\fname{tests/unit/test\_injection\_scorer\_filter.py}, bringing the class total
+to 28 tests, all passing.
+
+A security comment was also added to the \code{pickle.loads(raw)} call in
+\fname{src/pramanix/translator/injection\_scorer.py}, documenting the HMAC key
+rotation risk: a payload serialised under a rotated-out key cannot be rejected
+as forged, but it can be rejected as expired when the loading site validates
+the embedded timestamp.
 
 \paragraph{Phase~2 Baseline.}
 
@@ -1055,8 +1148,8 @@ All 61 tests pass in isolation and as part of the full suite.
 \toprule
 Metric & Value \\
 \midrule
-Tests passed & 3,984 \\
-Tests skipped & 130 \\
+Tests passed & 3,925 \\
+Tests skipped & 120 \\
 Tests failed & 0 \\
 Branch coverage & 98.26\,\% \\
 Python & 3.13.7 \\
@@ -2501,7 +2594,7 @@ P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} &
 AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
 Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
 Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
-3,984 tests (Phase~2)       & \fname{reality.md}            & \cfrsec{3.1} \\
+3,925 tests (Phase~2)       & \fname{reality.md}            & \cfrsec{3.1} \\
 3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
 3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
 EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\
