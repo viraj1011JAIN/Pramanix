@@ -137,42 +137,76 @@
 \chapter*{Abstract}
 \addcontentsline{toc}{chapter}{Abstract}
 
-Pramanix is an execution firewall for autonomous AI agents. Its core contract,
-stated in \fname{docs/Blueprint.md}, is mathematically precise: a decision is
-\code{allowed=True} if and only if the Microsoft Research Z3 SMT solver returns
-\code{sat} for all policy invariants simultaneously against the given inputs.
-Any other result --- \code{unsat}, \code{unknown}, timeout, exception, type
-error, network failure --- produces \code{allowed=False}. There is no third
-path.
+Pramanix is a Python SDK that provides formal, deterministic verification of
+AI agent actions using the Microsoft Research Z3 SMT solver.  Its core
+contract is stated in \fname{docs/Blueprint.md} and enforced by code:
+\code{Decision.allowed=True} if and only if Z3 returns \code{sat} for every
+policy invariant against the given inputs.  Every other outcome ---
+\code{unsat}, \code{unknown}, solver timeout, internal exception, Pydantic
+validation failure, or network error --- produces \code{allowed=False}.
+There is no third outcome and no code path in the codebase that returns
+\code{allowed=True} through an error handler.
 
-The problem it solves is real. When a language model reasons about a financial
-transfer, it reasons probabilistically. At 99.9\,\% accuracy across 10,000
-daily operations, ten transactions per day will be incorrect. The consequential
-ones --- overdrafts, frozen-account violations, daily-limit breaches --- are
-exactly the cases where an inch of probability is unacceptable. Pramanix
-eliminates that inch by moving the decision from statistical inference to
-mathematical proof.
+\textbf{The problem.}  Language models are stochastic.  When an AI agent
+calls a bank transfer API, it reasons probabilistically over token sequences.
+A system operating at 99.9\,\% accuracy across 10,000 daily decisions
+misclassifies ten per day.  In financial and healthcare contexts, those ten
+errors are not acceptable as a statistical artefact; they are individual
+financial losses or clinical safety events.  Pramanix moves the accept/reject
+decision from probabilistic inference to formal arithmetic verification.  It
+does not make the LLM more accurate.  It enforces a hard envelope around what
+the LLM's output can cause.
 
-At its core, thirteen architectural layers collaborate: a DSL expression
-engine, a Z3 transpiler that converts Python AST to Z3 AST without ever
-calling \code{eval} or \code{exec}, a two-phase solver with per-invariant
-violation attribution, a worker pool with process-isolation for production, an
-eleven-layer injection defence stack, a cryptographic audit trail with
-Ed25519 signing and Merkle batch anchoring, a compliance reporter mapping
-violation labels to regulatory citations in six legal frameworks, and a shadow
-policy evaluator that makes safe canary promotion possible.
+\textbf{What the codebase delivers} (verified against source as of
+2026-05-12 in \fname{reality.md}):
+\begin{itemize}
+  \item A Python-native DSL that lowers to Z3 AST without \code{eval} or
+        \code{exec} anywhere in the codebase (\fname{docs/DECISIONS.md}
+        \cfrsec{9}).
+  \item Exact rational arithmetic via \code{Decimal(str(v)).as\_integer\_ratio()}
+        $\to$ \code{z3.RatVal()}, preventing IEEE~754 rounding errors in
+        financial invariants (\fname{transpiler.py}, float handling path).
+  \item Two-phase Z3 solving: a shared solver for the common SAT case, then
+        per-invariant attribution solvers for UNSAT (\fname{docs/DECISIONS.md}
+        \cfrsec{3}).
+  \item Eleven-layer injection defence covering NFKC normalisation, regex
+        pattern matching, length enforcement, and dual-LLM consensus
+        (\fname{translator/}).
+  \item Ed25519-signed decisions with Merkle batch anchoring and a
+        self-contained offline verifier (\fname{audit/}).
+  \item AES-256-GCM at-rest encryption for archive segments
+        (\code{EncryptedArchiveWriter} in \fname{audit/archiver.py},
+        Phase~10).
+  \item Thirty-eight pre-built policy primitives across seven domains
+        (\fname{reality.md} \cfrsec{2.2}).
+  \item A compliance reporter mapping Z3 violation labels to regulatory
+        citations in six legal frameworks, with PDF export
+        (\fname{helpers/compliance.py}).  This is a tool for compliance
+        engineers building structured evidence packages, not a legal opinion.
+  \item Nine framework adapters (LangChain, LlamaIndex, AutoGen, FastAPI,
+        CrewAI, DSPy, Haystack, Semantic Kernel, Pydantic AI).
+        \textbf{Four of these --- DSPy, Haystack, Semantic Kernel, and
+        Pydantic AI --- are stub implementations} as of v1.0.0, documented
+        in \fname{docs/KNOWN\_GAPS.md}.
+\end{itemize}
 
-The codebase was independently audited against its own source on 2026-05-12
-(\fname{reality.md}). The audit score is 8.5/10. The technical moat is real.
-The single crisis is the AGPL-3.0 license, which blocks enterprise adoption
-before a single sale. That is documented, named, and not softened.
+\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): 3,923 passed,
+81 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
+passing).
 
-A subsequent hardening pass (Phase~10) added production AES-256-GCM archive
-encryption (\code{EncryptedArchiveWriter} in \fname{audit/archiver.py}),
-configurable injection-score field names (\code{amount\_field} parameter in
-\fname{translator/\_sanitise.py}), and eleven new real-integration tests that
-closed the coverage gap from 97.69\,\% to 98.16\,\%, surpassing the 98\,\%
-gate.  Test suite final state: 3,916 passed, 81 skipped, 0 failed.
+\textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
+audit was conducted by the author against the author's own source code.  It
+is not an independent third-party audit.  The structured rubric in
+\fname{reality.md} produced a self-assigned score of 8.5/10.  The primary
+adoption blocker is the AGPL-3.0-only license: any organization deploying
+Pramanix as part of a network service must release the complete corresponding
+source code of that service to users.  No commercial software company in
+financial services or healthcare accepts this in a proprietary stack.  A
+license change is the prerequisite for enterprise deployment.
+
+This document is a technical record of what was built, what decisions were
+made and why, where the gaps are, and what the evidence shows.  Where claims
+are stronger than the evidence supports, that is stated explicitly.
 
 \newpage
 \tableofcontents
@@ -224,14 +258,24 @@ Pramanix's approach, documented in \fname{docs/DECISIONS.md} \cfrsec{1},
 rejects both:
 
 \begin{quote}
-SMT solvers provide a completeness guarantee: if Z3 says \code{sat}, every
-invariant holds for the given inputs. There is no false positive path.
-Attribution (\code{unsat\_core()}) identifies exactly which invariants were
-violated, not just ``something failed.'' Z3 handles real arithmetic
-(\code{z3.Real}) natively, which is required for financial invariants. Z3 is
-deterministic. Given the same formula and the same timeout, it produces the
-same answer.
+For the decidable arithmetic theories Pramanix uses --- Linear Real
+Arithmetic (LRA) and Linear Integer Arithmetic (LIA) --- Z3 either returns
+\code{sat} (every invariant holds for the given inputs, with a satisfying
+model as proof) or \code{unsat} (at least one invariant is violated, with an
+unsatisfiable core for attribution).  Attribution via \code{unsat\_core()}
+identifies exactly which invariants were violated.  Z3 handles real
+arithmetic (\code{z3.Real}) natively, which is required for financial
+invariants.  Z3 is deterministic: given the same formula and the same
+\code{rlimit} cap, it produces the same answer.
 \end{quote}
+
+\textbf{Non-linear arithmetic caveat.}  For non-linear constraints (e.g.,
+\code{E(price) * E(quantity) >= E(min\_total)}), Z3 may return \code{unknown}
+rather than \code{sat} or \code{unsat}.  Pramanix is fail-closed:
+\code{unknown} produces \code{allowed=False}.  Policy authors writing
+multiplicative constraints should verify that Z3 returns \code{sat} for their
+specific invariant under expected input ranges; a Z3 \code{unknown} result
+produces a BLOCK decision, which is conservative but may be unexpected.
 
 \section{The Name}
 
@@ -295,11 +339,20 @@ Python, type-checked, IDE-complete, and readable without any knowledge of Z3.
 The choice of Z3 over alternative verification engines is documented in
 \fname{docs/DECISIONS.md} \cfrsec{1} with reasons that are not post-hoc.
 
-\textbf{OPA/Rego was considered and rejected.}\ Rego is Datalog-based. It
-cannot prove invariants over arithmetic without custom extensions. Attribution
-of which rule failed requires introspection OPA does not natively provide. For
-financial invariants like $\mathit{balance} - \mathit{amount} \geq
-\mathit{min\_reserve}$, Rego has no native arithmetic completeness guarantee.
+\textbf{OPA/Rego was considered and rejected.}\ OPA has built-in arithmetic
+operators (\code{>}, \code{>=}, \code{+}, \code{-}, etc.) and can evaluate
+numeric comparisons in Rego.  The reason for rejection is more specific:
+OPA provides no formal satisfiability guarantee.  A Rego rule evaluating to
+\code{false} means ``no derivation succeeded under the current rules'' ---
+not ``this constraint is mathematically violated by the inputs.''  OPA has
+no equivalent of Z3's \code{unsat\_core()}: identifying which of $k$ rules
+caused a denial requires manual rule introspection or explicit trace
+annotations, not a built-in attribution mechanism.  Additionally, OPA is
+designed for authorization policy (who may perform what action), not
+quantitative arithmetic safety verification (do the arithmetic relationships
+between fields satisfy all constraints simultaneously?).  The recommended
+deployment model is both: OPA for authorization, Pramanix for arithmetic
+safety.
 
 \textbf{Custom Python rule engine was considered and rejected.}\ Fast, but no
 formal completeness guarantee. A badly-written rule silently passes or blocks
@@ -370,6 +423,16 @@ This is enforced not just by convention but by code structure.
 entire system where an error handler returns \code{allowed=True}. The
 invariant is: Z3 returning SAT is the \emph{only} path to
 \code{allowed=True}.
+
+\textbf{Policy specification correctness.}  The fail-closed guarantee applies
+to the policy as written.  Z3 proves that the given formula is satisfiable or
+unsatisfiable for the given inputs.  It does not validate that the formula
+correctly encodes the intended business rule.  A policy author writing
+\code{E(amount) <= 10000} when they intended \code{E(amount) < 10000} will
+receive a formally correct SAT result for \code{amount == 10000}, which is
+business-wrong.  Policy specification review --- confirming that DSL
+invariants accurately capture the intended business rules --- is a human
+responsibility outside the scope of Z3.
 
 %% ============================================================================
 \chapter{Technical Architecture}
@@ -506,7 +569,14 @@ call:
 
 The dual-model consensus (\fname{docs/DECISIONS.md} \cfrsec{7}): a successful
 prompt injection attack must manipulate both models in the same direction
-simultaneously --- a significantly harder attack than manipulating one.
+simultaneously.  This is a harder attack than manipulating one model, provided
+the two models are from different providers or different architectural families.
+If both models share training data or come from the same provider family, a
+shared adversarial example may fool both.  \textbf{Operational cost}: when
+\code{translator\_enabled=True}, dual consensus means two LLM API calls per
+verification request --- 2$\times$ API cost, 2$\times$ latency, and 2$\times$
+rate-limit exposure.  This overhead is not captured in the benchmark tables,
+which measure the Z3 verification path only.
 
 \subsection{Layer~8 --- The Audit Chain (\fname{audit/})}
 
@@ -557,8 +627,9 @@ execution scope boundaries. These gates run after consensus and before Z3.
 \code{Decision} object and produces structured regulatory citations: BSA/AML
 (31~CFR~\S\,1020), OFAC/SDN (50~CFR~\S\,598), SEC wash sale (IRC~\S\,1091),
 HIPAA (45~CFR~\S\,164), SOX (15~U.S.C.~\S\,7241), Basel~III (BCBS~189). JSON
-and PDF export. This is the feature that converts a developer SDK into an
-enterprise product.
+and PDF export.  This reporter is a tool for compliance engineers building
+structured evidence packages; it maps Z3 violation labels to cited regulations.
+It is not a substitute for legal counsel or a compliance officer's judgment.
 
 \code{PolicyDiff} and \code{ShadowEvaluator} (\fname{lifecycle/diff.py})
 provide safe canary promotion. \code{ShadowEvaluator} runs the candidate
@@ -1001,8 +1072,11 @@ adversarial testing infrastructure, documented in \fname{reality.md}
 \textbf{Z3 Context Isolation}
 (\fname{tests/adversarial/test\_z3\_context\_isolation.py}): Uses
 \code{threading.Barrier} to force 10 concurrent simultaneous solver executions.
-Mathematically proves context poisoning between threads is impossible.
-CVE-prevention level testing.
+Demonstrates empirically that Z3 context state does not bleed between threads
+under the tested conditions (10 concurrent solvers, single process).  This is
+adversarial evidence of isolation, not a mathematical proof of impossibility;
+a formal proof would require verification of Z3's internal C implementation.
+CVE-prevention level adversarial testing.
 
 \textbf{Prompt Injection}
 (\fname{tests/adversarial/test\_prompt\_injection.py}): Verifies resistance to
@@ -1119,6 +1193,12 @@ initialisation in \code{\\_make\\_consumer()}).
 
 \section{Latency Benchmarks}
 
+\textbf{Benchmark environment}: single machine, single process, single thread,
+\code{sync} execution mode, Python~3.13.7, Z3~4.12.x, \code{orjson} installed,
+\code{prometheus-client} installed.  All figures are wall-clock elapsed time,
+not CPU time.  Results are not portable across hardware without re-running
+\fname{benchmarks/latency\_benchmark.py}.
+
 Results from \fname{benchmarks/results/latency\_results.json} --- API mode,
 2,000 samples, 5-invariant policy, \code{sync} execution mode:
 
@@ -1185,6 +1265,20 @@ Z3 context objects in its internal C heap, and Python's process RSS reflects
 those allocations with some lag. The final RSS is only 2.8\,MiB above
 baseline. This is bounded, stable behavior.
 
+\textbf{P50 discrepancy between benchmark tables.}  The 2,000-sample latency
+benchmark (Table~\ref{tab:latency}) records P50 of 5.235\,ms on a
+5-invariant policy.  The 1M stability benchmark (Table~\ref{tab:stability})
+records P50 of 11.283\,ms on a 1-invariant policy --- a simpler policy that
+runs 2.2$\times$ slower at the median.  The most likely explanation: the 1M
+run measures steady-state performance under sustained load, where GC pressure,
+Z3 internal heap fragmentation, and OS scheduling jitter accumulate over
+$\sim$3.4 hours.  The 2,000-sample run completes in approximately ten seconds
+and captures warm-cache, low-GC conditions.  Both benchmarks ran on the same
+hardware in the same \code{sync} mode.  The figures serve different purposes:
+the latency benchmark characterises request-path overhead; the 1M benchmark
+characterises long-run stability.  Neither figure should be used as a latency
+SLA without hardware-matched reproduction.
+
 \section{100M Decision Architecture}
 
 \fname{benchmarks/100m\_orchestrator\_fast.py} and
@@ -1239,7 +1333,11 @@ in \fname{primitives/fintech.py} directly maps to IRC~\S\,1091.
 \textbf{Anti-Structuring / BSA-AML}: \code{AntiStructuring} in
 \fname{primitives/fintech.py}. Maps to BSA/AML 31~CFR~\S\,1020.320(a)(2). An
 AI agent structuring deposits to avoid BSA reporting thresholds is a criminal
-violation. Z3-verified anti-structuring invariants are provably compliant.
+violation. Z3-verified anti-structuring invariants enforce a threshold check consistent
+with the reporting conditions in 31~CFR~\S\,1020.320(a)(2).  Whether that
+check constitutes legal compliance in a given deployment depends on the
+broader compliance program and regulatory examiner judgment; this SDK alone
+does not confer legal compliance.
 
 \textbf{Collateral Management}: \code{CollateralHaircut},
 \code{MarginRequirement}, \code{MaxDrawdown}, \code{VelocityCheck} ---
@@ -1404,14 +1502,24 @@ declarative language. Evaluates structured JSON data against policy rules.
 Returns allow/deny. Used widely for Kubernetes admission control and API
 authorization.
 
-\textbf{Where OPA falls short for Pramanix's use case}
-(\fname{docs/DECISIONS.md} \cfrsec{1}): Rego is Datalog-based. Datalog does
-not have arithmetic built in. The constraint $\mathit{balance} -
-\mathit{amount} \geq \mathit{min\_reserve}$ is not expressible in native Rego
-without custom built-in functions that introduce their own approximation risks.
-OPA provides no formal completeness guarantee over arithmetic. Attribution
-requires \code{with input as ...} test expressions --- there is no native
-\code{unsat\_core()} equivalent.
+\textbf{Where OPA falls short for Pramanix's use case}: OPA has built-in
+arithmetic operators and can express numeric comparisons in Rego.  The
+constraint $\mathit{balance} - \mathit{amount} \geq \mathit{min\_reserve}$
+is expressible in Rego.  The substantive limitations are:
+\begin{enumerate}
+  \item \textbf{No formal satisfiability guarantee.}  A Rego rule returning
+        \code{false} means ``no derivation succeeded'' --- not ``this
+        arithmetic constraint is violated by the inputs.''  There is no
+        underlying SMT completeness proof.
+  \item \textbf{No unsat-core attribution.}  OPA has no equivalent to Z3's
+        \code{unsat\_core()}.  Identifying which specific rule caused a
+        denial requires manual rule-set introspection or explicit trace
+        annotations, not a built-in mechanism.
+  \item \textbf{Domain mismatch.}  OPA is optimized for authorization policy
+        (who may do what).  Quantitative safety verification --- do the
+        arithmetic relationships between fields satisfy all constraints
+        simultaneously? --- is a different problem class.
+\end{enumerate}
 
 \textbf{Correct use}: OPA for authorization (\textit{can user X perform
 action~Y?}). Pramanix for mathematical safety (\textit{is action~Y logically
@@ -1433,26 +1541,50 @@ content safety on LLM I/O. Pramanix for formal safety on structured actions.
 
 \section{NVIDIA NeMo Guardrails}
 
-NeMo is dialogue management (Colang-based conversation flow control). Pramanix
-is transactional action verification. They are in entirely different domains.
-As \fname{docs/Blueprint.md} states: ``on transactional action verification,
-Pramanix is architecturally superior.''
+NeMo Guardrails is a dialogue management framework using Colang-based
+conversation flow control.  Pramanix is transactional action verification.
+They operate in different problem domains.  NeMo manages conversation-level
+guardrails (topic steering, topical restrictions); Pramanix verifies structured
+action intent against arithmetic invariants at tool call boundaries.  A
+deployment can use both without conflict.  No independent benchmarking
+comparing the two systems on a common task has been conducted; comparative
+claims about relative architectural merit without such data are unsupported.
 
-\section{The True Competitive Landscape}
+\section{Direct AI Safety Tools}
 
-The \fname{reality.md} audit identifies the actual competition:
+Several tools address LLM output and agent safety that are not covered in the
+sections above:
 
-\begin{quote}
-The SDK is not competing with NeMo or Guardrails AI. It is competing with
-enterprise compliance teams writing custom middleware in Go or Java.
-\end{quote}
+\textbf{Protect AI LLM Guard} (\url{https://llm-guard.com}): Input/output
+scanning for PII, prompt injection, toxicity, and harmful content.  Text-based
+scanning using NLP classifiers; does not perform Z3 arithmetic verification
+of structured actions.  Complementary to Pramanix.
 
-Every financial institution and healthcare provider deploying AI agents is
-currently either not verifying actions at all (accepting probabilistic risk),
-or writing bespoke middleware that reinvents incomplete versions of what
-Pramanix provides. The \code{ComplianceReporter} maps
-\code{violated\_invariants} to BSA/AML CFR citations. Banks pay seven figures
-for compliance software that does less.
+\textbf{LangSmith Guardrails}: Evaluation and tracing framework within the
+LangChain ecosystem.  Focuses on observability and evaluation; does not
+provide formal invariant verification.
+
+\textbf{Rebuff} (\url{https://github.com/protectai/rebuff}): Prompt injection
+detection using heuristics and LLM-based classifiers.  Complementary to
+Pramanix's injection defence stack.
+
+\textbf{Guardrails Hub}: Community-contributed validators for Guardrails AI.
+Probabilistic text-level validators; same category as Guardrails AI.
+
+\section{Competitive Summary}
+
+No independent evaluation comparing Pramanix against any of the above systems
+on a common benchmark has been performed.  The verifiable technical
+distinction is that Pramanix provides Z3 formal arithmetic verification with
+per-invariant attribution and an Ed25519-signed audit chain --- capabilities
+not present in any of the tools surveyed based on their public documentation.
+Whether that constitutes a competitive advantage in any specific deployment
+depends on workload characteristics.
+
+A realistic production deployment in regulated industries may use these tools
+in combination: OPA for authorization, Guardrails AI or LLM Guard for content
+safety, and Pramanix for structured action verification.  These address
+different problem classes and are not mutually exclusive.
 
 %% ============================================================================
 \chapter{Economics of Running}
@@ -1485,10 +1617,22 @@ for the full 100M/domain audit configuration. A production deployment with
 
 \section{SaaS Unit Economics}
 
-At \$0.01/1,000 decisions (\$10/million), the margin is enormous relative to
-compute cost (\$0.0034/million). The SaaS pricing ceiling is set by the value
-of an incorrect decision in the target domain --- a single fraudulent banking
-transfer is typically thousands of dollars.
+\textbf{License precondition.}  The following analysis assumes a license
+change from AGPL-3.0-only to a commercial or permissive license.  Under
+AGPL-3.0~\cfrsec{13}, any organisation providing Pramanix as part of a
+network service must make the complete corresponding source code of that
+service available to its users.  A proprietary SaaS business model on this
+codebase is not viable without a license change.  This is the primary
+adoption blocker documented in \fname{reality.md} \cfrsec{4.2}.
+
+Assuming a license change: at \$0.01 per 1,000 decisions (\$10/million),
+gross margin relative to measured infrastructure cost (\$0.0034/million on a
+single \code{c5.8xlarge} core in \code{sync} mode) is high.  The pricing
+ceiling is set by the cost of a single incorrect decision in the target
+domain.  These are rough projections from the single-machine 1M benchmark
+(\fname{benchmarks/results/1m\_audit\_summary.json}).  Production economics
+depend on operational overhead, multi-tenant isolation costs, policy
+complexity, and invariant count not captured in that benchmark.
 
 %% ============================================================================
 \chapter{Security Threat Model}
@@ -1571,9 +1715,15 @@ Four layers of non-repudiation:
         decision to policy version, model version, and IFC input labels.
 \end{enumerate}
 
-These four layers collectively make it impossible to tamper with a decision
-record without either breaking Ed25519 or invalidating the Merkle tree, both
-of which are computationally infeasible.
+These four layers make it computationally infeasible to forge or alter a
+decision record without either breaking Ed25519 or invalidating the Merkle
+tree, \emph{given that the Ed25519 signing key has not been compromised}.  If
+the private key is extracted from the host process or its key store, an
+attacker with that key can produce valid signatures on fabricated decisions.
+Key generation, storage, access control, and rotation for the Ed25519 private
+key are the responsibility of the deploying organisation.  Pramanix provides
+the signing and offline verification infrastructure; it does not manage key
+lifecycle.
 
 %% ============================================================================
 \chapter{Academic and Research Grounding}
@@ -1585,10 +1735,13 @@ Satisfiability Modulo Theories (SMT) is the decision problem for logical
 formulas with respect to background theories. The theories Pramanix uses:
 
 \textbf{Linear Real Arithmetic (LRA)}: For financial constraints of the form
-$\mathit{balance} - \mathit{amount} \geq \mathit{min\_reserve}$. LRA is
-decidable (Presburger arithmetic over reals is decidable). Z3 uses the
-Simplex algorithm for LRA, which has polynomial average-case complexity for
-common financial constraint patterns.
+$\mathit{balance} - \mathit{amount} \geq \mathit{min\_reserve}$.  LRA is
+decidable by quantifier elimination over real closed fields (Tarski, 1951).
+Presburger arithmetic is a distinct decidable theory covering linear
+arithmetic over non-negative integers; the two theories are different in
+domain and in complexity.  Z3 uses the Simplex method for LRA satisfiability
+checking, with polynomial average-case complexity for the linear constraint
+patterns common in financial policy.
 
 \textbf{Linear Arithmetic over Integers (LIA)}: For count-based constraints.
 Also decidable.
@@ -1830,6 +1983,16 @@ fail-closed when Z3 is unavailable.
 \chapter{Regulatory Mapping}
 %% ============================================================================
 
+\textbf{Disclaimer.}  This chapter describes how Pramanix SDK components
+relate to specific regulatory text.  These are engineering observations by
+the author, not legal analysis.  Regulatory compliance is a legal and
+operational determination that depends on jurisdiction, deployment context,
+business processes, and regulatory examiner interpretation.  Nothing in this
+chapter constitutes legal advice, and use of the Pramanix SDK alone does not
+confer regulatory compliance on any deployment.  Organisations subject to
+BSA/AML, HIPAA, SOX, EU AI Act, or other regulations must obtain qualified
+legal counsel before making compliance claims.
+
 \section{Financial Regulation}
 
 The \code{ComplianceReporter} in \fname{helpers/compliance.py} maps
@@ -1860,7 +2023,13 @@ Basel~III & Capital adequacy                   & BCBS~189 \\
 
 \textbf{Audit trail for HIPAA}: Every PHI access decision produces a
 \code{Decision} with \code{decision\_hash}, Ed25519 signature, and Merkle
-inclusion proof. This satisfies HIPAA's audit log requirements.
+inclusion proof.  These tamper-evident signed records can be incorporated
+into a HIPAA~\S\,164.312(b) audit trail programme.  They do not in isolation
+satisfy HIPAA audit logging requirements, which also encompass user
+login/logout events, system activity logs from all components handling ePHI,
+and data access and modification records across the full application stack.
+Pramanix covers the AI agent action layer of an audit trail, not the complete
+HIPAA audit logging obligation.
 
 \textbf{Archive encryption (resolved)}: \code{EncryptedArchiveWriter}
 (Phase~10) provides AES-256-GCM at-rest encryption for all Merkle archive
@@ -2078,22 +2247,23 @@ to be done.
 Three truths from the audit that summarize the project:
 
 \begin{enumerate}
-  \item \textbf{The technical moat is real.} Eleven-layer defence stack, 38
-        pre-built primitives, enterprise compliance reporting with six
-        regulatory frameworks, audit infrastructure ready for regulated
-        industries. This was independently verified line by line.
+  \item \textbf{The technical differentiation is verifiable from source.}
+        Eleven-layer defence stack, 38 pre-built policy primitives, compliance
+        reporter mapping Z3 violation labels to regulatory citations in six
+        frameworks, audit chain with Ed25519 signing and Merkle anchoring.
+        Every component cited here has a specific source file reference.  The
+        self-audit in \fname{reality.md} verified these against actual code.
 
-  \item \textbf{The licence is the crisis.} Every claim about enterprise market
-        potential is blocked by AGPL-3.0. Switch to Apache~2.0 before anything
-        else.
+  \item \textbf{The license is the primary blocker.}  Every claim about
+        enterprise deployment potential is gated on AGPL-3.0.  Switch to
+        Apache~2.0 or a commercial license before any external release.
 
-  \item \textbf{The ComplianceReporter and ShadowEvaluator are the features
-        that nobody knows about.} A compliance reporter that converts a Z3
-        violation label into a BSA/AML CFR citation, exported as PDF. A shadow
-        evaluator that runs canary policy tests non-blocking against live
-        traffic before promotion. These are the capabilities that make Pramanix
-        an enterprise product rather than a developer SDK. They need front-page
-        documentation.
+  \item \textbf{The ComplianceReporter and ShadowEvaluator need documentation
+        prominence.}  A compliance reporter that maps a Z3 violation label to
+        a BSA/AML CFR citation with PDF export.  A shadow evaluator that runs
+        candidate policy non-blocking against live traffic before promotion.
+        These capabilities are not obvious from the README.  They need
+        explicit front-page documentation.
 \end{enumerate}
 
 \section{What Comes Next}
@@ -2153,7 +2323,7 @@ P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} &
 AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
 Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
 Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
-3,966 tests                 & \fname{reality.md}            & \cfrsec{3.1} \\
+3,923 tests                 & \fname{reality.md}            & \cfrsec{3.1} \\
 3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
 3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
 EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\
