@@ -190,8 +190,8 @@ the LLM's output can cause.
         in \fname{docs/KNOWN\_GAPS.md}.
 \end{itemize}
 
-\textbf{Test suite state} (Python~3.13.7, pytest~7.4.4): \textbf{3,925 passed},
-120 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
+\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): \textbf{4,002 passed},
+81 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
 passing).
 
 \textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
@@ -893,6 +893,10 @@ After Phase~2 (Natural Policy Engine) additions and test-suite bug fixes:
 \textbf{3,925 passed}, \textbf{120 skipped}, \textbf{0 failed}.  Coverage:
 \textbf{98.26\,\%} (gate: \textbf{passing}).  Wall time: $\approx$\,430\,s.
 
+After pytest upgrade (7.4.4~$\to$~8.4.2) and full re-run (2026-05-13):
+\textbf{4,002 passed}, \textbf{81 skipped}, \textbf{0 failed}.  Coverage:
+\textbf{98.26\,\%} (gate: \textbf{passing}).  Wall time: 437.91\,s.
+
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection*{Phase~2 (Natural Policy Engine) --- v1.1: Natural Language Policy Compiler}
 % ─────────────────────────────────────────────────────────────────────────────
@@ -1159,6 +1163,30 @@ Wall time & $\approx$\,430\,s \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+\paragraph{Post-Upgrade Baseline (pytest 8.4.2, 2026-05-13).}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Metric & Value \\
+\midrule
+Tests passed & 4,002 \\
+Tests skipped & 81 \\
+Tests failed & 0 \\
+Items collected & 4,082 \\
+Branch coverage & 98.26\,\% \\
+Python & 3.13.7 \\
+pytest & 8.4.2 \\
+Wall time & 437.91\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The pytest upgrade from 7.4.4 to 8.4.2 changed skip semantics for several
+\code{anyio}-backed fixtures (anyio 4.12.1, asyncio-mode \texttt{AUTO});
+39 previously-skipped tests now execute and pass, raising the passing count
+from 3,925 to 4,002 with no new failures.
 
 \subsection*{Phase~12: Metric-Registry Bug and Coverage Completeness}
 
@@ -2594,7 +2622,7 @@ P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} &
 AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
 Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
 Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
-3,925 tests (Phase~2)       & \fname{reality.md}            & \cfrsec{3.1} \\
+4,002 tests (post-upgrade)  & \fname{reality.md}            & \cfrsec{3.1} \\
 3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
 3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
 EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\
