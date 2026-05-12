@@ -35,7 +35,6 @@ Critical design invariants
 from __future__ import annotations
 
 import collections
-import contextlib
 import hashlib
 import hmac as _hmac_mod
 import json as _json_mod
@@ -68,6 +67,32 @@ _RECYCLE_GRACE_S: float = 10.0
 # available.  Set high so the adaptive shedder's P99 window reflects the
 # failure as if it were an extremely slow solve.
 _FAILED_DISPATCH_PENALTY_MS: float = 9999.0
+
+# ── Prometheus warmup-failure counter (module-level, thread-safe registration) ─
+# Registered once at import time.  Multiple threads in async-thread mode share
+# this module; creating a Counter inside the exception handler causes a
+# ValueError("Duplicated timeseries") on the second call, silently swallowing
+# all subsequent increments.  Module-level registration avoids the race.
+_WORKER_WARMUP_FAILURE_COUNTER: Any = None
+try:
+    from prometheus_client import Counter as _WarmupCounter
+
+    try:
+        _WORKER_WARMUP_FAILURE_COUNTER = _WarmupCounter(
+            "pramanix_worker_warmup_failures_total",
+            "Number of Z3 worker warmup failures",
+        )
+    except ValueError:
+        from prometheus_client import REGISTRY as _PROM_REGISTRY
+
+        _prom_cols = getattr(_PROM_REGISTRY, "_names_to_collectors", None)
+        _WORKER_WARMUP_FAILURE_COUNTER = (
+            _prom_cols.get("pramanix_worker_warmup_failures_total")
+            if _prom_cols is not None
+            else None
+        )
+except Exception:
+    pass
 
 
 # ── Phase 10.4: Adaptive Concurrency Limiter ──────────────────────────────────
@@ -348,16 +373,11 @@ def _warmup_worker() -> None:
             _warmup_exc,
             exc_info=True,
         )
-        try:
-            from prometheus_client import Counter as _PCounter
-
-            _wc = _PCounter(
-                "pramanix_worker_warmup_failures_total",
-                "Number of Z3 worker warmup failures",
-            )
-            _wc.inc()
-        except Exception:
-            pass
+        if _WORKER_WARMUP_FAILURE_COUNTER is not None:
+            try:
+                _WORKER_WARMUP_FAILURE_COUNTER.inc()
+            except Exception:
+                pass
     finally:
         del ctx
 
@@ -620,17 +640,23 @@ class WorkerPool:
         if not getattr(self, "_alive", False):
             return
         if _is_finalizing():
-            with contextlib.suppress(Exception):
+            try:
                 self.shutdown(wait=False)
+            except Exception:
+                pass
             return
-        with contextlib.suppress(Exception):
+        try:
             _log.warning(
                 "WorkerPool GC'd without explicit shutdown() — "
                 "calling shutdown(wait=False).  "
                 "Call WorkerPool.shutdown() explicitly to avoid this warning."
             )
-        with contextlib.suppress(Exception):
+        except Exception:
+            pass
+        try:
             self.shutdown(wait=False)
+        except Exception:
+            pass
 
     # ── Public solve interface ─────────────────────────────────────────────────
 

@@ -444,8 +444,10 @@ class TestAzureKeyVaultKeyProviderInit:
             def get_secret(self, name: str, **kwargs: Any) -> _FakeSecret:
                 return _FakeSecret()
 
-        prev_azure_id = sys.modules.get("azure.identity")
-        prev_azure_kv = sys.modules.get("azure.keyvault.secrets")
+        _orig_azure = {
+            k: sys.modules.get(k)
+            for k in ["azure", "azure.identity", "azure.keyvault", "azure.keyvault.secrets"]
+        }
         try:
             # Inject fake azure modules
             import types
@@ -468,11 +470,11 @@ class TestAzureKeyVaultKeyProviderInit:
             assert provider._secret_name == "my-secret"
         finally:
             for key in ["azure", "azure.identity", "azure.keyvault", "azure.keyvault.secrets"]:
-                sys.modules.pop(key, None)
-            if prev_azure_id is not None:
-                sys.modules["azure.identity"] = prev_azure_id
-            if prev_azure_kv is not None:
-                sys.modules["azure.keyvault.secrets"] = prev_azure_kv
+                orig = _orig_azure[key]
+                if orig is not None:
+                    sys.modules[key] = orig
+                else:
+                    sys.modules.pop(key, None)
 
 
 class TestGcpKmsKeyProviderInit:
@@ -494,7 +496,13 @@ class TestGcpKmsKeyProviderInit:
             def access_secret_version(self, **kwargs: Any) -> _FakeResponse:
                 return _FakeResponse()
 
-        prev_gcp = sys.modules.get("google.cloud.secretmanager")
+        # Save originals so we can fully restore the google namespace package —
+        # dropping google from sys.modules entirely breaks later tests that
+        # import google.auth, google.api_core, etc.
+        _orig_google = {
+            k: sys.modules.get(k)
+            for k in ["google", "google.cloud", "google.cloud.secretmanager"]
+        }
         try:
             fake_google = types.ModuleType("google")
             fake_cloud = types.ModuleType("google.cloud")
@@ -515,9 +523,89 @@ class TestGcpKmsKeyProviderInit:
             # We can't call it without a real PEM, so just verify init is covered
         finally:
             for key in ["google", "google.cloud", "google.cloud.secretmanager"]:
-                sys.modules.pop(key, None)
-            if prev_gcp is not None:
-                sys.modules["google.cloud.secretmanager"] = prev_gcp
+                orig = _orig_google[key]
+                if orig is not None:
+                    sys.modules[key] = orig
+                else:
+                    sys.modules.pop(key, None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# worker.py — __del__ finalizing path (624-625) and log.warning raises (633-634)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestWorkerPoolDelEdgePaths:
+    """worker.py lines 624-625, 633-634: __del__ exception swallow paths."""
+
+    def test_del_finalizing_shutdown_raises_swallowed(self) -> None:
+        """Lines 624-625: _is_finalizing()=True and shutdown() raises → swallowed."""
+        from pramanix.worker import WorkerPool
+
+        pool = WorkerPool.__new__(WorkerPool)
+        pool._alive = True
+
+        def _shutdown_raises(*, wait: bool = True) -> None:
+            raise RuntimeError("shutdown failed during finalization")
+
+        pool.shutdown = _shutdown_raises  # type: ignore[method-assign]
+        pool.__del__(lambda: True)  # must not raise
+
+    def test_del_not_finalizing_log_warning_raises_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lines 633-634: _log.warning() raises → except Exception: pass swallows it."""
+        import pramanix.worker as _worker_mod
+        from pramanix.worker import WorkerPool
+
+        pool = WorkerPool.__new__(WorkerPool)
+        pool._alive = True
+        pool.shutdown = lambda *, wait: None  # type: ignore[method-assign]
+
+        def _warning_raises(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("structlog failure")
+
+        monkeypatch.setattr(_worker_mod._log, "warning", _warning_raises)
+        pool.__del__(lambda: False)  # must not raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# translator/openai_compat.py — aclose() branch misses (143->exit, 145->exit)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestOpenAICompatAcloseBranches:
+    """openai_compat.py aclose() — False branches of if _close is not None: and
+    if inspect.isawaitable(result):"""
+
+    @pytest.mark.asyncio
+    async def test_aclose_no_close_method_is_noop(self) -> None:
+        """143->exit: client has no close/aclose → _close is None → if block skipped."""
+        from pramanix.translator.openai_compat import OpenAICompatTranslator
+
+        t = OpenAICompatTranslator.__new__(OpenAICompatTranslator)
+
+        class _NoClose:
+            pass
+
+        t._client = _NoClose()
+        await t.aclose()  # must not raise; _close is None → if skipped
+
+    @pytest.mark.asyncio
+    async def test_aclose_sync_close_not_awaited(self) -> None:
+        """145->exit: close() returns sync (non-awaitable) → await skipped."""
+        from pramanix.translator.openai_compat import OpenAICompatTranslator
+
+        t = OpenAICompatTranslator.__new__(OpenAICompatTranslator)
+        close_called = []
+
+        class _SyncClose:
+            def close(self) -> None:
+                close_called.append(True)
+
+        t._client = _SyncClose()
+        await t.aclose()
+        assert close_called, "sync close() must have been called"
 
 
 class TestHashiCorpVaultKeyProviderInit:

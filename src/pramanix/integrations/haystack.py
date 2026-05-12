@@ -206,6 +206,4 @@ if _HAYSTACK_AVAILABLE and _haystack_component is not None:
     try:
         _haystack_component(HaystackGuardedComponent)
     except Exception as exc:
-        _log.warning(
-            "Haystack @component registration failed: %s", exc, exc_info=True
-        )
+        _log.warning("Haystack @component registration failed: %s", exc, exc_info=True)

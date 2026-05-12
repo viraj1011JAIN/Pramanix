@@ -290,18 +290,8 @@ class CalibratedScorer:
                 "The file may have been tampered with or signed with a different key.",
                 path=str(path),
             )
-        try:
-            import importlib as _il
-            _il.import_module("sklearn")
-            del _il
-        except ImportError as exc:
-            from pramanix.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                "scikit-learn is required for CalibratedScorer. "
-                "Install it with: pip install 'pramanix[sklearn]'"
-            ) from exc
         instance = cls.__new__(cls)
+        instance.__init__()  # type: ignore[misc]
         instance._pipeline = pickle.loads(raw)  # noqa: S301 — HMAC-verified above
         instance._is_fitted = True
         return instance

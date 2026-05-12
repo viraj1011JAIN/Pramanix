@@ -5,6 +5,7 @@
 Uses real langchain-core BaseTool. Zero sys.modules mocking.
 Skipped if langchain-core is not installed.
 """
+
 from __future__ import annotations
 
 import json
@@ -291,3 +292,26 @@ class TestWrapTools:
             state_provider=lambda: _STATE,
         )
         assert wrapped[0].description == "my description"
+
+    def test_wrap_tools_uses_execute_map_when_tool_name_matches(self):
+        """execute_map entry for a tool name is used as its execute_fn."""
+        _called: list[dict] = []
+
+        def _custom_fn(intent: dict) -> str:
+            _called.append(intent)
+            return "from_execute_map"
+
+        mock_tools = [type("T", (), {"name": "my_tool", "description": "desc"})()]
+        wrapped = wrap_tools(
+            mock_tools,
+            guard=_guard_allow,
+            intent_schema=_IntentModel,
+            state_provider=lambda: _STATE,
+            execute_map={"my_tool": _custom_fn},
+        )
+        assert len(wrapped) == 1
+        # Verify the execute_fn stored on the tool is the one from execute_map
+        execute_fn = object.__getattribute__(wrapped[0], "_pramanix_execute")
+        execute_fn({"amount": Decimal("1")})
+        assert len(_called) == 1
+        assert _called[0]["amount"] == Decimal("1")

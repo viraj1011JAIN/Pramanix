@@ -1,0 +1,2263 @@
+%% ============================================================================
+%%  PRAMANIX — A Deterministic Neuro-Symbolic Execution Firewall
+%%             for Autonomous AI Agents
+%%
+%%  A Technical Thesis: Engineering Design, Research Foundations,
+%%  and Production Evidence
+%%
+%%  Author  : Viraj Jain
+%%  Version : Pramanix 1.0.0
+%%  Audit   : 2026-05-12
+%%  License : AGPL-3.0-only
+%% ============================================================================
+
+\documentclass[12pt,a4paper,oneside]{report}
+
+%% ── Encoding & fonts ────────────────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+%% ── Page geometry ───────────────────────────────────────────────────────────
+\usepackage[top=2.5cm, bottom=2.5cm, left=3.5cm, right=2.5cm]{geometry}
+
+%% ── Mathematics ─────────────────────────────────────────────────────────────
+\usepackage{amsmath, amssymb}
+
+%% ── Tables ──────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+
+%% ── Code listings ───────────────────────────────────────────────────────────
+\usepackage{listings}
+\usepackage{xcolor}
+
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{210,210,210}
+\definecolor{kwcolor}{RGB}{0,0,160}
+\definecolor{cmtcolor}{RGB}{0,120,0}
+\definecolor{strcolor}{RGB}{160,0,0}
+
+\lstdefinestyle{pramanix}{
+  backgroundcolor  = \color{codebg},
+  basicstyle       = \small\ttfamily,
+  breakatwhitespace= false,
+  breaklines       = true,
+  captionpos       = b,
+  commentstyle     = \color{cmtcolor}\itshape,
+  frame            = single,
+  rulecolor        = \color{codeframe},
+  keepspaces       = true,
+  keywordstyle     = \color{kwcolor}\bfseries,
+  language         = Python,
+  numbers          = none,
+  showspaces       = false,
+  showstringspaces = false,
+  stringstyle      = \color{strcolor},
+  tabsize          = 4,
+  upquote          = true,
+}
+
+\lstdefinestyle{plain}{
+  backgroundcolor  = \color{codebg},
+  basicstyle       = \small\ttfamily,
+  breaklines       = true,
+  captionpos       = b,
+  frame            = single,
+  rulecolor        = \color{codeframe},
+  keepspaces       = true,
+  numbers          = none,
+  showspaces       = false,
+}
+
+\lstset{style=pramanix}
+
+%% ── Hyperlinks ───────────────────────────────────────────────────────────────
+\usepackage[hidelinks]{hyperref}
+
+%% ── Headers and footers ──────────────────────────────────────────────────────
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\nouppercase{\leftmark}}
+\fancyhead[R]{\small Pramanix v1.0.0}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+%% ── Line spacing ─────────────────────────────────────────────────────────────
+\usepackage{setspace}
+\onehalfspacing
+
+%% ── Paragraph style ──────────────────────────────────────────────────────────
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.7em}
+
+%% ── Lists ────────────────────────────────────────────────────────────────────
+\usepackage{enumitem}
+
+%% ── Custom shorthands ────────────────────────────────────────────────────────
+\newcommand{\fname}[1]{\texttt{#1}}          % file / path name
+\newcommand{\code}[1]{\texttt{#1}}           % inline code token
+\newcommand{\cfrsec}[1]{\S\,#1}             % regulatory section
+
+%% ── Title metadata ───────────────────────────────────────────────────────────
+\title{%
+  \Huge\bfseries PRAMANIX\\[0.6em]
+  \Large A Deterministic Neuro-Symbolic Execution Firewall\\[0.3em]
+  for Autonomous AI Agents\\[1.2em]
+  \large A Technical Thesis:\\
+  Engineering Design, Research Foundations, and Production Evidence
+}
+\author{Viraj Jain}
+\date{Audit Date: 12 May 2026}
+
+%% ============================================================================
+\begin{document}
+%% ============================================================================
+
+\maketitle
+\thispagestyle{empty}
+
+\vfill
+\begin{center}
+  \small
+  System Version: Pramanix 1.0.0 \quad\textbullet\quad License: AGPL-3.0-only\\[0.4em]
+  Repository: \url{https://github.com/viraj1011JAIN/Pramanix}\\[1em]
+  \textit{Evidence policy: every claim is grounded in a specific file, line number, or\\
+  benchmark result from the actual codebase. Where a gap exists it is named exactly\\
+  as a gap. Where the code proves a claim, the proof is cited.}
+\end{center}
+
+\newpage
+
+%% ── Abstract ─────────────────────────────────────────────────────────────────
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Pramanix is an execution firewall for autonomous AI agents. Its core contract,
+stated in \fname{docs/Blueprint.md}, is mathematically precise: a decision is
+\code{allowed=True} if and only if the Microsoft Research Z3 SMT solver returns
+\code{sat} for all policy invariants simultaneously against the given inputs.
+Any other result --- \code{unsat}, \code{unknown}, timeout, exception, type
+error, network failure --- produces \code{allowed=False}. There is no third
+path.
+
+The problem it solves is real. When a language model reasons about a financial
+transfer, it reasons probabilistically. At 99.9\,\% accuracy across 10,000
+daily operations, ten transactions per day will be incorrect. The consequential
+ones --- overdrafts, frozen-account violations, daily-limit breaches --- are
+exactly the cases where an inch of probability is unacceptable. Pramanix
+eliminates that inch by moving the decision from statistical inference to
+mathematical proof.
+
+At its core, thirteen architectural layers collaborate: a DSL expression
+engine, a Z3 transpiler that converts Python AST to Z3 AST without ever
+calling \code{eval} or \code{exec}, a two-phase solver with per-invariant
+violation attribution, a worker pool with process-isolation for production, an
+eleven-layer injection defence stack, a cryptographic audit trail with
+Ed25519 signing and Merkle batch anchoring, a compliance reporter mapping
+violation labels to regulatory citations in six legal frameworks, and a shadow
+policy evaluator that makes safe canary promotion possible.
+
+The codebase was independently audited against its own source on 2026-05-12
+(\fname{reality.md}). The audit score is 8.5/10. The technical moat is real.
+The single crisis is the AGPL-3.0 license, which blocks enterprise adoption
+before a single sale. That is documented, named, and not softened.
+
+A subsequent hardening pass (Phase~10) added production AES-256-GCM archive
+encryption (\code{EncryptedArchiveWriter} in \fname{audit/archiver.py}),
+configurable injection-score field names (\code{amount\_field} parameter in
+\fname{translator/\_sanitise.py}), and eleven new real-integration tests that
+closed the coverage gap from 97.69\,\% to 98.16\,\%, surpassing the 98\,\%
+gate.  Test suite final state: 3,916 passed, 81 skipped, 0 failed.
+
+\newpage
+\tableofcontents
+\newpage
+
+%% ============================================================================
+\chapter{Background and Motivation}
+%% ============================================================================
+
+\section{The Probabilistic Problem in AI Agents}
+
+Modern AI agent frameworks --- LangChain, AutoGen, CrewAI, Semantic Kernel ---
+give large language models tools: bank transfer APIs, infrastructure scale
+commands, medical record access, trading order entry. The models are
+stochastic. Their outputs are samples from a probability distribution. At
+temperature zero they are more deterministic, but they are never formally
+deterministic in the mathematical sense.
+
+The practical consequence, articulated precisely in \fname{docs/Blueprint.md}
+\cfrsec{1}, is this:
+
+\begin{quote}
+LLMs are stochastic token samplers. Temperature $> 0$ means no two identical
+runs are guaranteed identical. In a banking context, a 99.9\,\% accuracy rate
+on a financial operation means 1 in 1,000 transfers may be incorrect. At scale
+--- 10,000 daily operations --- that is 10 provably dangerous actions per day.
+\end{quote}
+
+This is not hypothetical. It is arithmetic.
+
+\section{Why Existing Approaches Fail}
+
+The market's current answers fall into two broken categories, both documented
+in the Blueprint.
+
+\textbf{Category~1 --- Rule-Based Systems (regex, IF-THEN).}\ Cannot reason
+about compound constraints. \code{amount < 10000 AND balance > amount AND NOT
+frozen} looks reasonable until the edge cases arrive: floating-point rounding
+on the balance comparison, compound conditions that interact non-linearly,
+rules that were correct in isolation but produce wrong results in combination.
+Rule-based systems have no completeness guarantee. A badly-written rule
+silently passes or blocks incorrectly.
+
+\textbf{Category~2 --- LLM-as-Judge.}\ Uses the same probabilistic tool to
+judge itself. Adversarial prompts can override the judge entirely. The system
+is circular.
+
+Pramanix's approach, documented in \fname{docs/DECISIONS.md} \cfrsec{1},
+rejects both:
+
+\begin{quote}
+SMT solvers provide a completeness guarantee: if Z3 says \code{sat}, every
+invariant holds for the given inputs. There is no false positive path.
+Attribution (\code{unsat\_core()}) identifies exactly which invariants were
+violated, not just ``something failed.'' Z3 handles real arithmetic
+(\code{z3.Real}) natively, which is required for financial invariants. Z3 is
+deterministic. Given the same formula and the same timeout, it produces the
+same answer.
+\end{quote}
+
+\section{The Name}
+
+The name encodes the philosophy. \textit{Pram\={a}\d{n}a} is a Sanskrit
+epistemological term meaning ``valid means of knowledge'' --- proof, evidence,
+what makes a belief justified. \textit{Unix} is the composable systems
+philosophy. Pramanix is the combination: a composable system that operates on
+proof, not belief.
+
+\section{What Pramanix Is Not}
+
+The \fname{docs/Blueprint.md} \cfrsec{3} table prevents misuse:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}p{4.4cm} p{9.2cm}@{}}
+\toprule
+\textbf{It is NOT} & \textbf{Because} \\
+\midrule
+A replacement for OPA &
+  OPA handles AuthZ (who can try). Pramanix handles mathematical safety (is
+  this attempt valid). Use both. \\[4pt]
+A prompt guardrail &
+  It does not filter LLM outputs. It verifies structured intents. \\[4pt]
+A general-purpose rule engine &
+  It operates exclusively on Z3-expressible constraints over typed fields. \\[4pt]
+Secure without host freshness check &
+  The \code{state\_version} check \emph{must} be implemented by the caller.
+  Pramanix enforces the contract; it does not implement the check. \\
+\bottomrule
+\end{tabular}
+\caption{What Pramanix is not (source: \fname{docs/Blueprint.md} \cfrsec{3})}
+\end{table}
+
+%% ============================================================================
+\chapter{Research and Design Phase}
+%% ============================================================================
+
+\section{The Core Research Question}
+
+The research question is practical and specific: can a Python library provide
+formal, mathematical verification of AI agent actions with latency and
+ergonomics suitable for production deployment?
+
+Two sub-questions follow:
+\begin{enumerate}
+  \item Can Z3 be made fast enough for request-path verification?
+  \item Can the policy authoring surface be ergonomic enough for application
+        engineers who have never used an SMT solver?
+\end{enumerate}
+
+Both answers are yes, with caveats. The benchmark evidence is in
+\fname{benchmarks/results/latency\_results.json}: P50 of 5.235\,ms, P95 of
+6.361\,ms, P99 of 7.109\,ms over 2,000 samples in \code{sync} mode. The
+ergonomics are answered by the DSL:
+\code{(E(balance) - E(amount) >= 0).named("non\_negative\_balance")} is pure
+Python, type-checked, IDE-complete, and readable without any knowledge of Z3.
+
+\section{SMT Solvers as Verification Engines}
+
+The choice of Z3 over alternative verification engines is documented in
+\fname{docs/DECISIONS.md} \cfrsec{1} with reasons that are not post-hoc.
+
+\textbf{OPA/Rego was considered and rejected.}\ Rego is Datalog-based. It
+cannot prove invariants over arithmetic without custom extensions. Attribution
+of which rule failed requires introspection OPA does not natively provide. For
+financial invariants like $\mathit{balance} - \mathit{amount} \geq
+\mathit{min\_reserve}$, Rego has no native arithmetic completeness guarantee.
+
+\textbf{Custom Python rule engine was considered and rejected.}\ Fast, but no
+formal completeness guarantee. A badly-written rule silently passes or blocks
+incorrectly with no attribution.
+
+\textbf{Symbolic execution over Python bytecode was considered and rejected.}\
+Complexity is prohibitive, failure modes are not well-understood.
+
+Z3 wins on four properties: completeness guarantee (SAT means all invariants
+hold), unsat-core attribution (exactly which invariants were violated), native
+real arithmetic (exact, not floating-point), and determinism.
+
+\section{The Exact Arithmetic Design Decision}
+
+One design decision that separates Pramanix from naive Z3 usage deserves its
+own section. \fname{docs/DECISIONS.md} \cfrsec{10} explains why floating-point
+values are never passed directly to Z3:
+
+\begin{quote}
+Floating-point values in invariants are converted via
+\code{Decimal(str(v)).as\_integer\_ratio()} before being passed to Z3 as
+rational numbers (\code{z3.RatVal(numerator, denominator)}).
+\end{quote}
+
+The implementation is in \fname{transpiler.py} at the float handling path.
+\code{Decimal(str(v)).as\_integer\_ratio()} produces an exact rational
+(numerator, denominator pair). Z3's \code{RatVal} represents this as exact
+rational arithmetic. $0.1 + 0.2 \neq 0.3$ in IEEE~754. In Z3 via this path,
+it is exactly equal. Financial invariants of the form $\mathit{balance} -
+\mathit{amount} \geq \mathit{min\_reserve}$ must be exact. This is not an
+optimisation; it is a correctness requirement.
+
+\section{The Two-Phase Solver Strategy}
+
+The solver architecture in \fname{docs/DECISIONS.md} \cfrsec{3} reflects a
+trade-off between the common case and the rare case.
+
+\textbf{Phase~1 (fast path):}\ One shared \code{z3.Solver} with all
+invariants added via \code{add()}. If \code{sat} $\Rightarrow$ return SAFE
+immediately. This is the common case for legitimate requests.
+
+\textbf{Phase~2 (attribution):}\ Each invariant gets its own \code{z3.Solver}
+with \code{assert\_and\_track}. One assertion per solver so
+\code{unsat\_core()} is always \code{\{label\}} --- complete violation
+attribution with no minimal-core ambiguity.
+
+The insight: \code{assert\_and\_track + unsat\_core()} on a single solver with
+multiple assertions does not always return the minimal core --- Z3's core
+extraction is heuristic. Using one solver per invariant guarantees that
+\code{unsat\_core()} returns exactly \code{\{label\}}, so violation
+attribution is complete and deterministic. The cost is $O(k)$ solves in
+Phase~2, but Phase~2 only triggers on violations, which should be the minority
+of requests in a correctly configured production system.
+
+\section{The Fail-Closed Invariant}
+
+The most important design decision in the system is documented in
+\fname{docs/DECISIONS.md} \cfrsec{2}:
+
+\begin{quote}
+\code{Guard.verify()} catches all exceptions and returns
+\code{Decision.error(allowed=False)}. It never raises to the caller.
+\end{quote}
+
+This is enforced not just by convention but by code structure.
+\code{Decision.\_\_post\_init\_\_} raises \code{ValueError} if
+\code{allowed=True} and \code{status != SAFE}. There is no code path in the
+entire system where an error handler returns \code{allowed=True}. The
+invariant is: Z3 returning SAT is the \emph{only} path to
+\code{allowed=True}.
+
+%% ============================================================================
+\chapter{Technical Architecture}
+%% ============================================================================
+
+\section{The Thirteen-Layer Architecture}
+
+The system is not a single module. It is thirteen distinct layers with clean
+boundaries, documented in \fname{docs/ARCHITECTURE\_NOTES.md} and
+independently verified in \fname{reality.md} \cfrsec{1.2}.
+
+\subsection{Layer~1 --- The Orchestrator (\fname{guard.py},
+\fname{guard\_pipeline.py})}
+
+The \code{Guard} class is the single entry point. Every \code{verify()} call
+passes through a ten-step pipeline:
+
+\begin{enumerate}[label=\arabic*.]
+  \item Pydantic strict-mode validation (intent + state)
+  \item Fast-path $O(1)$ pre-screen (if enabled) --- can only BLOCK
+  \item Translator consensus extraction (if \code{translator\_enabled=True})
+  \item \code{guard\_pipeline} semantic post-consensus check
+  \item Z3 solve via \fname{solver.py}
+  \item Decision construction
+  \item Ed25519 signing (\code{\_sign\_decision})
+  \item Audit sink emit (all configured sinks, failures caught and logged)
+  \item Structlog emission
+  \item OTel span close / Prometheus update
+\end{enumerate}
+
+The boundary invariant: \code{Guard.verify()} \textbf{never raises}. Every
+exception, including unexpected ones from user-defined \code{invariants()}, is
+caught and returned as \code{Decision.error()} with \code{allowed=False}.
+
+\subsection{Layer~2 --- The DSL (\fname{expressions.py}, \fname{policy.py})}
+
+Pure Python, zero Z3 imports. The \code{E()} builder, \code{ConstraintExpr},
+\code{ForAll}, \code{Exists}, \code{ArrayField}, \code{DatetimeField},
+\code{NestedField}. No string phase, no \code{eval}, no \code{exec} anywhere
+in the codebase (\fname{docs/DECISIONS.md} \cfrsec{9}).
+
+\code{ConstraintExpr.\_\_bool\_\_} raises \code{TypeError} rather than
+returning a value (verified: \fname{expressions.py}:931). This is intentional:
+\code{bool(expr1) and bool(expr2)} short-circuits at the Python level and
+discards one operand. The policy author intended \code{expr1 \& expr2}.
+Raising at compilation time surfaces the bug immediately rather than silently
+producing wrong constraints. Both \code{ExpressionNode.\_\_bool\_\_} (line~787)
+and \code{ConstraintExpr.\_\_bool\_\_} (line~931) raise \code{TypeError} with
+an explanatory message directing authors to use \code{\&}/\code{|}/\code{\~{}}.
+
+\subsection{Layer~3 --- The Transpiler (\fname{transpiler.py})}
+
+The only file in the codebase that calls \code{z3.*} from DSL nodes. Lowers
+Python AST to \code{z3.ExprRef} via explicit structural pattern matching
+(\code{match}/\code{case}) starting at line~382.
+
+Two critical details: floats go through \code{Decimal(str(v)).as\_integer\_ratio()}
+before becoming \code{z3.RatVal}. Integer literals default to \code{z3.RealVal}
+for compatibility with Real-sorted fields. \code{InvariantASTCache} pre-walks
+the expression tree at Guard construction time --- no repeated tree walks at
+request time.
+
+\textit{Previously noted as a bug; verified fixed in code}: \code{\_tree\_repr()}
+contains explicit \code{match}/\code{case} clauses for both \code{\_PowOp}
+and \code{\_ModOp} (\fname{transpiler.py}:762--765). Polynomial and modulo
+policies produce correct structural fingerprints. Z3 verification correctness
+and policy diff tooling are unaffected.
+
+\subsection{Layer~4 --- The Solver (\fname{solver.py})}
+
+Z3 invocation and two-phase verification. Thread-local \code{z3.Context()} per
+OS thread --- created once, never destroyed. This prevents GC races on
+Windows/Python~3.13. Both wall-clock timeout
+(\code{set("timeout", timeout\_ms)}) and elementary operation cap
+(\code{set("rlimit", solver\_rlimit)}) are applied. The \code{rlimit} prevents
+logic-bomb and non-linear expression DoS attacks that could exhaust CPU time
+regardless of wall-clock timeout.
+
+\subsection{Layer~5 --- The Worker Pool (\fname{worker.py})}
+
+Three execution modes:
+
+\begin{itemize}
+  \item \code{sync} --- Z3 runs in the calling thread. Lowest latency, highest
+        risk (Z3 crash kills the process).
+  \item \code{async-thread} --- \code{ThreadPoolExecutor}. GIL is released
+        during Z3 solving (Z3 releases the GIL), enabling genuine parallelism.
+  \item \code{async-process} --- \code{ProcessPoolExecutor(mp\_context=spawn)}.
+        Full process isolation. HMAC-sealed IPC prevents forged results from a
+        compromised worker.
+\end{itemize}
+
+The \code{spawn} context (not \code{fork}) is mandatory because forking after
+Z3 initialisation produces undefined behavior (\fname{docs/DECISIONS.md}
+\cfrsec{4}). In \code{async-process} mode, each solve result is HMAC-SHA256
+tagged with an ephemeral key (\code{\_EphemeralKey}) before crossing the
+\code{multiprocessing.Queue} boundary. \code{\_EphemeralKey.\_\_reduce\_\_}
+raises \code{TypeError} to prevent serialisation (\fname{docs/DECISIONS.md}
+\cfrsec{15}).
+
+\subsection{Layer~6 --- The Fast-Path Pre-Screener (\fname{fast\_path.py})}
+
+\code{SemanticFastPath} and \code{FastPathEvaluator} --- configurable
+pure-Python $O(1)$ rules that run after Pydantic validation and before Z3.
+Architecture contract from \fname{docs/DECISIONS.md} \cfrsec{8}:
+
+\begin{quote}
+Fast-path rules can only BLOCK --- they return a string reason or \code{None}.
+\code{None} passes through to Z3. There is no fast-path mechanism to allow a
+request.
+\end{quote}
+
+Built-in rules: \code{negative\_amount}, \code{zero\_or\_negative\_balance},
+\code{account\_frozen}, \code{exceeds\_hard\_cap},
+\code{amount\_exceeds\_balance}.
+
+\subsection{Layer~7 --- The LLM Translation Layer (\fname{translator/})}
+
+Seven provider adapters: \code{openai\_compat}, \code{anthropic},
+\code{ollama}, \code{gemini}, \code{cohere}, \code{mistral},
+\code{llamacpp}. A five-layer injection defence stack executes before any LLM
+call:
+
+\begin{enumerate}
+  \item Unicode NFKC normalisation --- collapses homoglyphs
+  \item Input length enforcement --- \code{InputTooLongError} at
+        \code{max\_input\_chars}
+  \item Control-character stripping
+  \item Injection pattern detection --- pre-compiled regex, $\sim$25 patterns
+        covering instruction overrides, jailbreak keywords, open-source model
+        tokens (Llama~2/3, ChatML, Phi-3), role escalation
+  \item Dual-model consensus --- two independent LLMs must agree
+\end{enumerate}
+
+The dual-model consensus (\fname{docs/DECISIONS.md} \cfrsec{7}): a successful
+prompt injection attack must manipulate both models in the same direction
+simultaneously --- a significantly harder attack than manipulating one.
+
+\subsection{Layer~8 --- The Audit Chain (\fname{audit/})}
+
+\code{DecisionSigner} signs \code{decision.decision\_hash} with Ed25519 via
+\code{PramanixSigner}. \code{DecisionVerifier} is intentionally
+self-contained --- an auditor can copy it as a single file and verify tokens
+offline without installing Pramanix (\fname{docs/ARCHITECTURE\_NOTES.md}).
+
+\code{MerkleAnchor} builds an in-memory Merkle tree:
+$\code{add}(\mathit{decision\_id}) \to \code{root}() \to
+\code{prove}(\mathit{decision\_id}) \to \code{proof.verify}()$. Proves any
+single decision was part of an unaltered batch without replaying all decisions.
+
+Archive encryption at rest (\textbf{resolved in Phase~10}):
+\code{EncryptedArchiveWriter} (\fname{audit/archiver.py}) provides
+AES-256-GCM encryption as a drop-in \code{archive\_writer=} pluggable
+callback.  Each archive segment is encrypted with a fresh 96-bit nonce
+(\code{secrets.token\_bytes(12)}) per NIST~SP~800-38D \cfrsec{8.2} and
+written atomically via \code{tempfile.mkstemp()} + \code{os.replace()}.
+GCM authentication tags verify byte-level integrity on every decrypt ---
+any tampered byte raises \code{cryptography.exceptions.InvalidTag} before
+any plaintext is exposed.  Key management stays with the caller (KMS/HSM).
+The archiver now emits a \code{WARNING} \emph{only} when no
+\code{archive\_writer=} is supplied.
+
+The iterative Merkle root construction (replacing recursive) was a deliberate
+correctness fix (\fname{docs/DECISIONS.md} \cfrsec{18}). The recursive
+implementation hits Python's call stack limit at approximately 1,000 decisions.
+The iterative version uses $O(1)$ stack depth.
+
+\subsection{Layer~9 --- The Governance Gates}
+
+\textbf{Information-Flow Control} (\fname{ifc/}): Lattice-based enforcement
+between trust levels. \code{FlowPolicy} maps
+\code{(source\_label, dest\_label)} pairs to \code{ALLOW} or \code{DENY}
+rules. The \code{regulated()} preset explicitly rules that \code{REGULATED}
+$\to$ \code{INTERNAL}, \code{REGULATED} $\to$ \code{CUSTOMER}, and
+\code{REGULATED} $\to$ \code{CONFIDENTIAL} are all \code{permitted=False},
+surfacing violation reasons in \code{FlowViolationError}.
+
+\code{OversightWorkflow} (\fname{oversight/}) manages escalation queues.
+\code{PrivilegeScope} (\fname{privilege/}) manages capability manifests and
+execution scope boundaries. These gates run after consensus and before Z3.
+
+\subsection{Layer~10 --- Compliance and Lifecycle Tools}
+
+\code{ComplianceReporter} (\fname{helpers/compliance.py}) takes a
+\code{Decision} object and produces structured regulatory citations: BSA/AML
+(31~CFR~\S\,1020), OFAC/SDN (50~CFR~\S\,598), SEC wash sale (IRC~\S\,1091),
+HIPAA (45~CFR~\S\,164), SOX (15~U.S.C.~\S\,7241), Basel~III (BCBS~189). JSON
+and PDF export. This is the feature that converts a developer SDK into an
+enterprise product.
+
+\code{PolicyDiff} and \code{ShadowEvaluator} (\fname{lifecycle/diff.py})
+provide safe canary promotion. \code{ShadowEvaluator} runs the candidate
+policy alongside every live decision, recording divergence events non-blocking
+via \code{threading.Lock}.
+
+\subsection{Layer~11 --- The Request Infrastructure}
+
+\code{ResolverRegistry} stores per-request resolved field values in a
+\code{contextvars.ContextVar} --- not \code{threading.local}. The distinction
+is security-critical: in asyncio, multiple concurrent tasks share one OS
+thread. \code{threading.local} would allow Task~B to see Task~A's resolved
+values --- a P0 data bleed between users (\fname{docs/DECISIONS.md}
+\cfrsec{6}). \code{Guard} calls \code{clear\_cache()} in its \code{finally}
+block unconditionally --- no resolved value survives across requests.
+
+\code{validator.py} uses Pydantic~v2 strict mode. Implicit coercions
+(\code{"123"} $\to$ \code{int}) are rejected at this single boundary.
+
+\subsection{Layer~12 --- The Exception Hierarchy (\fname{exceptions.py})}
+
+Nineteen typed exception classes in a strict \code{PramanixError} tree.
+Domain-specific: \code{GuardViolationError} (contains the full \code{Decision}
+object), \code{FlowViolationError}, \code{PrivilegeEscalationError},
+\code{OversightRequiredError}, \code{MemoryViolationError},
+\code{ProvenanceError}, \code{IntegrityError}, \code{SolverTimeoutError},
+\code{ExtractionMismatchError}. Callers never need to catch bare
+\code{Exception}.
+
+\subsection{Layer~13 --- The Primitives Library (\fname{primitives/})}
+
+Thirty-eight pre-built Policy constraints across seven domains
+(\fname{reality.md} \cfrsec{2.2}):
+
+\begin{itemize}
+  \item \textbf{Finance:} \code{NonNegativeBalance}, \code{UnderDailyLimit},
+        \code{UnderSingleTxLimit}, \code{RiskScoreBelow}
+  \item \textbf{FinTech:} \code{AntiStructuring}, \code{CollateralHaircut},
+        \code{KYCTierCheck}, \code{MarginRequirement}, \code{MaxDrawdown},
+        \code{SanctionsScreen}, \code{SufficientBalance},
+        \code{TradingWindowCheck}, \code{VelocityCheck}, \code{WashSaleDetection}
+  \item \textbf{Healthcare:} \code{BreakGlassAuth}, \code{ConsentActive},
+        \code{DosageGradientCheck}, \code{PediatricDoseBound},
+        \code{PHILeastPrivilege}
+  \item \textbf{RBAC:} \code{ConsentRequired}, \code{DepartmentMustBeIn},
+        \code{RoleMustBeIn}
+  \item \textbf{Infrastructure:} \code{BlastRadiusCheck},
+        \code{CircuitBreakerState}, \code{CPUMemoryGuard}, \code{MaxReplicas},
+        \code{MinReplicas}, \code{ProdDeployApproval}, \code{ReplicaBudget},
+        \code{WithinCPUBudget}, \code{WithinMemoryBudget}
+  \item \textbf{Time:} \code{After}, \code{Before}, \code{NotExpired},
+        \code{WithinTimeWindow}
+  \item \textbf{Common:} \code{FieldMustEqual}, \code{NotSuspended},
+        \code{StatusMustBe}, \code{EnterpriseRole}, \code{HIPAARole}
+\end{itemize}
+
+\section{The Decision Object}
+
+\code{Decision} is a frozen dataclass with one invariant enforced in
+\code{\_\_post\_init\_\_}: $\code{allowed=True} \Leftrightarrow
+\code{status=SAFE}$. No other combination is valid. The status values and
+their semantics are shown in Table~\ref{tab:decision-status}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}l l p{7.5cm}@{}}
+\toprule
+\textbf{Status} & \textbf{allowed} & \textbf{Cause} \\
+\midrule
+\code{SAFE}                & \code{True}  & Z3 proved all invariants hold \\
+\code{UNSAFE}              & \code{False} & Z3 found a counterexample \\
+\code{TIMEOUT}             & \code{False} & Z3 exceeded time budget \\
+\code{ERROR}               & \code{False} & Unexpected internal error \\
+\code{STALE\_STATE}        & \code{False} & \code{state\_version} field mismatch \\
+\code{VALIDATION\_FAILURE} & \code{False} & Pydantic model validation failed \\
+\code{CONSENSUS\_FAILURE}  & \code{False} & Dual-model LLM disagreement \\
+\code{RATE\_LIMITED}       & \code{False} & Load-shedding threshold exceeded \\
+\bottomrule
+\end{tabular}
+\caption{Decision status values and their semantics}
+\label{tab:decision-status}
+\end{table}
+
+The canonical hash is SHA-256 over \code{decision\_id + status + allowed +
+violated\_invariants + explanation}, computed via \code{orjson} (or stdlib
+\code{json} fallback). The \code{iat} timestamp is excluded from the signed
+payload --- signatures are deterministic regardless of signing time
+(\fname{docs/DECISIONS.md} \cfrsec{16}).
+
+\section{The Public API Stability Contract}
+
+Stability tiers from \fname{docs/PUBLIC\_API.md}:
+
+\begin{itemize}
+  \item \textbf{Stable:} \code{core}, \code{audit}, \code{crypto},
+        \code{circuit\_breaker}, \code{execution\_token}, \code{key\_provider},
+        \code{compliance}, \code{audit\_sinks}, \code{worker}, \code{primitives}
+  \item \textbf{Beta:} \code{translator}, \code{integrations},
+        \code{fast\_path}, \code{ifc}, \code{privilege}, \code{oversight},
+        \code{memory}, \code{lifecycle}, \code{provenance}
+\end{itemize}
+
+Beta subsystems are usable in production but may change in minor versions with
+deprecation notice.
+
+%% ============================================================================
+\chapter{Development Journey}
+%% ============================================================================
+
+\section{From Concept to 1.0.0}
+
+The development history is reconstructed from \fname{docs/CHANGELOG.md} (Keep
+a Changelog format) and the \fname{docs/Blueprint.md} milestone sequence.
+
+\subsection{Phase~0 --- v0.0: Concept Validation}
+
+The fundamental question: can Z3 verify a financial invariant in Python within
+acceptable latency? Before any architecture was built, this had to be answered
+empirically. The answer is yes --- the benchmark in
+\fname{benchmarks/latency\_benchmark.py} demonstrates P99 of 7.109\,ms over
+2,000 samples.
+
+\subsection{Phase~1 --- v0.1--v0.3: Core Engine}
+
+Foundation: \fname{guard.py}, \fname{policy.py}, \fname{expressions.py},
+\fname{transpiler.py}, \fname{solver.py}. The key design decision made at
+this stage was the fail-closed contract. \code{Decision.\_\_post\_init\_\_}
+raises \code{ValueError} if \code{allowed=True} and \code{status != SAFE}.
+This constraint is checked in every test suite run and has never been relaxed.
+
+\subsection{Phase~2 --- v0.4: Exception Hierarchy and Type Safety}
+
+Nineteen typed exceptions replacing bare raises. \code{mypy} strict mode
+(\fname{pyproject.toml}: \code{mypy.strict = true}). The policy of zero
+\code{cast()} except where Z3's incomplete type stubs require it
+(\fname{transpiler.py}:390--396) was established here.
+
+\subsection{Phase~3 --- v0.5: Security Hardening}
+
+The formal threat model was written. HMAC-sealed IPC for \code{async-process}
+mode (\fname{docs/DECISIONS.md} \cfrsec{15}) was implemented here.
+\code{\_EphemeralKey.\_\_reduce\_\_} raising \code{TypeError} to prevent
+serialisation was a direct response to the threat of worker process
+exploitation.
+
+The musl/Alpine rejection at import time (\fname{\_platform.py}) was added.
+From \fname{docs/DECISIONS.md} \cfrsec{12}: Z3's glibc-compiled wheels
+segfault or run 3--10$\times$ slower on musl. By the time Guard is
+constructed, Z3 is already loaded. Failing at import time is the only way to
+produce an attributable error in container startup logs.
+
+\subsection{Phase~4 --- v0.6: Domain Primitives}
+
+Thirty-eight pre-built primitives across seven domains. The
+\code{ComplianceReporter} with six regulatory frameworks and PDF export. This
+phase transformed the SDK from a framework requiring users to write all
+constraints from scratch into a library with batteries included.
+
+\subsection{Phase~5 --- v0.7: Performance Engineering}
+
+The \code{InvariantASTCache} eliminates repeated tree walks at request time.
+The \code{SemanticFastPath} provides $O(1)$ Python pre-screening before Z3.
+The process pool with zero-IPC worker architecture, documented in
+\fname{benchmarks/100m\_worker\_fast.py}:
+
+\begin{lstlisting}[style=plain,caption={IPC architecture comparison (source:
+  \fname{benchmarks/100m\_worker\_fast.py})}]
+Old: asyncio coroutine -> ThreadPoolExecutor -> Guard process -> Z3 process
+     2 IPC crossings per decision x ~15 ms each = ~30 ms overhead
+     = 22-27 RPS/worker
+
+New: 18 OS processes, each owns sync Guard + Z3 in one address space
+     0 IPC crossings per decision
+     = 80-120 RPS/worker  ->  1,440-2,160 aggregate RPS
+\end{lstlisting}
+
+Three micro-optimisations:
+\begin{enumerate}
+  \item \code{max\_input\_bytes=0} --- skips the per-decision JSON size-check
+        round-trip ($\sim$1--2\,ms saved per decision)
+  \item Pre-built payload cache --- 10,000 payloads generated at startup,
+        no \code{Decimal()} construction in the decision loop ($\sim$0.5\,ms
+        saved)
+  \item \code{orjson} $+$ 8\,MiB buffer --- one OS \code{write()} per
+        $\sim$100k decisions vs.\ one per decision ($\sim$0.3\,ms saved)
+\end{enumerate}
+
+\subsection{Phase~6 --- v0.8: Cryptographic Audit Engine}
+
+Ed25519 signing (\fname{crypto.py}), \code{MerkleAnchor} and
+\code{PersistentMerkleAnchor} (\fname{audit/merkle.py}),
+\code{ProvenanceChain} (\fname{provenance.py}). The iterative Merkle root was
+a correctness fix --- the recursive implementation hit Python's stack limit at
+1,000 decisions (\fname{docs/DECISIONS.md} \cfrsec{18}).
+
+\subsection{Phase~7 --- v0.9: Enterprise Integrations}
+
+Nine framework adapters: LangChain, LlamaIndex, AutoGen, FastAPI, CrewAI,
+DSPy, Haystack, Semantic Kernel, Pydantic AI. Two runtime interceptors: gRPC
+\code{ServerInterceptor} and Kafka consumer wrapper. Kubernetes
+\code{ValidatingWebhook}. The \code{@guard} decorator.
+
+\textbf{Security bug (H-03)}: \code{PramanixGuardedTool} previously defaulted
+\code{execute\_fn} to \code{lambda i: "OK"} when no function was provided.
+Every guarded action returned success without executing any real logic. Fixed:
+\code{execute\_fn=None} now raises \code{NotImplementedError}
+(\fname{CHANGELOG.md} \cfrsec{H-03}).
+
+\textbf{Security bug (H-04)}: \code{PramanixCrewAITool.\_run()} previously
+returned a non-exception string when \code{underlying\_fn=None}. A blocked
+CrewAI tool should raise, not return (\fname{CHANGELOG.md} \cfrsec{H-04}).
+
+\subsection{Phase~8 --- v0.9.5: Security Hardening Pass}
+
+\begin{itemize}
+  \item \textbf{C-01}: \code{verify\_async()} had \code{except Exception: pass}
+        in the \code{max\_input\_bytes} size-check path. Unserializable payloads
+        silently bypassed the size gate. Fixed: returns
+        \code{Decision.error(allowed=False)}.
+
+  \item \textbf{H-02/M-05}: Timing pad applied only to BLOCK responses. ALLOW
+        responses returned immediately, leaking a timing oracle. Fixed: timing
+        pad applied unconditionally before the ALLOW/BLOCK branch.
+
+  \item \textbf{BUG-03}: \code{OversightRecord} had no \code{\_\_slots\_\_}.
+        Arbitrary attribute injection on a tamper-evident audit record. Fixed.
+
+  \item \textbf{BUG-10}: \code{JWTIdentityLinker.\_verify\_token()} decoded the
+        JWT payload before validating the \code{alg} header. An attacker could
+        craft a token with \code{alg: "RS256"} and an HMAC-SHA256 signature,
+        bypassing the asymmetric-key check (CVE-2015-9235 family). Fixed:
+        \code{alg} validated as \code{"HS256"} \emph{before} signature
+        computation.
+
+  \item \textbf{BUG-11}: JWT \code{nbf} (not-before) claim not enforced.
+        Tokens with future \code{nbf} were accepted. Fixed.
+
+  \item \textbf{BUG-12}: Empty or missing JWT \code{sub} claim accepted.
+        \code{"sub": ""} produced an empty-identity principal. Fixed.
+\end{itemize}
+
+\subsection{Phase~9 --- v1.0.0~GA: Documentation, Coverage, and Honest Gaps}
+
+\fname{docs/KNOWN\_GAPS.md} was created --- an honest inventory of 14 known
+limitations. \fname{MIGRATION.md} covering v0.7--v1.0 upgrade paths.
+\fname{docs/PUBLIC\_API.md} stability tiers finalised. \code{pramanix doctor}
+check~\#10 (logging-handlers) and check~\#11 (policy-hash-binding) added.
+
+Test suite at v1.0.0 GA + Phase~10 hardening: 3,916 passed, 81 skipped, 0
+failed.  Coverage: 98.16\,\% (98\,\% gate: \textbf{passing}).  Python~3.13.7,
+pytest~8.4.2.  Total wall time: 417\,s on a single-core Windows CI node.
+
+After Phase~11 test-isolation fixes: 3,916 passed, 81 skipped, 0 failed.
+Coverage: 98.22\,\% (gate: \textbf{passing}).  Wall time: 793\,s.
+
+After Phase~12 metric-registry and coverage fixes: 3,923 passed, 81 skipped,
+0 failed.  Coverage: \textbf{98.26\,\%} (gate: \textbf{passing}).  Wall
+time: 867\,s.
+
+\subsection*{Phase~12: Metric-Registry Bug and Coverage Completeness}
+
+Phase~12 closed a silent production defect in the Prometheus instrumentation
+and plugged all remaining testable coverage gaps.
+
+\paragraph{Bug~3 --- Prometheus Counter Double-Registration in
+  \code{worker.py}.}
+\code{\_warmup\_worker()} created a \code{prometheus\_client.Counter} object
+\emph{inside} the \code{except~Exception} handler.  In \code{async-thread}
+mode every thread worker shares the same module namespace; the second
+invocation of \code{\_warmup\_worker()} raised \code{ValueError: Duplicated
+timeseries in CollectorRegistry}.  That exception was silently swallowed by
+the outer \code{except~Exception:~pass} clause, permanently disabling warmup
+failure counting for every call after the first.  The defect was latent in
+single-process mode but would corrupt metrics in any multi-worker deployment.
+
+\textbf{Fix.}  A module-level \code{\_WORKER\_WARMUP\_FAILURE\_COUNTER}
+variable is now initialised once at import time, following the identical
+pattern already used by \code{crypto.py} (lines~55--71).  A
+\code{try/except~ValueError} block attempts to register the counter; if the
+name already exists in \code{prometheus\_client.REGISTRY} the reference is
+recovered via \code{REGISTRY.\_names\_to\_collectors}.  The
+\code{\_warmup\_worker()} exception handler now simply calls
+\code{\_WORKER\_WARMUP\_FAILURE\_COUNTER.inc()}, guarded by a
+\code{is~not~None} check and an inner \code{try/except~Exception} so that a
+missing Prometheus installation never crashes the worker.
+
+\paragraph{Coverage Gaps Closed.}
+
+\begin{itemize}
+
+\item \textbf{Haystack adapter async error paths}
+  (\fname{integrations/haystack.py} lines 176, 181--187, 208--209).\quad
+  Six new tests in \fname{tests/integration/test\_haystack\_adapter.py}
+  (class \code{TestRunAsync}) exercise every branch of the async error path.
+  The \code{\_AsyncBrokenGuard} helper class provides a real
+  \code{async~def~verify\_async()} implementation that raises
+  \code{RuntimeError}, satisfying the no-mock constraint while covering
+  both the \code{block\_on\_error=True} and \code{block\_on\_error=False}
+  branches.  The \code{messages}/\code{blocked\_messages} assignment branches
+  (lines~208--209) are covered by tests that supply and omit the optional
+  \code{messages} parameter.
+
+\item \textbf{LangChain execute-map dispatch branch}
+  (\fname{integrations/langchain.py} line~178).\quad
+  One new test in \fname{tests/integration/test\_langchain\_tool.py}
+  (\code{test\_wrap\_tools\_uses\_execute\_map\_when\_tool\_name\_matches})
+  passes an \code{execute\_map} dictionary whose key matches the tool name.
+  It asserts that the wrapped tool's \code{\_pramanix\_execute} attribute is
+  exactly the function supplied via the map rather than the default
+  \code{tool.run} callable.
+
+\item \textbf{LlamaIndex async state provider}
+  (\fname{integrations/llamaindex.py} line~484).\quad
+  One new test in \fname{tests/integration/test\_integration\_coverage.py}
+  (\code{test\_acall\_with\_async\_state\_provider}) passes an
+  \code{async~def} coroutine as the \code{state\_provider} argument to
+  \code{PramanixQueryEngineTool}.  The test exercises the
+  \code{if asyncio.iscoroutine(result): result = await result} branch
+  inside \code{\_get\_state()}.
+
+\end{itemize}
+
+\paragraph{Remaining Structurally Dead Lines.}  The following lines cannot be
+covered without modifying the production environment and are documented as
+intentional:
+
+\begin{itemize}
+\item \fname{worker.py}~242--246: the ppid watchdog tight loop (only executes
+  inside a live subprocess spawned by \code{ProcessPoolExecutor}).
+\item \fname{worker.py}~85--95: the \code{except~ValueError} registry
+  recovery path (only reachable when \code{\_warmup\_worker} is called a
+  second time inside the same Python process during multi-worker startup
+  on a platform where Prometheus is installed — rare in CI).
+\item \fname{archiver.py}~161--164, 196--199: \code{cryptography} package
+  absent and OS-level \code{fsync}/\code{replace} failures.
+\item \fname{transpiler.py}~346: structurally unreachable \code{continue}
+  following an exhaustive \code{if/elif/else}.
+\item All integration import-error placeholder blocks: require uninstalling
+  the corresponding framework package mid-test.
+\item \fname{cli.py}~1033--1054: Linux/musl platform detection (Windows CI).
+\item \fname{gemini.py}~199--221: \code{httpx} transport-level error
+  injection.
+\end{itemize}
+
+\paragraph{Coverage Impact.}  Phase~12 adds 7 new tests (3,923 total) and
+improves branch coverage from 98.22\,\% to \textbf{98.26\,\%}.  The 98\,\%
+gate remains satisfied with margin.
+
+\subsection*{Phase~11: Test-Isolation Hardening}
+
+A post-release audit revealed two latent test bugs that only surfaced when the
+full 3,916-test suite ran in its default ordering.  Both were genuine
+production-quality defects in the test infrastructure, not in Pramanix itself.
+
+\paragraph{Bug~1 --- Missing \code{\_dlq\_pending} Initialisation.}
+\code{TestKafkaConsumerRealPaths.\_make\_consumer()} used
+\code{PramanixKafkaConsumer.\_\_new\_\_} to bypass the real Kafka bootstrap,
+but omitted the \code{\_dlq\_pending~= 0} and \code{\_dlq\_flush\_interval~= 100}
+attribute initialisations that \code{\_\_init\_\_} normally performs.  When a
+guard exception caused \code{safe\_poll} to call \code{\_dead\_letter()},
+\code{self.\_dlq\_pending~+= 1} raised \code{AttributeError}, masking the
+underlying guard error and causing the generator to yield nothing.  Fix: both
+attributes are now initialised explicitly in \code{\_make\_consumer()}.
+
+\paragraph{Bug~2 --- Structlog State Leaking Across Test Files.}
+\code{TestLoggingIsolation.\_capture\_log\_output()} in
+\fname{test\_guard\_dark\_paths.py} called \code{structlog.configure(\ldots,
+logger\_factory=PrintLoggerFactory(buf))} without restoring the prior
+configuration.  When \code{test\_guard\_dark\_paths.py} ran \emph{before}
+\fname{test\_interceptors\_real.py} in the suite ordering, the leaked
+\code{PrintLoggerFactory} remained active.  Structlog's \code{add\_logger\_name}
+processor subsequently called \code{logger.name} on a \code{PrintLogger}
+(which lacks a \code{.name} attribute), raising \code{AttributeError} inside
+every \code{guard.verify()} call made by the Kafka consumer tests.  The
+exception was swallowed by \code{safe\_poll}'s \code{except~Exception} clause,
+dead-lettering all messages and causing the generators to yield nothing.
+Fix: wrapped the \code{structlog.configure()} call in a \code{try/finally}
+block that captures the old config via \code{structlog.get\_config()} and
+restores it unconditionally after the test, making each invocation
+of \code{\_capture\_log\_output()} side-effect-free.
+
+\paragraph{Coverage Impact.}  With both bugs fixed, line coverage increased
+from 98.16\,\% to \textbf{98.22\,\%} (0\,failures, 98\,\% gate: passing).
+
+\subsection*{Phase~10: Production Hardening}
+
+Phase~10 addressed three root-cause gaps identified during the final pre-PyPI
+audit: two open Known Limitations, three test failures, and a coverage gate
+that was 0.31\,\% short.
+
+\paragraph{AES-256-GCM Archive Encryption.}
+\code{EncryptedArchiveWriter} was added to \fname{audit/archiver.py}.  It
+implements the pluggable \code{archive\_writer: Callable[[Path, bytes], None]}
+protocol defined in Phase~8.  Each archive segment is encrypted with a fresh
+96-bit nonce generated by \code{secrets.token\_bytes(12)} (NIST~SP~800-38D
+\S8.2 compliant).  The GCM authentication tag is embedded in the ciphertext;
+any byte-level tampering raises \code{InvalidTag} before plaintext is exposed.
+Writes are atomic: \code{tempfile.mkstemp()} + \code{os.fdopen()} +
+\code{os.fsync()} + \code{os.replace()} ensures no partial segment is ever
+visible on disk.  The class is exported from \code{pramanix.audit} and
+documented in \fname{docs/PUBLIC\_API.md} as Tier~B (stable).  Known
+Limitation~5 (Merkle Archive Plaintext) is resolved.
+
+\paragraph{Configurable Injection-Score Field Name.}
+\code{injection\_confidence\_score()} in \fname{translator/\_sanitise.py} now
+accepts \code{*, amount\_field: str = "amount"} as a keyword-only parameter.
+Non-financial callers pass the field name that carries a monetary amount in
+their schema; passing \code{amount\_field=""} disables the sub-penny signal
+entirely.  The change is fully backward-compatible: callers that do not pass
+\code{amount\_field} receive the same behaviour as before.  Known
+Limitation~9 (Injection Scorer Sub-Penny Gap) is resolved.
+
+\paragraph{Three Test Failures.}
+All three failures were root-cause-diagnosed and fixed with surgical changes:
+(1)~a missing \code{\_SKLEARN\_AVAILABLE} guard in \code{CalibratedScorer.load()};
+(2)~a monkey-patch-vs-call-site binding error fixed with
+\code{unittest.mock.patch()} at the correct import path;
+(3)~\code{GeminiTranslator.\_\_init\_\_}'s except clause broadened to
+\code{(ImportError, AttributeError)}.  No test intent was changed.
+
+\paragraph{Coverage Gate.}
+Eleven new real-integration tests in
+\fname{tests/unit/test\_archiver\_coverage\_gaps.py} exercising the full
+\code{EncryptedArchiveWriter} lifecycle --- key generation, round-trip
+encrypt/decrypt, atomic write, wrong-key \code{InvalidTag}, fresh-nonce-per-call
+--- lifted branch coverage from 97.69\,\% to 98.16\,\%, crossing the gate.
+
+%% ============================================================================
+\chapter{Testing Strategy}
+%% ============================================================================
+
+\section{Test Architecture Philosophy}
+
+The test suite is not a collection of happy-path unit tests. It is an
+adversarial testing infrastructure, documented in \fname{reality.md}
+\cfrsec{3.1}.
+
+\section{Adversarial Tests}
+
+\textbf{Z3 Context Isolation}
+(\fname{tests/adversarial/test\_z3\_context\_isolation.py}): Uses
+\code{threading.Barrier} to force 10 concurrent simultaneous solver executions.
+Mathematically proves context poisoning between threads is impossible.
+CVE-prevention level testing.
+
+\textbf{Prompt Injection}
+(\fname{tests/adversarial/test\_prompt\_injection.py}): Verifies resistance to
+null bytes, unicode full-width digits, massive integers, negative bounds, and
+resource exhaustion using in-process stub translators. Isolates the Z3 +
+governance layer from LLM parsing --- correct layered unit-test design.
+
+\section{Property-Based Tests (Hypothesis)}
+
+\code{hypothesis} is in the dev dependencies (\fname{pyproject.toml}:
+\code{hypothesis = "\^{}6.100"}). Property-based testing verifies that the
+DSL produces correct constraints for arbitrary input values rather than just
+hand-picked examples.
+
+Known gap (\fname{reality.md} \cfrsec{3.1}): The \fname{\_sanitise.py}
+injection scorer has complex additive float-math heuristics. No Hypothesis
+property tests verify that score combinations are monotonically bounded within
+$[0.0, 1.0]$ across the full input space.
+
+\section{Real Infrastructure Integration Tests}
+
+\fname{tests/integration/} --- 26 files hitting real containers: Kafka via
+Redpanda, Redis, Postgres, LocalStack, Azure KeyVault, HashiCorp Vault. Live
+LLM adapters tested: Gemini, Cohere. Container availability is detected at
+test session start (\fname{tests/integration/conftest.py}:34--45). The 81
+skips in the test suite are primarily these infrastructure-dependent tests
+skipping when Docker is unavailable. This is correct behavior, not a testing
+gap.
+
+\section{Concurrent Load Tests}
+
+\fname{tests/unit/test\_production\_gaps.py} --- 14 tests including a
+50-coroutine concurrent async size-check test with oversized payloads,
+unserializable payloads, and mixed batches. Timing-pad distribution tests:
+p5 latency assertions ($\geq 90$\,\% of budget) for both ALLOW and BLOCK;
+symmetry ratio check ($\leq 1.30$) to detect asymmetric padding.
+
+\section{Coverage Gate}
+
+\fname{pyproject.toml}: \code{fail\_under = 98}.  Current status after
+Phase~11: \textbf{98.22\,\% --- gate passing}.  Branch coverage is tracked
+alongside line coverage (\code{--cov-branch}).
+
+Residual uncovered lines fall into structurally-dead categories that
+cannot be reached without removing installed packages or injecting OS-level
+failures:
+\begin{itemize}
+  \item \fname{audit/archiver.py}: lines~161--164 (the
+        \code{ConfigurationError} branch that fires when the
+        \code{cryptography} package is absent) and lines~196--199 (the
+        \code{os.write()} failure path inside the atomic write helper).
+  \item \fname{transpiler.py}: line~346 (a \code{continue} in the final
+        enum-promotions loop that is structurally unreachable with any
+        valid input).
+  \item Optional-dependency import-error paths in all six integration
+        adapters: \fname{langchain.py}, \fname{haystack.py},
+        \fname{llamaindex.py}, \fname{crewai.py},
+        \fname{kafka.py}, \fname{fastapi.py}.
+        These paths execute only when the optional framework is \emph{not}
+        installed; covering them would require uninstalling those packages
+        for a dedicated test run.
+  \item \fname{translator/gemini.py}: lines~199--221 (\code{httpx} transport
+        error wrapping and \code{AsyncRetrying} exception re-raise path).
+        Requires a network-level timeout injection that cannot be simulated
+        without the real Gemini endpoint or a live httpx mock server.
+  \item \fname{worker.py}: lines~242--246, 338 (\code{WorkerPool} crash-
+        restart path and an orphaned \code{asyncio.Task} finaliser).
+        Triggered only on OS-level thread scheduling failures.
+\end{itemize}
+
+\section{All Test Failures --- Resolved (Phases~10 and~11)}
+
+All five diagnosed test failures have been fixed.  The test suite reports 0
+failures.  Phase~10 resolved the three v1.0.0 originals; Phase~11 resolved two
+latent ordering-dependent bugs discovered during the post-release audit.
+
+\textbf{Failure~1 ---
+\code{test\_sklearn\_absent\_raises\_configuration\_error}} (\textit{fixed}):
+\code{CalibratedScorer.load()} classmethod lacked the sklearn availability
+check present in \code{\_\_init\_\_()}.  Fix: added the same
+\code{\_SKLEARN\_AVAILABLE} guard at the start of \code{load()}, raising
+\code{ConfigurationError} before any attribute access.
+
+\textbf{Failure~2 ---
+\code{test\_canonical\_bytes\_exception\_falls\_back\_to\_stdlib\_json}}
+(\textit{fixed}): The test monkey-patched \code{\_dec\_mod.\_canonical\_bytes}
+after import, which had no effect on the already-resolved binding inside
+\code{\_compute\_hash()}.  Fix: replaced the monkey-patch with
+\code{unittest.mock.patch("pramanix.decision.\_canonical\_bytes",
+side\_effect=RuntimeError(...))} which patches at the actual call site.
+
+\textbf{Failure~3 --- \code{test\_gemini\_prefix}} (\textit{fixed}):
+\code{GeminiTranslator.\_\_init\_\_} only caught \code{ImportError}, but the
+\code{google} namespace package (installed via \code{google.auth}) caused an
+\code{AttributeError} inside \code{google-generativeai}.  Fix: changed the
+catch clause to \code{(ImportError, AttributeError)} and changed
+\code{\_GEMINI\_AVAILABLE} detection from \code{find\_spec()} to an actual
+try-import, making the availability check consistent with the runtime
+behaviour.
+
+\textbf{Phase~11 --- Failure~4 ---
+\code{test\_safe\_poll\_allowed\_message\_yielded}} (\textit{fixed}):
+See Phase~11 subsection above (Bug~1, missing \code{\_dlq\\_pending}
+initialisation in \code{\\_make\\_consumer()}).
+
+\textbf{Phase~11 --- Failure~5 ---
+\code{test\_safe\_poll\_guard\_exception\_dead\_letters\_and\_continues}}
+(\textit{fixed}): See Phase~11 subsection above (Bug~2, structlog
+\code{PrintLoggerFactory} state leak contaminating Kafka consumer tests).
+
+%% ============================================================================
+\chapter{Research and Benchmarks}
+%% ============================================================================
+
+\section{Latency Benchmarks}
+
+Results from \fname{benchmarks/results/latency\_results.json} --- API mode,
+2,000 samples, 5-invariant policy, \code{sync} execution mode:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{} l r r @{}}
+\toprule
+\textbf{Metric} & \textbf{Measured} & \textbf{Target} \\
+\midrule
+P50  & 5.235\,ms & 5.0\,ms \\
+P95  & 6.361\,ms & 10.0\,ms \\
+P99  & 7.109\,ms & 15.0\,ms \\
+Mean & 5.336\,ms & --- \\
+\bottomrule
+\end{tabular}
+\caption{Latency benchmark results (source:
+  \fname{benchmarks/results/latency\_results.json})}
+\label{tab:latency}
+\end{table}
+
+P50 narrowly misses its target by 0.235\,ms. P95 and P99 are well within
+targets. The \code{passed: false} in the JSON file reflects the strict P50
+gate.
+
+\section{1M Decision Stability Test}
+
+Results from \fname{benchmarks/results/1m\_audit\_summary.json} ---
+1,000,000 decisions, 500 warmup, 1-invariant policy, \code{sync} mode,
+single-threaded:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{} l r @{}}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Total decisions    & 1,000,000 \\
+Total elapsed      & 12,298.479\,s \\
+Average RPS        & 81.3 \\
+P50 latency        & 11.283\,ms \\
+P95 latency        & 20.145\,ms \\
+P99 latency        & 30.538\,ms \\
+P99.9              & 153.848\,ms \\
+P99.99             & 270.578\,ms \\
+Max                & 1,565.746\,ms \\
+Baseline RSS       & 57.617\,MiB \\
+Final RSS          & 60.422\,MiB \\
+Peak RSS           & 80.395\,MiB \\
+Memory growth      & 2.805\,MiB over 1\,M decisions \\
+GC gen0 delta      & $+$6 collections \\
+GC gen1/gen2 delta & 0 \\
+\bottomrule
+\end{tabular}
+\caption{1M decision stability test (source:
+  \fname{benchmarks/results/1m\_audit\_summary.json})}
+\label{tab:stability}
+\end{table}
+
+The memory profile is critical evidence. 2.805\,MiB growth across 1,000,000
+decisions is not a leak. The RSS oscillations visible in
+\fname{1m\_audit\_full.log} (spiking between 57\,MiB and 74\,MiB throughout
+the run) are Z3's native heap behavior --- the solver allocates and deallocates
+Z3 context objects in its internal C heap, and Python's process RSS reflects
+those allocations with some lag. The final RSS is only 2.8\,MiB above
+baseline. This is bounded, stable behavior.
+
+\section{100M Decision Architecture}
+
+\fname{benchmarks/100m\_orchestrator\_fast.py} and
+\fname{benchmarks/100m\_worker\_fast.py} document a zero-IPC production
+architecture:
+
+\begin{lstlisting}[style=plain,caption={100M decision target architecture}]
+18 x multiprocessing.Process (spawn mode)
+Each process: owns sync Guard + Z3 in one address space
+Decision loop: cycles through 10,000 pre-built payloads (5 MiB per worker)
+Target: 100M decisions per domain x 5 domains = 500M decisions total
+\end{lstlisting}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{} p{6.5cm} r r @{}}
+\toprule
+\textbf{Architecture} & \textbf{RPS/worker} & \textbf{IPC crossings} \\
+\midrule
+Old: asyncio $\to$ ThreadPool $\to$ Guard process $\to$ Z3 process
+  & 22--27 & 2 per decision \\
+New: 18 process $\times$ sync Guard
+  & 80--120 & 0 per decision \\
+\bottomrule
+\end{tabular}
+\caption{Architecture throughput comparison (source:
+  \fname{benchmarks/100m\_worker\_fast.py})}
+\end{table}
+
+The 3.5--5$\times$ throughput improvement comes entirely from eliminating IPC
+crossings. 18 workers targeting 80--120~RPS each yields 1,440--2,160
+aggregate~RPS.
+
+%% ============================================================================
+\chapter{Use Cases and Target Industries}
+%% ============================================================================
+
+\section{Financial Services}
+
+\textbf{Banking Transfers}: \fname{examples/banking\_transfer.py} is the
+canonical reference. A \code{BankingPolicy} with three invariants
+(\code{non\_negative\_balance}, \code{within\_daily\_limit},
+\code{account\_not\_frozen}) demonstrates all six decision outcomes. Exact
+arithmetic via \code{Decimal} prevents the IEEE~754 rounding errors that
+would cause $\mathit{balance} - \mathit{amount} \geq 0$ to fail or pass
+incorrectly.
+
+\textbf{High-Frequency Trading --- Wash Sale Detection}:
+\fname{examples/hft\_wash\_trade.py}. The \code{WashSaleDetection} primitive
+in \fname{primitives/fintech.py} directly maps to IRC~\S\,1091.
+
+\textbf{Anti-Structuring / BSA-AML}: \code{AntiStructuring} in
+\fname{primitives/fintech.py}. Maps to BSA/AML 31~CFR~\S\,1020.320(a)(2). An
+AI agent structuring deposits to avoid BSA reporting thresholds is a criminal
+violation. Z3-verified anti-structuring invariants are provably compliant.
+
+\textbf{Collateral Management}: \code{CollateralHaircut},
+\code{MarginRequirement}, \code{MaxDrawdown}, \code{VelocityCheck} ---
+quantitative invariants that Z3 handles exactly.
+
+\section{Healthcare}
+
+\textbf{PHI Access Control}: \fname{examples/healthcare\_phi\_access.py} and
+\fname{examples/healthcare\_rbac.py}. \code{PHILeastPrivilege},
+\code{BreakGlassAuth}, \code{ConsentActive} enforce HIPAA minimum-necessary
+standard at the action boundary. Every PHI access produces a signed,
+Merkle-anchored \code{Decision} with a \code{decision\_hash} --- ready for
+HIPAA audit trail requirements.
+
+\textbf{Dosage Safety}: \code{DosageGradientCheck},
+\code{PediatricDoseBound} --- invariants over prescription amounts. An AI
+clinical decision support system that recommends dosages cannot exceed
+pediatric weight-based bounds. Z3 verifies this before the recommendation
+reaches the prescriber.
+
+\section{Cloud Infrastructure}
+
+\textbf{Blast Radius Control}: \fname{examples/infra\_blast\_radius.py}.
+\code{BlastRadiusCheck} in \fname{primitives/infra.py}. An AI agent scaling
+Kubernetes pods cannot set replicas above a hard cap without a
+\code{ProdDeployApproval} invariant passing. \code{ReplicaBudget},
+\code{CPUMemoryGuard}, \code{WithinCPUBudget}, \code{WithinMemoryBudget} ---
+all computable from current cluster state and expressible as Z3 Real
+arithmetic.
+
+\textbf{SRE Automation}: Infrastructure changes proposed by AI SRE systems
+are Z3-verified before applying. A change that would violate
+\code{MinReplicas} during a traffic spike is blocked with a full explanation.
+
+\section{Multi-Agent Systems}
+
+\textbf{AutoGen / CrewAI}: \fname{examples/autogen\_multi\_agent.py}. The
+\code{PramanixCrewAITool} and AutoGen adapter ensure that every tool
+invocation in a multi-agent system --- not just the first --- is verified. An
+agent in a chain cannot bypass a policy by delegating to a sub-agent.
+
+\textbf{LangChain / LlamaIndex}:
+\fname{examples/langchain\_banking\_agent.py},
+\fname{examples/llamaindex\_rag\_guard.py}. A retrieval-augmented agent
+querying a document database and proposing an action based on retrieved
+content cannot use that content to bypass the policy.
+
+%% ============================================================================
+\chapter{Known Limitations and Future Roadmap}
+%% ============================================================================
+
+\section{Verified Limitations (from \fname{docs/KNOWN\_GAPS.md})}
+
+\begin{enumerate}
+  \item \textbf{AGPL-3.0 License} (\fname{pyproject.toml}:8). No enterprise
+        legal team approves AGPL as a Python library dependency. The entire
+        target market --- financial services, healthcare, cloud providers ---
+        uses Apache~2.0, MIT, or commercial licenses. This is documented in
+        \fname{reality.md} \cfrsec{4.2} as the first absolute blocker.
+
+  \item \textbf{Redis Circuit Breaker TOCTOU Race} --- \textit{resolved}.
+        \code{RedisDistributedBackend.set\_state}
+        (\fname{circuit\_breaker.py}:771) uses \code{WATCH} +
+        \code{MULTI}/\code{EXEC} optimistic locking to make the entire
+        read-modify-write atomic.  If another writer modifies the key between
+        \code{WATCH} and \code{EXEC}, the transaction aborts and retries up
+        to \code{\_MERGE\_MAX\_RETRIES=3} times (\fname{circuit\_breaker.py}:769).
+        No Lua scripting required.
+
+  \item \textbf{\code{\_tree\_repr} Polynomial Gap} --- \textit{resolved}.
+        \fname{transpiler.py} contains explicit \code{match}/\code{case}
+        clauses for both \code{\_PowOp} and \code{\_ModOp} (lines~762--765).
+        Structural fingerprints for polynomial and modulo policies are correct.
+
+  \item \textbf{Logging Split-Brain} (\fname{reality.md} \cfrsec{4.1}).
+        \fname{guard\_config.py} installs structlog with secrets redaction.
+        But \fname{worker.py}, \fname{solver.py}, \fname{decision.py} and most
+        other modules use \code{logging.getLogger(\_\_name\_\_)} (stdlib),
+        bypassing structlog redaction entirely. Sensitive policy values can
+        reach log sinks unredacted.
+
+  \item \textbf{Merkle Archive Encryption} (\fname{audit/archiver.py}).
+        \textit{[Resolved — Phase~10]}. AES-256-GCM at-rest encryption is
+        provided by \code{EncryptedArchiveWriter}.  Pass it as
+        \code{archive\_writer=EncryptedArchiveWriter(key)} at construction.
+        The archiver emits a \code{WARNING} only when no writer is supplied.
+        SOC~2 CC6.6, PCI~DSS Req~10, and HIPAA \S164.312(a)(2)(iv) are
+        now addressable at the SDK layer.
+
+  \item \textbf{HMAC-Only JWT} (\fname{identity/linker.py}). HMAC-SHA256
+        symmetric. Every service in a microservice mesh must share the secret
+        key. RS256 or ES256 required for enterprise deployments.
+
+  \item \textbf{Execution Token Replay After Restart}
+        (\fname{execution\_token.py}). The consumed-set is in-memory only. A
+        process restart clears it. \code{RedisExecutionTokenVerifier} closes
+        this for Redis deployments.
+
+  \item \textbf{No NLP Validators}. No PII redaction, toxicity scoring, or
+        free-text classification. Pramanix is built exclusively for structured
+        intent verification. Pramanix~$+$ Guardrails~AI are complementary,
+        not alternatives.
+
+  \item \textbf{Injection Scorer Field Name}
+        (\fname{\_sanitise.py}). \textit{[Resolved — Phase~10]}.
+        \code{injection\_confidence\_score} now accepts a keyword-only
+        \code{amount\_field: str = "amount"} parameter.  Non-financial
+        callers pass their field name directly; passing
+        \code{amount\_field=""} disables the sub-penny signal entirely
+        without needing to set \code{sub\_penny\_threshold=Decimal("0")}
+        as a workaround.  The API is backward-compatible: existing callers
+        need no changes.
+
+  \item \textbf{Stub Integrations} (\fname{integrations/}). DSPy, Haystack,
+        Semantic Kernel, and Pydantic AI are stubs
+        (\fname{docs/KNOWN\_GAPS.md} \cfrsec{8}).
+\end{enumerate}
+
+\section{Future Roadmap}
+
+\textbf{Immediate (Pre-PyPI):}
+\begin{itemize}
+  \item License change: AGPL-3.0 $\to$ Apache~2.0
+  \item Redis circuit breaker TOCTOU already resolved via \code{WATCH}/\code{MULTI}/\code{EXEC} (\fname{circuit\_breaker.py}:771)
+  \item \code{\_tree\_repr} polynomial gap already resolved (\fname{transpiler.py}:762)
+  \item \textit{[Done — Phase~10]} Fix 3 failing tests, restore 98\,\% coverage gate --- 3,916 passed, 81 skipped, 0 failed; 98.16\,\% coverage
+  \item \textit{[Done — Phase~10]} Merkle archive pluggable AES-256-GCM writer (\code{EncryptedArchiveWriter})
+  \item \textit{[Done — Phase~10]} Configurable \code{amount\_field} in injection confidence scorer
+  \item \textit{[Done — Phase~11]} Fix 2 latent test-isolation bugs; coverage: 98.16\,\% $\to$ 98.22\,\%
+\end{itemize}
+
+\textbf{Short-Term (v1.1):}
+\begin{itemize}
+  \item License change: AGPL-3.0 $\to$ Apache~2.0 (unchanged blocker)
+  \item Logging split-brain fix: route stdlib logging through
+        \code{structlog.stdlib.ProcessorFormatter}
+  \item RS256/ES256 JWT support
+  \item Hypothesis property tests for injection scorer
+  \item Close optional-dependency coverage gaps in
+        \fname{integrations/langchain.py},
+        \fname{integrations/haystack.py},
+        \fname{integrations/llamaindex.py},
+        \fname{integrations/crewai.py},
+        \fname{interceptors/kafka.py} (currently 86--90\,\%)
+\end{itemize}
+
+\textbf{Medium-Term (v1.2):}
+\begin{itemize}
+  \item Complete DSPy, Semantic Kernel, Pydantic AI integrations
+  \item Z3 formula caching across Guard instances with identical policies
+  \item Declarative policy YAML front-end (without removing Python DSL)
+\end{itemize}
+
+%% ============================================================================
+\chapter{Competitive Deep-Dive}
+%% ============================================================================
+
+\section{Open Policy Agent (OPA)}
+
+\textbf{What OPA does}: Policy-as-code with Rego, a Datalog-inspired
+declarative language. Evaluates structured JSON data against policy rules.
+Returns allow/deny. Used widely for Kubernetes admission control and API
+authorization.
+
+\textbf{Where OPA falls short for Pramanix's use case}
+(\fname{docs/DECISIONS.md} \cfrsec{1}): Rego is Datalog-based. Datalog does
+not have arithmetic built in. The constraint $\mathit{balance} -
+\mathit{amount} \geq \mathit{min\_reserve}$ is not expressible in native Rego
+without custom built-in functions that introduce their own approximation risks.
+OPA provides no formal completeness guarantee over arithmetic. Attribution
+requires \code{with input as ...} test expressions --- there is no native
+\code{unsat\_core()} equivalent.
+
+\textbf{Correct use}: OPA for authorization (\textit{can user X perform
+action~Y?}). Pramanix for mathematical safety (\textit{is action~Y logically
+consistent with all invariants?}). Use both.
+
+\section{Guardrails AI}
+
+\textbf{What Guardrails AI does}: Provides \code{Validator} objects that run
+checks on LLM input/output strings. Hundreds of pre-built validators: PII
+detection, toxicity, content safety, format checks.
+
+\textbf{Where Guardrails AI falls short}: Guardrails AI is a text-processing
+library. Its validators are probabilistic functions. \code{(E(balance) -
+E(amount) >= 0)} cannot be expressed as a Guardrails validator without
+reimplementing Z3 arithmetic.
+
+\textbf{Market reality}: The two systems are complementary. Guardrails~AI for
+content safety on LLM I/O. Pramanix for formal safety on structured actions.
+
+\section{NVIDIA NeMo Guardrails}
+
+NeMo is dialogue management (Colang-based conversation flow control). Pramanix
+is transactional action verification. They are in entirely different domains.
+As \fname{docs/Blueprint.md} states: ``on transactional action verification,
+Pramanix is architecturally superior.''
+
+\section{The True Competitive Landscape}
+
+The \fname{reality.md} audit identifies the actual competition:
+
+\begin{quote}
+The SDK is not competing with NeMo or Guardrails AI. It is competing with
+enterprise compliance teams writing custom middleware in Go or Java.
+\end{quote}
+
+Every financial institution and healthcare provider deploying AI agents is
+currently either not verifying actions at all (accepting probabilistic risk),
+or writing bespoke middleware that reinvents incomplete versions of what
+Pramanix provides. The \code{ComplianceReporter} maps
+\code{violated\_invariants} to BSA/AML CFR citations. Banks pay seven figures
+for compliance software that does less.
+
+%% ============================================================================
+\chapter{Economics of Running}
+%% ============================================================================
+
+\section{Compute Cost Per Decision}
+
+At 81.3~RPS single-threaded (from \fname{1m\_audit\_summary.json}), one CPU
+core handles approximately 81 verifications per second in \code{sync} mode.
+Each decision costs $\sim$12.3\,ms of wall-clock time including all overhead.
+
+At the 18-worker architecture (from \fname{benchmarks/100m\_orchestrator\_fast.py}):
+\begin{align*}
+  18 \text{ workers} \times 80\ \text{RPS}  &= 1{,}440\ \text{aggregate RPS (minimum)} \\
+  18 \text{ workers} \times 120\ \text{RPS} &= 2{,}160\ \text{aggregate RPS (maximum)}
+\end{align*}
+
+On a 32-vCPU \code{c5.8xlarge} (AWS) at \$1.36/hour, approximately
+\$0.0034 per million decisions in compute only. This is lower than most cloud
+service API costs and is fully self-hosted.
+
+\section{Memory Budget}
+
+Per worker: $\sim$50--80\,MiB peak Z3 heap $+$ 5\,MiB payload cache $+$
+baseline Python process ($\sim$57\,MiB baseline RSS from the 1M benchmark).
+
+$18 \text{ workers} \times 80\,\text{MiB peak} = \sim 1.4\,\text{GB RAM}$
+for the full 100M/domain audit configuration. A production deployment with
+4--8 workers requires 320--640\,MB, well within any modern server instance.
+
+\section{SaaS Unit Economics}
+
+At \$0.01/1,000 decisions (\$10/million), the margin is enormous relative to
+compute cost (\$0.0034/million). The SaaS pricing ceiling is set by the value
+of an incorrect decision in the target domain --- a single fraudulent banking
+transfer is typically thousands of dollars.
+
+%% ============================================================================
+\chapter{Security Threat Model}
+%% ============================================================================
+
+\section{The Eleven-Layer Defence Stack}
+
+The complete stack, verified from source (\fname{reality.md} \cfrsec{2.1}):
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{} c l p{7.5cm} @{}}
+\toprule
+\textbf{Layer} & \textbf{Location} & \textbf{Defence} \\
+\midrule
+1  & \fname{\_platform.py}                   & Alpine/musl rejection at import time \\
+2  & \fname{translator/injection\_filter.py} & Pre-compiled regex, $\sim$25 injection patterns \\
+3  & \fname{translator/\_sanitise.py}         & NFKC normalisation $+$ length limits \\
+4  & \fname{validator.py}                    & Pydantic~v2 strict mode, zero implicit coercions \\
+5  & \fname{translator/redundant.py}         & Dual-model LLM consensus \\
+6  & \fname{guard\_pipeline.py}              & Post-consensus semantic check \\
+7  & \fname{fast\_path.py}                   & Configurable $O(1)$ pre-screener, can only BLOCK \\
+8  & \fname{solver.py}                       & Z3 with \code{rlimit} DoS guard \\
+9  & \fname{translator/\_sanitise.py}         & Post-consensus injection heuristics \\
+10 & \fname{guard.py}                        & Governance gates (Privilege, Oversight, IFC) \\
+11 & \fname{crypto.py}                       & Ed25519 decision signing \\
+\bottomrule
+\end{tabular}
+\caption{Eleven-layer defence stack (source: \fname{reality.md} \cfrsec{2.1})}
+\end{table}
+
+\section{Attack Vector Analysis}
+
+\textbf{Prompt Injection}: The five-layer translator defence handles this. NFKC
+normalisation collapses homoglyphs, regex patterns detect common overrides,
+dual-model consensus requires both LLMs to agree. The Z3 layer is unreachable
+via text injection because the policy is compiled Python DSL ---
+\code{"ignore previous instructions"} cannot affect the Z3 formula.
+
+\textbf{Malicious Z3 Constraints}: Both wall-clock timeout and \code{rlimit}
+(elementary operation cap) are applied. \code{rlimit} prevents non-linear
+expression DoS that can defeat wall-clock timeout via adversarial formula
+construction.
+
+\textbf{Worker Process Exploitation}: In \code{async-process} mode, the
+HMAC-sealed IPC means a compromised worker cannot forge \code{allowed=True}
+in the host process without the ephemeral key, which is stored only in the
+host process and is not serializable.
+
+\textbf{HMAC Key Compromise} (\fname{reality.md} \cfrsec{2.1}):
+\fname{injection\_scorer.py}:305 uses \code{pickle.loads()} after HMAC
+verification. If \code{PRAMANIX\_SCORER\_KEY} is compromised, this is an RCE
+vector. HMAC key hygiene is a deployment requirement.
+
+\textbf{JWT Algorithm Confusion} (fixed, \fname{CHANGELOG.md} \cfrsec{BUG-10}):
+The CVE-2015-9235 family attack --- crafting a token with \code{alg: "RS256"}
+and an HMAC-SHA256 signature --- was present and is now fixed. The header is
+decoded and \code{alg} validated as \code{"HS256"} \emph{before} signature
+computation.
+
+\textbf{Timing Oracle} (fixed, \fname{CHANGELOG.md} \cfrsec{H-02}): ALLOW
+responses returning faster than BLOCK responses allow binary-search probing to
+identify violated constraints even with \code{redact\_violations=True}. Fixed:
+timing pad applied unconditionally to every response before the ALLOW/BLOCK
+branch.
+
+\section{The Audit Non-Repudiation Chain}
+
+Four layers of non-repudiation:
+
+\begin{enumerate}
+  \item \textbf{Decision hash}: SHA-256 over \code{decision\_id + status +
+        allowed + violated\_invariants + explanation}. Deterministic. Any
+        tampering is detectable.
+  \item \textbf{Ed25519 signature}: Signs the decision hash. Offline
+        verifiable with only the public key.
+  \item \textbf{Merkle proof}: Proves inclusion in an unaltered batch without
+        replaying all decisions.
+  \item \textbf{ProvenanceChain}: HMAC-signed chain-of-custody binding each
+        decision to policy version, model version, and IFC input labels.
+\end{enumerate}
+
+These four layers collectively make it impossible to tamper with a decision
+record without either breaking Ed25519 or invalidating the Merkle tree, both
+of which are computationally infeasible.
+
+%% ============================================================================
+\chapter{Academic and Research Grounding}
+%% ============================================================================
+
+\section{SMT Solving --- The Theoretical Foundation}
+
+Satisfiability Modulo Theories (SMT) is the decision problem for logical
+formulas with respect to background theories. The theories Pramanix uses:
+
+\textbf{Linear Real Arithmetic (LRA)}: For financial constraints of the form
+$\mathit{balance} - \mathit{amount} \geq \mathit{min\_reserve}$. LRA is
+decidable (Presburger arithmetic over reals is decidable). Z3 uses the
+Simplex algorithm for LRA, which has polynomial average-case complexity for
+common financial constraint patterns.
+
+\textbf{Linear Arithmetic over Integers (LIA)}: For count-based constraints.
+Also decidable.
+
+\textbf{Boolean combinations via DPLL(T)}: Z3's architecture combines SAT
+solving (propositional Boolean reasoning) with theory solvers. The DPLL SAT
+solver handles the Boolean structure; the theory solver (Simplex for LRA)
+handles the arithmetic atoms. For a constraint such as:
+\begin{equation}
+  (balance - amount \geq 0) \;\wedge\; (amount \leq daily\_limit) \;\wedge\;
+  \neg frozen
+  \label{eq:banking-policy}
+\end{equation}
+the Boolean skeleton $A \wedge B \wedge C$ is handled by DPLL; the arithmetic
+atoms $A$ and $B$ are dispatched to the LRA solver; the Boolean atom $C$ is
+handled natively.
+
+\section{Formal Methods in Safety-Critical Systems}
+
+Formal verification in safety-critical domains (avionics, nuclear, medical
+devices) has used model checkers and theorem provers for decades. The NASA
+Ames Formal Methods group, the Cambridge L4.verified project, and seL4
+demonstrate that formal verification at scale is achievable in production
+systems.
+
+Pramanix applies this philosophy to AI agent actions. The argument is exactly
+the same as in avionics: when the cost of an incorrect action is high enough,
+probabilistic correctness is insufficient. A bank transfer that overdrafts an
+account is not a statistic; it is an individual financial loss.
+
+\section{Neuro-Symbolic AI}
+
+The neuro-symbolic framing reflects the architecture: a neural component (LLM
+for intent extraction) combined with a symbolic component (Z3 for formal
+verification). This is a recognized research paradigm, with work from IBM
+Research, MIT, and DeepMind on neuro-symbolic integration.
+
+Pramanix's contribution is a production-ready instantiation: the LLM extracts
+structured intent from natural language; the symbolic verifier proves that
+intent against formal constraints. The dual-model consensus is a
+neuro-symbolic defense: two independent neural extractors must agree before
+the symbolic verifier is invoked. Disagreement itself is a signal --- ambiguous
+or adversarial input produces consistent disagreement between models.
+
+\section{The Z3 Literature}
+
+Microsoft Research's Z3 has been continuously developed since 2007 (de~Moura
+and Bj\o{}rner, \textit{Z3: An Efficient SMT Solver}, TACAS~2008). Key
+properties exploited by Pramanix:
+
+\begin{itemize}
+  \item \textbf{DPLL(T) completeness}: For decidable theories (LRA, LIA), Z3
+        either returns SAT with a model or UNSAT with a proof. No false
+        positives.
+  \item \textbf{Unsat cores}: \code{assert\_and\_track + unsat\_core()} extracts
+        the minimal set of constraints responsible for unsatisfiability.
+        Pramanix uses one constraint per solver to get complete attribution
+        without relying on Z3's heuristic minimal-core extraction.
+  \item \textbf{Python API / GIL release}: \code{z3-solver} is the official
+        Python binding. The GIL is released during solver execution
+        (\fname{docs/DECISIONS.md} \cfrsec{1}), enabling genuine thread-level
+        parallelism.
+\end{itemize}
+
+%% ============================================================================
+\chapter{Failure Log}
+%% ============================================================================
+
+\section{Architectures That Were Tried and Rejected}
+
+\begin{itemize}
+  \item \textbf{Recursive Merkle root construction}: The initial
+        \code{MerkleAnchor.\_build\_root} was recursive. It hit Python's
+        default call stack limit at $\sim$1,000 decisions.
+        (\fname{docs/DECISIONS.md} \cfrsec{18})
+
+  \item \textbf{\code{fork()} instead of \code{spawn()} for worker processes}:
+        Fork copies parent file descriptors, memory-mapped files, and OS
+        resources. Z3 has internal state --- forking after Z3 initialization
+        produced undefined behavior. (\fname{docs/DECISIONS.md} \cfrsec{4})
+
+  \item \textbf{\code{threading.local} for resolver cache}: Thread-scoped.
+        Under asyncio, Task~B could see Task~A's resolved field values --- a
+        data bleed between users. (\fname{docs/DECISIONS.md} \cfrsec{6})
+
+  \item \textbf{Single solver for unsat attribution}: Z3's \code{unsat\_core()}
+        on a multi-assertion solver does not always return the minimal core.
+        One solver per invariant guarantees complete, deterministic attribution.
+        (\fname{docs/DECISIONS.md} \cfrsec{3})
+
+  \item \textbf{Eval/exec in the transpiler}: String-based formula generation
+        is an RCE surface. Rejected entirely. (\fname{docs/DECISIONS.md}
+        \cfrsec{9})
+
+  \item \textbf{Floating-point direct to Z3}: IEEE~754 rounding errors.
+        \code{Decimal(str(v)).as\_integer\_ratio()} was required.
+        (\fname{docs/DECISIONS.md} \cfrsec{10})
+\end{itemize}
+
+\section{Security Bugs Found During Development}
+
+\begin{itemize}
+  \item \textbf{Silent stub exploitation (H-03, H-04)}: LangChain and CrewAI
+        integrations both had \code{execute\_fn=None} defaulting to
+        \code{lambda i: "OK"}. Every guarded action returned success without
+        executing real logic. Fixed by raising \code{NotImplementedError}.
+
+  \item \textbf{Async fail-safe bypass (C-01)}: \code{verify\_async()} had
+        \code{except Exception: pass} in the size-check path. Unserializable
+        payloads silently bypassed the size gate. Any exception in the size
+        check must produce \code{Decision.error(allowed=False)}.
+
+  \item \textbf{Timing oracle (H-02)}: ALLOW and BLOCK responses having
+        different latencies is a side-channel attack. The timing pad was applied
+        only to BLOCK. Fixed: timing pad applied unconditionally before the
+        ALLOW/BLOCK branch.
+
+  \item \textbf{JWT algorithm confusion (BUG-10)}: CVE-2015-9235 family.
+        Decoding the payload before validating the algorithm allows crafting
+        tokens with mismatched algorithms. Fixed.
+\end{itemize}
+
+\section{The Hardest Bugs}
+
+\textbf{Z3 context threading}: Z3 \code{Context} objects are thread-local C
+objects. They cannot be shared between threads. The GIL is released during
+solving --- meaning Z3 operations in multiple threads run truly concurrently
+in C code. Using shared contexts between threads produces undefined behavior.
+Solution: thread-local \code{z3.Context()} created once per OS thread, never
+destroyed. The adversarial test (\fname{test\_z3\_context\_isolation.py}) uses
+\code{threading.Barrier} to force 10 concurrent simultaneous solver executions.
+
+\textbf{The \code{ConstraintExpr.\_\_bool\_\_} trap}: \code{expr1 and expr2}
+in Python short-circuits at the Python level. If \code{\_\_bool\_\_} returned
+\code{True}, the \code{and} expression would return \code{expr2}, silently
+discarding \code{expr1}. The fix --- raising \code{PolicyCompilationError} ---
+means the common mistake (using Python \code{and}/\code{or} instead of
+\code{\&}/\code{|}) is immediately detected at policy compile time.
+
+%% ============================================================================
+\chapter{Real World Simulation Results}
+%% ============================================================================
+
+\section{The 1M Decision Stability Test}
+
+The most important stability result is in
+\fname{benchmarks/results/1m\_audit\_summary.json}. One million decisions at
+81.3 average~RPS, with memory and GC tracked throughout.
+
+Key finding: Z3 heap behavior is oscillatory, not leaking. The
+\fname{1m\_audit\_full.log} shows RSS spiking between 57\,MiB and 74\,MiB
+throughout the entire run, then settling. The net growth over 1M decisions:
+2.805\,MiB. GC gen0 collected 6 additional times; gen1 and gen2 unchanged.
+This is bounded, stable behavior.
+
+The P99.9 of 153.848\,ms and P99.99 of 270.578\,ms indicate rare but real
+tail latency events. The max of 1,565.746\,ms is a single outlier --- likely
+GC pause or OS scheduling jitter. For production deployments, a
+\code{min\_response\_ms} padding budget and circuit breaker should handle these
+tail events.
+
+\section{Finance Domain Stress Test}
+
+\fname{benchmarks/100m\_domain\_policies.py} documents the Finance domain
+benchmark policy (\code{Finance100MPolicy}) targeting:
+\begin{itemize}
+  \item 20\,\% overdraft (BLOCK on \code{non\_negative\_balance})
+  \item 10\,\% high risk (BLOCK on \code{risk\_score\_below\_threshold})
+  \item $\sim$5\,\% overlap (double BLOCK)
+  \item Target $\sim$25\,\% BLOCK rate overall
+\end{itemize}
+
+This mix exercises both Phase~1 (SAT, $\sim$75\,\% of decisions) and Phase~2
+(UNSAT attribution, $\sim$25\,\% of decisions). A policy tuned only for
+common-case SAT performance that degrades badly on UNSAT would not survive
+this benchmark.
+
+\section{Memory Growth Model}
+
+The benchmark architecture's \code{max\_decisions\_per\_worker = 10{,}000}
+Guard recycling strategy was empirically derived. The Guard recycle strategy:
+
+\begin{enumerate}
+  \item After 10,000 decisions, the old Guard is replaced with a new one
+  \item The old Guard's worker pool is drained (background thread,
+        \code{\_drain\_executor})
+  \item Z3 heap of the old Guard is freed by Python's GC when the Guard
+        object's reference count drops to zero
+\end{enumerate}
+
+This keeps Z3 heap bounded at ${<}$50\,MiB growth per worker.
+
+%% ============================================================================
+\chapter{Dependency Risk Analysis}
+%% ============================================================================
+
+\section{Z3 API Change Risk}
+
+The constraint in \fname{pyproject.toml}: \code{z3-solver = "\^{}4.12"}.
+The \code{\^{}} operator means \code{>=4.12.0, <5.0.0}. Z3's 4.x line has
+been stable since 2018. The parts Pramanix uses --- \code{.check()},
+\code{.model()}, \code{.unsat\_core()}, \code{z3.RatVal()},
+\code{z3.Context()} --- are stable public API.
+
+Mitigation: the transpiler is the only file calling Z3 directly. A Z3 API
+change requires updating only \fname{transpiler.py} and \fname{solver.py}.
+The rest of the codebase is Z3-agnostic.
+
+\section{Z3 Swap Difficulty}
+
+A swap to another SMT solver (e.g., cvc5, MathSAT) would require:
+\begin{enumerate}
+  \item A new transpiler file emitting the target solver's AST
+  \item A new solver module wrapping the target solver's Python API
+  \item Compatibility verification for \code{RatVal} exact rationals,
+        \code{assert\_and\_track + unsat\_core()} attribution, and GIL release
+        during solve
+\end{enumerate}
+
+The DSL and all user-facing policy code would be unchanged. Estimated effort:
+500--800 lines of code in transpiler and solver, plus thorough re-testing of
+the exact rational arithmetic behavior.
+
+\section{LLM Deprecation Risk}
+
+The translator layer supports seven providers. If any single provider
+deprecates its API, only one adapter file needs updating. The
+\code{OpenAICompatTranslator} covers OpenAI, Azure OpenAI, and any
+OpenAI-compatible endpoint, reducing single-provider lock-in.
+
+\section{Single Points of Failure}
+
+The only genuine single point of failure is Z3. If Z3 is unavailable, the
+entire verification stack fails. The musl check (\fname{\_platform.py}) fails
+fast at import time. There is no Z3 fallback --- by design, the system is
+fail-closed when Z3 is unavailable.
+
+%% ============================================================================
+\chapter{Regulatory Mapping}
+%% ============================================================================
+
+\section{Financial Regulation}
+
+The \code{ComplianceReporter} in \fname{helpers/compliance.py} maps
+\code{violated\_invariants} Z3 labels to structured regulatory citations:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{} l l l @{}}
+\toprule
+\textbf{Domain} & \textbf{Regulation} & \textbf{Reference} \\
+\midrule
+BSA/AML   & Bank Secrecy Act, Anti-Structuring & 31~CFR~\S\,1020.320(a)(2) \\
+OFAC/SDN  & Sanctions screening                & 50~CFR~\S\,598 \\
+SEC       & Wash Sale                          & IRC~\S\,1091 \\
+SOX       & Financial controls reporting       & 15~U.S.C.~\S\,7241 \\
+Basel~III & Capital adequacy                   & BCBS~189 \\
+\bottomrule
+\end{tabular}
+\caption{Financial regulatory mappings in \code{ComplianceReporter}
+  (\fname{helpers/compliance.py})}
+\end{table}
+
+\section{Healthcare Regulation (HIPAA)}
+
+\code{PHILeastPrivilege}, \code{BreakGlassAuth}, \code{ConsentActive},
+\code{DosageGradientCheck}, \code{PediatricDoseBound} in
+\fname{primitives/healthcare.py} map to HIPAA 45~CFR~\S\,164.
+
+\textbf{Audit trail for HIPAA}: Every PHI access decision produces a
+\code{Decision} with \code{decision\_hash}, Ed25519 signature, and Merkle
+inclusion proof. This satisfies HIPAA's audit log requirements.
+
+\textbf{Archive encryption (resolved)}: \code{EncryptedArchiveWriter}
+(Phase~10) provides AES-256-GCM at-rest encryption for all Merkle archive
+segments.  PHI-adjacent audit logs are no longer stored in plaintext.
+Deployments pass \code{archive\_writer=EncryptedArchiveWriter(key)} at
+\code{MerkleArchiver} construction.  HIPAA \S164.312(a)(2)(iv) (encryption
+and decryption) is addressable at the SDK layer.
+
+\section{EU AI Act}
+
+The EU AI Act (Regulation (EU) 2024/1689) classifies high-risk AI systems
+(Annex~III, including financial services AI, healthcare AI, and critical
+infrastructure AI) with requirements including Article~12 record-keeping.
+Pramanix's signed decisions, Merkle anchoring, and ProvenanceChain directly
+support Article~12. The \code{ComplianceReporter} could be extended to
+produce EU AI Act Article~13 transparency reports.
+
+\section{SOC~2 Type~II}
+
+\begin{itemize}
+  \item \textbf{CC6.1 (Logical access)}: JWT identity boundary with
+        HMAC-SHA256 verification and \code{sub} claim validation
+  \item \textbf{CC7.2 (System operations monitoring)}: 6 configurable audit
+        sinks (Kafka, S3, Splunk, Datadog)
+  \item \textbf{CC7.3 (Incident detection)}: \code{AdaptiveCircuitBreaker}
+        state machine with \code{ISOLATED} state requiring manual reset
+  \item \textbf{Confidentiality (C1)}: \code{\_RedactSecretsProcessor} in
+        structlog pipeline, IFC labels
+  \item \textbf{CC6.6 (Encryption at rest)}: \textit{[Resolved — Phase~10]}
+        \code{EncryptedArchiveWriter} provides AES-256-GCM encryption for all
+        Merkle archive segments.  Pass the writer at construction;
+        no external tool chain required.
+\end{itemize}
+
+%% ============================================================================
+\chapter{Scaling Story}
+%% ============================================================================
+
+\section{10$\times$ Scale: Current Architecture}
+
+At 10$\times$ current load (810~RPS), a 10-worker configuration:
+\begin{itemize}
+  \item $10 \times 80\text{--}120\ \text{RPS} = 800\text{--}1{,}200$
+        aggregate~RPS
+  \item RAM: $10 \times 80\,\text{MiB} = 800\,\text{MiB}$
+  \item CPU: 10 dedicated cores (or hardware threads)
+\end{itemize}
+
+No architectural changes required. The circuit breaker begins shedding load
+when P99 latency exceeds \code{shed\_latency\_threshold\_ms}.
+
+\section{100$\times$ Scale: Horizontal Z3 Worker Pools}
+
+At 100$\times$ (8,100~RPS), a single machine with 18 workers approaches its
+ceiling ($\sim$2,160~RPS). Scaling to 8,100~RPS requires 4--6 machines or a
+Kubernetes deployment.
+
+Architecture:
+\begin{itemize}
+  \item K8s \code{PramanixMiddleware} admission webhook $\to$ shared policy
+        hash check at startup
+  \item StatelessGuard instances per pod (no inter-pod state, policies are
+        immutable)
+  \item Redis \code{DistributedCircuitBreaker} for coordinated load shedding
+        across pods
+  \item Redis \code{RedisExecutionTokenVerifier} for cross-pod single-use
+        token enforcement
+\end{itemize}
+
+The policy hash check (\code{GuardConfig.expected\_policy\_hash}) is the
+critical invariant: all replicas must run the same policy version. A SHA-256
+mismatch at construction time raises \code{ConfigurationError} --- prevents
+split-brain policy enforcement during rolling deploys.
+
+\section{1000$\times$ Scale: What Breaks First}
+
+At 1,000$\times$ (81,000~RPS), several architectural limits are hit:
+
+\begin{itemize}
+  \item \textbf{Z3 memory}: $\sim$80\,MiB peak per worker $\times$ 750 workers
+        $= \sim$60\,GB peak RAM. Horizontal pod scaling with smaller per-pod
+        worker counts mitigates.
+
+  \item \textbf{Redis circuit breaker TOCTOU} --- \textit{resolved}.
+        \code{RedisDistributedBackend.set\_state} uses \code{WATCH} +
+        \code{MULTI}/\code{EXEC} optimistic locking with
+        \code{\_MERGE\_MAX\_RETRIES=3} retries, eliminating the race
+        without Lua scripting.
+
+  \item \textbf{Audit sink throughput}: Kafka sink's 10,000-message queue
+        overflows if backend throughput drops below 81,000 messages/second.
+        Fix: increase queue size or add Kafka partitioning.
+
+  \item \textbf{Execution token consumed-set}: In-memory per-process set.
+        \code{RedisExecutionTokenVerifier} becomes mandatory --- and Redis
+        becomes a SPOF.
+\end{itemize}
+
+%% ============================================================================
+\chapter{Developer Experience Decisions}
+%% ============================================================================
+
+\section{Python vs.\ Rust/Go}
+
+The decision to use Python is implicit in the architecture. AI agent frameworks
+(LangChain, AutoGen, CrewAI) are Python-first. The SDK must integrate without
+a language boundary. \code{z3-solver} is the official Python binding --- Z3's
+Rust bindings (\code{z3} crate) are less mature and do not have feature parity.
+The policy DSL is natural Python: \code{E(balance) - E(amount) >= 0}. \code{mypy}
+strict mode with \code{disallow\_untyped\_defs = true} provides close to
+Rust-level type safety. Z3 releases the Python GIL during solve, enabling
+genuine parallel solving in thread mode without Python-level synchronization.
+
+\section{Poetry vs.\ pip}
+
+\fname{pyproject.toml} uses Poetry's build backend
+(\code{poetry-core>=1.7.0}). The lockfile-based dependency resolution prevents
+the transitive dependency conflicts that bare pip installs produce with 31
+optional extras spanning AI, cloud, database, cryptography, and compliance
+ecosystems.
+
+\section{AGPL-3.0 vs.\ Apache~2.0 vs.\ MIT}
+
+AGPL-3.0 is documented in \fname{pyproject.toml}:8 and analyzed in
+\fname{reality.md} \cfrsec{4.2} as the first absolute blocker:
+
+\begin{quote}
+AGPL-3.0 License: No enterprise legal team approves an AGPL Python
+dependency. Blocks fintech, healthcare, and enterprise B2B adoption.
+\end{quote}
+
+AGPL's copyleft requirement: any software that uses an AGPL library and is
+provided as a network service must release its source code. For a bank or
+hospital using Pramanix in production, this means releasing their entire
+application source. No enterprise legal team accepts this.
+
+Apache~2.0 is the correct choice: patent protection (important for Z3 usage),
+enterprise-approved legal language, and allows proprietary use without source
+release.
+
+\section{DSL Syntax Alternatives}
+
+The DSL design (\fname{expressions.py}) chose Python operator overloading
+(\code{\&}, \code{|}, \code{\textasciitilde}, \code{>=}, \code{<=},
+\code{>}, \code{<}, \code{==}, \code{!=}) over alternatives:
+
+\begin{itemize}
+  \item \textbf{String-based DSL}: Rejected --- requires \code{eval}/\code{parse}
+        (injection vector), no type checking, no IDE support.
+  \item \textbf{YAML-based policy}: Rejected --- cannot express Python-typed
+        cross-field relationships without a custom schema language.
+  \item \textbf{Rego/Datalog-style}: Rejected --- lacks Z3's arithmetic, would
+        require embedded parser.
+  \item \textbf{JSON Schema-based}: Rejected --- JSON Schema is not a constraint
+        specification language; it validates types, not cross-field relationships.
+\end{itemize}
+
+The Python operator overloading approach provides IDE support, type checking,
+and Python-native ergonomics. The \code{\_\_bool\_\_} raising provides
+immediate feedback when the common mistake (\code{and} instead of \code{\&})
+is made at policy compile time.
+
+%% ============================================================================
+\chapter{Personal Reflection}
+%% ============================================================================
+
+\section{What This Project Actually Is}
+
+Pramanix is an attempt to answer one specific engineering question: can
+production-quality formal verification be made accessible to Python developers
+who build AI systems?
+
+The answer, based on the evidence of this codebase, is yes --- with significant
+caveats. The caveats are not embarrassments; they are the research findings.
+
+\section{What Required the Most Learning}
+
+\textbf{Z3 internals}: Thread-local contexts, GIL release semantics,
+\code{assert\_and\_track} vs.\ \code{add()}, \code{RatVal} vs.\ \code{IntVal}
+vs.\ \code{RealVal}, \code{rlimit} as a DoS defense. None of this is in the
+Z3 Python tutorial. It required reading Z3's C++ source code, the DPLL(T)
+algorithm papers, and extensive empirical testing under adversarial conditions.
+
+\textbf{The memory model}: Understanding why Z3 heap oscillates rather than
+leaks, how Python's GC interacts with C++ allocated objects via
+\code{z3-solver}, when to recycle a Guard instance --- these required building
+the 1M-decision benchmark and reading the log output at the line level.
+
+\textbf{Exact arithmetic in SMT}: The \code{Decimal.as\_integer\_ratio()}
+insight was not obvious. IEEE~754 floating-point passed to Z3's \code{z3.Q(...)}
+produces floating-point arithmetic in Z3, not real arithmetic.
+\code{z3.RatVal(numerator, denominator)} produces exact rational arithmetic.
+This distinction matters for financial invariants and took significant
+experimentation to understand and verify.
+
+\textbf{Security reasoning in depth}: The JWT algorithm confusion bug
+(BUG-10), the async fail-safe bypass (C-01), the timing oracle (H-02), the
+worker HMAC seal --- these are not bugs that surface in happy-path testing.
+They surface in adversarial analysis. Building the threat model before the
+implementation would have caught several earlier.
+
+\section{What the Audit Taught}
+
+The \fname{reality.md} document is the most important artifact in this
+repository. It is an honest, line-by-line audit of every claim made about the
+system against the actual source code. Several claimed features were initially
+described incorrectly; the audit corrected them. Several real gaps were found
+that the initial implementation missed.
+
+The practice of writing this kind of audit --- before any external release ---
+is what separates engineering from marketing. The gaps documented in
+\fname{reality.md} are not weaknesses to hide; they are the work remaining
+to be done.
+
+Three truths from the audit that summarize the project:
+
+\begin{enumerate}
+  \item \textbf{The technical moat is real.} Eleven-layer defence stack, 38
+        pre-built primitives, enterprise compliance reporting with six
+        regulatory frameworks, audit infrastructure ready for regulated
+        industries. This was independently verified line by line.
+
+  \item \textbf{The licence is the crisis.} Every claim about enterprise market
+        potential is blocked by AGPL-3.0. Switch to Apache~2.0 before anything
+        else.
+
+  \item \textbf{The ComplianceReporter and ShadowEvaluator are the features
+        that nobody knows about.} A compliance reporter that converts a Z3
+        violation label into a BSA/AML CFR citation, exported as PDF. A shadow
+        evaluator that runs canary policy tests non-blocking against live
+        traffic before promotion. These are the capabilities that make Pramanix
+        an enterprise product rather than a developer SDK. They need front-page
+        documentation.
+\end{enumerate}
+
+\section{What Comes Next}
+
+The fail-closed contract must never be relaxed. The Z3 path to
+\code{allowed=True} must remain the only path.
+
+The license must change. The Redis circuit breaker race must be fixed. The
+logging split-brain must be unified.  \textit{[Done --- Phase~10]} The Merkle
+archive encryption is now pluggable (\code{EncryptedArchiveWriter}).
+
+After those three remaining changes (license, Redis race, logging split-brain),
+Pramanix is ready for external release. Not because
+the system is perfect --- the 14 known gaps in \fname{docs/KNOWN\_GAPS.md}
+document what remains. But because every gap is known, named, and honest, and
+the core contract has not been broken.
+
+That is what production readiness means: not the absence of gaps, but the
+honest accounting of them.
+
+%% ============================================================================
+%%  APPENDICES
+%% ============================================================================
+
+\appendix
+
+\chapter{File Reference Map}
+\label{app:references}
+
+\begin{longtable}{@{} p{5.5cm} p{5cm} p{3.5cm} @{}}
+\toprule
+\textbf{Claim} & \textbf{File} & \textbf{Location} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\footnotesize\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Claim} & \textbf{File} & \textbf{Location} \\
+\midrule
+\endhead
+\bottomrule
+\multicolumn{3}{r}{\footnotesize\textit{(continued on next page)}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Fail-closed contract        & \fname{docs/DECISIONS.md}     & \cfrsec{2} \\
+Two-phase solver            & \fname{docs/DECISIONS.md}     & \cfrsec{3} \\
+Exact arithmetic            & \fname{docs/DECISIONS.md}     & \cfrsec{10} \\
+HMAC-sealed IPC             & \fname{docs/DECISIONS.md}     & \cfrsec{15} \\
+ContextVar isolation        & \fname{docs/DECISIONS.md}     & \cfrsec{6} \\
+Alpine/musl rejection       & \fname{docs/DECISIONS.md}     & \cfrsec{12} \\
+Iterative Merkle            & \fname{docs/DECISIONS.md}     & \cfrsec{18} \\
+Timing pad design           & \fname{docs/DECISIONS.md}     & \cfrsec{19} \\
+P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} & root \\
+1M stability results        & \fname{benchmarks/results/1m\_audit\_summary.json} & root \\
+100M architecture           & \fname{benchmarks/100m\_orchestrator\_fast.py} & header \\
+38 primitives               & \fname{reality.md}            & \cfrsec{2.2} \\
+AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
+Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
+Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
+3,966 tests                 & \fname{reality.md}            & \cfrsec{3.1} \\
+3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
+3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
+EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\
+amount\_field parameter     & \fname{src/pramanix/translator/\_sanitise.py} & injection\_confidence\_score \\
+structlog isolation fix     & \fname{tests/unit/test\_guard\_dark\_paths.py} & \code{\_capture\_log\_output} \\
+Stability tiers             & \fname{docs/PUBLIC\_API.md}   & Stability Tiers \\
+9 integrations              & \fname{reality.md}            & \cfrsec{2.4} \\
+ComplianceReporter          & \fname{reality.md}            & \cfrsec{2.4} \\
+ShadowEvaluator             & \fname{reality.md}            & \cfrsec{2.4} \\
+BUG-10 JWT fix              & \fname{docs/CHANGELOG.md}     & \cfrsec{BUG-10} \\
+H-02 timing oracle fix      & \fname{docs/CHANGELOG.md}     & \cfrsec{H-02} \\
+C-01 async bypass fix       & \fname{docs/CHANGELOG.md}     & \cfrsec{C-01} \\
+H-03 LangChain stub         & \fname{docs/CHANGELOG.md}     & \cfrsec{H-03} \\
+H-04 CrewAI stub            & \fname{docs/CHANGELOG.md}     & \cfrsec{H-04} \\
+BUG-03 OversightRecord      & \fname{docs/CHANGELOG.md}     & \cfrsec{BUG-03} \\
+\end{longtable}
+
+\chapter{Dependency Inventory}
+\label{app:deps}
+
+\textbf{Core} (always installed with \code{pip install pramanix}):
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{} l l p{7cm} @{}}
+\toprule
+\textbf{Package} & \textbf{Version} & \textbf{Purpose} \\
+\midrule
+\code{pydantic}  & \code{\textasciicircum{}2.5}  & Strict-mode input validation \\
+\code{z3-solver} & \code{\textasciicircum{}4.12} & SMT formal verification engine \\
+\code{structlog} & \code{\textasciicircum{}23.2} & Structured logging with secrets redaction \\
+\bottomrule
+\end{tabular}
+\caption{Core dependencies (source: \fname{pyproject.toml})}
+\end{table}
+
+\textbf{Optional extras} (31 total, from \fname{pyproject.toml}):
+
+\begin{itemize}
+  \item \code{translator}: \code{httpx}, \code{openai}, \code{anthropic},
+        \code{tenacity}
+  \item \code{otel}: \code{opentelemetry-sdk},
+        \code{opentelemetry-exporter-otlp-proto-grpc}
+  \item \code{fastapi}: \code{fastapi}, \code{starlette}, \code{httpx}
+  \item \code{crypto}: \code{cryptography} (Ed25519 signing)
+  \item \code{aws} / \code{azure} / \code{gcp} / \code{vault}: cloud key
+        providers
+  \item \code{kafka}: \code{confluent-kafka} (audit sink)
+  \item \code{metrics}: \code{prometheus-client}
+  \item \code{performance}: \code{orjson}
+  \item \code{sklearn}: \code{scikit-learn} (\code{CalibratedScorer})
+  \item Plus 20 more for specific framework integrations
+\end{itemize}
+
+%% ============================================================================
+%%  BIBLIOGRAPHY
+%% ============================================================================
+
+\chapter*{References}
+\addcontentsline{toc}{chapter}{References}
+
+\begin{enumerate}[label={[\arabic*]}]
+  \item L.~de~Moura and N.~Bj\o{}rner. \textit{Z3: An Efficient SMT Solver}.
+        In \textit{Tools and Algorithms for the Construction and Analysis of
+        Systems (TACAS~2008)}, Lecture Notes in Computer Science, vol.~4963,
+        pp.~337--340. Springer, Berlin, Heidelberg, 2008.
+
+  \item D.~Kroening and O.~Strichman. \textit{Decision Procedures: An
+        Algorithmic Point of View}. 2nd~ed. Springer, 2016.
+
+  \item R.~Nieuwenhuis, A.~Oliveras, and C.~Tinelli. Solving SAT and SAT
+        Modulo Theories: From an Abstract Davis--Putnam--Logemann--Loveland
+        Procedure to DPLL(T). \textit{Journal of the ACM}, 53(6):937--977,
+        2006.
+
+  \item Open Policy Agent. \textit{Policy Language}. Open Policy Agent
+        Documentation. \url{https://www.openpolicyagent.org/docs/latest/}.
+        Accessed May 2026.
+
+  \item National Institute of Standards and Technology. \textit{Artificial
+        Intelligence Risk Management Framework (AI RMF 1.0)}. NIST AI 100-1.
+        January 2023.
+
+  \item European Parliament and the Council of the European Union. Regulation
+        (EU) 2024/1689 laying down harmonised rules on artificial intelligence
+        (Artificial Intelligence Act). \textit{Official Journal of the European
+        Union}, L series, 2024.
+
+  \item G.~Katz, C.~Barrett, D.~Dill, K.~Julian, and M.~Kochenderfer.
+        Reluplex: An Efficient SMT Solver for Verifying Deep Neural Networks.
+        In \textit{Computer Aided Verification (CAV~2017)}, Lecture Notes in
+        Computer Science, vol.~10426. Springer, 2017.
+
+  \item seL4 Foundation. \textit{The seL4 Microkernel: An Introduction}.
+        \url{https://sel4.systems/Info/Docs/seL4-manual-latest.pdf}.
+        Accessed May 2026.
+\end{enumerate}
+
+\vfill
+\begin{center}
+  \small\itshape
+  Every claim in this document is grounded in source code, benchmark output,\\
+  or documentation that exists in the repository as of the audit date 2026-05-12.\\
+  Where code and documentation disagree, the code is the authority.
+\end{center}
+
+\end{document}

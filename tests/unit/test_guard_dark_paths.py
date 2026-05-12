@@ -43,6 +43,7 @@ Coverage targets
 * OTel span set_attribute path (real in-memory exporter)
 * Prometheus metrics path (real counter reads)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -73,9 +74,7 @@ class _MinimalPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) >= 0)
-            .named("non_negative")
-            .explain("amount {amount} must be >= 0"),
+            (E(_amount_field) >= 0).named("non_negative").explain("amount {amount} must be >= 0"),
         ]
 
 
@@ -101,9 +100,7 @@ class _ModelledPolicy(Policy):
     @classmethod
     def invariants(cls):  # type: ignore[override]
         return [
-            (E(_amount_field) >= 0)
-            .named("non_negative")
-            .explain("amount {amount} must be >= 0"),
+            (E(_amount_field) >= 0).named("non_negative").explain("amount {amount} must be >= 0"),
         ]
 
 
@@ -298,7 +295,9 @@ class TestSemanticPostConsensusCheck:
     # ── Infra: replica and resource checks ──────────────────────────────────
 
     def test_negative_replicas_raises(self) -> None:
-        with pytest.raises(SemanticPolicyViolation, match="requested_replicas must be non-negative"):
+        with pytest.raises(
+            SemanticPolicyViolation, match="requested_replicas must be non-negative"
+        ):
             self._call({"requested_replicas": -1}, {})
 
     def test_replicas_exceed_max_raises(self) -> None:
@@ -350,9 +349,7 @@ def async_thread_guard():
 
 class TestVerifyAsyncThreadMode:
     @pytest.mark.asyncio
-    async def test_allow_with_decimal_intent_and_state(
-        self, async_thread_guard: Guard
-    ) -> None:
+    async def test_allow_with_decimal_intent_and_state(self, async_thread_guard: Guard) -> None:
         """dict->validate_intent + validate_state + version check (ALLOW)."""
         result = await async_thread_guard.verify_async(
             intent={"amount": Decimal("50")},
@@ -378,9 +375,7 @@ class TestVerifyAsyncThreadMode:
         assert result.status == SolverStatus.VALIDATION_FAILURE
 
     @pytest.mark.asyncio
-    async def test_stale_state_version_returns_stale(
-        self, async_thread_guard: Guard
-    ) -> None:
+    async def test_stale_state_version_returns_stale(self, async_thread_guard: Guard) -> None:
         """Wrong state_version -> stale_state."""
         from pramanix import SolverStatus
 
@@ -426,7 +421,9 @@ class TestVerifyAsyncThreadMode:
         from pramanix import guard as _gmod
 
         monkeypatch.setattr(
-            _gmod, "validate_intent", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("unexpected"))
+            _gmod,
+            "validate_intent",
+            lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("unexpected")),
         )
 
         result = await async_thread_guard.verify_async(
@@ -569,9 +566,7 @@ class TestOtelSpanAttributes:
             (s for s in finished if s.name == "pramanix.guard.verify"),
             None,
         )
-        assert verify_span is not None, (
-            "Expected a span named 'pramanix.guard.verify'"
-        )
+        assert verify_span is not None, "Expected a span named 'pramanix.guard.verify'"
         assert "pramanix.decision_id" in verify_span.attributes
         assert "pramanix.policy.name" in verify_span.attributes
 
@@ -584,9 +579,9 @@ class TestOtelSpanAttributes:
 class TestPrometheusMetrics:
     def test_prom_available_is_true(self) -> None:
         """prometheus_client is a hard dependency — _PROM_AVAILABLE must be True."""
-        assert _guard_mod._PROM_AVAILABLE is True, (
-            "_PROM_AVAILABLE is False — prometheus_client may not be installed"
-        )
+        assert (
+            _guard_mod._PROM_AVAILABLE is True
+        ), "_PROM_AVAILABLE is False — prometheus_client may not be installed"
 
     def test_verify_increments_decisions_total_counter(self) -> None:
         """metrics_enabled=True → pramanix_decisions_total counter increments.
@@ -599,11 +594,9 @@ class TestPrometheusMetrics:
 
         def _read_counter(status: str) -> float:
             try:
-                return (
-                    _guard_mod._decisions_total  # type: ignore[attr-defined]
-                    .labels(policy=policy_name, status=status)
-                    ._value.get()
-                )
+                return _guard_mod._decisions_total.labels(  # type: ignore[attr-defined]
+                    policy=policy_name, status=status
+                )._value.get()
             except Exception:
                 return 0.0
 
@@ -628,11 +621,7 @@ class TestPrometheusMetrics:
 
         def _read_histogram_count() -> float:
             try:
-                return (
-                    _guard_mod._decision_latency  # type: ignore[attr-defined]
-                    .labels(policy=policy_name)
-                    ._sum.get()
-                )
+                return _guard_mod._decision_latency.labels(policy=policy_name)._sum.get()  # type: ignore[attr-defined]
             except Exception:
                 return 0.0
 
@@ -781,17 +770,21 @@ class TestLoggingIsolation:
                 ]
 
         buf = _io.StringIO()
-        structlog.configure(
-            processors=[
-                structlog.stdlib.add_log_level,
-                structlog.processors.JSONRenderer(),
-            ],
-            logger_factory=structlog.PrintLoggerFactory(buf),
-            cache_logger_on_first_use=False,
-        )
+        old_config = structlog.get_config()
+        try:
+            structlog.configure(
+                processors=[
+                    structlog.stdlib.add_log_level,
+                    structlog.processors.JSONRenderer(),
+                ],
+                logger_factory=structlog.PrintLoggerFactory(buf),
+                cache_logger_on_first_use=False,
+            )
 
-        guard = Guard(_P, GuardConfig(execution_mode="sync"))
-        guard.verify(intent=intent, state=state)
+            guard = Guard(_P, GuardConfig(execution_mode="sync"))
+            guard.verify(intent=intent, state=state)
+        finally:
+            structlog.configure(**old_config)
         return buf.getvalue()
 
     def test_financial_amounts_not_logged_on_allow(self) -> None:
@@ -802,12 +795,10 @@ class TestLoggingIsolation:
             intent={"amount": Decimal(sentinel_amount)},
             state={"balance": Decimal(sentinel_balance), "state_version": "1.0"},
         )
-        assert sentinel_amount not in output, (
-            f"amount {sentinel_amount!r} appeared in log output"
-        )
-        assert sentinel_balance not in output, (
-            f"balance {sentinel_balance!r} appeared in log output"
-        )
+        assert sentinel_amount not in output, f"amount {sentinel_amount!r} appeared in log output"
+        assert (
+            sentinel_balance not in output
+        ), f"balance {sentinel_balance!r} appeared in log output"
 
     def test_financial_amounts_not_logged_on_block(self) -> None:
         """Blocked decision must not log the actual amount or balance."""
@@ -817,9 +808,7 @@ class TestLoggingIsolation:
             intent={"amount": Decimal(sentinel_amount)},
             state={"balance": Decimal(sentinel_balance), "state_version": "1.0"},
         )
-        assert sentinel_amount not in output, (
-            f"amount {sentinel_amount!r} appeared in log output"
-        )
-        assert sentinel_balance not in output, (
-            f"balance {sentinel_balance!r} appeared in log output"
-        )
+        assert sentinel_amount not in output, f"amount {sentinel_amount!r} appeared in log output"
+        assert (
+            sentinel_balance not in output
+        ), f"balance {sentinel_balance!r} appeared in log output"

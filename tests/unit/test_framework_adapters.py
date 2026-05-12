@@ -220,3 +220,29 @@ async def test_pydantic_ai_check_async_blocked_raises() -> None:
     with pytest.raises(GuardViolationError) as exc_info:
         await validator.check_async(BLOCK_INTENT, state=ALLOW_STATE)
     assert exc_info.value.decision.violated_invariants == ("above_threshold",)
+
+
+# ── DSPy absent import path ───────────────────────────────────────────────────
+
+
+def test_dspy_unavailable_sets_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """dspy.py lines 48-50: when dspy is absent, _DSPY_AVAILABLE=False, _ModuleBase=object."""
+    monkeypatch.delitem(sys.modules, "pramanix.integrations.dspy", raising=False)
+    monkeypatch.setitem(sys.modules, "dspy", None)
+    import importlib
+    dspy_mod = importlib.import_module("pramanix.integrations.dspy")
+    assert dspy_mod._DSPY_AVAILABLE is False
+    assert dspy_mod._ModuleBase is object
+
+
+# ── FastAPI / starlette absent import path ───────────────────────────────────
+
+
+def test_fastapi_starlette_absent_sets_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """fastapi.py lines 60-62: starlette absent → _STARLETTE_AVAILABLE=False."""
+    monkeypatch.delitem(sys.modules, "pramanix.integrations.fastapi", raising=False)
+    monkeypatch.setitem(sys.modules, "starlette.middleware.base", None)
+    import importlib
+    fa_mod = importlib.import_module("pramanix.integrations.fastapi")
+    assert fa_mod._STARLETTE_AVAILABLE is False
+    assert fa_mod._BaseHTTPMiddleware is object

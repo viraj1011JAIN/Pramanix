@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import threading as _thr
-import warnings as _w
 from typing import TYPE_CHECKING, Any
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
@@ -26,12 +24,17 @@ if TYPE_CHECKING:
 
 __all__ = ["GeminiTranslator"]
 
+# Temperature 0 ≡ deterministic mode — critical for reproducible consensus.
+_TEMPERATURE = 0.0
+
 # Suppress google-generativeai deprecation warnings globally.  The package
 # emits a FutureWarning attributed to the caller's frame (our gemini.py import
 # site) with a message beginning with "\n\n  All support...".  Python's
 # warnings.filterwarnings uses re.match (anchored to start), and ".*" does not
 # match newlines by default, so we use the inline (?s) / DOTALL flag to ensure
 # the pattern matches across the leading newlines.
+import warnings as _w
+
 _w.filterwarnings("ignore", message=r"(?s).*google\.generativeai.*", category=FutureWarning)
 _w.filterwarnings("ignore", message=r"(?s).*google\.generativeai.*", category=DeprecationWarning)
 del _w
@@ -40,11 +43,10 @@ del _w
 # support global key configuration (not per-instance clients).
 # threading.Lock (not asyncio.Lock) so it is safe across event-loop boundaries;
 # different pytest tests each run with a fresh event loop.
+import threading as _thr
+
 _GEMINI_CONFIGURE_LOCK = _thr.Lock()
 del _thr
-
-# Temperature 0 ≡ deterministic mode — critical for reproducible consensus.
-_TEMPERATURE = 0.0
 
 
 class GeminiTranslator:
@@ -89,7 +91,7 @@ class GeminiTranslator:
                 del _gp, _g
             except ImportError:
                 pass
-            import google.generativeai as _genai
+            import google.generativeai  # noqa: F401
         except ImportError as exc:
             raise ConfigurationError(
                 "google-generativeai is required for GeminiTranslator. "
@@ -101,6 +103,8 @@ class GeminiTranslator:
         self._timeout = timeout
         # M-12: build a per-instance genai client so two Guard instances with
         # different keys don't overwrite each other via genai.configure().
+        import google.generativeai as _genai
+
         self._genai = _genai
         if self._api_key:
             # genai v0.8+ supports Client(api_key=...) per-instance.
@@ -134,6 +138,8 @@ class GeminiTranslator:
             LLMTimeoutError:        All retry attempts exhausted.
             ConfigurationError:     ``google-generativeai`` not installed.
         """
+        genai = self._genai
+
         try:
             from tenacity import (
                 AsyncRetrying,
@@ -189,7 +195,7 @@ class GeminiTranslator:
             try:
                 import httpx as _httpx
 
-                if isinstance(exc, _httpx.TransportError | _httpx.TimeoutException):
+                if isinstance(exc, (_httpx.TransportError, _httpx.TimeoutException)):
                     raise LLMTimeoutError(
                         f"Gemini model '{self.model}' connection error: {exc}",
                         model=self.model,

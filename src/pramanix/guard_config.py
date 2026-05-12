@@ -18,6 +18,7 @@ Contents
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import re
 import warnings
@@ -64,21 +65,53 @@ def _redact_secrets_processor(
     return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else v) for k, v in event_dict.items()}
 
 
+# Shared pre-chain applied to ALL log events that enter the structlog pipeline,
+# whether they originate from structlog.get_logger() or stdlib logging.getLogger().
+# _redact_secrets_processor MUST be first so secrets never appear in any
+# downstream processor, renderer, or sink.
+_SHARED_LOG_PROCESSORS: list[Any] = [
+    _redact_secrets_processor,
+    structlog.stdlib.add_log_level,
+    structlog.stdlib.add_logger_name,
+    structlog.processors.TimeStamper(fmt="iso", utc=True),
+    structlog.processors.StackInfoRenderer(),
+    structlog.processors.format_exc_info,
+    structlog.processors.UnicodeDecoder(),
+]
+
 structlog.configure(
-    processors=[
-        _redact_secrets_processor,  # must be first — sanitise before anything else
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer(),
-    ],
+    processors=_SHARED_LOG_PROCESSORS + [structlog.processors.JSONRenderer()],
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
     wrapper_class=structlog.BoundLogger,
     cache_logger_on_first_use=True,
 )
+
+# ── Stdlib logging bridge ─────────────────────────────────────────────────────
+# Modules that use logging.getLogger(__name__) (worker.py, solver.py,
+# decision.py, etc.) bypass structlog's pipeline and therefore bypass
+# _redact_secrets_processor.  The bridge below routes the entire
+# "pramanix.*" stdlib logger tree through the same redaction + JSON pipeline.
+#
+# foreign_pre_chain applies _SHARED_LOG_PROCESSORS to stdlib LogRecord objects
+# before the final JSONRenderer renders them — identical output, no split-brain.
+_stdlib_formatter = structlog.stdlib.ProcessorFormatter(
+    processor=structlog.processors.JSONRenderer(),
+    foreign_pre_chain=_SHARED_LOG_PROCESSORS,
+)
+_stdlib_handler = logging.StreamHandler()
+_stdlib_handler.setFormatter(_stdlib_formatter)
+
+# Attach once to the "pramanix" root logger.  The guard is idempotent so
+# re-importing guard_config in tests never installs duplicate handlers.
+# propagate is intentionally left True (Python's default) so that pytest's
+# caplog fixture and application-configured root handlers can still capture
+# pramanix log records.  Applications that want to suppress duplicate output
+# from a separately configured root handler should set
+# logging.getLogger("pramanix").propagate = False in their own logging setup.
+_pramanix_root = logging.getLogger("pramanix")
+if not _pramanix_root.handlers:
+    _pramanix_root.addHandler(_stdlib_handler)
 
 _log = structlog.get_logger("pramanix.guard")
 

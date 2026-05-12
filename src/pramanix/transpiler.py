@@ -758,6 +758,10 @@ def _tree_repr(node: Any) -> str:
             return f"InOp({_tree_repr(l)},{[_tree_repr(v) for v in vs]})"
         case _AbsOp(operand=o):
             return f"AbsOp({_tree_repr(o)})"
+        case _PowOp(base=b, exp=e):
+            return f"PowOp({_tree_repr(b)},{e!r})"
+        case _ModOp(dividend=d, divisor=v):
+            return f"ModOp({_tree_repr(d)},{_tree_repr(v)})"
         case _:
             return f"Unknown({type(node).__name__})"
 
@@ -793,8 +797,8 @@ class InvariantASTCache:
 
     _cache: ClassVar[dict[tuple[int, str], list[InvariantMeta]]] = {}
     _access_order: ClassVar[deque[tuple[int, str]]] = deque()  # ordered by last access
-    _max_size: int = 512
-    _lock: Any = _threading.Lock()
+    _max_size: ClassVar[int] = 512
+    _lock: ClassVar[Any] = _threading.Lock()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)

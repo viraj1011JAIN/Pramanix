@@ -33,6 +33,7 @@ Environment variables
 PRAMANIX_MERKLE_SEGMENT_DAYS      : int, default 30  — archive entries older than N days
 PRAMANIX_MERKLE_MAX_ACTIVE_ENTRIES: int, default 100000 — trigger archival at this threshold
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -40,13 +41,39 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _log = logging.getLogger(__name__)
+
+# ── ArchiveWriter protocol ────────────────────────────────────────────────────
+# A callable ``(path: Path, content: bytes) -> None`` that persists an archive
+# segment.  The default writer writes plaintext UTF-8.  For compliance regimes
+# that require encryption at rest (SOC 2 Type II, PCI DSS, HIPAA) supply a
+# custom writer that encrypts with AES-256-GCM before writing to disk.
+#
+# Example — AES-256-GCM writer using ``cryptography``::
+#
+#     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+#     import secrets
+#
+#     key = AESGCM.generate_key(bit_length=256)   # store in KMS
+#     gcm = AESGCM(key)
+#
+#     def encrypted_writer(path: Path, content: bytes) -> None:
+#         nonce = secrets.token_bytes(12)
+#         ciphertext = gcm.encrypt(nonce, content, None)
+#         path.with_suffix(".enc").write_bytes(nonce + ciphertext)
+#
+#     archiver = MerkleArchiver(archive_writer=encrypted_writer)
+ArchiveWriter = "Callable[[Path, bytes], None]"
 
 
 @dataclass
@@ -66,6 +93,154 @@ class ArchiveResult:
     checkpoint_id: str
 
 
+def _default_archive_writer(path: Path, content: bytes) -> None:
+    """Default plaintext writer — atomic write via tempfile + os.replace()."""
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".merkle.tmp.", suffix=".partial")
+    try:
+        with os.fdopen(tmp_fd, "wb") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
+    os.replace(tmp_path, path)
+
+
+class EncryptedArchiveWriter:
+    """AES-256-GCM archive writer for SOC 2, PCI DSS, and HIPAA compliance.
+
+    Encrypts each archive segment with AES-256-GCM before writing to disk.
+    Each write generates a fresh 12-byte random nonce (NIST SP 800-38D §8.2
+    compliant: nonce space is 2^96; probability of collision is negligible
+    for the volumes produced by MerkleArchiver).
+
+    Wire format (written to ``path.with_suffix(".enc")``):
+    ``[12-byte nonce][GCM-authenticated ciphertext (tag appended by AESGCM)]``
+
+    The GCM authentication tag is verified on every :meth:`decrypt` call —
+    any byte-level tampering raises
+    :class:`cryptography.exceptions.InvalidTag` before plaintext is returned.
+
+    Requires: ``cryptography >= 41.0`` (core Pramanix dependency, always
+    present; no extra install needed).
+
+    Args:
+        key: 32-byte AES-256 key.  Generate once and store in a KMS::
+
+                import secrets
+                key = secrets.token_bytes(32)  # store in Vault / AWS KMS / etc.
+
+    Raises:
+        ValueError: If *key* is not exactly 32 bytes.
+        ConfigurationError: If the ``cryptography`` package is not installed.
+
+    Example::
+
+        import secrets
+        from pramanix.audit.archiver import EncryptedArchiveWriter, MerkleArchiver
+
+        key = secrets.token_bytes(32)  # persist this in your KMS
+        writer = EncryptedArchiveWriter(key)
+        archiver = MerkleArchiver(base_path="/var/lib/pramanix/merkle",
+                                  archive_writer=writer)
+    """
+
+    _NONCE_BYTES: int = 12  # 96-bit nonce — NIST SP 800-38D recommendation for GCM
+
+    def __init__(self, key: bytes) -> None:
+        if len(key) != 32:
+            raise ValueError(
+                f"EncryptedArchiveWriter requires a 32-byte AES-256 key "
+                f"(got {len(key)} bytes).  "
+                f"Generate one with: secrets.token_bytes(32)"
+            )
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        except ImportError as exc:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "The 'cryptography' package is required for EncryptedArchiveWriter. "
+                "Install it with: pip install pramanix  (it is a core dependency)"
+            ) from exc
+
+        self._aesgcm = AESGCM(key)
+
+    def __call__(self, path: Path, content: bytes) -> None:
+        """Encrypt *content* with AES-256-GCM and write to ``path.with_suffix('.enc')``.
+
+        Writes atomically via a tempfile + :func:`os.replace` so a crash
+        mid-write never leaves a partial or corrupt ciphertext on disk.
+
+        Args:
+            path:    Base path provided by :class:`MerkleArchiver`.  The
+                     ``.enc`` suffix is appended so plaintext and ciphertext
+                     archive paths are never confused.
+            content: Raw plaintext bytes (UTF-8 encoded NDJSON archive).
+        """
+        nonce = secrets.token_bytes(self._NONCE_BYTES)
+        ciphertext = self._aesgcm.encrypt(nonce, content, None)
+        payload = nonce + ciphertext  # nonce prepended; decrypt() splits on _NONCE_BYTES
+
+        enc_path = path.with_suffix(".enc")
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=enc_path.parent, prefix=".merkle.enc.tmp.", suffix=".partial"
+        )
+        try:
+            with os.fdopen(tmp_fd, "wb") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+        os.replace(tmp_path, enc_path)
+
+    @staticmethod
+    def decrypt(key: bytes, enc_path: Path) -> bytes:
+        """Decrypt an archive segment written by :class:`EncryptedArchiveWriter`.
+
+        Reads the ``[nonce][ciphertext+tag]`` payload, verifies the GCM
+        authentication tag, and returns plaintext bytes.  Any byte-level
+        tampering raises :class:`cryptography.exceptions.InvalidTag` before
+        any plaintext is exposed.
+
+        Args:
+            key:      The same 32-byte key used at encryption time.
+            enc_path: Path to the ``.enc`` file produced by this writer.
+
+        Returns:
+            Plaintext bytes (UTF-8 encoded NDJSON archive).
+
+        Raises:
+            ValueError:                         *key* is not 32 bytes.
+            FileNotFoundError:                  *enc_path* does not exist.
+            cryptography.exceptions.InvalidTag: Ciphertext has been tampered with.
+        """
+        if len(key) != 32:
+            raise ValueError(f"decrypt() requires a 32-byte AES-256 key (got {len(key)} bytes).")
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        raw = Path(enc_path).read_bytes()
+        nonce = raw[: EncryptedArchiveWriter._NONCE_BYTES]
+        ciphertext = raw[EncryptedArchiveWriter._NONCE_BYTES :]
+        return AESGCM(key).decrypt(nonce, ciphertext, None)
+
+    @staticmethod
+    def generate_key() -> bytes:
+        """Generate a cryptographically random 32-byte AES-256 key.
+
+        Returns:
+            32 random bytes suitable for use as an AES-256 key.  Store this
+            in a KMS (AWS KMS, HashiCorp Vault, Azure Key Vault, GCP Cloud KMS)
+            before using it in production.
+        """
+        return secrets.token_bytes(32)
+
+
 class MerkleArchiver:
     """Merkle accumulator with automatic segment-based archival.
 
@@ -82,6 +257,18 @@ class MerkleArchiver:
         max_active_entries: Trigger archival when active count reaches N.
                             Default: env ``PRAMANIX_MERKLE_MAX_ACTIVE_ENTRIES``
                             or 100,000.
+        archive_writer:     Callable ``(path: Path, content: bytes) -> None``
+                            that persists each archive segment.  Defaults to
+                            the plaintext atomic writer.  Supply an encrypted
+                            writer for SOC 2, PCI DSS, or HIPAA deployments::
+
+                                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                                import secrets
+                                gcm = AESGCM(key)
+                                def enc_writer(p, data):
+                                    nonce = secrets.token_bytes(12)
+                                    p.write_bytes(nonce + gcm.encrypt(nonce, data, None))
+                                archiver = MerkleArchiver(archive_writer=enc_writer)
 
     Usage::
 
@@ -99,6 +286,7 @@ class MerkleArchiver:
         base_path: str | Path = ".",
         segment_days: int | None = None,
         max_active_entries: int | None = None,
+        archive_writer: Callable[[Path, bytes], None] | None = None,
     ) -> None:
         self._base_path = Path(base_path)
         self._segment_days: int = (
@@ -116,13 +304,15 @@ class MerkleArchiver:
                 )
             )
         )
+        self._writer: Callable[[Path, bytes], None] = archive_writer or _default_archive_writer
         self._active: list[_Leaf] = []
-        _log.warning(
-            "MerkleArchiver: archive files are written in PLAINTEXT. "
-            "For compliance regimes requiring encryption at rest "
-            "(SOC 2, PCI DSS, HIPAA), encrypt the archive directory "
-            "or implement a custom archiver with AES-256-GCM."
-        )
+        if archive_writer is None:
+            _log.warning(
+                "MerkleArchiver: no archive_writer supplied — segments written as "
+                "PLAINTEXT UTF-8.  For SOC 2, PCI DSS, or HIPAA deployments pass "
+                "an encrypted archive_writer (e.g. AES-256-GCM).  "
+                "See MerkleArchiver docstring for an example."
+            )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -273,24 +463,10 @@ class MerkleArchiver:
                 )
             )
         self._base_path.mkdir(parents=True, exist_ok=True)
-        # H-06: atomic write — write to temp file, fsync, then os.replace().
-        # A crash mid-write produces an orphaned .tmp file, never a corrupt
-        # archive.  os.replace() is atomic on POSIX; on Windows it is atomic
-        # if src and dst are on the same filesystem (they always are here).
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=self._base_path, prefix=".merkle.tmp.", suffix=".partial"
-        )
-        try:
-            content = "\n".join(lines) + "\n"
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                fh.write(content)
-                fh.flush()
-                os.fsync(fh.fileno())
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
-        os.replace(tmp_path, archive_path)
+        content_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+        # Delegate to the configured writer (default: plaintext atomic write;
+        # custom: caller-supplied encrypted writer for compliance deployments).
+        self._writer(archive_path, content_bytes)
 
         # Replace archived entries with a checkpoint leaf in the active chain.
         archived_ids = {leaf.decision_id for leaf in to_archive}
@@ -319,9 +495,7 @@ def _build_root(leaf_hashes: list[str]) -> str:
             padded = hashlib.sha256(b"\x01" + level[-1].encode()).hexdigest()
             level.append(padded)
         level = [
-            hashlib.sha256(
-                b"\x01" + (level[i] + level[i + 1]).encode()
-            ).hexdigest()
+            hashlib.sha256(b"\x01" + (level[i] + level[i + 1]).encode()).hexdigest()
             for i in range(0, len(level), 2)
         ]
     return level[0]

@@ -265,6 +265,46 @@ class TestOpenAICompatCoverage:
 
 
 class TestCohereTranslatorCoverage:
+    def test_cohere_init_both_attribute_fallbacks_covered(self) -> None:
+        """cohere.py lines 77-79: both except AttributeError branches fire.
+
+        Replaces sys.modules["cohere"] with a mock that:
+        - Has no errors.TooManyRequestsError → outer except AttributeError fires
+        - Has no core.api_error.ApiError → inner except AttributeError fires (77-79)
+        - CohereError = None → retryable becomes (OSError,)
+        """
+        from pramanix.translator.cohere import CohereTranslator
+
+        class _FakeErrors:
+            pass  # no TooManyRequestsError → AttributeError
+
+        class _FakeApiError:
+            pass  # no ApiError → AttributeError
+
+        class _FakeCore:
+            api_error = _FakeApiError()
+
+        class _FakeCohereModule:
+            errors = _FakeErrors()
+            core = _FakeCore()
+            CohereError = None  # getattr returns None → (OSError,)
+
+            class AsyncClientV2:
+                def __init__(self, **kw: object) -> None:
+                    pass
+
+        sentinel = object()
+        orig = sys.modules.pop("cohere", sentinel)
+        sys.modules["cohere"] = _FakeCohereModule()  # type: ignore[assignment]
+        try:
+            t = CohereTranslator("command-r", api_key="fake-key")
+            assert t._retryable == (OSError,)
+        finally:
+            if orig is sentinel:
+                sys.modules.pop("cohere", None)
+            else:
+                sys.modules["cohere"] = orig
+
     def test_cohere_error_fallback_when_core_missing(self) -> None:
         """CohereError generic fallback when cohere.core.api_error missing."""
 
@@ -338,7 +378,7 @@ class TestCohereTranslatorCoverage:
 
 
 class TestLlamaCppCoverage:
-    def test_get_llm_loads_from_cache(self, tmp_path: "pytest.fixture") -> None:  # type: ignore[type-arg]
+    def test_get_llm_loads_from_cache(self, tmp_path: pytest.fixture) -> None:  # type: ignore[type-arg]
         """_get_llm() returns the cached model without calling Llama().
 
         Uses importlib.import_module to get a single canonical module reference —
@@ -370,9 +410,9 @@ class TestLlamaCppCoverage:
         t._llm = None
 
         result = t._get_llm()
-        assert result is fake_llm, (
-            "_get_llm() must return the cached sentinel without calling Llama()"
-        )
+        assert (
+            result is fake_llm
+        ), "_get_llm() must return the cached sentinel without calling Llama()"
         _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
 
     @pytest.mark.asyncio
@@ -437,9 +477,12 @@ class TestGeminiTranslatorCoverage:
         from pramanix.exceptions import ConfigurationError
 
         monkeypatch.setitem(sys.modules, "google.generativeai", None)
-        monkeypatch.setitem(sys.modules, "google", None)
+        # Do NOT null out "google" itself — that corrupts the google namespace
+        # package for the rest of the session. Blocking google.generativeai is
+        # sufficient: `import google.generativeai` raises ImportError when
+        # sys.modules contains None for that key.
         if "pramanix.translator.gemini" in sys.modules:
-            del sys.modules["pramanix.translator.gemini"]
+            monkeypatch.delitem(sys.modules, "pramanix.translator.gemini")
         with pytest.raises((ConfigurationError, ImportError)):
             from pramanix.translator.gemini import GeminiTranslator
 

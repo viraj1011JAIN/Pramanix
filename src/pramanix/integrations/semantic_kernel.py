@@ -62,6 +62,7 @@ class PramanixSemanticKernelPlugin:
         # missing-dependency error surfaces immediately rather than at call time.
         try:
             import importlib as _il
+
             _il.import_module("semantic_kernel")
             del _il
         except ImportError as exc:

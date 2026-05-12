@@ -278,10 +278,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# expressions.py: E(), ForAll(), Exists(), DatetimeField() are public DSL entry
-# points styled after mathematical logic notation (∃, ∀) and type constructors.
-# Renaming to snake_case would break the established DSL API contract.
-"src/pramanix/expressions.py" = ["N802"]
 # Primitive factory functions are intentionally PascalCase (styled as constructors).
 "src/pramanix/primitives/*.py" = ["N802"]
 # Integration tests use print() for latency measurement output; T20 not applicable here.
@@ -359,9 +355,6 @@ filterwarnings = [
     # GuardConfig emits a production-mode advisory when PRAMANIX_ENV=production;
     # tests that set this env var are explicitly testing that path.
     "ignore:GuardConfig:UserWarning",
-    # requests library version-mismatch advisory — upstream environment issue, not
-    # a Pramanix defect.  Suppressed so pytest output stays signal-only.
-    "ignore:.*doesn't match a supported version:Warning",
 ]
 
 [tool.coverage.run]

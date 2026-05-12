@@ -27,6 +27,7 @@ costs and latency for attack traffic.
 The false-positive rate for legitimate low-value transactions is intentionally
 low — the threshold (0.5) was chosen to block only high-confidence attacks.
 """
+
 from __future__ import annotations
 
 import re
@@ -124,6 +125,7 @@ def injection_confidence_score(
     warnings: list[str],
     *,
     sub_penny_threshold: Decimal = Decimal("0.10"),
+    amount_field: str = "amount",
 ) -> float:
     """Heuristic injection-confidence score in *[0, 1]*.
 
@@ -156,6 +158,13 @@ def injection_confidence_score(
                               (3-decimal currencies), ``Decimal("0.0001")``
                               for crypto, or ``Decimal("0")`` to disable the
                               signal entirely.
+        amount_field:         Key in *extracted_intent* that holds the
+                              monetary amount.  Defaults to ``"amount"``
+                              (standard financial schema).  Override to
+                              ``"value"``, ``"price"``, ``"quantity"`` etc.
+                              for non-standard intent schemas.  Pass an
+                              empty string ``""`` to disable the sub-penny
+                              signal entirely regardless of threshold.
 
     Returns:
         Float in *[0.0, 1.0]*.
@@ -170,23 +179,32 @@ def injection_confidence_score(
     if len(user_input.strip()) < 10:
         score += 0.2
 
-    # Sub-threshold amounts are anomalous for most financial transactions.
-    # The threshold is domain-specific; callers must override for currencies
-    # with legitimate micro-transaction semantics (crypto, zero-decimal, etc.).
-    try:
-        amt = Decimal(str(extracted_intent.get("amount", "1")))
-        if Decimal("0") < amt < sub_penny_threshold:
-            score += 0.3
-    except Exception:
-        score += 0.4  # unparseable amount is itself a suspicious anomaly
+    # Sub-threshold amounts are anomalous for financial transactions.
+    # Only applies when amount_field is explicitly present in extracted_intent —
+    # non-financial policies that have no monetary field are silently skipped.
+    # Callers in non-financial domains set amount_field to their field name or
+    # pass amount_field="" to disable this signal entirely.
+    if amount_field and amount_field in extracted_intent:
+        try:
+            amt = Decimal(str(extracted_intent[amount_field]))
+            if Decimal("0") < amt < sub_penny_threshold:
+                score += 0.3
+        except Exception:
+            score += 0.4  # unparseable amount is itself a suspicious anomaly
 
     # Non-word characters in any ID-like field are suspicious (path-traversal /
     # code-injection vectors).  Check all string fields whose names suggest an
     # identifier rather than free-text (e.g. description, reason).
     # M-29: \w with re.UNICODE so Unicode names (André, 김민준) are not flagged.
     _id_like_suffixes = (
-        "_id", "_key", "_token", "_ref",
-        "_number", "_code", "_account", "_address",
+        "_id",
+        "_key",
+        "_token",
+        "_ref",
+        "_number",
+        "_code",
+        "_account",
+        "_address",
     )
     for _field_name, _field_val in extracted_intent.items():
         if (

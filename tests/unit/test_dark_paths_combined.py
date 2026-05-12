@@ -165,8 +165,12 @@ class TestInjectionScorerDarkPaths:
         key = b"valid_key_32bytes_abcdefghijk1234"
         pkl_path = self._write_valid_pkl(tmp_path, key)
 
-        # Temporarily hide sklearn from the import system
-        with patch.dict(sys.modules, {"sklearn": None}):
+        # Temporarily hide sklearn from the import system.
+        # Must also null out already-cached submodules so that
+        # `from sklearn.X.Y import Z` inside __init__ cannot resolve
+        # them from sys.modules when sklearn is installed.
+        _sklearn_keys = {k: None for k in list(sys.modules) if k == "sklearn" or k.startswith("sklearn.")}
+        with patch.dict(sys.modules, _sklearn_keys):
             with pytest.raises(ConfigurationError, match="scikit-learn"):
                 CalibratedScorer.load(pkl_path, hmac_key=key)
 

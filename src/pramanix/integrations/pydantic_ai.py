@@ -72,6 +72,7 @@ class PramanixPydanticAIValidator:
 
         try:
             import importlib as _il
+
             _il.import_module("pydantic_ai")
             del _il
         except ImportError as exc:

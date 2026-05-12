@@ -758,47 +758,107 @@ class RedisDistributedBackend:
         except (ValueError, KeyError):
             return _DistributedState()
 
-    async def set_state(self, namespace: str, state: _DistributedState) -> None:
-        """Merge *state* into the Redis Hash for *namespace* (conservative merge).
+    # Severity ordering for conservative circuit-state merge.
+    # Higher value = more severe.  Incoming state only escalates, never downgrades.
+    _STATE_SEVERITY: dict[str, int] = {
+        CircuitState.CLOSED.value: 0,
+        CircuitState.HALF_OPEN.value: 1,
+        CircuitState.OPEN.value: 2,
+        CircuitState.ISOLATED.value: 3,
+    }
+    # Maximum number of WATCH/MULTI/EXEC retry attempts before giving up.
+    _MERGE_MAX_RETRIES = 3
 
-        Conservative merge means:
-        - ``circuit_state`` escalates to the most severe value.
-        - ``failure_count`` is summed with the existing count.
+    async def set_state(self, namespace: str, state: _DistributedState) -> None:
+        """Atomically merge *state* into the Redis Hash for *namespace*.
+
+        Uses ``WATCH`` + ``MULTI``/``EXEC`` (optimistic locking) so the entire
+        read-modify-write is atomic: if another writer modifies the key between
+        the WATCH and EXEC, the transaction is aborted and retried up to
+        ``_MERGE_MAX_RETRIES`` times.  This eliminates the TOCTOU race without
+        requiring Lua scripting (and without the ``lupa`` optional dependency).
+
+        Conservative merge rules:
+        - ``circuit_state`` escalates to the most severe value across replicas.
+        - ``failure_count`` is summed (each write's delta is accumulated).
         - ``last_failure_time`` takes the maximum.
         - ``open_episode_count`` takes the maximum.
         """
         try:
+            from redis.exceptions import WatchError
+        except ImportError:
+            # redis package not installed — skip silently (unit tests that
+            # inject a fake client will still work via duck-typing).
+            WatchError = Exception  # type: ignore[assignment,misc]
+
+        try:
             client = await self._get_client()
             key = self._key(namespace)
 
-            # Fetch existing state for conservative merge.
-            existing = await self.get_state(namespace)
+            for attempt in range(self._MERGE_MAX_RETRIES):
+                async with client.pipeline(transaction=True) as pipe:
+                    try:
+                        await pipe.watch(key)
+                        # Read current state while key is being watched.
+                        # Between WATCH and MULTI, commands execute immediately.
+                        raw: dict[str, str] = await pipe.hgetall(key)
 
-            # Severity-wins merge for circuit_state.
-            new_severity = self._SEVERITY.get(state.circuit_state, 0)
-            existing_severity = self._SEVERITY.get(existing.circuit_state, 0)
-            merged_circuit_state = (
-                state.circuit_state
-                if new_severity >= existing_severity
-                else existing.circuit_state
-            )
+                        # Parse existing state, defaulting to CLOSED if absent.
+                        try:
+                            current = _DistributedState(
+                                circuit_state=raw.get(
+                                    "circuit_state", CircuitState.CLOSED.value
+                                ),
+                                failure_count=int(raw.get("failure_count", 0)),
+                                last_failure_time=float(
+                                    raw.get("last_failure_time", 0.0)
+                                ),
+                                open_episode_count=int(
+                                    raw.get("open_episode_count", 0)
+                                ),
+                            )
+                        except (ValueError, KeyError):
+                            current = _DistributedState()
 
-            merged = {
-                "circuit_state": merged_circuit_state,
-                "failure_count": str(existing.failure_count + state.failure_count),
-                "last_failure_time": str(
-                    max(existing.last_failure_time, state.last_failure_time)
-                ),
-                "open_episode_count": str(
-                    max(existing.open_episode_count, state.open_episode_count)
-                ),
-            }
+                        # Conservative merge
+                        cur_sev = self._STATE_SEVERITY.get(current.circuit_state, 0)
+                        new_sev = self._STATE_SEVERITY.get(state.circuit_state, 0)
+                        merged = _DistributedState(
+                            circuit_state=(
+                                state.circuit_state
+                                if new_sev >= cur_sev
+                                else current.circuit_state
+                            ),
+                            failure_count=current.failure_count + state.failure_count,
+                            last_failure_time=max(
+                                current.last_failure_time, state.last_failure_time
+                            ),
+                            open_episode_count=max(
+                                current.open_episode_count, state.open_episode_count
+                            ),
+                        )
 
-            # Use a pipeline for atomicity: HSET + EXPIRE in one round-trip.
-            async with client.pipeline(transaction=True) as pipe:
-                await pipe.hset(key, mapping=merged)
-                await pipe.expire(key, self._ttl)
-                await pipe.execute()
+                        # Enter MULTI mode — subsequent commands are buffered
+                        # and executed atomically.  WatchError fires on EXEC if
+                        # another writer touched the key since WATCH.
+                        pipe.multi()
+                        pipe.hset(
+                            key,
+                            mapping={
+                                "circuit_state": merged.circuit_state,
+                                "failure_count": str(merged.failure_count),
+                                "last_failure_time": str(merged.last_failure_time),
+                                "open_episode_count": str(merged.open_episode_count),
+                            },
+                        )
+                        pipe.expire(key, self._ttl)
+                        await pipe.execute()
+                        return  # success — exit retry loop
+                    except WatchError:
+                        if attempt == self._MERGE_MAX_RETRIES - 1:
+                            raise  # surfaced as non-fatal error below
+                        # Another writer won the race; retry from the top.
+
         except Exception as exc:
             # State-sync failures are non-fatal — local state still governs,
             # but we must surface this so operators know distributed view is stale.

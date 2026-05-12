@@ -141,6 +141,8 @@ class TestKafkaConsumerRealPaths:
         consumer._state_provider = lambda: {}
         consumer._dlq_producer = kwargs.get("dlq_producer")
         consumer._dlq_topic = "test.dlq"
+        consumer._dlq_pending = 0
+        consumer._dlq_flush_interval = 100
         consumer._consumer = _FakeConsumer(messages)
         return consumer
 

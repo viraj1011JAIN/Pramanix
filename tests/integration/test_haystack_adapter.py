@@ -279,6 +279,72 @@ class TestRunAsync:
         assert result["documents"] == []
         assert _DOC_ALLOW in result["blocked_documents"]
 
+    @pytest.mark.asyncio
+    async def test_intent_extraction_error_async_allows_when_block_on_error_false(self):
+        """Intent extractor crash + block_on_error=False in async → item passes (fail-open)."""
+
+        def _bad(item):
+            raise ValueError("cannot parse")
+
+        comp = _make_component(_ASYNC_ALLOW_GUARD, block_on_error=False, intent_extractor=_bad)
+        result = await comp.run_async(documents=[_DOC_ALLOW])
+        assert _DOC_ALLOW in result["documents"]
+        assert result["blocked_documents"] == []
+
+    @pytest.mark.asyncio
+    async def test_guard_error_async_blocks_with_block_on_error_true(self):
+        """verify_async() raises + block_on_error=True → item quarantined."""
+
+        class _AsyncBrokenGuard:
+            async def verify_async(self, *, intent, state):
+                raise RuntimeError("Z3 async solver crashed")
+
+        comp = HaystackGuardedComponent(
+            guard=_AsyncBrokenGuard(),
+            intent_extractor=lambda item: {"amount": Decimal("10")},
+            state_provider=lambda: _STATE,
+            block_on_error=True,
+        )
+        result = await comp.run_async(documents=[_DOC_ALLOW])
+        assert result["documents"] == []
+        assert _DOC_ALLOW in result["blocked_documents"]
+
+    @pytest.mark.asyncio
+    async def test_guard_error_async_allows_when_block_on_error_false(self):
+        """verify_async() raises + block_on_error=False → item passes (fail-open)."""
+
+        class _AsyncBrokenGuard:
+            async def verify_async(self, *, intent, state):
+                raise RuntimeError("Z3 async solver crashed")
+
+        comp = HaystackGuardedComponent(
+            guard=_AsyncBrokenGuard(),
+            intent_extractor=lambda item: {"amount": Decimal("10")},
+            state_provider=lambda: _STATE,
+            block_on_error=False,
+        )
+        result = await comp.run_async(documents=[_DOC_ALLOW])
+        assert _DOC_ALLOW in result["documents"]
+        assert result["blocked_documents"] == []
+
+    @pytest.mark.asyncio
+    async def test_messages_key_present_when_messages_provided_async(self):
+        """When messages are passed to run_async the result dict contains 'messages' keys."""
+        comp = _make_component(_ASYNC_ALLOW_GUARD)
+        result = await comp.run_async(messages=[_MSG_ALLOW])
+        assert "messages" in result
+        assert "blocked_messages" in result
+        assert _MSG_ALLOW in result["messages"]
+        assert result["blocked_messages"] == []
+
+    @pytest.mark.asyncio
+    async def test_messages_key_absent_when_not_provided_async(self):
+        """When messages=None is passed to run_async the result dict must not contain 'messages'."""
+        comp = _make_component(_ASYNC_ALLOW_GUARD)
+        result = await comp.run_async(documents=[_DOC_ALLOW], messages=None)
+        assert "messages" not in result
+        assert "blocked_messages" not in result
+
 
 # ── Haystack framework registration (skipped without haystack) ────────────────
 

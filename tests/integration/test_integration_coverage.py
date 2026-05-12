@@ -5,6 +5,7 @@
 Targets uncovered lines in fastapi.py, langchain.py, llamaindex.py,
 autogen.py, and integrations/__init__.py after Phase 9 implementation.
 """
+
 from __future__ import annotations
 
 import json
@@ -492,6 +493,24 @@ class TestLlamaindexQueryEngineTool:
     @pytest.mark.asyncio
     async def test_call_thread_pool_when_loop_running(self) -> None:
         output = self._tool("x").call(json.dumps({"amount": "100"}))
+        assert output.is_error is False
+
+    @pytest.mark.asyncio
+    async def test_acall_with_async_state_provider(self) -> None:
+        """Line 484: state_provider returning a coroutine is awaited in _get_state."""
+
+        async def _async_state() -> dict:
+            return {"state_version": "1.0"}
+
+        tool = PramanixQueryEngineTool(
+            query_engine="engine",
+            guard=_guard_allow(),
+            intent_schema=_IntentModel,
+            state_provider=_async_state,
+            name="rag_async_state",
+            description="RAG with async state",
+        )
+        output = await tool.acall(json.dumps({"amount": "100"}))
         assert output.is_error is False
 
 

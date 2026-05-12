@@ -33,6 +33,7 @@ import pytest
 
 from pramanix.identity.linker import (
     IdentityClaims,
+    JWTAlgorithm,
     JWTExpiredError,
     JWTIdentityLinker,
     JWTVerificationError,
@@ -253,6 +254,15 @@ class TestVerifyToken:
         sig_b64 = _b64url(sig)
         token = f"{header_b64}.{bad_payload_b64}.{sig_b64}"
         with pytest.raises(JWTVerificationError, match="payload decode"):
+            self.linker._verify_token(token)
+
+    def test_invalid_header_json_raises_verification_error(self) -> None:
+        """Corrupt header (not valid JSON) raises JWTVerificationError before alg check."""
+        bad_header_b64 = _b64url(b"not-json!!!")
+        payload_b64 = _b64url(json.dumps(_make_valid_payload()).encode())
+        sig_b64 = _b64url(b"\x00" * 32)
+        token = f"{bad_header_b64}.{payload_b64}.{sig_b64}"
+        with pytest.raises(JWTVerificationError, match="header decode"):
             self.linker._verify_token(token)
 
 
@@ -498,3 +508,155 @@ class TestRedisStateLoader:
         assert state_alice["balance"] == 1000
         assert state_bob["balance"] == 500
         assert state_alice["balance"] != state_bob["balance"]
+
+
+# ── TestJWTAlgorithmEnum ───────────────────────────────────────────────────────
+
+
+class TestJWTAlgorithmEnum:
+    def test_hs256_value(self) -> None:
+        assert JWTAlgorithm.HS256.value == "HS256"
+
+    def test_rs256_value(self) -> None:
+        assert JWTAlgorithm.RS256.value == "RS256"
+
+    def test_es256_value(self) -> None:
+        assert JWTAlgorithm.ES256.value == "ES256"
+
+    def test_hs256_is_default_algorithm(self) -> None:
+        linker = JWTIdentityLinker(state_loader=_make_noop_loader(), jwt_secret=_SECRET_32)
+        assert linker._algorithm is JWTAlgorithm.HS256
+
+
+# ── TestAlgorithmConfusion ─────────────────────────────────────────────────────
+
+
+def _make_token_with_alg(payload: dict, alg: str, secret: str = _SECRET_32) -> str:
+    """Craft a JWT with an arbitrary alg header — for confusion-attack testing."""
+    header_b64 = _b64url(json.dumps({"alg": alg, "typ": "JWT"}).encode())
+    payload_b64 = _b64url(json.dumps(payload).encode())
+    signing_input = f"{header_b64}.{payload_b64}"
+    sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+    return f"{header_b64}.{payload_b64}.{_b64url(sig)}"
+
+
+def _make_token_no_alg(payload: dict) -> str:
+    """Craft a JWT whose header contains no alg field."""
+    header_b64 = _b64url(json.dumps({"typ": "JWT"}).encode())
+    payload_b64 = _b64url(json.dumps(payload).encode())
+    sig_b64 = _b64url(b"\x00" * 32)
+    return f"{header_b64}.{payload_b64}.{sig_b64}"
+
+
+class TestAlgorithmConfusion:
+    """Algorithm confusion attack prevention (CVE-2015-9235 family).
+
+    A linker configured for algorithm X must reject tokens claiming any
+    other algorithm — including ``"none"``, RS256, or ES256 on an HS256
+    linker, and vice-versa.  No cryptographic work should be done before
+    the alg header is validated.
+    """
+
+    def setup_method(self) -> None:
+        self.linker = JWTIdentityLinker(state_loader=_make_noop_loader(), jwt_secret=_SECRET_32)
+
+    def test_hs256_linker_rejects_rs256_token(self) -> None:
+        payload = _make_valid_payload()
+        token = _make_token_with_alg(payload, "RS256")
+        with pytest.raises(JWTVerificationError, match="Algorithm mismatch"):
+            self.linker._verify_token(token)
+
+    def test_hs256_linker_rejects_es256_token(self) -> None:
+        payload = _make_valid_payload()
+        token = _make_token_with_alg(payload, "ES256")
+        with pytest.raises(JWTVerificationError, match="Algorithm mismatch"):
+            self.linker._verify_token(token)
+
+    def test_hs256_linker_rejects_alg_none(self) -> None:
+        payload = _make_valid_payload()
+        token = _make_token_with_alg(payload, "none")
+        with pytest.raises(JWTVerificationError, match="Algorithm mismatch"):
+            self.linker._verify_token(token)
+
+    def test_hs256_linker_rejects_missing_alg_header(self) -> None:
+        payload = _make_valid_payload()
+        token = _make_token_no_alg(payload)
+        with pytest.raises(JWTVerificationError, match="Algorithm mismatch"):
+            self.linker._verify_token(token)
+
+    def test_hs256_linker_rejects_hs512(self) -> None:
+        payload = _make_valid_payload()
+        token = _make_token_with_alg(payload, "HS512")
+        with pytest.raises(JWTVerificationError, match="Algorithm mismatch"):
+            self.linker._verify_token(token)
+
+    def test_rs256_linker_constructor_requires_public_key_pem(self) -> None:
+        with pytest.raises(ValueError, match="public_key_pem is required"):
+            JWTIdentityLinker(
+                state_loader=_make_noop_loader(),
+                algorithm=JWTAlgorithm.RS256,
+            )
+
+    def test_es256_linker_constructor_requires_public_key_pem(self) -> None:
+        with pytest.raises(ValueError, match="public_key_pem is required"):
+            JWTIdentityLinker(
+                state_loader=_make_noop_loader(),
+                algorithm=JWTAlgorithm.ES256,
+            )
+
+    def test_rs256_linker_rejects_hs256_token(self) -> None:
+        """RS256 linker must reject a valid HS256 token (algorithm mismatch)."""
+        pytest.importorskip("cryptography")
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_pem = private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        rs256_linker = JWTIdentityLinker(
+            state_loader=_make_noop_loader(),
+            public_key_pem=public_pem,
+            algorithm=JWTAlgorithm.RS256,
+        )
+        # A valid HS256 token should be rejected by an RS256 linker
+        hs256_token = _make_token(_make_valid_payload())
+        with pytest.raises(JWTVerificationError, match="Algorithm mismatch"):
+            rs256_linker._verify_token(hs256_token)
+
+    def test_rs256_rejects_ec_key_pem(self) -> None:
+        """RS256 linker must reject an EC (P-256) public key at construction time."""
+        pytest.importorskip("cryptography")
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+
+        ec_key = ec.generate_private_key(ec.SECP256R1())
+        ec_pem = ec_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        with pytest.raises(ValueError, match="RSA public key"):
+            JWTIdentityLinker(
+                state_loader=_make_noop_loader(),
+                public_key_pem=ec_pem,
+                algorithm=JWTAlgorithm.RS256,
+            )
+
+    def test_es256_rejects_rsa_key_pem(self) -> None:
+        """ES256 linker must reject an RSA public key at construction time."""
+        pytest.importorskip("cryptography")
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+
+        rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        rsa_pem = rsa_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        with pytest.raises(ValueError, match="EC.*public key"):
+            JWTIdentityLinker(
+                state_loader=_make_noop_loader(),
+                public_key_pem=rsa_pem,
+                algorithm=JWTAlgorithm.ES256,
+            )
