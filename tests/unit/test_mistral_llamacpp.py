@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Tests for MistralTranslator and LlamaCppTranslator (D-2)."""
+
 from __future__ import annotations
 
 import sys
-from unittest.mock import patch
 
 import pytest
 
@@ -22,6 +22,7 @@ def test_mistral_raises_config_error_without_package(monkeypatch: pytest.MonkeyP
         del sys.modules["pramanix.translator.mistral"]
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[mistral\\]'"):
         from pramanix.translator.mistral import MistralTranslator
+
         MistralTranslator("mistral-small")
 
 
@@ -128,6 +129,7 @@ def test_create_translator_mistral_prefix() -> None:
 
 def test_create_translator_llama_prefix() -> None:
     """create_translator("llama:...") returns a LlamaCppTranslator."""
+    pytest.importorskip("llama_cpp")
     from pramanix.translator.redundant import create_translator
 
     t = create_translator("llama:/some/model.gguf")

@@ -1022,10 +1022,14 @@ class TestKeyProviderRefreshCacheErrors:
 
         mock_client = MagicMock()
         mock_client.get_secret_value.side_effect = ConnectionError("no route to AWS")
-        provider = AwsKmsKeyProvider(
-            secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k",
-            _client=mock_client,
-        )
+        # boto3 is an optional dep; mock it so the constructor import succeeds
+        # even when pramanix[aws] is not installed.  The real client is never
+        # used because _client is injected directly.
+        with patch.dict(sys.modules, {"boto3": MagicMock()}):
+            provider = AwsKmsKeyProvider(
+                secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k",
+                _client=mock_client,
+            )
         with pytest.raises(RuntimeError, match="AwsKmsKeyProvider: failed to fetch secret"):
             provider.private_key_pem()
 
@@ -1034,11 +1038,22 @@ class TestKeyProviderRefreshCacheErrors:
 
         mock_client = MagicMock()
         mock_client.get_secret.side_effect = ConnectionError("Azure vault unreachable")
-        provider = AzureKeyVaultKeyProvider(
-            vault_url="https://test.vault.azure.net",
-            secret_name="my-key",
-            _client=mock_client,
-        )
+        # azure-keyvault-secrets and azure-identity are optional deps; mock them.
+        _azure_mock = MagicMock()
+        with patch.dict(
+            sys.modules,
+            {
+                "azure": _azure_mock,
+                "azure.identity": _azure_mock,
+                "azure.keyvault": _azure_mock,
+                "azure.keyvault.secrets": _azure_mock,
+            },
+        ):
+            provider = AzureKeyVaultKeyProvider(
+                vault_url="https://test.vault.azure.net",
+                secret_name="my-key",
+                _client=mock_client,
+            )
         with pytest.raises(RuntimeError, match="AzureKeyVaultKeyProvider: failed to fetch"):
             provider.private_key_pem()
 
@@ -1047,11 +1062,21 @@ class TestKeyProviderRefreshCacheErrors:
 
         mock_client = MagicMock()
         mock_client.access_secret_version.side_effect = ConnectionError("GCP unreachable")
-        provider = GcpKmsKeyProvider(
-            project_id="my-project",
-            secret_id="my-secret",
-            _client=mock_client,
-        )
+        # google-cloud-secret-manager is an optional dep; mock it.
+        _gcp_mock = MagicMock()
+        with patch.dict(
+            sys.modules,
+            {
+                "google": _gcp_mock,
+                "google.cloud": _gcp_mock,
+                "google.cloud.secretmanager": _gcp_mock,
+            },
+        ):
+            provider = GcpKmsKeyProvider(
+                project_id="my-project",
+                secret_id="my-secret",
+                _client=mock_client,
+            )
         with pytest.raises(RuntimeError, match="GcpKmsKeyProvider: failed to fetch"):
             provider.private_key_pem()
 
@@ -1060,11 +1085,13 @@ class TestKeyProviderRefreshCacheErrors:
 
         mock_client = MagicMock()
         mock_client.secrets.kv.v2.read_secret_version.side_effect = OSError("Vault sealed")
-        provider = HashiCorpVaultKeyProvider(
-            url="https://vault.example.com:8200",
-            secret_path="pramanix/key",
-            _client=mock_client,
-        )
+        # hvac is an optional dep; mock it so the constructor import succeeds.
+        with patch.dict(sys.modules, {"hvac": MagicMock()}):
+            provider = HashiCorpVaultKeyProvider(
+                url="https://vault.example.com:8200",
+                secret_path="pramanix/key",
+                _client=mock_client,
+            )
         with pytest.raises(RuntimeError, match="HashiCorpVaultKeyProvider: failed to read"):
             provider.private_key_pem()
 
@@ -1079,12 +1106,13 @@ class TestKeyProviderRefreshCacheErrors:
                 "metadata": {"version": 1},
             }
         }
-        provider = HashiCorpVaultKeyProvider(
-            url="https://vault.example.com:8200",
-            secret_path="pramanix/key",
-            field="private_key_pem",
-            _client=mock_client,
-        )
+        with patch.dict(sys.modules, {"hvac": MagicMock()}):
+            provider = HashiCorpVaultKeyProvider(
+                url="https://vault.example.com:8200",
+                secret_path="pramanix/key",
+                field="private_key_pem",
+                _client=mock_client,
+            )
         with pytest.raises(ConfigurationError, match="field 'private_key_pem' not found"):
             provider.private_key_pem()
 
@@ -1407,14 +1435,35 @@ def test_gemini_protobuf_absent_inner_except_covered(monkeypatch: pytest.MonkeyP
     monkeypatch.setitem(sys.modules, "google.protobuf", None)
     with pytest.raises(ConfigurationError, match="google-generativeai"):
         from pramanix.translator.gemini import GeminiTranslator
+
         GeminiTranslator("gemini-pro")
 
 
 def test_gemini_no_api_key_client_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """gemini.py line 118: no api_key and no env var → else branch → self._client = None."""
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    from pramanix.translator.gemini import GeminiTranslator
-    t = GeminiTranslator("gemini-pro")
+    # google-generativeai is optional; mock it so the constructor runs without
+    # the package installed.  The real genai client is never built because
+    # api_key resolves to None (no env var, no argument).
+    _genai_mock = MagicMock()
+    _genai_mock.Client = None  # simulate older SDK that lacks per-instance Client
+    with patch.dict(
+        sys.modules,
+        {
+            "google": MagicMock(),
+            "google.protobuf": MagicMock(),
+            "google.generativeai": _genai_mock,
+        },
+    ):
+        # Force re-import since gemini module may be cached with a bad state.
+        import importlib
+
+        import pramanix.translator.gemini as _gem_mod
+
+        importlib.reload(_gem_mod)
+        from pramanix.translator.gemini import GeminiTranslator as _GT
+
+        t = _GT("gemini-pro")
     assert t._client is None
 
 
@@ -1501,7 +1550,9 @@ def test_solver_span_noop_when_otel_absent(monkeypatch: pytest.MonkeyPatch) -> N
     import contextlib as _contextlib
 
     # Save and evict ALL opentelemetry-* entries so no stale attributes remain.
-    otel_keys = [k for k in list(sys.modules) if k == "opentelemetry" or k.startswith("opentelemetry.")]
+    otel_keys = [
+        k for k in list(sys.modules) if k == "opentelemetry" or k.startswith("opentelemetry.")
+    ]
     saved_otel = {k: sys.modules.pop(k) for k in otel_keys}
 
     # Also evict the solver module so its top-level code reruns on import.

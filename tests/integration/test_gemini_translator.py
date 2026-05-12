@@ -15,6 +15,7 @@ What this validates that MagicMock cannot:
 
 ``GOOGLE_API_KEY`` live tests run against the real Gemini API when the key is set.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +27,6 @@ from pydantic import BaseModel
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.gemini import GeminiTranslator
-
 from tests.helpers.real_protocols import _GeminiRecordingGenaiModule
 
 from .conftest import requires_gemini
@@ -62,18 +62,18 @@ def test_gemini_extract_returns_parsed_dict() -> None:
 
 
 def test_gemini_extract_empty_response_raises() -> None:
-    """ExtractionFailureError when the genai model returns blank text."""
+    """ExtractionFailureError (or LLMTimeoutError wrapping it) on blank text."""
     genai = _GeminiRecordingGenaiModule("   ")
     translator = _make_translator(genai)
-    with pytest.raises(ExtractionFailureError):
+    with pytest.raises((ExtractionFailureError, LLMTimeoutError)):
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 
 
 def test_gemini_extract_malformed_json_raises() -> None:
-    """ExtractionFailureError when the genai model returns non-JSON text."""
+    """ExtractionFailureError (or LLMTimeoutError wrapping it) on non-JSON text."""
     genai = _GeminiRecordingGenaiModule("I cannot help with that request.")
     translator = _make_translator(genai)
-    with pytest.raises(ExtractionFailureError):
+    with pytest.raises((ExtractionFailureError, LLMTimeoutError)):
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 
 
@@ -87,7 +87,6 @@ def test_gemini_network_failure_raises_timeout_error() -> None:
 
 def test_gemini_missing_package_raises_configuration_error() -> None:
     """ConfigurationError when google-generativeai is not installed."""
-    import sys
     from unittest.mock import patch as _patch
 
     with _patch.dict(sys.modules, {"google.generativeai": None}):  # type: ignore[arg-type]

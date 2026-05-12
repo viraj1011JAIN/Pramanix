@@ -8,6 +8,7 @@ Single source of truth imported by both:
 
 Keeping patterns in one file prevents drift between the two defenders.
 """
+
 from __future__ import annotations
 
 from typing import Final
@@ -18,8 +19,7 @@ from typing import Final
 INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     # ── Classic instruction overrides ──────────────────────────────────
     (
-        r"ignore\s+(previous|above|all)\s+"
-        r"(instructions?|prompts?|rules?|context)",
+        r"ignore\s+(previous|above|all)\s+" r"(instructions?|prompts?|rules?|context)",
         "instruction_override",
     ),
     (r"ignore\s+all", "instruction_override"),
@@ -29,8 +29,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
         "instruction_override",
     ),
     (
-        r"forget\s+(all|everything|previous|above|prior)\s+"
-        r"(instructions?|context|rules?)",
+        r"forget\s+(all|everything|previous|above|prior)\s+" r"(instructions?|context|rules?)",
         "instruction_override",
     ),
     # ── Jailbreak trigger words ─────────────────────────────────────────
@@ -74,8 +73,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     # ── Refusal bypass ──────────────────────────────────────────────────
     (r"(do\s+not|don'?t)\s+refuse", "refusal_bypass"),
     (
-        r"you\s+(must|will|should|shall)\s+"
-        r"(comply|obey|follow|execute)\s+",
+        r"you\s+(must|will|should|shall)\s+" r"(comply|obey|follow|execute)\s+",
         "compliance_coercion",
     ),
     # ── Prompt / system-prompt extraction ──────────────────────────────
@@ -86,11 +84,37 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
         "prompt_extraction",
     ),
     (
-        r"what\s+(are|were)\s+your\s+"
-        r"(instructions?|system\s+prompt|rules?)",
+        r"what\s+(are|were)\s+your\s+" r"(instructions?|system\s+prompt|rules?)",
         "prompt_extraction",
     ),
     # ── RL / reward-hacking phrases ─────────────────────────────────────
     (r"reward\s+hack", "reward_hack"),
     (r"prompt\s+injection", "prompt_injection_keyword"),
+    # ── Constraint / rule override phrases (previously missing) ─────────
+    (
+        r"discard\s+(?:(?:all|previous|prior|above|existing)\s+)+"
+        r"(?:constraints?|rules?|policies|guidelines?|instructions?)"
+        r"|discard\s+(?:constraints?|rules?|policies)",
+        "constraint_override",
+    ),
+    (
+        r"ignore\s+(?:all\s+)?(?:constraints?|policies|rules?|limits?)",
+        "constraint_override",
+    ),
+    (
+        r"override\s+(?:all\s+)?(?:constraints?|policies|rules?|limits?)",
+        "constraint_override",
+    ),
+    (
+        r"bypass\s+(?:the\s+)?(?:policy|policies|filter|filters|constraints?|rules?|safety)",
+        "policy_bypass",
+    ),
+    (
+        r"forget\s+(?:the\s+)?(?:constraints?|rules?|policies|guidelines?)",
+        "constraint_override",
+    ),
+    (
+        r"no\s+(?:more\s+)?(?:restrictions?|constraints?|limits?|rules?|policies)",
+        "constraint_override",
+    ),
 ]

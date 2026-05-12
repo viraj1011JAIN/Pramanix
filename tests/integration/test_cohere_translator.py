@@ -14,6 +14,7 @@ What this validates that MagicMock cannot:
 
 ``COHERE_API_KEY`` live tests run against the real API when the key is set.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,8 +23,9 @@ import json
 import httpx
 import pytest
 import respx
-
 from pydantic import BaseModel
+
+cohere = pytest.importorskip("cohere", reason="pramanix[cohere] not installed")
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.cohere import CohereTranslator
@@ -37,6 +39,7 @@ class TransferIntent(BaseModel):
 
 
 # ── Recorded real Cohere v2 response fixture ──────────────────────────────────
+
 
 def _cohere_success_response(text: str) -> dict:
     """Returns a real Cohere v2 /chat response shape with *text* as content."""
@@ -144,9 +147,7 @@ def test_cohere_extract_raises_llm_timeout_on_network_failure() -> None:
 def test_cohere_request_has_auth_header() -> None:
     """The real HTTP request must carry the Authorization header."""
     payload = '{"amount": 10.0, "action": "test"}'
-    route = respx.post(_COHERE_CHAT_URL).respond(
-        200, json=_cohere_success_response(payload)
-    )
+    route = respx.post(_COHERE_CHAT_URL).respond(200, json=_cohere_success_response(payload))
 
     translator = CohereTranslator("command-r", api_key="sk-real-key-test")
     asyncio.run(translator.extract("test 10 USD", TransferIntent))
@@ -161,9 +162,7 @@ def test_cohere_request_has_auth_header() -> None:
 def test_cohere_request_body_contains_model_name() -> None:
     """The HTTP request body must include the configured model name."""
     payload = '{"amount": 5.0, "action": "test"}'
-    route = respx.post(_COHERE_CHAT_URL).respond(
-        200, json=_cohere_success_response(payload)
-    )
+    route = respx.post(_COHERE_CHAT_URL).respond(200, json=_cohere_success_response(payload))
 
     translator = CohereTranslator("command-r-plus", api_key="test-key")
     asyncio.run(translator.extract("test input", TransferIntent))
@@ -176,9 +175,7 @@ def test_cohere_request_body_contains_model_name() -> None:
 def test_cohere_temperature_zero_in_request() -> None:
     """temperature=0.0 must appear in the request body for deterministic output."""
     payload = '{"amount": 1.0, "action": "t"}'
-    route = respx.post(_COHERE_CHAT_URL).respond(
-        200, json=_cohere_success_response(payload)
-    )
+    route = respx.post(_COHERE_CHAT_URL).respond(200, json=_cohere_success_response(payload))
 
     translator = CohereTranslator("command-r", api_key="test-key")
     asyncio.run(translator.extract("test", TransferIntent))

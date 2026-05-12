@@ -65,6 +65,28 @@ def _redact_secrets_processor(
     return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else v) for k, v in event_dict.items()}
 
 
+def _safe_add_logger_name(logger: Any, method_name: str, event_dict: Any) -> Any:
+    """Add logger name to event dict, safely handling structlog's PrintLogger.
+
+    ``structlog.stdlib.add_logger_name`` calls ``logger.name`` which only
+    exists on stdlib ``logging.Logger`` objects.  When structlog is configured
+    with ``PrintLoggerFactory()`` (the default in tests and lightweight
+    deployments), ``PrintLogger`` has no ``.name`` attribute, causing an
+    ``AttributeError`` that propagates out of the logging call.
+
+    This processor is a safe drop-in replacement: it reads ``_record.name``
+    for stdlib-bridged log records (identical to the stdlib behaviour) and
+    falls back to ``getattr(logger, 'name', 'pramanix')`` for all other
+    logger types.
+    """
+    record = event_dict.get("_record")
+    if record is not None:
+        event_dict["logger"] = record.name
+    else:
+        event_dict["logger"] = getattr(logger, "name", "pramanix")
+    return event_dict
+
+
 # Shared pre-chain applied to ALL log events that enter the structlog pipeline,
 # whether they originate from structlog.get_logger() or stdlib logging.getLogger().
 # _redact_secrets_processor MUST be first so secrets never appear in any
@@ -72,7 +94,7 @@ def _redact_secrets_processor(
 _SHARED_LOG_PROCESSORS: list[Any] = [
     _redact_secrets_processor,
     structlog.stdlib.add_log_level,
-    structlog.stdlib.add_logger_name,
+    _safe_add_logger_name,
     structlog.processors.TimeStamper(fmt="iso", utc=True),
     structlog.processors.StackInfoRenderer(),
     structlog.processors.format_exc_info,

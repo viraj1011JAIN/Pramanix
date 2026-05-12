@@ -237,6 +237,42 @@ def main() -> int:
         help="Exit 1 if any WARNING is found (not just errors).",
     )
 
+    # compile-policy subcommand (Phase 2 — Natural Policy Compiler)
+    compile_cmd = sub.add_parser(
+        "compile-policy",
+        help=(
+            "Compile a natural-language policy YAML/JSON to a Z3 ConstraintExpr "
+            "(Phase 2 — Natural Policy Engine)."
+        ),
+    )
+    compile_cmd.add_argument(
+        "policy_file",
+        metavar="POLICY_FILE",
+        nargs="?",
+        default=None,
+        help=(
+            "Path to a YAML or JSON file conforming to the NaturalPolicySchema.  "
+            "See 'pramanix compile-policy --example' for a minimal template."
+        ),
+    )
+    compile_cmd.add_argument(
+        "--verify",
+        choices=["strict", "warn", "skip"],
+        default="warn",
+        help="Meta-verification mode (default: warn).",
+    )
+    compile_cmd.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output compilation result as JSON instead of human-readable text.",
+    )
+    compile_cmd.add_argument(
+        "--example",
+        action="store_true",
+        help="Print a minimal policy YAML template to stdout and exit.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -259,6 +295,9 @@ def main() -> int:
 
     if args.command == "doctor":
         return _cmd_doctor(args)
+
+    if args.command == "compile-policy":
+        return _cmd_compile_policy(args)
 
     parser.print_help()
     return 2
@@ -1358,3 +1397,132 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     if has_warn and getattr(args, "strict", False):
         return 1
     return 0
+
+
+# ── Natural Policy Compiler CLI (Phase 2) ─────────────────────────────────────
+
+_COMPILE_POLICY_EXAMPLE = """\
+# Minimal NaturalPolicySchema YAML template for 'pramanix compile-policy'
+# This is the intermediate representation consumed by the compiler.
+# Use this format when you already have a validated schema and want to skip
+# the LLM translation step (NaturalPolicyCompiler.compile_from_schema).
+#
+# NOTE: rhs_value must be a scalar (int, float, bool, or str).
+#       Field-to-field comparisons are not supported in the schema.
+policy_name: example_transfer_policy
+original_english: >
+  Allow transfers only when the account balance is above zero
+  and the transfer amount is strictly positive.
+fields:
+  - name: balance
+    z3_type: Real
+    description: "Current account balance in USD."
+  - name: amount
+    z3_type: Real
+    description: "Requested transfer amount in USD."
+constraints:
+  - kind: comparison
+    label: positive_balance
+    lhs:
+      kind: field
+      field_name: balance
+    operator: ">"
+    rhs_value: 0
+    natural_language: "balance > 0 (account balance must be greater than 0)."
+  - kind: comparison
+    label: positive_amount
+    lhs:
+      kind: field
+      field_name: amount
+    operator: ">"
+    rhs_value: 0
+    natural_language: "amount > 0 (transfer amount must be strictly positive, above 0)."
+"""
+
+
+def _cmd_compile_policy(args: argparse.Namespace) -> int:
+    """Compile a NaturalPolicySchema YAML/JSON file to a Z3 ConstraintExpr."""
+    if getattr(args, "example", False):
+        print(_COMPILE_POLICY_EXAMPLE)
+        return 0
+
+    try:
+        from pramanix.natural_policy import NaturalPolicyCompiler, VerificationMode
+    except ImportError as exc:
+        print(f"ERROR: could not import natural_policy module: {exc}", file=sys.stderr)
+        return 1
+
+    policy_path = args.policy_file
+    verify_arg = getattr(args, "verify", "warn")
+    as_json = getattr(args, "as_json", False)
+
+    if not policy_path:
+        print("ERROR: POLICY_FILE is required when --example is not used.", file=sys.stderr)
+        print("Usage: pramanix compile-policy POLICY_FILE [--verify {strict,warn,skip}] [--json]")
+        print("       pramanix compile-policy --example")
+        return 2
+
+    try:
+        mode = VerificationMode[verify_arg.upper()]
+    except KeyError:
+        print(f"ERROR: unknown verification mode {verify_arg!r}", file=sys.stderr)
+        return 2
+
+    try:
+        raw = open(policy_path).read()
+    except OSError as exc:
+        print(f"ERROR: cannot read {policy_path!r}: {exc}", file=sys.stderr)
+        return 1
+
+    # Support both YAML and JSON input
+    try:
+        import yaml as _yaml
+
+        policy_dict = _yaml.safe_load(raw)
+    except ImportError:
+        try:
+            policy_dict = _json.loads(raw)
+        except _json.JSONDecodeError as exc:
+            print(
+                f"ERROR: file is not valid JSON and PyYAML is not installed: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+    except Exception as exc:
+        print(f"ERROR: YAML parse error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        from pramanix.natural_policy.schemas import NaturalPolicySchema
+
+        schema = NaturalPolicySchema.model_validate(policy_dict)
+        compiled = NaturalPolicyCompiler.compile_from_schema(schema, verification_mode=mode)
+    except Exception as exc:
+        if as_json:
+            print(_json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            print(f"ERROR: compilation failed: {exc}", file=sys.stderr)
+        return 1
+
+    result: dict[str, Any] = {
+        "ok": True,
+        "policy_name": compiled.schema.policy_name,
+        "rules_compiled": len(compiled.constraints),
+        "verification_mode": verify_arg,
+        "verification_passed": compiled.verification.verified,
+        "verification_warnings": list(compiled.verification.mismatches),
+    }
+
+    if as_json:
+        print(_json.dumps(result, indent=2))
+    else:
+        ok_sym = "+" if result["verification_passed"] else "!"
+        print(f"[{ok_sym}] Compiled: {result['policy_name']}")
+        print(f"    Rules compiled : {result['rules_compiled']}")
+        print(
+            f"    Verification   : {verify_arg} — {'PASS' if result['verification_passed'] else 'MISMATCH'}"
+        )
+        for m in result["verification_warnings"]:
+            print(f"    Mismatch: {m}")
+
+    return 0 if compiled.verification.verified else 1

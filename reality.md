@@ -79,7 +79,7 @@ Multi-layer defence observable in code (10 enumerated layers):
 **Verified Flaws:**
 
 - **Financial Domain Assumption in Scorer** (`_sanitise.py:177`): `injection_confidence_score` hardcodes the key `"amount"`. For non-financial policies, `extracted_intent.get("amount", "1")` returns `Decimal("1")` which is above the default `sub_penny_threshold=0.10`, so the +0.3 sub-penny signal never fires. The fix is `sub_penny_threshold=Decimal("0")` for non-financial callers — but this requires caller awareness, and nothing in the API surface communicates this requirement. The docstring explains it; the default does not protect against silent miscalibration.
-- **Injection Filter Scope** (`injection_filter.py`, `_injection_patterns.py`): Patterns use full regex (not literals), but coverage is purely syntactic. The phrase *"discard previous constraints"* passes through. Defence-in-depth means the LLM + consensus + post-scoring layers still apply — this is a fast first-pass eliminator, correctly scoped.
+- **Injection Filter Scope** (`injection_filter.py`, `_injection_patterns.py`): Patterns use full regex (not literals), but coverage is purely syntactic. Defence-in-depth means the LLM + consensus + post-scoring layers still apply — this is a fast first-pass eliminator, correctly scoped. Note: phrases like *"discard previous constraints"*, *"bypass policy"*, *"override all constraints"* are now covered as of v1.1 (Phase~2 hardening).
 - **Pickle in `injection_scorer.py:305`:** `pickle.loads()` executes after HMAC verification. If `PRAMANIX_SCORER_KEY` is compromised, this is an RCE vector. HMAC key hygiene is a deployment concern, but the risk should be documented prominently.
 
 ---

@@ -292,6 +292,11 @@ class CalibratedScorer:
             )
         instance = cls.__new__(cls)
         instance.__init__()  # type: ignore[misc]
+        # SECURITY: pickle.loads executes arbitrary code. The HMAC check above
+        # prevents loading tampered files, but a compromised PRAMANIX_SCORER_KEY
+        # environment variable would allow an attacker to craft a valid HMAC for
+        # a malicious payload. Rotate the key immediately if it is suspected to be
+        # exposed. Never load scorer files from untrusted sources.
         instance._pipeline = pickle.loads(raw)  # noqa: S301 — HMAC-verified above
         instance._is_fitted = True
         return instance

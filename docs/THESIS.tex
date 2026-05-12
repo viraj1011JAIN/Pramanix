@@ -190,8 +190,8 @@ the LLM's output can cause.
         in \fname{docs/KNOWN\_GAPS.md}.
 \end{itemize}
 
-\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): 3,923 passed,
-81 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
+\textbf{Test suite state} (Python~3.13.7, pytest~7.4.4): \textbf{3,984 passed},
+130 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
 passing).
 
 \textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
@@ -888,6 +888,184 @@ Coverage: 98.22\,\% (gate: \textbf{passing}).  Wall time: 793\,s.
 After Phase~12 metric-registry and coverage fixes: 3,923 passed, 81 skipped,
 0 failed.  Coverage: \textbf{98.26\,\%} (gate: \textbf{passing}).  Wall
 time: 867\,s.
+
+After Phase~2 (Natural Policy Engine) additions and test-suite bug fixes:
+\textbf{3,984 passed}, \textbf{130 skipped}, \textbf{0 failed}.  Coverage:
+\textbf{98.26\,\%} (gate: \textbf{passing}).  Wall time: $\approx$\,430\,s.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection*{Phase~2 (Natural Policy Engine) --- v1.1: Natural Language Policy Compiler}
+% ─────────────────────────────────────────────────────────────────────────────
+
+\paragraph{Motivation.}
+Every prior policy in Pramanix was authored as Python code (decorator calls or
+\code{PolicyConfig} objects).  That gates governance on engineering bandwidth:
+a compliance officer cannot write a policy without knowing Z3's S-expression
+vocabulary or Pramanix's \code{ConstraintExpr} DSL.  Phase~2 removes that
+dependency by introducing a \emph{compile-time} natural-language front-end
+that converts plain English sentences into verified, deterministic Z3
+constraint graphs — with zero LLM inference on the hot evaluation path.
+
+\paragraph{Five Non-Negotiable Design Constraints.}
+
+\begin{enumerate}
+\item \textbf{No LLM on the hot path.}  Every policy evaluation is purely
+  deterministic.  An LLM is permitted only at \emph{compile time} (the
+  author's workstation), never inside \code{Guard.verify()}.
+\item \textbf{Full type safety.}  All intermediate representations are
+  validated Pydantic v2 models; no raw dictionaries cross API boundaries.
+\item \textbf{Meta-verification.}  Every compiled policy is checked with Z3
+  for satisfiability and monotonicity before it is returned to the caller.
+\item \textbf{Fail-closed.}  A malformed or unverifiable natural-language
+  policy raises a hard error; it never silently permits a request.
+\item \textbf{Python~3.11+.}  All type annotations use modern union syntax
+  (\code{X | Y}) and pattern-matching where appropriate.
+\end{enumerate}
+
+\paragraph{Compilation Pipeline.}
+
+\[
+  \text{English sentence}
+  \;\xrightarrow{\text{LLM (compile-time only)}}\;
+  \code{NaturalPolicySchema}
+  \;\xrightarrow{\text{ASTBuilder}}\;
+  \code{ConstraintExpr}~(\text{Z3 DSL})
+  \;\xrightarrow{\text{MetaVerifier}}\;
+  \code{CompiledPolicy}
+\]
+
+\noindent
+The four stages are logically independent modules; each can be replaced or
+extended without touching the others.
+
+\begin{description}
+
+\item[\code{NaturalPolicySchema}]
+  A Pydantic v2 model produced by the LLM from the natural-language input.
+  Fields include: \code{field} (the transaction attribute being constrained),
+  \code{operator} (one of \code{lt / le / eq / ge / gt / ne}), \code{value}
+  (the threshold), \code{value\_type} (\code{REAL / INT / BOOL / STRING}),
+  and optional \code{name} / \code{description} metadata.  All fields are
+  validated at construction time; an invalid schema raises \code{ValueError}
+  before any Z3 object is created.
+
+\item[\code{ASTBuilder}]
+  A stateless transformer that converts a \code{NaturalPolicySchema} into a
+  \code{ConstraintExpr} node using the existing Z3 DSL.  The type bridge
+  \code{\_Z3\_TO\_PYTHON} maps each \code{value\_type} token to its Python
+  counterpart: \code{REAL}→\code{Decimal}, \code{INT}→\code{int},
+  \code{BOOL}→\code{bool}, \code{STRING}→\code{str}.  The builder
+  validates that the supplied threshold value is coercible to the declared
+  type; a mismatch raises \code{TypeError} with a helpful message before any
+  Z3 context is entered.
+
+\item[\code{NaturalPolicyCompiler}]
+  The public entry point.  Given a \code{NaturalPolicySchema} (or a
+  dictionary that Pydantic can coerce to one), it calls \code{ASTBuilder}
+  to produce a \code{ConstraintExpr}, passes the result through
+  \code{MetaVerifier}, and returns an immutable \code{CompiledPolicy} if
+  verification succeeds.  Raises \code{ValueError} (schema) or
+  \code{RuntimeError} (Z3 refutation) on any failure.
+
+\item[\code{MetaVerifier}]
+  Runs two Z3 checks on the compiled constraint before the policy is
+  accepted.  First, \emph{satisfiability}: the constraint must be satisfiable
+  (a policy that is always \textsc{deny} regardless of input is rejected as
+  logically vacuous).  Second, \emph{monotonicity}: tightening the threshold
+  by a small $\varepsilon$ must produce a strictly more restrictive constraint
+  (catches polarity inversions where ``allow amounts under \$100'' was
+  accidentally compiled as ``allow amounts over \$100'').  Behaviour is
+  governed by \code{VerificationMode}: \code{STRICT} (raise), \code{WARN}
+  (log and continue), or \code{SKIP} (no check).
+
+\item[\code{CompiledPolicy}]
+  An immutable dataclass holding the original \code{NaturalPolicySchema}, the
+  compiled \code{ConstraintExpr}, optional Z3 satisfiability evidence, and a
+  SHA-256 digest of the schema for audit traceability.  It exposes a
+  \code{to\_policy\_config()} helper that wraps the constraint in a
+  \code{PolicyConfig} ready to be passed directly to \code{Guard}.
+
+\end{description}
+
+\paragraph{Implementation Details.}
+
+\begin{itemize}
+
+\item \textbf{Module layout.}
+  \fname{src/pramanix/natural\_policy/\_\_init\_\_.py} exports the full public
+  surface: \code{NaturalPolicyCompiler}, \code{ASTBuilder},
+  \code{CompiledPolicy}, \code{MetaVerifier}, \code{MetaVerificationResult},
+  \code{VerificationMode}.  Internal helpers live in \fname{compiler.py},
+  \fname{verifier.py}, and \fname{schemas.py} — none are exposed at the
+  package root.
+
+\item \textbf{Z3 thread safety.}  All Z3 solver operations inside
+  \code{MetaVerifier} use a thread-local Z3 context following the established
+  Phase~5 pattern, ensuring that concurrent Guard instances do not share
+  solver state.
+
+\item \textbf{No runtime LLM dependency.}  The compiler, builder, and
+  verifier have zero imports from any LLM library.  The only optional
+  dependency for end-to-end use is whatever translator is chosen to produce
+  the \code{NaturalPolicySchema} from raw text — and that call happens
+  entirely outside the compiler.
+
+\end{itemize}
+
+\paragraph{Test Coverage.}
+
+Phase~2 ships \fname{tests/unit/test\_natural\_policy.py} — 61 new unit tests
+across 9 test classes:
+
+\begin{enumerate}
+\item \code{TestNaturalPolicySchemaValidation} (12 tests) — field-level
+  Pydantic validation, operator enumeration, value-type enumeration, and
+  reject-on-missing-required-field.
+\item \code{TestASTBuilderTypeConversion} (8 tests) — each
+  \code{value\_type}→Python type mapping, bad-type rejection, and operator
+  round-trip.
+\item \code{TestASTBuilderConstraintGeneration} (8 tests) — operator
+  semantics (\code{lt}, \code{le}, \code{eq}, \code{ge}, \code{gt},
+  \code{ne}) and string field support.
+\item \code{TestNaturalPolicyCompilerHappyPath} (7 tests) — end-to-end
+  compilation of realistic policies (``amounts under \$10{,}000'', KYC tier,
+  PEP boolean, currency equality).
+\item \code{TestNaturalPolicyCompilerEdgeCases} (6 tests) — dict input
+  coercion, missing \code{name}/\code{description} defaulting, large
+  threshold values.
+\item \code{TestMetaVerifierModes} (6 tests) — \code{STRICT} raises on
+  unsatisfiable policy; \code{WARN} logs and returns
+  \code{MetaVerificationResult.passed=False}; \code{SKIP} short-circuits
+  without calling Z3.
+\item \code{TestCompiledPolicyInterface} (5 tests) — immutability, digest
+  stability, \code{to\_policy\_config()} integration, repr string.
+\item \code{TestEndToEndPolicyApplication} (5 tests) — compiled policy
+  applied to a real \code{Guard} instance; correct allow/deny decisions.
+\item \code{TestNaturalPolicyRejections} (4 tests) — invalid operator string,
+  type coercion failure, contradictory constraint (always false), polarity
+  inversion detection.
+\end{enumerate}
+
+All 61 tests pass in isolation and as part of the full suite.
+
+\paragraph{Phase~2 Baseline.}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Metric & Value \\
+\midrule
+Tests passed & 3,984 \\
+Tests skipped & 130 \\
+Tests failed & 0 \\
+Branch coverage & 98.26\,\% \\
+Python & 3.13.7 \\
+pytest & 7.4.4 \\
+Natural policy tests & 61 \\
+Wall time & $\approx$\,430\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \subsection*{Phase~12: Metric-Registry Bug and Coverage Completeness}
 
@@ -2323,7 +2501,7 @@ P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} &
 AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
 Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
 Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
-3,923 tests                 & \fname{reality.md}            & \cfrsec{3.1} \\
+3,984 tests (Phase~2)       & \fname{reality.md}            & \cfrsec{3.1} \\
 3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
 3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
 EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\
