@@ -31,7 +31,7 @@ Example::
             return [
                 # Only CLINICIAN or BREAK_GLASS may access PHI
                 (
-                    (E(_target_phi) == False)  # noqa: E712
+                    E(_target_phi).is_false()
                     | (E(_role) == HIPAARole.CLINICIAN)
                     | (E(_role) == HIPAARole.BREAK_GLASS)
                 )

@@ -278,6 +278,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# expressions.py: E(), ForAll(), Exists(), DatetimeField() are public DSL entry
+# points styled after mathematical logic notation (∃, ∀) and type constructors.
+# Renaming to snake_case would break the established DSL API contract.
+"src/pramanix/expressions.py" = ["N802"]
 # Primitive factory functions are intentionally PascalCase (styled as constructors).
 "src/pramanix/primitives/*.py" = ["N802"]
 # Integration tests use print() for latency measurement output; T20 not applicable here.

@@ -1092,7 +1092,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         import z3
 
         s = z3.Solver()
-        s.add(z3.Bool("x") == True)  # noqa: E712
+        s.add(z3.Bool("x"))
         res = str(s.check())
         if res == "sat":
             _check("z3-solver", "OK", f"z3 {z3.get_version_string()} — solver functional")
@@ -1149,10 +1149,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # ── 8. Cryptography package (required for PramanixSigner / Ed25519) ───────
     if _has("cryptography"):
         try:
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-                Ed25519PrivateKey,  # noqa: F401
-            )
-
+            import importlib as _il
+            _il.import_module("cryptography.hazmat.primitives.asymmetric.ed25519")
+            del _il
             _check("cryptography", "OK", "cryptography — Ed25519 available")
         except ImportError as exc:
             _check(
@@ -1200,7 +1199,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     _log_status = _chk_log("pramanix")
     _check(
         "logging-handlers",
-        _log_status["level"],  # type: ignore[arg-type]
+        _log_status["level"],
         _log_status["detail"],
         hint=_log_status["hint"],
     )

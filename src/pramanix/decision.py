@@ -141,16 +141,6 @@ def _build_decision_canonical(
     }
 
 
-# ---------------------------------------------------------------------------
-# Compatibility shim: FrozenInstanceError was added in Python 3.11.
-# In 3.10 frozen dataclasses raise AttributeError directly.
-# ---------------------------------------------------------------------------
-try:
-    from dataclasses import FrozenInstanceError  # type: ignore[attr-defined,unused-ignore]
-except ImportError:  # Python 3.10
-    FrozenInstanceError = AttributeError  # type: ignore[assignment, misc]
-
-
 # ── SolverStatus ──────────────────────────────────────────────────────────────
 
 

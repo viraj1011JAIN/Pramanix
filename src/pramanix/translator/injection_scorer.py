@@ -291,7 +291,9 @@ class CalibratedScorer:
                 path=str(path),
             )
         try:
-            import sklearn  # noqa: F401 — verify sklearn is available before unpickling
+            import importlib as _il
+            _il.import_module("sklearn")
+            del _il
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 

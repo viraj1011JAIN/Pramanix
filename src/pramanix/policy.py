@@ -51,7 +51,7 @@ Typical usage::
                 .named("within_daily_limit")
                 .explain("Exceeds daily limit: amount={amount}, limit={daily_limit}"),
 
-                (E(cls.is_frozen) == False)        # noqa: E712
+                E(cls.is_frozen).is_false()
                 .named("account_not_frozen")
                 .explain("Account is frozen; no transactions permitted"),
             ]
@@ -119,7 +119,7 @@ def invariant_mixin(fn: _MixinFn) -> _MixinFn:
         def AccountSafetyMixin(fields: dict[str, Field]) -> list[ConstraintExpr]:
             return [
                 (E(fields["balance"]) >= 0).named("non_neg_balance"),
-                (E(fields["is_frozen"]) == False).named("account_not_frozen"),  # noqa: E712
+                E(fields["is_frozen"]).is_false().named("account_not_frozen"),
             ]
 
         class TradePolicy(Policy, mixins=[AccountSafetyMixin]):
@@ -142,7 +142,7 @@ def invariant_mixin(fn: _MixinFn) -> _MixinFn:
         The same callable, with ``._is_invariant_mixin = True`` set for
         introspection.
     """
-    fn._is_invariant_mixin = True  # type: ignore[attr-defined]
+    cast(Any, fn)._is_invariant_mixin = True
     return fn
 
 
@@ -260,7 +260,7 @@ class Policy:
                         break
 
             # Step 2: evaluate each mixin with this class's field dict.
-            fields = _cls.fields()  # type: ignore[attr-defined]
+            fields = cast(Any, _cls).fields()
             extra: list[ConstraintExpr] = []
             for mixin_fn in _raw_mixins:
                 if not callable(mixin_fn):

@@ -202,7 +202,7 @@ def ProdDeployApproval(
         required_approvers:  Minimum number of approvers required (literal int).
     """
     return (
-        ((E(deployment_approved) == True) & (E(approver_count) >= required_approvers))  # noqa: E712
+        (E(deployment_approved).is_true() & (E(approver_count) >= required_approvers))
         .named("prod_deploy_approval")
         .explain(
             "Production deployment blocked: approved={deployment_approved}, "

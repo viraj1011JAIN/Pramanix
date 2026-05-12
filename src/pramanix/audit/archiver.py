@@ -35,6 +35,7 @@ PRAMANIX_MERKLE_MAX_ACTIVE_ENTRIES: int, default 100000 — trigger archival at 
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -286,10 +287,8 @@ class MerkleArchiver:
                 fh.flush()
                 os.fsync(fh.fileno())
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
         os.replace(tmp_path, archive_path)
 

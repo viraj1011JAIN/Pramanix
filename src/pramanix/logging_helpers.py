@@ -200,17 +200,15 @@ def check_logging_configuration(
     log = logging.getLogger(logger_name)
 
     # Walk the hierarchy collecting handlers.
+    # Logger.parent is always a Logger (never a PlaceHolder), so the isinstance
+    # loop with current.parent is well-typed without any extra casts.
     reachable: list[logging.Handler] = []
-    current: logging.Logger | logging.PlaceHolder | None = log
-    while current is not None:
-        if isinstance(current, logging.Logger):
-            reachable.extend(current.handlers)
-            if not current.propagate:
-                break
-        parent_name = current.parent if hasattr(current, "parent") else None
-        if parent_name is None:
+    current: logging.Logger | None = log
+    while isinstance(current, logging.Logger):
+        reachable.extend(current.handlers)
+        if not current.propagate:
             break
-        current = parent_name  # type: ignore[assignment]
+        current = current.parent
 
     # Root logger handlers
     root = logging.getLogger()

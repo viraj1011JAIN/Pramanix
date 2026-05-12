@@ -33,7 +33,6 @@ import hashlib
 import hmac
 import logging
 import os
-import queue
 import threading
 import time
 import uuid

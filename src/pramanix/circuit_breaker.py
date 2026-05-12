@@ -33,7 +33,7 @@ import enum
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
@@ -211,7 +211,7 @@ class AdaptiveCircuitBreaker:
         async with self._lock:
             self._record_solve(solve_ms)
 
-        return decision  # type: ignore[no-any-return]
+        return cast("Decision", decision)
 
     def reset(self) -> None:
         """Manual reset from ISOLATED. Requires human acknowledgment."""
@@ -545,7 +545,7 @@ class DistributedCircuitBreaker:
             else:
                 self._local_failure_count = 0
 
-        return decision  # type: ignore[no-any-return]
+        return cast("Decision", decision)
 
     def verify_sync(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Decision:
         """Blocking synchronous wrapper (sync callers only).
@@ -681,7 +681,9 @@ class RedisDistributedBackend:
         ttl_seconds: int = 300,
     ) -> None:
         try:
-            import redis.asyncio  # noqa: F401
+            import importlib as _il
+            _il.import_module("redis.asyncio")
+            del _il
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -695,6 +697,7 @@ class RedisDistributedBackend:
         self._prefix = key_prefix
         self._ttl = ttl_seconds
         self._client: Any = None
+        self._clear_tasks: set[asyncio.Future] = set()
 
     async def _get_client(self) -> Any:
         """Lazily create and cache the async Redis client."""
@@ -707,10 +710,8 @@ class RedisDistributedBackend:
     async def close(self) -> None:
         """Close the underlying Redis connection."""
         if self._client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._client.aclose()
-            except Exception:
-                pass
             self._client = None
 
     def __del__(self) -> None:
@@ -832,7 +833,9 @@ class RedisDistributedBackend:
                 "event loop.  Use 'await clear_async()' in async code to avoid "
                 "scheduling issues.  Scheduling as background task."
             )
-            asyncio.ensure_future(self._async_clear(namespace))
+            _task = asyncio.ensure_future(self._async_clear(namespace))
+            self._clear_tasks.add(_task)
+            _task.add_done_callback(self._clear_tasks.discard)
         except RuntimeError:
             # No running loop — safe to use asyncio.run().
             asyncio.run(self._async_clear(namespace))
@@ -932,7 +935,7 @@ class TranslatorCircuitBreaker:
 
         try:
             result = await coro_factory()
-        except (ExtractionFailureError, LLMTimeoutError) as exc:
+        except (ExtractionFailureError, LLMTimeoutError):
             async with self._lock:
                 self._consecutive_failures += 1
                 if self._state == CircuitState.HALF_OPEN or (

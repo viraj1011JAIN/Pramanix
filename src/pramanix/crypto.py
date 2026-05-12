@@ -32,7 +32,7 @@ import base64
 import hashlib
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -62,9 +62,8 @@ def _increment_signing_failure_counter() -> None:
             )
         except ValueError:
             from prometheus_client import REGISTRY
-            _c = REGISTRY._names_to_collectors.get(  # type: ignore[union-attr]
-                "pramanix_signing_failure_total"
-            )
+            _collectors = getattr(REGISTRY, "_names_to_collectors", None)
+            _c = _collectors.get("pramanix_signing_failure_total") if _collectors is not None else None
             if _c is None:
                 return
         _c.inc()
@@ -153,7 +152,7 @@ class PramanixSigner:
                 if isinstance(private_key_pem, str)
                 else private_key_pem
             )
-            self._private_key: Ed25519PrivateKey = load_pem_private_key(raw, password=None)  # type: ignore[assignment]
+            self._private_key: Ed25519PrivateKey = cast("Ed25519PrivateKey", load_pem_private_key(raw, password=None))
             if not isinstance(self._private_key, Ed25519PrivateKey):
                 raise ValueError(
                     "PEM key is not an Ed25519 private key. "
@@ -162,7 +161,7 @@ class PramanixSigner:
         else:
             env_pem = os.environ.get(_ENV_KEY_PEM, "")
             if env_pem:
-                self._private_key = load_pem_private_key(env_pem.encode(), password=None)  # type: ignore[assignment]
+                self._private_key = cast("Ed25519PrivateKey", load_pem_private_key(env_pem.encode(), password=None))
                 if not isinstance(self._private_key, Ed25519PrivateKey):
                     raise ValueError(
                         "PRAMANIX_SIGNING_KEY_PEM is not an Ed25519 private key."

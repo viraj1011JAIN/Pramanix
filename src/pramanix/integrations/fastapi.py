@@ -32,13 +32,13 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Literal
-
-_log = logging.getLogger(__name__)
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pramanix.audit.signer import DecisionSigner
 from pramanix.exceptions import GuardViolationError, PolicyCompilationError
 from pramanix.guard import Guard, GuardConfig
+
+_log = logging.getLogger(__name__)
 
 
 class JSONResponse:
@@ -53,9 +53,7 @@ class JSONResponse:
 
 try:
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request  # noqa: F401
     from starlette.responses import JSONResponse, Response  # type: ignore[assignment]
-    from starlette.types import ASGIApp  # noqa: F401
 
     _STARLETTE_AVAILABLE = True
     _BaseHTTPMiddleware: type = BaseHTTPMiddleware
@@ -304,7 +302,7 @@ def pramanix_route(
             return await fn(*args, **kwargs)
 
         # Attach the guard for introspection / testing.
-        wrapper.__guard__ = _guard  # type: ignore[attr-defined]
+        cast(Any, wrapper).__guard__ = _guard
         return wrapper
 
     return decorator

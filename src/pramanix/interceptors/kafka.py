@@ -27,6 +27,7 @@ Usage::
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -192,7 +193,5 @@ class PramanixKafkaConsumer:
                 "PramanixKafkaConsumer GC'd without explicit close() — "
                 "call close() explicitly to release the Kafka consumer cleanly."
             )
-            try:
+            with contextlib.suppress(Exception):
                 self.close()
-            except Exception:
-                pass

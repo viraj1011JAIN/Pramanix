@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import json
 from collections.abc import Callable
 from typing import Any
@@ -26,12 +27,13 @@ except ImportError:
 
 # Build model_config at module level to avoid polluting the class namespace
 # (Pydantic would treat an in-class `from pydantic import ConfigDict` as a field)
+_PRAMANIX_MODEL_CONFIG: Any = None
 try:
     from pydantic import ConfigDict as _ConfigDict
 
     _PRAMANIX_MODEL_CONFIG = _ConfigDict(arbitrary_types_allowed=True)
 except ImportError:
-    _PRAMANIX_MODEL_CONFIG = None  # type: ignore[assignment]
+    pass
 
 __all__ = ["PramanixGuardedTool", "wrap_tools"]
 
@@ -112,10 +114,8 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         executor.shutdown(wait=False)
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
     async def _arun(self, tool_input: str, **kwargs: Any) -> str:
         guard = object.__getattribute__(self, "_pramanix_guard")

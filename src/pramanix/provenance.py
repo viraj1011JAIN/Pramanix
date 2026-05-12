@@ -164,7 +164,7 @@ class ProvenanceRecord:
         principal_id: str = "",
         prev_hash: str = "",
         metadata: dict[str, Any] | None = None,
-    ) -> "ProvenanceRecord":
+    ) -> ProvenanceRecord:
         """Build a record from a :class:`~pramanix.decision.Decision`.
 
         Args:
@@ -290,7 +290,7 @@ class ProvenanceChain:
             records = list(self._records)
             tags = list(self._tags)
 
-        for i, (rec, stored_tag) in enumerate(zip(records, tags)):
+        for i, (rec, stored_tag) in enumerate(zip(records, tags, strict=False)):
             computed = rec.hmac_tag(self._key)
             if not hmac.compare_digest(computed, stored_tag):
                 _log.error(

@@ -71,7 +71,9 @@ class PramanixPydanticAIValidator:
         self._state_fn = state_fn
 
         try:
-            import pydantic_ai  # noqa: F401
+            import importlib as _il
+            _il.import_module("pydantic_ai")
+            del _il
         except ImportError as exc:
             raise ConfigurationError(
                 "pydantic-ai is required for PramanixPydanticAIValidator. "

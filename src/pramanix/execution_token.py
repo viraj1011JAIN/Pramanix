@@ -66,6 +66,7 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -80,10 +81,11 @@ from typing import TYPE_CHECKING, Any
 _log = logging.getLogger(__name__)
 
 # asyncpg is optional — only required for PostgresExecutionTokenVerifier.
+_asyncpg: types.ModuleType | None
 try:
     import asyncpg as _asyncpg  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover
-    _asyncpg = None  # type: ignore[assignment]
+    _asyncpg = None
 
 # Sentinel used in except clauses: empty tuple = catch nothing when asyncpg absent.
 _ASYNCPG_UNIQUE_VIOLATION: type | tuple[type, ...] = (
@@ -91,6 +93,8 @@ _ASYNCPG_UNIQUE_VIOLATION: type | tuple[type, ...] = (
 )
 
 if TYPE_CHECKING:
+    import types
+
     from pramanix.decision import Decision
 
 __all__ = [
@@ -976,7 +980,8 @@ class PostgresExecutionTokenVerifier:
 
     async def _init_pool(self) -> Any:
         """Create the asyncpg connection pool and ensure the schema exists."""
-        pool = await _asyncpg.create_pool(self._dsn, min_size=1, max_size=5)  # type: ignore[union-attr]
+        assert _asyncpg is not None, "asyncpg not installed — install pramanix[postgres]"
+        pool = await _asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
         async with pool.acquire() as conn:
             await self._ensure_table(conn)
         return pool
@@ -995,10 +1000,8 @@ class PostgresExecutionTokenVerifier:
         """Close the connection pool and stop the background event loop."""
         import asyncio
 
-        try:
+        with contextlib.suppress(Exception):
             asyncio.run_coroutine_threadsafe(self._pool.close(), self._loop).result(timeout=10.0)
-        except Exception:
-            pass
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._loop_thread.join(timeout=10.0)
 

@@ -33,7 +33,7 @@ Usage::
             return [
                 (E(cls.balance) - E(cls.amount) >= 0).named("non_negative_balance"),
                 (E(cls.amount) <= E(cls.daily_limit)).named("within_daily_limit"),
-                (E(cls.is_frozen) == False).named("account_not_frozen"),  # noqa: E712
+                E(cls.is_frozen).is_false().named("account_not_frozen"),
             ]
 
     guard = Guard(BankingPolicy)
@@ -73,7 +73,7 @@ import contextlib
 import dataclasses
 import time
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
 
@@ -242,11 +242,11 @@ class Guard:
         self._config = config or GuardConfig()
 
         # Extract Pydantic models from Policy.Meta (may be None)
-        self._intent_model: type[BaseModel] | None = (  # type: ignore[assignment,unused-ignore]
-            policy.meta_intent_model()
+        self._intent_model: type[BaseModel] | None = cast(
+            "type[BaseModel] | None", policy.meta_intent_model()
         )
-        self._state_model: type[BaseModel] | None = (  # type: ignore[assignment,unused-ignore]
-            policy.meta_state_model()
+        self._state_model: type[BaseModel] | None = cast(
+            "type[BaseModel] | None", policy.meta_state_model()
         )
         # B-4: validate semver first so malformed tuples raise before meta_version() formats them.
         self._policy_semver: tuple[int, int, int] | None = self._validate_semver(policy)

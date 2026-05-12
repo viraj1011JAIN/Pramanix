@@ -209,7 +209,7 @@ def BreakGlassAuth(
             supervisor.  0 = no approver.
     """
     return (
-        ((E(emergency_flag) == True) & (E(approver_id) > 0))  # noqa: E712
+        (E(emergency_flag).is_true() & (E(approver_id) > 0))
         .named("break_glass_auth")
         .explain(
             "Break-glass access blocked: emergency_flag={emergency_flag}, "

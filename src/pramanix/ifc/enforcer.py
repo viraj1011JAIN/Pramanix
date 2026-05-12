@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pramanix.exceptions import FlowViolationError
-from pramanix.ifc.flow_policy import FlowPolicy
-from pramanix.ifc.labels import ClassifiedData, TrustLabel
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pramanix.ifc.flow_policy import FlowPolicy
+    from pramanix.ifc.labels import ClassifiedData, TrustLabel
 
 __all__ = ["FlowEnforcer"]
 

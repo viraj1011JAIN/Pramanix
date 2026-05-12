@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
-    from pramanix.expressions import Field as ExprField
     from pramanix.policy import Policy
 
 __all__ = [
@@ -162,7 +161,7 @@ class PolicyDiff:
         cls,
         old_policy: type[Policy],
         new_policy: type[Policy],
-    ) -> "PolicyDiff":
+    ) -> PolicyDiff:
         """Compute the structural diff between *old_policy* and *new_policy*.
 
         Uses string representations of invariant expressions to detect changes.
@@ -313,7 +312,6 @@ class ShadowEvaluator:
         Returns:
             A :class:`ShadowResult` capturing the comparison.
         """
-        from pramanix.decision import SolverStatus
 
         live_allowed = live_decision.allowed
         live_latency_ms = getattr(live_decision, "latency_ms", 0.0)
@@ -327,7 +325,7 @@ class ShadowEvaluator:
             shadow_decision = self._shadow.verify(intent, state)
             shadow_latency_ms = (time.perf_counter() - t0) * 1_000
             shadow_allowed = shadow_decision.allowed
-        except Exception as exc:  # noqa: BLE001 — shadow errors must never propagate
+        except Exception as exc:  # — shadow errors must never propagate
             shadow_error = f"{type(exc).__name__}: {exc}"
             _log.warning(
                 "shadow_evaluator.error: %s",
@@ -411,7 +409,7 @@ def _collect_invariants(policy: type[Policy]) -> dict[str, str]:
     """
     try:
         invs = policy.invariants()
-    except Exception:  # noqa: BLE001 — broken policies still need a diff
+    except Exception:  # — broken policies still need a diff
         return {}
     result: dict[str, str] = {}
     for inv in invs:
@@ -420,7 +418,7 @@ def _collect_invariants(policy: type[Policy]) -> dict[str, str]:
         explanation = getattr(inv, "explanation", None) or ""
         node = getattr(inv, "node", None)
         # repr() on NamedTuple nodes is stable (no object id)
-        stable = f"label={label!r}|explanation={explanation!r}|node={repr(node)}"
+        stable = f"label={label!r}|explanation={explanation!r}|node={node!r}"
         result[str(name)] = stable
     return result
 
@@ -433,7 +431,8 @@ def _collect_fields(policy: type[Policy], field_cls: type) -> dict[str, str]:
             continue
         try:
             val = getattr(policy, attr_name)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:
+            _log.debug("policy_diff: skipping attr %r: %s", attr_name, exc)
             continue
         if isinstance(val, field_cls):
             result[attr_name] = str(val.z3_type) if hasattr(val, "z3_type") else repr(val)

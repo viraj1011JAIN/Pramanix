@@ -143,7 +143,7 @@ class CohereTranslator:
             try:
                 import httpx as _httpx
 
-                if isinstance(exc, (_httpx.TransportError, _httpx.TimeoutException)):
+                if isinstance(exc, _httpx.TransportError | _httpx.TimeoutException):
                     raise LLMTimeoutError(
                         f"Cohere model '{self.model}' connection error: {exc}",
                         model=self.model,

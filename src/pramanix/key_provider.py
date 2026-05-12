@@ -644,7 +644,7 @@ class HashiCorpVaultKeyProvider:
                 f"HashiCorpVaultKeyProvider: field {self._field!r} not found in secret "
                 f"{self._secret_path!r} (mount={self._mount_point!r}). "
                 f"Available fields: {available}"
-            )
+            ) from None
         self._cached_pem = value.encode() if isinstance(value, str) else value
         self._cached_version = str(resp["data"]["metadata"]["version"])
         self._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL

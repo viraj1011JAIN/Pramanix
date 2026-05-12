@@ -22,7 +22,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass, field
-from pathlib import Path  # noqa: F401 — re-exported for backward compatibility
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -33,7 +33,7 @@ from pramanix.resolvers import resolver_registry
 if TYPE_CHECKING:
     from pramanix.crypto import PramanixSigner
 
-__all__ = ["GovernanceConfig", "GuardConfig"]
+__all__ = ["GovernanceConfig", "GuardConfig", "Path"]
 
 from pramanix.governance_config import GovernanceConfig
 
@@ -108,6 +108,11 @@ except ImportError:
 # ── Prometheus — graceful optional dependency ─────────────────────────────────
 # Each metric is a no-op when ``prometheus_client`` is absent, so there is zero
 # overhead on deployments that do not expose a /metrics endpoint.
+_decisions_total: Any = None
+_decision_latency: Any = None
+_solver_timeouts_total: Any = None
+_validation_failures_total: Any = None
+_PROM_AVAILABLE = False
 
 try:
     import prometheus_client as _prom
@@ -136,11 +141,7 @@ try:
     _PROM_AVAILABLE = True
 
 except ImportError:
-    _PROM_AVAILABLE = False
-    _decisions_total = None  # type: ignore[assignment]
-    _decision_latency = None  # type: ignore[assignment]
-    _solver_timeouts_total = None  # type: ignore[assignment]
-    _validation_failures_total = None  # type: ignore[assignment]
+    pass
 
 
 # ── Module-level resolver registry ───────────────────────────────────────────
@@ -424,18 +425,19 @@ class GuardConfig:
                 f"GuardConfig.consensus_strictness must be one of {_valid_strictness!r}, "
                 f"got '{self.consensus_strictness}'."
             )
-        if self.injection_scorer_path is not None:
-            # Validate that the name looks like a valid entry-point name
-            # (non-empty, no path separators).  Full existence check happens
-            # at call time in redundant.extract_with_consensus() so that
-            # entry-points installed after GuardConfig construction are found.
-            if "/" in self.injection_scorer_path or "\\" in self.injection_scorer_path:
-                raise ConfigurationError(
-                    f"GuardConfig.injection_scorer_path must be an entry-point name, "
-                    f"not a file path. Got: {self.injection_scorer_path!r}. "
-                    "Register your scorer via the 'pramanix.injection_scorers' "
-                    "entry-point group and pass its name here."
-                )
+        # Validate that the name looks like a valid entry-point name
+        # (non-empty, no path separators).  Full existence check happens
+        # at call time in redundant.extract_with_consensus() so that
+        # entry-points installed after GuardConfig construction are found.
+        if self.injection_scorer_path is not None and (
+            "/" in self.injection_scorer_path or "\\" in self.injection_scorer_path
+        ):
+            raise ConfigurationError(
+                f"GuardConfig.injection_scorer_path must be an entry-point name, "
+                f"not a file path. Got: {self.injection_scorer_path!r}. "
+                "Register your scorer via the 'pramanix.injection_scorers' "
+                "entry-point group and pass its name here."
+            )
         if not (0.0 < self.shed_worker_pct <= 100.0):
             raise ConfigurationError(
                 f"GuardConfig.shed_worker_pct must be in (0.0, 100.0], "
@@ -490,16 +492,15 @@ class GuardConfig:
                 stacklevel=2,
             )
         # ── Production safety: no audit sinks configured ──────────────────────
-        if _is_prod and not self.audit_sinks:
-            if not _env_bool("ALLOW_NO_AUDIT_SINKS", False):
-                raise ConfigurationError(
-                    "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
-                    "no audit sinks configured — decisions are not persisted. A regulated "
-                    "deployment without a durable audit trail fails SOC 2 / HIPAA compliance. "
-                    "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink). "
-                    "To suppress this error only for local testing: "
-                    "set PRAMANIX_ALLOW_NO_AUDIT_SINKS=1."
-                )
+        if _is_prod and not self.audit_sinks and not _env_bool("ALLOW_NO_AUDIT_SINKS", False):
+            raise ConfigurationError(
+                "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
+                "no audit sinks configured — decisions are not persisted. A regulated "
+                "deployment without a durable audit trail fails SOC 2 / HIPAA compliance. "
+                "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink). "
+                "To suppress this error only for local testing: "
+                "set PRAMANIX_ALLOW_NO_AUDIT_SINKS=1."
+            )
         # ── Production safety: resource limits disabled ────────────────────────
         if _is_prod and self.solver_rlimit == 0:
             warnings.warn(

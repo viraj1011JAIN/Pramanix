@@ -31,7 +31,7 @@ def _extract_first_json(s: str) -> str | None:
             continue
         try:
             value, end = decoder.raw_decode(s, i)
-            if isinstance(value, (dict, list)):
+            if isinstance(value, dict | list):
                 return s[i:end]
         except json.JSONDecodeError:
             continue

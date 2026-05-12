@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_block_feedback
@@ -40,8 +41,6 @@ __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 # Raise ImportError on import so the dependency requirement is clear.
 
 try:
-    from llama_index.core.tools import FunctionTool as _LlamaFunctionTool  # noqa: F401
-    from llama_index.core.tools import QueryEngineTool as _LlamaQueryEngineTool  # noqa: F401
     from llama_index.core.tools.types import ToolMetadata, ToolOutput
 
     _LLAMA_AVAILABLE = True
@@ -243,10 +242,8 @@ class PramanixFunctionTool:
         self._executor.shutdown(wait=False)
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
     # ── State retrieval ───────────────────────────────────────────────────────
 
@@ -255,7 +252,7 @@ class PramanixFunctionTool:
         result = self._state_provider()
         if asyncio.iscoroutine(result):
             result = await result
-        return result  # type: ignore[no-any-return]
+        return cast(dict[str, Any], result)
 
     # ── Class method factory ──────────────────────────────────────────────────
 
@@ -485,4 +482,4 @@ class PramanixQueryEngineTool:
         result = self._state_provider()
         if asyncio.iscoroutine(result):
             result = await result
-        return result  # type: ignore[no-any-return]
+        return cast(dict[str, Any], result)

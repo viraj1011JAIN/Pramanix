@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pramanix.exceptions import GuardViolationError
 
@@ -117,7 +117,7 @@ def guard(
 
                 return await fn(*args, **kwargs)
 
-            async_wrapper.__guard__ = _guard_instance  # type: ignore[attr-defined]
+            cast(Any, async_wrapper).__guard__ = _guard_instance
             return async_wrapper
 
         else:
@@ -141,7 +141,7 @@ def guard(
 
                 return fn(*args, **kwargs)
 
-            sync_wrapper.__guard__ = _guard_instance  # type: ignore[attr-defined]
+            cast(Any, sync_wrapper).__guard__ = _guard_instance
             return sync_wrapper
 
     return decorator

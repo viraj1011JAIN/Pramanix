@@ -412,7 +412,7 @@ class _NowOp(NamedTuple):
     """
 
 
-def DatetimeField(name: str) -> Field:  # noqa: N802
+def DatetimeField(name: str) -> Field:
     """Convenience constructor for a datetime-typed field stored as Unix epoch seconds.
 
     Produces a :class:`Field` with ``z3_type="Int"`` so Z3 can reason over
@@ -842,6 +842,22 @@ class ExpressionNode:
     def __ne__(self, o: Any) -> ConstraintExpr:  # type: ignore[override]
         return ConstraintExpr(_CmpOp("ne", self.node, self._w(o)))
 
+    def is_true(self) -> ConstraintExpr:
+        """Assert this Bool-sorted field is True.
+
+        Prefer this over ``E(field) == True`` which triggers linter E712.
+        Only meaningful for ``Bool``-sorted fields.
+        """
+        return ConstraintExpr(_CmpOp("eq", self.node, self._w(True)))
+
+    def is_false(self) -> ConstraintExpr:
+        """Assert this Bool-sorted field is False.
+
+        Prefer this over ``E(field) == False`` which triggers linter E712.
+        Only meaningful for ``Bool``-sorted fields.
+        """
+        return ConstraintExpr(_CmpOp("eq", self.node, self._w(False)))
+
 
 class ConstraintExpr:
     """A boolean constraint expression with an optional label and explanation.
@@ -935,7 +951,7 @@ class ConstraintExpr:
 # ── Public factory ────────────────────────────────────────────────────────────
 
 
-def E(field: Field) -> ExpressionNode:  # noqa: N802
+def E(field: Field) -> ExpressionNode:
     """Begin a DSL expression from a :class:`Field` descriptor.
 
     This is the sole entry-point for constructing policy constraints.
@@ -961,7 +977,7 @@ def E(field: Field) -> ExpressionNode:  # noqa: N802
     return ExpressionNode(_FieldRef(field))
 
 
-def ForAll(  # noqa: N802
+def ForAll(
     array_field: ArrayField,
     predicate: Callable[[Field], ConstraintExpr],
 ) -> ConstraintExpr:
@@ -997,7 +1013,7 @@ def ForAll(  # noqa: N802
     return ConstraintExpr(_ForAllOp(array_field, predicate))
 
 
-def Exists(  # noqa: N802
+def Exists(
     array_field: ArrayField,
     predicate: Callable[[Field], ConstraintExpr],
 ) -> ConstraintExpr:

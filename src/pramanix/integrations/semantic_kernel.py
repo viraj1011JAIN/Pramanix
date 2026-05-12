@@ -61,7 +61,9 @@ class PramanixSemanticKernelPlugin:
         # Validate presence of semantic-kernel at construction time so the
         # missing-dependency error surfaces immediately rather than at call time.
         try:
-            import semantic_kernel  # noqa: F401
+            import importlib as _il
+            _il.import_module("semantic_kernel")
+            del _il
         except ImportError as exc:
             raise ConfigurationError(
                 "semantic-kernel is required for PramanixSemanticKernelPlugin. "

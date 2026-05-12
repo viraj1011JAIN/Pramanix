@@ -5,7 +5,7 @@
 The trust lattice is total-ordered (PUBLIC < INTERNAL < CUSTOMER < CONFIDENTIAL
 < REGULATED < UNTRUSTED).  The ordering is used for dominance checks:
 data at label *L* may flow to a sink at label *L'* only if *L'* >= *L*
-(the Bell–LaPadula "no-read-up" direction for integrity, inverted here for
+(the Bell-LaPadula "no-read-up" direction for integrity, inverted here for
 secrecy enforcement in the data-movement sense used by IFC libraries).
 
 Pramanix uses the following semantics:
@@ -22,10 +22,12 @@ Pramanix uses the following semantics:
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 __all__ = [
     "ClassifiedData",
@@ -107,7 +109,7 @@ class ClassifiedData:
 
     # ── Transformation helpers ─────────────────────────────────────────────
 
-    def taint(self, component: str) -> "ClassifiedData":
+    def taint(self, component: str) -> ClassifiedData:
         """Return a copy marking transit through *component*.
 
         Does not change the trust label — use :meth:`downgrade` or the
@@ -131,7 +133,7 @@ class ClassifiedData:
         self,
         to_label: TrustLabel,
         redactor: Callable[[Any], Any],
-    ) -> "ClassifiedData":
+    ) -> ClassifiedData:
         """Return a copy with a *lower* label after applying *redactor*.
 
         Downgrading (moving to a less-sensitive label) requires a transformation
@@ -167,7 +169,7 @@ class ClassifiedData:
             ),
         )
 
-    def upgrade(self, to_label: TrustLabel, reason: str) -> "ClassifiedData":
+    def upgrade(self, to_label: TrustLabel, reason: str) -> ClassifiedData:
         """Return a copy with a *higher* label.
 
         Upgrading is used when new context reveals that data is more sensitive

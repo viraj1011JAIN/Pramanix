@@ -35,6 +35,7 @@ Critical design invariants
 from __future__ import annotations
 
 import collections
+import contextlib
 import hashlib
 import hmac as _hmac_mod
 import json as _json_mod
@@ -614,28 +615,22 @@ class WorkerPool:
         # cleared; a default arg holds a direct reference to the C function
         # and survives even when sys.meta_path is None (which makes `import`
         # fail for every module, including `sys` itself).
-        _is_finalizing: "Any" = _sys.is_finalizing,
+        _is_finalizing: Any = _sys.is_finalizing,
     ) -> None:
         if not getattr(self, "_alive", False):
             return
         if _is_finalizing():
-            try:
+            with contextlib.suppress(Exception):
                 self.shutdown(wait=False)
-            except Exception:
-                pass
             return
-        try:
+        with contextlib.suppress(Exception):
             _log.warning(
                 "WorkerPool GC'd without explicit shutdown() — "
                 "calling shutdown(wait=False).  "
                 "Call WorkerPool.shutdown() explicitly to avoid this warning."
             )
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             self.shutdown(wait=False)
-        except Exception:
-            pass
 
     # ── Public solve interface ─────────────────────────────────────────────────
 

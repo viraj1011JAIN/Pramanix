@@ -35,7 +35,7 @@ from __future__ import annotations
 import asyncio
 import functools
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_autogen_rejection
@@ -228,4 +228,4 @@ async def _get_state_inner(state_provider: Callable[[], Any]) -> dict[str, Any]:
     result = state_provider()
     if asyncio.iscoroutine(result):
         result = await result
-    return result  # type: ignore[no-any-return]
+    return cast(dict[str, Any], result)

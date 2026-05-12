@@ -23,6 +23,7 @@ Adding custom sinks::
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
@@ -400,10 +401,8 @@ class SplunkHecAuditSink:
 
     def close(self) -> None:
         """Close the underlying HTTP client.  Call at application teardown."""
-        try:
+        with contextlib.suppress(Exception):
             self._client.close()
-        except Exception:
-            pass
 
 
 class DatadogAuditSink:
@@ -486,7 +485,5 @@ class DatadogAuditSink:
 
     def close(self) -> None:
         """Close the Datadog API client.  Call at application teardown."""
-        try:
+        with contextlib.suppress(Exception):
             self._api_client.close()
-        except Exception:
-            pass

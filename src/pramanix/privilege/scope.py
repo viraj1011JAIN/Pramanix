@@ -269,22 +269,21 @@ class ScopeEnforcer:
             )
 
         # Dual-control check for high-risk scopes.
-        if required.requires_dual_control() and not capability.allows_dual_control_bypass:
-            if not context.approved_by:
-                self._record(tool_name, context, False, "dual-control approval missing")
-                _log.warning(
-                    "privilege.dual_control_required: tool=%s principal=%s",
-                    tool_name,
-                    context.principal_id,
-                )
-                raise PrivilegeEscalationError(
-                    f"Tool '{tool_name}' requires dual-control approval "
-                    f"(scopes: {required.scope_names()}). "
-                    "Set ExecutionContext.approved_by to the oversight approval ID.",
-                    required_scope="DUAL_CONTROL_APPROVAL",
-                    held_scopes=frozenset(held.scope_names()),
-                    tool=tool_name,
-                )
+        if required.requires_dual_control() and not capability.allows_dual_control_bypass and not context.approved_by:
+            self._record(tool_name, context, False, "dual-control approval missing")
+            _log.warning(
+                "privilege.dual_control_required: tool=%s principal=%s",
+                tool_name,
+                context.principal_id,
+            )
+            raise PrivilegeEscalationError(
+                f"Tool '{tool_name}' requires dual-control approval "
+                f"(scopes: {required.scope_names()}). "
+                "Set ExecutionContext.approved_by to the oversight approval ID.",
+                required_scope="DUAL_CONTROL_APPROVAL",
+                held_scopes=frozenset(held.scope_names()),
+                tool=tool_name,
+            )
 
         self._record(tool_name, context, True, "permitted")
         _log.debug(

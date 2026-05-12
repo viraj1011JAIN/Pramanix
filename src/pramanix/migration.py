@@ -23,7 +23,7 @@ from typing import Any
 __all__ = ["PolicyMigration", "MigrationError"]
 
 # Re-export so callers can do: from pramanix.migration import MigrationError
-from pramanix.exceptions import MigrationError as MigrationError  # noqa: F401
+from pramanix.exceptions import MigrationError as MigrationError
 
 
 @dataclasses.dataclass

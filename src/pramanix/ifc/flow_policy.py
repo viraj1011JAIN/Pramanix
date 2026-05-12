@@ -3,9 +3,8 @@
 """Flow rules and policy — what data is allowed to flow where."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import Literal
 
 from pramanix.ifc.labels import TrustLabel
 
@@ -64,12 +63,7 @@ class FlowRule:
             and not fnmatch(source_component, self.source_component)
         ):
             return False
-        if (
-            self.sink_component is not None
-            and not fnmatch(sink_component, self.sink_component)
-        ):
-            return False
-        return True
+        return self.sink_component is None or fnmatch(sink_component, self.sink_component)
 
 
 @dataclass(frozen=True)
@@ -203,12 +197,12 @@ class FlowPolicy:
     # ── Built-in presets ──────────────────────────────────────────────────
 
     @classmethod
-    def permissive(cls) -> "FlowPolicy":
+    def permissive(cls) -> FlowPolicy:
         """Allow all flows (development and testing only)."""
         return cls(rules=[], default_deny=False)
 
     @classmethod
-    def strict(cls) -> "FlowPolicy":
+    def strict(cls) -> FlowPolicy:
         """Deny all cross-label flows; same-label flows are permitted.
 
         Each label may only flow to an equal-label sink.  This is the most
@@ -226,7 +220,7 @@ class FlowPolicy:
         return cls(rules=rules, default_deny=True)
 
     @classmethod
-    def regulated(cls) -> "FlowPolicy":
+    def regulated(cls) -> FlowPolicy:
         """Preset for PCI/HIPAA deployments.
 
         * REGULATED data may only flow to REGULATED sinks.

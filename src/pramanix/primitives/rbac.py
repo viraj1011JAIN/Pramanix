@@ -62,7 +62,7 @@ def ConsentRequired(consent: Field) -> ConstraintExpr:
         consent: Bool-sorted field; ``True`` means consent was granted.
     """
     return (
-        (E(consent) == True)  # noqa: E712
+        E(consent).is_true()
         .named("consent_required")
         .explain("Access denied: explicit user consent is required ({consent}=False).")
     )

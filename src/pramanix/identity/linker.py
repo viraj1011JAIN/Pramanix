@@ -75,7 +75,7 @@ class JWTIdentityLinker:
             decision = await guard.verify_async(intent=intent, state=state)
     """
 
-    _ENV_SECRET = "PRAMANIX_JWT_SECRET"
+    _JWT_ENV_VAR = "PRAMANIX_JWT_SECRET"
     _MIN_SECRET_LENGTH = 32
 
     def __init__(
@@ -84,11 +84,11 @@ class JWTIdentityLinker:
         jwt_secret: str | None = None,
         clock_skew_seconds: int = 30,
     ) -> None:
-        raw = jwt_secret or os.environ.get(self._ENV_SECRET, "")
+        raw = jwt_secret or os.environ.get(self._JWT_ENV_VAR, "")
         if not raw or len(raw) < self._MIN_SECRET_LENGTH:
             raise ValueError(
                 f"JWT secret must be >= {self._MIN_SECRET_LENGTH} characters. "
-                f"Set {self._ENV_SECRET} environment variable."
+                f"Set {self._JWT_ENV_VAR} environment variable."
             )
         self._secret = raw.encode()
         self._loader = state_loader
