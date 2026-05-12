@@ -232,10 +232,10 @@ The practical consequence, articulated precisely in \fname{docs/Blueprint.md}
 LLMs are stochastic token samplers. Temperature $> 0$ means no two identical
 runs are guaranteed identical. In a banking context, a 99.9\,\% accuracy rate
 on a financial operation means 1 in 1,000 transfers may be incorrect. At scale
---- 10,000 daily operations --- that is 10 provably dangerous actions per day.
+--- 10,000 daily operations --- that is 10 incorrect decisions per day.
 \end{quote}
 
-This is not hypothetical. It is arithmetic.
+This is not hypothetical. It is arithmetic: $10{,}000 \times 0.001 = 10$.
 
 \section{Why Existing Approaches Fail}
 
@@ -1492,10 +1492,14 @@ initialisation in \code{\\_make\\_consumer()}).
 
 \section{Latency Benchmarks}
 
-\textbf{Benchmark environment}: single machine, single process, single thread,
-\code{sync} execution mode, Python~3.13.7, Z3~4.12.x, \code{orjson} installed,
-\code{prometheus-client} installed.  All figures are wall-clock elapsed time,
-not CPU time.  Results are not portable across hardware without re-running
+\textbf{Benchmark environment}: Windows~11 (Build~10.0.26200), AMD64,
+Intel Core 14P/20-logical-thread CPU at 2300\,MHz base clock, 15.6\,GB RAM
+(consumer laptop hardware --- not a server or cloud instance).  Single
+process, single thread, \code{sync} execution mode, Python~3.13.7,
+Z3~4.16.0, \code{orjson} installed, \code{prometheus-client} installed.
+The 1M stability test was collected under Pramanix~v0.8.0; the current
+release is v1.0.0.  All figures are wall-clock elapsed time, not CPU time.
+Results are not portable across hardware without re-running
 \fname{benchmarks/latency\_benchmark.py}.
 
 Results from \fname{benchmarks/results/latency\_results.json} --- API mode,
@@ -1646,10 +1650,13 @@ quantitative invariants that Z3 handles exactly.
 
 \textbf{PHI Access Control}: \fname{examples/healthcare\_phi\_access.py} and
 \fname{examples/healthcare\_rbac.py}. \code{PHILeastPrivilege},
-\code{BreakGlassAuth}, \code{ConsentActive} enforce HIPAA minimum-necessary
-standard at the action boundary. Every PHI access produces a signed,
-Merkle-anchored \code{Decision} with a \code{decision\_hash} --- ready for
-HIPAA audit trail requirements.
+\code{BreakGlassAuth}, \code{ConsentActive} enforce access controls
+consistent with the HIPAA minimum-necessary principle at the action boundary.
+Every PHI access produces a signed, Merkle-anchored \code{Decision} with a
+\code{decision\_hash} --- suitable for incorporation into a HIPAA audit trail
+programme.  See the \textit{Regulatory Mapping} chapter for scope and
+limitations; these records alone do not satisfy all HIPAA audit logging
+obligations.
 
 \textbf{Dosage Safety}: \code{DosageGradientCheck},
 \code{PediatricDoseBound} --- invariants over prescription amounts. An AI
@@ -1691,11 +1698,13 @@ content cannot use that content to bypass the policy.
 \section{Verified Limitations (from \fname{docs/KNOWN\_GAPS.md})}
 
 \begin{enumerate}
-  \item \textbf{AGPL-3.0 License} (\fname{pyproject.toml}:8). No enterprise
-        legal team approves AGPL as a Python library dependency. The entire
-        target market --- financial services, healthcare, cloud providers ---
-        uses Apache~2.0, MIT, or commercial licenses. This is documented in
-        \fname{reality.md} \cfrsec{4.2} as the first absolute blocker.
+  \item \textbf{AGPL-3.0 License} (\fname{pyproject.toml}:8). Most enterprise
+        legal teams in regulated industries do not approve AGPL as a Python
+        library dependency without explicit exception review, due to the
+        network-service copyleft obligation. The entire target market ---
+        financial services, healthcare, cloud providers --- defaults to
+        Apache~2.0, MIT, or commercial licenses. This is documented in
+        \fname{reality.md} \cfrsec{4.2} as the first adoption blocker.
 
   \item \textbf{Redis Circuit Breaker TOCTOU Race} --- \textit{resolved}.
         \code{RedisDistributedBackend.set\_state}
@@ -1901,9 +1910,12 @@ At the 18-worker architecture (from \fname{benchmarks/100m\_orchestrator\_fast.p
   18 \text{ workers} \times 120\ \text{RPS} &= 2{,}160\ \text{aggregate RPS (maximum)}
 \end{align*}
 
-On a 32-vCPU \code{c5.8xlarge} (AWS) at \$1.36/hour, approximately
-\$0.0034 per million decisions in compute only. This is lower than most cloud
-service API costs and is fully self-hosted.
+Projecting the single-core throughput from the Windows~11 laptop benchmark
+(Table~\ref{tab:stability}) to a 32-vCPU \code{c5.8xlarge} (AWS, approximately
+\$1.36/hour as of early 2026): a rough first-order estimate of approximately
+\$0.0034 per million decisions in compute only.  This is a projection, not a
+measurement on that instance type; actual throughput and cost on server
+hardware require re-benchmarking on the target platform.
 
 \section{Memory Budget}
 
@@ -2078,9 +2090,9 @@ for intent extraction) combined with a symbolic component (Z3 for formal
 verification). This is a recognized research paradigm, with work from IBM
 Research, MIT, and DeepMind on neuro-symbolic integration.
 
-Pramanix's contribution is a production-ready instantiation: the LLM extracts
-structured intent from natural language; the symbolic verifier proves that
-intent against formal constraints. The dual-model consensus is a
+Pramanix's contribution in this implementation is a concrete, deployable
+instantiation: the LLM extracts structured intent from natural language; the
+symbolic verifier checks that intent against formal constraints using Z3. The dual-model consensus is a
 neuro-symbolic defense: two independent neural extractors must agree before
 the symbolic verifier is invoked. Disagreement itself is a signal --- ambiguous
 or adversarial input produces consistent disagreement between models.
@@ -2463,7 +2475,9 @@ dependency. Blocks fintech, healthcare, and enterprise B2B adoption.
 AGPL's copyleft requirement: any software that uses an AGPL library and is
 provided as a network service must release its source code. For a bank or
 hospital using Pramanix in production, this means releasing their entire
-application source. No enterprise legal team accepts this.
+application source. Most enterprise legal teams in regulated industries do
+not accept this condition without an explicit exception review and relicensing
+agreement.
 
 Apache~2.0 is the correct choice: patent protection (important for Z3 usage),
 enterprise-approved legal language, and allows proprietary use without source
