@@ -1,0 +1,35 @@
+# Minimal NaturalPolicySchema YAML template for 'pramanix compile-policy'
+# This is the intermediate representation consumed by the compiler.
+# Use this format when you already have a validated schema and want to skip
+# the LLM translation step (NaturalPolicyCompiler.compile_from_schema).
+#
+# NOTE: rhs_value must be a scalar (int, float, bool, or str).
+#       Field-to-field comparisons are not supported in the schema.
+policy_name: example_transfer_policy
+original_english: >
+  Allow transfers only when the account balance is above zero
+  and the transfer amount is strictly positive.
+fields:
+  - name: balance
+    z3_type: Real
+    description: "Current account balance in USD."
+  - name: amount
+    z3_type: Real
+    description: "Requested transfer amount in USD."
+constraints:
+  - kind: comparison
+    label: positive_balance
+    lhs:
+      kind: field
+      field_name: balance
+    operator: ">"
+    rhs_value: 0
+    natural_language: "balance > 0 (account balance must be greater than 0)."
+  - kind: comparison
+    label: positive_amount
+    lhs:
+      kind: field
+      field_name: amount
+    operator: ">"
+    rhs_value: 0
+    natural_language: "amount > 0 (transfer amount must be strictly positive, above 0)."

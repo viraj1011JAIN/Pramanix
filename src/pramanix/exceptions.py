@@ -25,7 +25,8 @@ Hierarchy::
     │   ├── ExtractionMismatchError     # dual-model consensus failed (M3)
     │   ├── LLMTimeoutError             # LLM API timed out after retries (M3)
     │   ├── SemanticPolicyViolation     # post-consensus business-rule check (M3)
-    │   └── InjectionBlockedError       # pre-LLM injection scorer blocked input (M3)
+    │   ├── InjectionBlockedError       # pre-LLM injection scorer blocked input (M3)
+    │   └── MeshAuthenticationError     # Pillar 2 Zero-Trust Mesh JWT-SVID failure
     ├── ConfigurationError              # Guard / Policy misconfiguration
     └── IntegrityError                  # HMAC / cryptographic artifact verification failure
 """
@@ -47,6 +48,7 @@ __all__ = [
     "InvariantLabelError",
     "LLMTimeoutError",
     "MemoryViolationError",
+    "MeshAuthenticationError",
     "MigrationError",
     "OversightRequiredError",
     "PolicyCompilationError",
@@ -220,6 +222,36 @@ class WorkerError(GuardError):
     Raised when a thread or process worker raises an unhandled exception,
     or when the worker pool cannot be initialised.
     """
+
+
+class MeshAuthenticationError(GuardError):
+    """A JWT-SVID presented to the Zero-Trust Agent Mesh failed authentication.
+
+    Raised by :class:`~pramanix.mesh.authenticator.MeshAuthenticator` when a
+    JWT-SVID is missing, structurally malformed, cryptographically invalid,
+    expired, not-yet-valid, audience-mismatched, or contains an invalid
+    SPIFFE URI in the ``sub`` claim.
+
+    Fail-closed: this exception is always raised on any authentication failure.
+    The downstream ``Guard.verify()`` never receives an unbound intent.
+
+    Attributes:
+        reason:        Short machine-readable reason code, e.g. ``"expired"``,
+                       ``"invalid_signature"``, ``"bad_spiffe_uri"``.
+        token_preview: First 16 chars of the raw token for log correlation
+                       (never the full token — avoids logging credentials).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str = "unknown",
+        token_preview: str = "",
+    ) -> None:
+        self.reason = reason
+        self.token_preview = token_preview
+        super().__init__(message)
 
 
 class GuardViolationError(GuardError):
