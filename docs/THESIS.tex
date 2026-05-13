@@ -561,6 +561,73 @@ an already-structured \code{PolicyIR} with no LLM dependency.  The two can
 be composed --- an intermediate adapter converts \code{NaturalPolicySchema}
 to \code{PolicyIR} --- but each is independently usable.
 
+\subsubsection{Polymorphic RHS and Pillar~1 + Pillar~2 Unification}
+
+A \code{Condition} in the IR represents a single binary assertion
+$\mathrm{lhs}\ \mathrm{op}\ \mathrm{rhs}$.  In earlier designs the
+right-hand side was constrained to raw scalar literals, which prevented two
+important classes of policy:
+
+\begin{enumerate}
+  \item \emph{Relational field-to-field assertions}: for example, asserting
+    that a wire-transfer amount does not exceed the current account balance
+    (\(\mathit{intent.amount} \leq \mathit{state.balance}\)) without
+    hard-coding a numeric threshold.
+  \item \emph{Identity-bound assertions}: checking the cryptographic identity
+    of the calling agent (e.g.\
+    $\mathit{intent.\_mesh\_principal} = \texttt{"spiffe://\dots/payments-agent"}$)
+    where the identity value is a constant literal but the left-hand side
+    is a field injected by \textbf{Pillar~2} (\code{MeshAuthenticator}).
+\end{enumerate}
+
+\textbf{Discriminated union.}  The \code{rhs} field of every \code{Condition}
+is now a Pydantic~v2 discriminated union keyed by the JSON field \code{"type"}:
+
+\begin{itemize}
+  \item \code{FieldReference} (\code{type = "field"}) --- a field pointer
+    into either the \code{intent} or \code{state} namespace, enabling
+    field-to-field comparisons.
+  \item \code{LiteralValue} (\code{type = "literal"}) --- a typed constant
+    (\code{bool}, \code{int}, \code{float}, or \code{str}) or a non-empty
+    list of scalars for \code{IN}/\code{NOT\_IN} membership tests.
+\end{itemize}
+
+Pydantic routes JSON to the correct branch before any application
+validation runs, eliminating the ambiguous type-inference fallback that
+previously caused silent coercion bugs.  A \code{model\_validator} enforces
+structural constraints (e.g.\ \code{FieldReference} RHS is incompatible with
+membership operators; boolean literals cannot appear with ordering operators).
+
+\textbf{\code{\_mesh\_principal} bridge.}  \code{MeshAuthenticator.\allowbreak
+authenticate\_and\_bind()} (Pillar~2) injects the SPIFFE URI of the verified
+caller into the intent context under the key \code{"\_mesh\_principal"}.
+Policy authors reference it as a \code{FieldReference} with
+\code{source = "intent"} and \code{field\_name = "\_mesh\_principal"}.
+Because \code{FieldReference.field\_name} accepts any non-empty string
+(underscore prefixes are explicitly permitted, and are \emph{not} subject to
+the snake\_case label-validation regex that applies to rule and condition
+labels), this design requires no special-casing in the compiler or IR schema.
+At compile time the field name is resolved against the target \code{Policy}
+class's declared \code{Field} attributes; a hallucinated or missing field name
+produces a \code{PolicyCompilationError} before any Z3 formula is constructed.
+
+\textbf{Natural-language decompilation.}  The \code{\_OP\_PHRASE} module-level
+dictionary maps each \code{Operator} to a human-readable verb phrase.  The
+\code{Decompiler} uses this mapping for field-to-field conditions so that the
+CISO audit report reads, for example:
+
+\begin{quote}
+\textit{``intent.amount must be less than or equal to state.balance''}
+\end{quote}
+
+\noindent rather than the raw operator symbol~\code{<=}.  This satisfies the
+audit-readability requirement without requiring a separate NL generation model.
+
+\textbf{Example.}  A complete policy YAML demonstrating all three RHS
+variants --- \code{FieldReference}, scalar \code{LiteralValue}, and list
+\code{LiteralValue} --- together with the \code{\_mesh\_principal} identity
+gate is provided in \fname{examples/mesh\_policy\_ir.yaml}.
+
 \subsection{Layer~3 --- The Transpiler (\fname{transpiler.py})}
 
 The only file in the codebase that calls \code{z3.*} from DSL nodes. Lowers

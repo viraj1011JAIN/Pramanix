@@ -144,17 +144,52 @@ Floating-point values go through `Decimal(str(v)).as_integer_ratio()` → `z3.Ra
 
 The module has four isolated layers:
 
-1. **IR schema** (`FieldReference`, `Operator`, `Condition`, `Rule`, `PolicyIR`) — pure Pydantic v2, zero Z3, zero I/O. `ConfigDict(extra="forbid", frozen=True)` on every model. `Rule` is recursive via `Rule.model_rebuild()`. `PolicyIR` enforces globally unique rule names via a `model_validator` — duplicate names would produce duplicate invariant labels, which the Z3 attribution phase cannot disambiguate. The `version` field requires semver format (`MAJOR.MINOR.PATCH`).
+1. **IR schema** (`FieldReference`, `LiteralValue`, `Operator`, `Condition`, `Rule`, `PolicyIR`) — pure Pydantic v2, zero Z3, zero I/O. `ConfigDict(extra="forbid", frozen=True)` on every model. `Rule` is recursive via `Rule.model_rebuild()`. `PolicyIR` enforces globally unique rule names via a `model_validator` — duplicate names would produce duplicate invariant labels, which the Z3 attribution phase cannot disambiguate. The `version` field requires semver format (`MAJOR.MINOR.PATCH`).
 
-2. **`PolicyCompiler`** — stateless; `compile(ir, policy_cls) → list[ConstraintExpr]`. Validates at compile time: (a) every `FieldReference.field_name` must resolve against `Policy.fields()`; (b) Z3 sort compatibility between lhs and a scalar rhs (e.g., `String`-sorted field rejects integer literal); (c) field-to-field sort compatibility when rhs is also a `FieldReference`; (d) ordering operators (`GT`, `LT`, `GTE`, `LTE`) rejected on `Bool`-sorted fields; (e) `IN`/`NOT_IN` requires a list RHS. Every violation raises `PolicyCompilationError` with full context — the compiler never silently drops a constraint or returns a partial result. Uses `Decimal(str(scalar))` for `Real`-sorted scalars, consistent with `transpiler.py`'s exact arithmetic path.
+2. **`PolicyCompiler`** — stateless; `compile(ir, policy_cls) → list[ConstraintExpr]`. Validates at compile time: (a) every `FieldReference.field_name` must resolve against `Policy.fields()`; (b) Z3 sort compatibility between lhs and a scalar rhs (e.g., `String`-sorted field rejects integer literal); (c) field-to-field sort compatibility when rhs is also a `FieldReference`; (d) ordering operators (`GT`, `LT`, `GTE`, `LTE`) rejected on `Bool`-sorted fields; (e) `IN`/`NOT_IN` requires a `LiteralValue` with a list `value`; (f) `FieldReference` RHS rejected for membership operators. Every violation raises `PolicyCompilationError` with full context — the compiler never silently drops a constraint or returns a partial result. Uses `Decimal(str(scalar))` for `Real`-sorted scalars, consistent with `transpiler.py`'s exact arithmetic path.
 
 3. **Fail-closed validation** — seven compile-time error classes detected before any Z3 formula is constructed: unknown field, scalar type incompatible with field Z3 sort, field-to-field sort mismatch, ordering operator on Bool sort, membership operator on non-list RHS, empty membership set, bool literal as ordering RHS.
 
-4. **`Decompiler`** — reverse translation: `list[ConstraintExpr] → str`. Walks the internal DSL AST (`_FieldRef`, `_Literal`, `_BinOp`, `_CmpOp`, `_BoolOp`, `_InOp`) without touching Z3. Produces a timestamped CISO sign-off report with per-invariant English sentences. Unknown future AST node types produce a `<TypeName>` placeholder (graceful degradation). Deterministic and idempotent.
+4. **`Decompiler`** — reverse translation: `list[ConstraintExpr] → str`. Walks the internal DSL AST (`_FieldRef`, `_Literal`, `_BinOp`, `_CmpOp`, `_BoolOp`, `_InOp`) without touching Z3. Produces a timestamped CISO sign-off report with per-invariant English sentences. For field-to-field comparisons, the explanation line uses the `_OP_PHRASE` map to generate human-readable text such as `"intent.amount must be less than or equal to state.balance"`. Unknown future AST node types produce a `<TypeName>` placeholder (graceful degradation). Deterministic and idempotent.
 
 **Security invariants:** No `eval()`, no `exec()`, no dynamic code generation. The LLM is never called by this module. Every field reference is validated against the `Policy` class's declared `Field` attributes — a hallucinated field name in the LLM output is caught before any Z3 formula is constructed.
 
-**Public surface:** Nine symbols exported via both `compiler.__all__` and `pramanix.__init__`: `Condition`, `Decompiler`, `FieldReference`, `FieldSource`, `Logic`, `Operator`, `PolicyCompiler`, `PolicyIR`, `Rule`.
+**Public surface:** Ten symbols exported via both `compiler.__all__` and `pramanix.__init__`: `Condition`, `Decompiler`, `FieldReference`, `FieldSource`, `LiteralValue`, `Logic`, `Operator`, `PolicyCompiler`, `PolicyIR`, `Rule`.
+
+### 3.7 Polymorphic RHS Discriminated Union (Pillar 1 + Pillar 2 Unification)
+
+**The architectural problem.** A naive `Condition` model that accepts only scalar RHS values (`bool | int | float | str | list`) cannot express relational business logic such as `intent.amount <= state.balance`. It also cannot express identity-bound conditions such as `intent._mesh_principal == "spiffe://…/payments-agent"` where `_mesh_principal` is a live field injected by Pillar 2 (`MeshAuthenticator`). Without field-to-field comparison support, these two pillars operate in isolation.
+
+**The solution: discriminated union on `Condition.rhs`.** The `rhs` field of every `Condition` is a Pydantic v2 discriminated union keyed by a `"type"` tag:
+
+| `type` value | Python model | JSON shape | Use case |
+|---|---|---|---|
+| `"field"` | `FieldReference` | `{"type": "field", "source": "intent", "field_name": "amount"}` | Field-to-field comparison |
+| `"literal"` | `LiteralValue` | `{"type": "literal", "value": 50000}` | Field-to-constant comparison |
+| `"literal"` | `LiteralValue` | `{"type": "literal", "value": ["USD", "GBP"]}` | `IN` / `NOT_IN` membership |
+
+Pydantic reads the `"type"` key and routes to the correct model before any validation runs — there is no ambiguous coercion, no type-inference fallback, and no silent data loss.
+
+**`_mesh_principal` bridge.** `MeshAuthenticator.authenticate_and_bind()` injects the verified SPIFFE URI of the caller into the intent context under the key `"_mesh_principal"`. Policy authors reference it as:
+
+```json
+{
+  "lhs": {"type": "field", "source": "intent", "field_name": "_mesh_principal"},
+  "op": "==",
+  "rhs": {"type": "literal", "value": "spiffe://prod.example.com/ns/payments/sa/payments-agent"}
+}
+```
+
+`FieldReference.field_name` accepts any non-empty string including underscore-prefixed names — `_mesh_principal` is valid without special casing. The compiler resolves it against `Policy.fields()` at compile time; if the policy class does not declare a `Field` for `_mesh_principal`, the compile fails with a `PolicyCompilationError` listing all declared fields.
+
+**Decompiler output for field-to-field conditions.** When both sides are field references, the audit report explanation line uses `_OP_PHRASE` to produce natural English:
+
+```
+Rule 2 [amount_within_balance]: amount ≤ balance
+  → intent.amount must be less than or equal to state.balance.
+```
+
+**Example YAML.** See `examples/mesh_policy_ir.yaml` for a complete policy demonstrating all three RHS variants (`FieldReference`, scalar `LiteralValue`, and list `LiteralValue`) alongside `_mesh_principal` identity gating.
 
 ---
 

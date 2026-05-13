@@ -1,0 +1,153 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Viraj Jain
+#
+# mesh_policy_ir.yaml
+#
+# Example PolicyIR demonstrating the polymorphic RHS discriminated union
+# (Pillar 1 + Pillar 2 unification).
+#
+# Two RHS types are supported on every Condition:
+#
+#   type: "field"    → FieldReference — field-to-field comparison
+#                      (e.g. intent.amount <= state.balance)
+#
+#   type: "literal"  → LiteralValue — comparison against a constant scalar
+#                      or a membership list (e.g. intent.currency IN ["USD", "GBP"])
+#
+# The _mesh_principal field is injected into the intent context by
+# MeshAuthenticator.authenticate_and_bind() (Pillar 2) after zero-trust
+# SPIFFE/SVID validation.  It is referenced here as a FieldReference with
+# source: intent and field_name: _mesh_principal, binding the cryptographic
+# identity of the calling agent directly to the policy enforcement plane.
+#
+# Usage (Python):
+#
+#   import yaml
+#   from pramanix.compiler import PolicyIR, PolicyCompiler
+#
+#   with open("examples/mesh_policy_ir.yaml") as f:
+#       ir = PolicyIR.model_validate(yaml.safe_load(f))
+#
+#   compiler = PolicyCompiler()
+#   invariants = compiler.compile(ir, WireTransferPolicy)
+#
+#   from pramanix.compiler import Decompiler
+#   report = Decompiler().decompile(invariants, policy_name=ir.name)
+#   print(report)
+
+name: MeshIdentityTransferPolicy
+version: "1.0.0"
+description: >
+  Wire transfer policy enforcing zero-trust identity bounds and relational
+  balance limits.  The requesting agent must present a valid SPIFFE identity
+  matching the authorised payments service, and the transfer amount must not
+  exceed the per-session available balance or the daily transfer limit.
+
+rules:
+  # ── Rule 1: Identity gate (Pillar 1 + Pillar 2 unification) ─────────────────
+  # The _mesh_principal field is injected by MeshAuthenticator (Pillar 2) and
+  # compared here against an expected literal SPIFFE URI using a LiteralValue RHS.
+  - name: trusted_mesh_caller
+    description: >
+      Only the authorised payments agent (verified via SPIFFE/SVID by
+      MeshAuthenticator) may initiate wire transfers.  Any request whose
+      _mesh_principal does not match the expected URI is blocked unconditionally.
+    logic: AND
+    conditions:
+      - lhs:
+          type: field
+          source: intent
+          field_name: _mesh_principal
+        op: "=="
+        rhs:
+          type: literal
+          value: "spiffe://prod.example.com/ns/payments/sa/payments-agent"
+        natural_language: >
+          The calling agent must present the authorised payments-agent SPIFFE identity.
+
+  # ── Rule 2: Relational amount-vs-balance check (field-to-field RHS) ──────────
+  # Uses a FieldReference RHS to compare two live fields at decision time.
+  # This is the Pillar 1 polymorphic RHS in action: the compiler builds a Z3
+  # field-to-field expression rather than a field-to-constant expression.
+  - name: amount_within_balance
+    description: >
+      The requested transfer amount must not exceed the available account balance.
+      Both values are live fields resolved at verification time — no constant
+      threshold is hard-coded.
+    logic: AND
+    conditions:
+      - lhs:
+          type: field
+          source: intent
+          field_name: amount
+        op: "<="
+        rhs:
+          type: field
+          source: state
+          field_name: balance
+        natural_language: >
+          intent.amount must be less than or equal to state.balance.
+
+  # ── Rule 3: Relational amount-vs-daily-limit check (field-to-field RHS) ──────
+  - name: within_daily_limit
+    description: >
+      The requested transfer amount must not exceed the remaining daily transfer
+      limit for this account.
+    logic: AND
+    conditions:
+      - lhs:
+          type: field
+          source: intent
+          field_name: amount
+        op: "<="
+        rhs:
+          type: field
+          source: state
+          field_name: daily_limit
+        natural_language: >
+          intent.amount must be less than or equal to state.daily_limit.
+
+  # ── Rule 4: Balance non-negative check (LiteralValue scalar RHS) ─────────────
+  - name: non_negative_balance
+    description: The account balance must not be negative at the time of the transfer.
+    logic: AND
+    conditions:
+      - lhs:
+          type: field
+          source: state
+          field_name: balance
+        op: ">="
+        rhs:
+          type: literal
+          value: 0
+
+  # ── Rule 5: Account-not-frozen check (LiteralValue boolean RHS) ──────────────
+  - name: account_not_frozen
+    description: The account must not be in a frozen state.
+    logic: AND
+    conditions:
+      - lhs:
+          type: field
+          source: state
+          field_name: is_frozen
+        op: "=="
+        rhs:
+          type: literal
+          value: false
+
+  # ── Rule 6: Currency membership check (LiteralValue list RHS / IN operator) ──
+  - name: supported_currency
+    description: >
+      Only USD, GBP, and EUR are accepted currencies for wire transfers.
+    logic: AND
+    conditions:
+      - lhs:
+          type: field
+          source: intent
+          field_name: currency
+        op: "IN"
+        rhs:
+          type: literal
+          value: ["USD", "GBP", "EUR"]
+        natural_language: >
+          intent.currency must be one of the supported currencies: USD, GBP, EUR.

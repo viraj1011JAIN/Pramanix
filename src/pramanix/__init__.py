@@ -33,6 +33,7 @@ __stability__: dict[str, str] = {
     "memory": "beta",  # secure scoped memory (SecureMemoryStore, ScopedMemoryPartition)
     "lifecycle": "beta",  # policy lifecycle (PolicyDiff, ShadowEvaluator)
     "provenance": "beta",  # chain-of-custody (ProvenanceRecord, ProvenanceChain)
+    "mesh": "beta",  # Pillar 2 — Zero-Trust Agent Mesh (MeshAuthenticator, SpiffeIdentity)
 }
 
 # ── Phase 2 (v0.1) public surface ─────────────────────────────────────────────
@@ -65,6 +66,7 @@ from pramanix.compiler import (
     Decompiler,
     FieldReference,
     FieldSource,
+    LiteralValue,
     Logic,
     Operator,
     PolicyCompiler,
@@ -87,6 +89,7 @@ from pramanix.exceptions import (
     InvariantLabelError,
     LLMTimeoutError,
     MemoryViolationError,
+    MeshAuthenticationError,
     MigrationError,
     OversightRequiredError,
     PolicyCompilationError,
@@ -171,6 +174,7 @@ from pramanix.memory import (
     ScopedMemoryPartition,
     SecureMemoryStore,
 )
+from pramanix.mesh.authenticator import MeshAuthenticator, SpiffeIdentity
 from pramanix.migration import PolicyMigration
 from pramanix.oversight import (
     ApprovalDecision,
@@ -300,6 +304,8 @@ __all__ = [
     # E-3: KMS/HSM key providers
     "KeyProvider",
     "LLMTimeoutError",
+    # Pillar 1 — IR compiler: typed scalar / membership literal wrapper
+    "LiteralValue",
     # Pillar 1 — IR compiler: AND / OR connective
     "Logic",
     "MerkleAnchor",
@@ -308,8 +314,12 @@ __all__ = [
     # Memory security
     "MemoryEntry",
     "MemoryViolationError",
+    # Pillar 2 — Zero-Trust Mesh
+    "MeshAuthenticationError",
+    "MeshAuthenticator",
     # Policy migration error
     "MigrationError",
+    "SpiffeIdentity",
     # B-1: Nested model descriptor chaining
     "NestedField",
     # Oversight record

@@ -99,7 +99,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic import Field as PF
@@ -127,6 +127,7 @@ __all__ = [
     "Decompiler",
     "FieldReference",
     "FieldSource",
+    "LiteralValue",
     "Logic",
     "Operator",
     "PolicyCompiler",
@@ -275,13 +276,33 @@ class FieldReference(BaseModel):
     the target :class:`~pramanix.policy.Policy`.
 
     Attributes:
+        type:       Discriminator tag — always ``"field"``; identifies this object
+                    as a :class:`FieldReference` within the polymorphic RHS union.
+                    Optional when constructing directly in Python (defaults to
+                    ``"field"``); **required** in JSON when used as ``Condition.rhs``
+                    so that Pydantic's discriminated-union routing can select the
+                    correct branch.
         source:     The model this field comes from.
         field_name: The exact attribute name declared on the Policy class
                     (e.g. ``"amount"``, ``"daily_limit"``, ``"is_frozen"``).
+                    Underscore-prefixed names are valid — in particular
+                    ``"_mesh_principal"`` is the field injected by
+                    :class:`~pramanix.mesh.authenticator.MeshAuthenticator` into
+                    the intent context after zero-trust authentication, enabling
+                    identity-bound policy conditions such as
+                    ``intent._mesh_principal == \"spiffe://…/payments-agent\"``.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    type: Literal["field"] = PF(
+        default="field",
+        description=(
+            "Discriminator tag identifying this RHS as a field reference.  "
+            'Must be "field".  Optional in Python construction (has a default); '
+            "required in JSON when used as Condition.rhs."
+        ),
+    )
     source: FieldSource = PF(
         ...,
         description=(
@@ -309,25 +330,73 @@ class FieldReference(BaseModel):
         return f"{self.source.value}.{self.field_name}"
 
 
+class LiteralValue(BaseModel):
+    """A typed scalar literal or membership list for use as the RHS of a :class:`Condition`.
+
+    Together with :class:`FieldReference`, this forms the discriminated union
+    that represents the right-hand side of every :class:`Condition`.  Pydantic
+    routes JSON to the correct branch via the ``"type"`` discriminator key:
+
+    .. code-block:: json
+
+        {"type": "literal", "value": 50000}
+        {"type": "literal", "value": "PENDING"}
+        {"type": "literal", "value": false}
+        {"type": "literal", "value": ["USD", "GBP", "EUR"]}
+
+    The ``value`` field accepts all four scalar types that Pramanix policies
+    support, plus a list variant exclusively for ``IN`` / ``NOT_IN`` membership
+    conditions.  Type-compatibility with the LHS field's Z3 sort (e.g. a
+    ``"Real"``-sorted field accepting only numeric literals) is enforced later
+    by :class:`PolicyCompiler`, not by this model.
+
+    Attributes:
+        type:  Discriminator tag — always ``"literal"``.
+        value: The scalar constant or membership list.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    type: Literal["literal"] = PF(
+        default="literal",
+        description='Discriminator tag identifying this RHS as a literal value.  Must be "literal".',
+    )
+    value: bool | int | float | str | list[bool | int | float | str] = PF(
+        ...,
+        description=(
+            "The scalar constant (bool / int / float / str) or a non-empty list of scalars "
+            "for IN / NOT_IN membership tests.  For Real-sorted fields use a numeric literal; "
+            "for Bool-sorted fields use true/false; for String-sorted fields use a str literal."
+        ),
+    )
+
+
 class Condition(BaseModel):
     """A single binary predicate: ``lhs operator rhs``.
 
     The left-hand side is always a :class:`FieldReference`.  The right-hand
-    side may be:
+    side is a **discriminated union** of exactly two types, selected by the
+    ``"type"`` key in JSON:
 
-    * Another :class:`FieldReference` — for field-to-field comparisons such as
-      ``intent.amount <= state.balance``.
-    * A scalar literal (``bool``, ``int``, ``float``, or ``str``) — for
-      comparisons against a fixed constant.
-    * A non-empty list of scalar literals — exclusively for ``IN`` / ``NOT_IN``
-      membership tests.
+    * :class:`FieldReference` (``type="field"``) — for field-to-field
+      comparisons such as ``intent.amount <= state.balance``, or for
+      identity-bound conditions such as
+      ``intent._mesh_principal == \"spiffe://…/payments-agent\"`` using the
+      ``_mesh_principal`` field injected by
+      :class:`~pramanix.mesh.authenticator.MeshAuthenticator`.
+    * :class:`LiteralValue` (``type="literal"``) — for comparisons against a
+      fixed constant scalar (``bool``, ``int``, ``float``, or ``str``) or a
+      non-empty list of scalars for ``IN`` / ``NOT_IN`` membership tests.
 
     Structural constraints enforced by ``model_validator``:
 
-    * ``IN`` and ``NOT_IN`` operators require a **non-empty list** RHS.
-    * All other operators require a **non-list**, **non-empty** RHS.
-    * A ``bool`` RHS combined with an ordering operator (``>``, ``<``, etc.)
-      is rejected immediately — ordering a boolean is semantically undefined.
+    * ``IN`` and ``NOT_IN`` operators require a :class:`LiteralValue` RHS whose
+      ``value`` is a **non-empty list**.
+    * All other operators require either a :class:`FieldReference` or a
+      :class:`LiteralValue` with a **scalar** (non-list) ``value``.
+    * A :class:`FieldReference` RHS is invalid with ``IN`` / ``NOT_IN``.
+    * A ``bool`` ``LiteralValue`` combined with an ordering operator
+      (``>``, ``<``, etc.) is rejected immediately.
 
     Type-compatibility constraints are enforced later by
     :class:`PolicyCompiler`, which has access to the target
@@ -336,7 +405,7 @@ class Condition(BaseModel):
     Attributes:
         lhs:              Left-hand side field reference.
         op:               Binary comparison operator.
-        rhs:              Right-hand side value.
+        rhs:              Right-hand side — a :class:`LiteralValue` or :class:`FieldReference`.
         label:            Optional snake_case label.  If omitted, the compiler
                           generates one from the parent :class:`Rule` name and
                           the condition's zero-based position index.
@@ -355,14 +424,16 @@ class Condition(BaseModel):
         ...,
         description="The binary comparison operator.",
     )
-    # Union ordering: FieldReference first (object), bool before int (subclass
-    # ordering), then float, str, list.  Pydantic v2 tries types left-to-right.
-    rhs: FieldReference | bool | int | float | str | list[bool | int | float | str] = PF(
+    # Discriminated union: Pydantic reads the 'type' key to select the branch.
+    # LiteralValue carries type="literal"; FieldReference carries type="field".
+    rhs: LiteralValue | FieldReference = PF(
         ...,
+        discriminator="type",
         description=(
-            "Right-hand side: a FieldReference for field-to-field comparisons, "
-            "a scalar literal (bool / int / float / str) for constant comparisons, "
-            "or a non-empty list of scalars for IN / NOT_IN membership tests."
+            "Right-hand side: a FieldReference (type='field') for field-to-field "
+            "comparisons such as intent.amount <= state.balance or identity-bound "
+            "conditions via intent._mesh_principal, or a LiteralValue (type='literal') "
+            "for comparisons against a constant scalar or a membership list."
         ),
     )
     label: str = PF(
@@ -397,19 +468,43 @@ class Condition(BaseModel):
     def _validate_rhs_op_compat(self) -> Condition:
         """Enforce structural compatibility between the operator and the RHS type.
 
+        For :class:`FieldReference` RHS: membership operators (``IN`` /
+        ``NOT_IN``) are rejected because they require a list, and a field
+        reference is not a list.
+
+        For :class:`LiteralValue` RHS: the ``value`` field is unwrapped and
+        the following structural checks are applied:
+
+        * ``IN`` / ``NOT_IN`` require a non-empty list ``value``.
+        * All other operators require a scalar (non-list) ``value``.
+        * A ``bool`` scalar with an ordering operator is rejected.
+
         Raises:
             ValueError: If the combination of operator and RHS type is invalid.
         """
-        is_list_rhs: bool = isinstance(self.rhs, list)
+        # FieldReference RHS: membership operators cannot accept a field reference.
+        if isinstance(self.rhs, FieldReference):
+            if self.op in _MEMBERSHIP_OPERATORS:
+                raise ValueError(
+                    f"Operator {self.op.value!r} requires a list RHS; "
+                    "a FieldReference cannot be used with IN or NOT_IN. "
+                    "Provide a LiteralValue(value=[...]) for membership tests."
+                )
+            return self
+
+        # LiteralValue RHS — unwrap and perform structural checks.
+        rhs_val = self.rhs.value
+        is_list_rhs: bool = isinstance(rhs_val, list)
 
         if self.op in _MEMBERSHIP_OPERATORS:
             if not is_list_rhs:
                 raise ValueError(
                     f"Operator {self.op.value!r} requires a list RHS "
-                    f"(e.g. [1, 2, 3]); got {type(self.rhs).__name__!r}. "
-                    "Provide a non-empty list of scalar literals."
+                    f"(e.g. LiteralValue(value=[1, 2, 3])); got scalar "
+                    f"{type(rhs_val).__name__!r}. "
+                    "Wrap a non-empty list of scalar literals in LiteralValue."
                 )
-            if not self.rhs:  # type: ignore[truthy-bool]
+            if not rhs_val:  # type: ignore[truthy-bool]
                 raise ValueError(
                     f"Operator {self.op.value!r} requires a non-empty list RHS. "
                     "An empty membership set makes the condition unsatisfiable for "
@@ -420,13 +515,13 @@ class Condition(BaseModel):
                 raise ValueError(
                     f"A list RHS is only valid with IN or NOT_IN operators; "
                     f"received {self.op.value!r} with a list value. "
-                    "Use a scalar literal or a FieldReference for scalar comparisons."
+                    "Use a scalar LiteralValue or a FieldReference for non-membership comparisons."
                 )
 
-        # Catch an obvious LLM mistake: ordering a boolean is semantically undefined.
-        if isinstance(self.rhs, bool) and self.op in _ORDERING_OPERATORS:
+        # Catch obvious LLM mistake: ordering a boolean is semantically undefined.
+        if isinstance(rhs_val, bool) and self.op in _ORDERING_OPERATORS:
             raise ValueError(
-                f"Boolean RHS {self.rhs!r} cannot be used with ordering operator "
+                f"Boolean RHS {rhs_val!r} cannot be used with ordering operator "
                 f"{self.op.value!r}.  Bool-typed values only support == and !=."
             )
 
@@ -455,19 +550,19 @@ class Rule(BaseModel):
           "logic": "AND",
           "conditions": [
             {
-              "lhs": {"source": "intent",  "field_name": "amount"},
+              "lhs": {"type": "field", "source": "intent", "field_name": "amount"},
               "op":  "<=",
-              "rhs": {"source": "state",   "field_name": "daily_limit"}
+              "rhs": {"type": "field", "source": "state",  "field_name": "daily_limit"}
             },
             {
-              "lhs": {"source": "state",   "field_name": "balance"},
+              "lhs": {"type": "field", "source": "state",  "field_name": "balance"},
               "op":  ">=",
-              "rhs": 0
+              "rhs": {"type": "literal", "value": 0}
             },
             {
-              "lhs": {"source": "state",   "field_name": "is_frozen"},
+              "lhs": {"type": "field", "source": "state",  "field_name": "is_frozen"},
               "op":  "==",
-              "rhs": false
+              "rhs": {"type": "literal", "value": false}
             }
           ]
         }
@@ -619,6 +714,25 @@ class PolicyIR(BaseModel):
                 )
             seen.add(rule.name)
         return self
+
+
+# ── Operator phrase map (used by Decompiler and _compile_field_comparison) ────
+
+_OP_PHRASE: dict[Operator, str] = {
+    Operator.EQ: "must equal",
+    Operator.NE: "must not equal",
+    Operator.GT: "must be greater than",
+    Operator.LT: "must be less than",
+    Operator.GTE: "must be greater than or equal to",
+    Operator.LTE: "must be less than or equal to",
+}
+"""Human-readable verb phrases for each comparison operator.
+
+Used by :meth:`PolicyCompiler._compile_field_comparison` to generate
+natural-language explanations for field-to-field comparisons
+(e.g. ``"intent.amount must be less than or equal to state.balance"``)
+in the CISO audit report produced by :class:`Decompiler`.
+"""
 
 
 # ── PolicyCompiler ─────────────────────────────────────────────────────────────
@@ -859,15 +973,18 @@ class PolicyCompiler:
         lhs_field: Field = self._resolve_field_ref(cond.lhs, policy_fields)
         lhs_node: ExpressionNode = E(lhs_field)
 
-        if cond.op in _MEMBERSHIP_OPERATORS:
-            # Condition.model_validator guarantees rhs is a non-empty list here.
-            assert isinstance(cond.rhs, list)
-            return self._compile_membership(cond, lhs_field, lhs_node, label)
-
+        # Discriminated-union dispatch on the RHS type.
         if isinstance(cond.rhs, FieldReference):
             return self._compile_field_comparison(cond, lhs_field, lhs_node, policy_fields, label)
 
-        return self._compile_scalar_comparison(cond, lhs_field, lhs_node, label)
+        # cond.rhs is LiteralValue — unwrap the inner value for downstream methods.
+        rhs_val = cond.rhs.value
+        if cond.op in _MEMBERSHIP_OPERATORS:
+            # model_validator guarantees rhs_val is a non-empty list at this point.
+            assert isinstance(rhs_val, list)
+            return self._compile_membership(cond, lhs_field, lhs_node, label, rhs_val)
+
+        return self._compile_scalar_comparison(cond, lhs_field, lhs_node, label, rhs_val)
 
     def _compile_scalar_comparison(
         self,
@@ -875,6 +992,7 @@ class PolicyCompiler:
         lhs_field: Field,
         lhs_node: ExpressionNode,
         label: str,
+        scalar: bool | int | float | str,
     ) -> ConstraintExpr:
         """Compile a field-to-literal comparison (e.g. ``intent.amount <= 50000``).
 
@@ -883,10 +1001,13 @@ class PolicyCompiler:
         fields), then applies the comparison operator.
 
         Args:
-            cond:      The :class:`Condition` (``rhs`` is a scalar literal).
+            cond:      The :class:`Condition`.
             lhs_field: The resolved LHS :class:`~pramanix.expressions.Field`.
             lhs_node:  The :class:`ExpressionNode` wrapping ``lhs_field``.
             label:     Invariant label for the produced expression.
+            scalar:    The unwrapped scalar value from ``cond.rhs`` (a
+                       :class:`LiteralValue` with a non-list ``value``).  The
+                       caller is responsible for unwrapping before dispatch.
 
         Returns:
             A labelled :class:`ConstraintExpr`.
@@ -895,9 +1016,6 @@ class PolicyCompiler:
             PolicyCompilationError: Scalar type incompatible with field sort.
             FieldTypeError:          Ordering operator on Bool / String field.
         """
-        # Caller guarantees rhs is not a FieldReference and not a list.
-        scalar: bool | int | float | str = cond.rhs  # type: ignore[assignment]
-
         self._check_ordering_op_on_sort(lhs_field, cond.op)
         self._check_scalar_sort_compat(lhs_field, scalar)
 
@@ -955,9 +1073,10 @@ class PolicyCompiler:
 
         expr: ConstraintExpr = self._apply_comparison_op(lhs_node, cond.op, rhs_node)
 
-        nl: str = (
-            cond.natural_language
-            or f"{cond.lhs.qualified_name()} {cond.op.value} {cond.rhs.qualified_name()}"
+        nl: str = cond.natural_language or (
+            f"{cond.lhs.qualified_name()} "
+            f"{_OP_PHRASE.get(cond.op, cond.op.value)} "
+            f"{cond.rhs.qualified_name()}"  # type: ignore[union-attr]  # cond.rhs is FieldReference here
         )
         return expr.named(label).explain(nl)
 
@@ -967,6 +1086,7 @@ class PolicyCompiler:
         lhs_field: Field,
         lhs_node: ExpressionNode,
         label: str,
+        rhs_list: list[bool | int | float | str],
     ) -> ConstraintExpr:
         """Compile an ``IN`` / ``NOT_IN`` membership condition.
 
@@ -979,10 +1099,13 @@ class PolicyCompiler:
         inequality constraints — one per value in the set.
 
         Args:
-            cond:      The :class:`Condition` (``rhs`` is a non-empty list).
+            cond:      The :class:`Condition`.
             lhs_field: Resolved LHS :class:`~pramanix.expressions.Field`.
             lhs_node:  :class:`ExpressionNode` wrapping ``lhs_field``.
             label:     Invariant label for the produced expression.
+            rhs_list:  The unwrapped list from ``cond.rhs.value`` (a
+                       :class:`LiteralValue` with a non-empty list ``value``).
+                       The caller is responsible for unwrapping before dispatch.
 
         Returns:
             A labelled :class:`ConstraintExpr`.
@@ -994,10 +1117,8 @@ class PolicyCompiler:
                 (belt-and-suspenders; membership operators are not ordering
                 operators, so this would indicate a caller bug).
         """
-        assert isinstance(cond.rhs, list)
-
         coerced_values: list[bool | int | Decimal | str] = []
-        for element in cond.rhs:
+        for element in rhs_list:
             self._check_scalar_sort_compat(lhs_field, element)
             coerced_values.append(self._coerce_scalar(element, lhs_field))
 
