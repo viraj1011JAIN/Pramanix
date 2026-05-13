@@ -781,6 +781,96 @@ provide safe canary promotion. \code{ShadowEvaluator} runs the candidate
 policy alongside every live decision, recording divergence events non-blocking
 via \code{threading.Lock}.
 
+\subsection{Layer~10a --- Pillar~3 Compliance Oracle
+  (\fname{src/pramanix/compliance/oracle.py})}
+
+\code{ComplianceOracle} is the regulatory attestation engine introduced in
+Pillar~3.  It operates exclusively on completed \code{ProvenanceRecord}
+objects and is \emph{structurally decoupled} from \code{Guard.verify()}: it
+imports nothing from the hot-path layers (\fname{guard.py},
+\fname{solver.py}, \fname{transpiler.py}).  Its sole function is to read a
+finished audit record and emit a cryptographically-bound
+\code{ComplianceAttestation} mapping the record to one or more regulatory
+control identifiers.
+
+\subsubsection{Design Invariant: Offline-Only Evaluation}
+
+The oracle is intentionally an \emph{offline} component.  Coupling compliance
+attestation to the synchronous verification hot-path would (a)~add variable
+latency to safety-critical decisions, (b)~create a single point of failure
+that could, if the oracle raised, cause the guard to block on an internal
+error rather than on a policy violation.  Instead, the oracle is called
+asynchronously after the guard has already written the \code{ProvenanceRecord}
+to the audit sink.  This matches the architectural pattern used by hardware
+security modules for post-hoc attestation.
+
+\subsubsection{\texttt{ControlMapping} and Discriminated Evidence}
+
+A \code{ControlMapping} is a frozen Pydantic~v2 model with two optional
+evidence criteria:
+
+\begin{itemize}
+  \item \code{invariant\_label} (\code{str | None}) --- matched by exact
+        equality against invariant labels in \code{evaluated\_invariants}
+        or \code{violated\_invariants}.
+  \item \code{principal\_pattern} (\code{str | None}) --- matched via
+        \code{fnmatch.fnmatch} against \code{record.principal\_id}, which
+        carries the verified SPIFFE URI injected by Pillar~2's
+        \code{MeshAuthenticator}.
+\end{itemize}
+
+At least one criterion must be set (enforced in \code{model\_post\_init});
+\code{require\_both=True} (default) requires both criteria to match when
+both are specified.  \code{require\_both=False} produces OR semantics.  The
+\code{MappingMatchKind} enum (\code{INVARIANT\_LABEL},
+\code{PRINCIPAL\_IDENTITY}, \code{BOTH}) records which criterion triggered.
+
+This discriminated evidence model directly bridges Pillar~1 (invariant
+labels produced by the IR compiler and Z3 attribution phase) with Pillar~2
+(SPIFFE identity injected by \code{MeshAuthenticator}).  A single
+\code{ControlMapping} can therefore express a compound regulatory assertion
+such as: ``this principal identity must have invoked a tool that satisfied
+this invariant'' --- with no additional glue code.
+
+\subsubsection{Cryptographic Provenance in \texttt{ComplianceAttestation}}
+
+Every \code{ComplianceAttestation} embeds a \code{record\_hmac\_tag} field
+derived from \code{ProvenanceRecord.hmac\_tag()}.  This HMAC-SHA256 tag is
+computed over the immutable fields of the originating record, providing a
+cryptographic link from the attestation back to the exact record that was
+evaluated.  The oracle also accepts a \code{stored\_hmac\_tag} parameter
+for cross-process audit scenarios in which the live record object is
+unavailable --- the stored tag from the original write can be supplied
+directly.
+
+\subsubsection{Fail-Closed Evaluation}
+
+\code{evaluate\_record()} has a single, unbreachable contract:
+it \emph{never raises}.  The outermost try-except catches all exceptions,
+logs them at \code{ERROR} level, and returns a minimal
+\code{ComplianceAttestation} with \code{total\_controls\_matched = 0} and a
+summary string recording the failure.  No unhandled exception in the oracle
+can propagate to the caller and disrupt audit pipeline execution.
+
+\subsubsection{Thread Safety}
+
+The internal registry (\code{defaultdict(list)}) is protected by a
+\code{threading.RLock}.  \code{register\_mapping()} holds the lock for the
+duration of the append.  \code{evaluate\_record()} snapshots the registry
+under lock into a local \code{dict[RegulatoryFramework, list[ControlMapping]]}
+and immediately releases the lock before any evaluation work begins.  This
+design allows the oracle to serve concurrent audit pipeline workers without
+holding the lock across (potentially slow) evaluation loops.
+
+\subsubsection{Public Surface}
+
+Eight symbols are re-exported from \code{pramanix.compliance} and from the
+top-level \code{pramanix} package: \code{ComplianceAttestation},
+\code{ComplianceOracle}, \code{ControlEnforcementResult},
+\code{ControlMapping}, \code{ControlSatisfactionResult},
+\code{FrameworkAttestation}, \code{MappingMatchKind},
+\code{RegulatoryFramework}.
+
 \subsection{Layer~11 --- The Request Infrastructure}
 
 \code{ResolverRegistry} stores per-request resolved field values in a

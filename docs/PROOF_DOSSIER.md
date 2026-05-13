@@ -191,6 +191,101 @@ Rule 2 [amount_within_balance]: amount ≤ balance
 
 **Example YAML.** See `examples/mesh_policy_ir.yaml` for a complete policy demonstrating all three RHS variants (`FieldReference`, scalar `LiteralValue`, and list `LiteralValue`) alongside `_mesh_principal` identity gating.
 
+### 3.8 Pillar 3 — Compliance Oracle (`compliance/oracle.py`)
+
+`compliance/oracle.py` is the regulatory attestation engine. It reads completed `ProvenanceRecord` objects and emits a cryptographically-bound `ComplianceAttestation` that maps each record to one or more regulatory framework controls. The module is **intentionally decoupled from `Guard.verify()`** — it never sits on the hot path and cannot block execution.
+
+#### Regulatory frameworks (`RegulatoryFramework`)
+
+Six frameworks are supported as a `str` + `enum.Enum`:
+
+| Member | String value | Represents |
+|---|---|---|
+| `SOC2` | `"SOC2"` | AICPA SOC 2 Trust Services Criteria |
+| `EU_AI_ACT` | `"EU_AI_ACT"` | EU Artificial Intelligence Act (2024) |
+| `HIPAA` | `"HIPAA"` | 45 CFR §164 Security and Privacy Rules |
+| `NIST_AI_RMF` | `"NIST_AI_RMF"` | NIST AI Risk Management Framework 1.0 |
+| `ISO_42001` | `"ISO_42001"` | ISO/IEC 42001 AI Management System |
+| `GDPR` | `"GDPR"` | Regulation (EU) 2016/679 |
+
+#### Control mapping (`ControlMapping`) — `real`
+
+A frozen Pydantic v2 model (seven fields, `ConfigDict(extra="forbid", frozen=True)`) that maps a single Pramanix evidence source to one regulatory control:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `framework` | `RegulatoryFramework` | Target framework |
+| `control_id` | `str` | Canonical ID, e.g. `"CC6.1"`, `"Art.14"` |
+| `control_title` | `str` | Short human title |
+| `description` | `str` | Free-text explanation for audit packages |
+| `invariant_label` | `str \| None` | Matches against evaluated/violated invariant labels |
+| `principal_pattern` | `str \| None` | `fnmatch` glob matched against `record.principal_id` (SPIFFE URI) |
+| `require_both` | `bool = True` | When both criteria set: require both to match (AND); `False` = either (OR) |
+
+`model_post_init` enforces that at least one of `invariant_label` / `principal_pattern` is present — a mapping with neither criterion raises `ValueError` immediately at construction time.
+
+#### Match classification (`MappingMatchKind`) — `real`
+
+Three values record how a mapping was triggered:
+
+- `INVARIANT_LABEL` — matched via invariant label alone
+- `PRINCIPAL_IDENTITY` — matched via `fnmatch` on SPIFFE URI alone
+- `BOTH` — both criteria matched
+
+#### Output models — `real`
+
+**`ControlSatisfactionResult`** (ALLOWED records): `control_id`, `control_title`, `description`, `matched_invariant`, `matched_principal`, `match_kind`.
+
+**`ControlEnforcementResult`** (BLOCKED records): all fields of `ControlSatisfactionResult` plus `violation_prevented` — a machine-generated string describing what was blocked. BLOCKED records only report invariants that *caused* the block (`violated_invariants`), not invariants that passed.
+
+**`FrameworkAttestation`**: per-framework grouping of `controls_satisfied` and `controls_enforced` lists; `total_controls` and `has_findings` computed properties.
+
+**`ComplianceAttestation`**: the root output model. Key fields:
+
+| Field | Source | Purpose |
+|---|---|---|
+| `attestation_id` | `uuid.uuid4()` | Unique attestation identifier |
+| `timestamp_utc` | `datetime.now(UTC).isoformat()` | ISO 8601 UTC timestamp |
+| `decision_id` | `record.decision_id` | Links to originating Guard decision |
+| `record_hmac_tag` | `record.hmac_tag()` or `stored_hmac_tag` | Cryptographic proof of record integrity |
+| `outcome` | `"ALLOWED"` / `"BLOCKED"` | Mirrors `record.allowed` |
+| `framework_results` | list of `FrameworkAttestation` | Per-framework findings |
+| `summary` | generated string | Plain-English CISO summary |
+| `total_controls_matched` | int | Total across all frameworks |
+
+`to_dict()` delegates to Pydantic's `model_dump(mode="json")` — all enum values are serialised as their string tags.
+
+#### `ComplianceOracle` — `real`
+
+The engine class. Thread-safe via `threading.RLock`; registry is a `defaultdict(list)` keyed by `RegulatoryFramework`.
+
+**`register_mapping(framework, mapping)`** — registers a `ControlMapping`. Validates that `mapping.framework == framework`; raises `ValueError` on mismatch. Safe to call from multiple threads.
+
+**`evaluate_record(record, *, stored_hmac_tag="", decision_snapshot=None) → ComplianceAttestation`** — the primary API. Design contract:
+
+1. Snapshots the registry under lock; releases lock before any evaluation work begins.
+2. Extracts `(evaluated_invariants, violated_invariants)` from: `decision_snapshot` first (the dict returned by `Decision.to_dict()`), then `record.metadata`, then a best-effort fallback for ALLOWED records that carries no explicit evidence.
+3. Iterates every registered `ControlMapping`; evaluates via `_evaluate_mapping()` which calls `_check_invariant_match()` (exact label equality) and `_check_principal_match()` (`fnmatch.fnmatch`) as appropriate.
+4. **Never raises.** All exceptions caught, logged at `ERROR`, and a minimal fail-closed attestation returned.
+5. `stored_hmac_tag` enables offline/cross-process evaluation from persisted audit logs where the live `record.hmac_tag()` call is unavailable.
+
+**`mapping_count(framework=None)`** — returns total registered mappings, or count for a specific framework.
+
+**`registered_frameworks()`** — returns list of frameworks with at least one mapping.
+
+#### Offline / async design invariant — `real`
+
+The oracle has zero imports from `guard.py`, `solver.py`, `transpiler.py`, or any hot-path module. It only imports: `pramanix.provenance.ProvenanceRecord`, `pramanix.decision.Decision` (for `to_dict()` type hint), standard library (`datetime`, `fnmatch`, `hashlib`, `hmac`, `logging`, `threading`, `uuid`), and Pydantic. This is not a convention — it is enforced by the absence of any import path that could introduce Guard-layer coupling.
+
+#### Security properties — `real`
+
+- No `eval()`, no `exec()`, no dynamic code generation.
+- `fnmatch` patterns are matched client-side against `record.principal_id`; no external identity resolution.
+- `ControlMapping` is frozen and immutable after construction — registry entries cannot be mutated through a stored reference.
+- All exceptions swallowed in `evaluate_record` are logged at ERROR before the fallback attestation is returned, ensuring audit trail continuity even under internal failure.
+
+**Public surface:** Eight symbols exported via both `compliance.__init__` and `pramanix.__init__.__all__`: `ComplianceAttestation`, `ComplianceOracle`, `ControlEnforcementResult`, `ControlMapping`, `ControlSatisfactionResult`, `FrameworkAttestation`, `MappingMatchKind`, `RegulatoryFramework`.
+
 ---
 
 ## 4. Proof of Toughness
