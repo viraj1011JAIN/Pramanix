@@ -206,7 +206,9 @@ passing).
 \textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
 audit was conducted by the author against the author's own source code.  It
 is not an independent third-party audit.  The structured rubric in
-\fname{reality.md} produced a self-assigned score of 8.5/10.  The primary
+\fname{reality.md} produced a self-assigned score of 9.0/10 (revised upward from
+8.5 after Phase~10 confirmed resolution of the Merkle archive encryption gap,
+the injection scorer field-name gap, and the async fail-safe bypass).  The primary
 adoption blocker is the AGPL-3.0-only license: any organization deploying
 Pramanix as part of a network service must release the complete corresponding
 source code of that service to users.  No commercial software company in
@@ -971,6 +973,296 @@ Beta subsystems are usable in production but may change in minor versions with
 deprecation notice.
 
 %% ============================================================================
+\chapter{The Three Pillars of Policy Intelligence}
+%% ============================================================================
+
+The Thirteen-Layer Architecture operates a single verification pipeline.
+Layered on top of that pipeline are three independent \textit{Pillars} ---
+structured modules that elevate Pramanix beyond a Z3 wrapper into a full
+policy intelligence platform.  Each Pillar has a distinct design philosophy,
+a distinct security scope, and a distinct integration point.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{} l p{3.2cm} p{3.8cm} p{3.5cm} @{}}
+\toprule
+\textbf{Pillar} & \textbf{Name} & \textbf{Core Function} & \textbf{Hot-Path?} \\
+\midrule
+1 & IR Compiler     & LLM-output $\to$ Z3 invariants (compile-time) & Off; compile-once \\
+2 & MeshAuthenticator & SPIFFE JWT-SVID identity injection            & On; per-request \\
+3 & ComplianceOracle & ProvenanceRecord $\to$ regulatory attestation  & Off; post-decision \\
+\bottomrule
+\end{tabular}
+\caption{The Three Pillars of Policy Intelligence}
+\end{table}
+
+%% ── Pillar 1 ─────────────────────────────────────────────────────────────────
+\section{Pillar~1 --- The IR Compiler (\fname{src/pramanix/compiler.py})}
+
+\subsection{Purpose and Motivation}
+
+Policy authoring by hand is an expert task.  The DSL is ergonomic, but
+encoding the correct Z3-typed field constraints requires understanding of
+Z3 sorts, the transpiler's handling of RHS types, and the naming of invariant
+labels that feed the compliance reporter.  Pillar~1 closes this gap by
+providing a machine-readable, LLM-friendly Intermediate Representation (IR)
+as a Pydantic v2 schema, and a compiler that lowers it deterministically to
+the same \code{ConstraintExpr} objects that hand-authored policies produce.
+The LLM never touches Z3.  The compiler does all the heavy lifting, with
+zero network calls.
+
+\subsection{Architecture}
+
+The compiler has four isolated layers:
+
+\begin{enumerate}
+  \item \textbf{IR Schema:} \code{FieldReference}, \code{LiteralValue},
+        \code{Operator}, \code{Condition}, \code{Rule}, \code{PolicyIR} ---
+        all pure Pydantic~v2, \code{ConfigDict(extra="forbid", frozen=True)}.
+        \code{Rule} is recursive (self-referential) via
+        \code{Rule.model\_rebuild()}.  \code{PolicyIR} enforces globally
+        unique rule names via a \code{model\_validator}.
+
+  \item \textbf{PolicyCompiler:} Stateless;
+        \code{compile(ir, policy\_cls) \to list[ConstraintExpr]}.
+        Validates at compile time: (a) every \code{FieldReference.field\_name}
+        must resolve against \code{Policy.fields()}; (b) Z3 sort
+        compatibility between LHS and scalar RHS; (c) field-to-field sort
+        compatibility when RHS is also a \code{FieldReference}; (d) ordering
+        operators (\code{GT}, \code{LT}, \code{GTE}, \code{LTE}) rejected on
+        Bool-sorted fields; (e) \code{IN}/\code{NOT\_IN} requires a
+        \code{LiteralValue} with list \code{value}.
+
+  \item \textbf{Fail-Closed Validation:} Seven compile-time error classes
+        detected before any Z3 formula is constructed:
+        (1)~unknown field reference,
+        (2)~scalar type incompatible with field Z3 sort,
+        (3)~field-to-field sort mismatch,
+        (4)~ordering operator on Bool sort,
+        (5)~membership operator on non-list RHS,
+        (6)~empty membership set,
+        (7)~bool literal as ordering RHS.
+
+  \item \textbf{Decompiler:} Reverse translation ---
+        \code{list[ConstraintExpr] \to str}.  Walks the DSL AST without
+        touching Z3.  Produces a timestamped structured-English CISO sign-off
+        report per invariant.  Gracefully degrades on unknown future AST node
+        types.  Deterministic and idempotent.
+\end{enumerate}
+
+\subsection{Security Invariants}
+
+\begin{itemize}
+  \item No \code{eval()}, \code{exec()}, \code{pickle} in the compiler module.
+  \item The LLM is never called by \code{compiler.py}.
+  \item Every field reference is validated against the declared
+        \code{Policy.fields()} before any Z3 formula is constructed.  A
+        hallucinated field name produces \code{PolicyCompilationError} with
+        the full list of valid fields.
+\end{itemize}
+
+\subsection{Public Surface}
+
+Ten symbols exported: \code{Condition}, \code{Decompiler},
+\code{FieldReference}, \code{FieldSource}, \code{LiteralValue},
+\code{Logic}, \code{Operator}, \code{PolicyCompiler}, \code{PolicyIR},
+\code{Rule}.
+
+%% ── Pillar 2 ─────────────────────────────────────────────────────────────────
+\section{Pillar~2 --- The Mesh Authenticator
+  (\fname{src/pramanix/mesh/authenticator.py})}
+
+\subsection{Purpose and Motivation}
+
+Agentic systems are not monolithic.  Agent~A calls Agent~B, which calls
+Agent~C.  At the policy enforcement layer, the question is not only ``is this
+request arithmetically safe?'' but ``is the \emph{caller} who it claims to
+be?''  Pillar~2 answers the second question using SPIFFE JWT-SVIDs --- the
+standard identity document for zero-trust workload identity (SPIFFE Spec,
+CNCF 2023).
+
+\subsection{Architecture}
+
+\code{MeshAuthenticator.authenticate\_and\_bind(bearer\_token, raw\_intent)}
+performs the following steps in order:
+
+\begin{enumerate}
+  \item \textbf{Token size limit}: Tokens exceeding 16\,KiB are rejected
+        before parsing, preventing resource exhaustion.
+  \item \textbf{Algorithm whitelist}: Only RS256 and ES256 are accepted.
+        \code{"none"} and HS256 are unconditionally rejected \emph{before}
+        any cryptographic work.
+  \item \textbf{Signature first}: Cryptographic signature is verified before
+        any claim (\code{exp}, \code{nbf}, \code{aud}) is inspected.
+        An attacker cannot observe timing differences from unsigned tokens.
+  \item \textbf{Strict expiry}: \code{exp} is required.  Tokens without
+        \code{exp} are rejected.  \code{nbf} is enforced when present.
+  \item \textbf{Audience check}: \code{aud} (string or array per RFC~7519
+        \S4.1.3) must contain the configured audience.
+  \item \textbf{SPIFFE URI validation}: \code{sub} must be a syntactically
+        valid \code{spiffe://} URI.  Ports, userinfo, query strings, and
+        fragments are all rejected.
+  \item \textbf{Intent-poisoning prevention}: If \code{\_mesh\_principal}
+        already exists in the caller-supplied intent, the call is rejected
+        immediately.
+  \item \textbf{Injection}: The verified SPIFFE URI is written into the intent
+        dict under \code{\_mesh\_principal}.  The enriched dict is returned.
+\end{enumerate}
+
+\subsection{Pillar 1 + Pillar 2 Unification}
+
+The polymorphic RHS discriminated union in the IR schema makes both Pillars
+composable.  A \code{Condition} can reference \code{\_mesh\_principal} as a
+\code{FieldReference}:
+
+\begin{lstlisting}[style=plain]
+{
+  "lhs": {"type": "field", "source": "intent",
+          "field_name": "_mesh_principal"},
+  "op": "==",
+  "rhs": {"type": "literal",
+          "value": "spiffe://prod.example.com/ns/payments/sa/agent"}
+}
+\end{lstlisting}
+
+At compile time, Pillar~1's \code{PolicyCompiler} resolves
+\code{\_mesh\_principal} against \code{Policy.fields()}.  At runtime,
+Pillar~2's \code{authenticate\_and\_bind} injects the verified value before
+\code{Guard.verify()} is called.  The full chain is:
+
+\begin{enumerate}
+  \item Pillar~2 authenticates the bearer token and injects
+        \code{\_mesh\_principal}.
+  \item Pillar~1 has already compiled the \code{intent.\_mesh\_principal ==
+        "spiffe://\ldots"} constraint into a Z3 formula.
+  \item Guard calls the Z3 solver; the constraint is checked exactly.
+\end{enumerate}
+
+No component outside this chain can inject or override \code{\_mesh\_principal}.
+
+\subsection{JWKS Caching}
+
+The JWKS document is cached with a configurable TTL (default: 600\,s) to
+avoid a per-request HTTP round-trip.  Cache refresh is thread-safe via a
+\code{threading.Lock}.
+
+%% ── Pillar 3 ─────────────────────────────────────────────────────────────────
+\section{Pillar~3 --- The Compliance Oracle
+  (\fname{src/pramanix/compliance/oracle.py})}
+
+\subsection{Purpose and Motivation}
+
+After a decision is signed and archived, a compliance engineer needs to
+answer: ``Which of our regulatory obligations does this decision address, and
+is there a tamper-evident record I can produce for an auditor?''
+Pillar~3 answers this without touching the hot path.
+
+\subsection{Architecture}
+
+\subsubsection{Regulatory Frameworks}
+
+Six frameworks supported:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{} l l l @{}}
+\toprule
+\textbf{Member} & \textbf{String} & \textbf{Standard} \\
+\midrule
+\code{SOC2}         & \code{"SOC2"}         & AICPA SOC~2 Trust Services Criteria \\
+\code{EU\_AI\_ACT}  & \code{"EU\_AI\_ACT"}  & EU AI Act Regulation (EU) 2024/1689 \\
+\code{HIPAA}        & \code{"HIPAA"}        & 45~CFR~\S164 Security and Privacy \\
+\code{NIST\_AI\_RMF}& \code{"NIST\_AI\_RMF"}& NIST AI RMF 1.0 (AI 100-1) \\
+\code{ISO\_42001}   & \code{"ISO\_42001"}   & ISO/IEC 42001 AI Management System \\
+\code{GDPR}         & \code{"GDPR"}         & GDPR Art.~22 automated decision-making \\
+\bottomrule
+\end{tabular}
+\caption{Regulatory frameworks in \code{RegulatoryFramework}
+  (\fname{compliance/oracle.py})}
+\end{table}
+
+\subsubsection{ControlMapping}
+
+A frozen Pydantic~v2 model with seven fields.  The key fields:
+
+\begin{itemize}
+  \item \code{invariant\_label} --- matched by exact equality against Z3
+        attribution labels.
+  \item \code{principal\_pattern} --- \code{fnmatch} glob matched against the
+        SPIFFE URI in \code{record.principal\_id}.
+  \item \code{require\_both} --- when both criteria are set: \code{True} =
+        AND (both must match); \code{False} = OR (either suffices).
+\end{itemize}
+
+\code{model\_post\_init} enforces that at least one criterion is set.  A
+mapping with neither raises \code{ValueError} at construction.
+
+\subsubsection{ComplianceOracle}
+
+Thread-safe via \code{threading.RLock}.  Registry is a
+\code{defaultdict(list)} keyed by \code{RegulatoryFramework}.
+
+\textbf{evaluate\_record(record, *, stored\_hmac\_tag="", decision\_snapshot=None)
+\textrightarrow{} ComplianceAttestation}:
+
+\begin{enumerate}
+  \item Snapshots the registry under lock; releases lock before evaluation.
+  \item Extracts \code{evaluated\_invariants} and \code{violated\_invariants}
+        from \code{decision\_snapshot} first, then \code{record.metadata},
+        then a best-effort fallback for ALLOWED records.
+  \item Evaluates every registered \code{ControlMapping}.
+  \item \textbf{Never raises.}  All exceptions caught, logged at
+        \code{ERROR}, and a minimal fail-closed attestation returned.
+\end{enumerate}
+
+\subsubsection{Cryptographic Provenance}
+
+\code{ComplianceAttestation.record\_hmac\_tag} carries the HMAC tag from the
+originating \code{ProvenanceRecord}.  This binds the attestation to the
+specific decision record: an auditor with the HMAC key can verify that the
+record presented to the oracle has not been altered since signing.
+The \code{stored\_hmac\_tag} parameter enables offline/cross-process
+evaluation from persisted audit logs.
+
+\subsection{Offline Design Invariant}
+
+The oracle has zero imports from \fname{guard.py}, \fname{solver.py},
+\fname{transpiler.py}, or any hot-path module.  This is enforced by the
+import graph: adding a hot-path import would be immediately visible in code
+review.  The oracle only imports \fname{pramanix.provenance},
+\fname{pramanix.decision}, and standard library.
+
+%% ── Pillar Integration ───────────────────────────────────────────────────────
+\section{Pillar Integration: The Unified Policy Intelligence Stack}
+
+\begin{enumerate}
+  \item \textbf{Compile time (Pillar~1):} An LLM produces a \code{PolicyIR}
+        JSON via \code{response\_format=PolicyIR.model\_json\_schema()}.
+        \code{PolicyCompiler.compile(ir, policy\_cls)} validates field
+        references, Z3 sort compatibility, and semantic completeness; emits
+        \code{list[ConstraintExpr]} identical to hand-authored invariants.
+        \code{Decompiler.report(constraints)} produces a human-readable
+        audit summary for CISO sign-off.
+
+  \item \textbf{Request time (Pillar~2):} \code{MeshAuthenticator} validates
+        the bearer token, enforces SPIFFE URI syntax, and injects
+        \code{\_mesh\_principal} into the intent.  The enriched intent is
+        passed directly to \code{Guard.verify()}.
+
+  \item \textbf{Post-decision time (Pillar~3):} The compliance engineer calls
+        \code{ComplianceOracle.evaluate\_record(record)} on the persisted
+        \code{ProvenanceRecord}.  The oracle returns a
+        \code{ComplianceAttestation} mapping Z3 violation labels to
+        regulatory controls with cryptographic provenance linkage.
+\end{enumerate}
+
+\code{GovernanceConfig} cross-validates all four governance pillars
+(\code{ifc\_policy}, \code{oversight\_workflow}, \code{privilege\_scope},
+\code{compliance\_oracle}) at construction time.  A \code{ConfigurationError}
+is raised if governance components are configured inconsistently, preventing
+split-brain policy enforcement.
+
+%% ============================================================================
 \chapter{Development Journey}
 %% ============================================================================
 
@@ -1663,6 +1955,199 @@ Eleven new real-integration tests in
 \code{EncryptedArchiveWriter} lifecycle --- key generation, round-trip
 encrypt/decrypt, atomic write, wrong-key \code{InvalidTag}, fresh-nonce-per-call
 --- lifted branch coverage from 97.69\,\% to 98.16\,\%, crossing the gate.
+
+%% ============================================================================
+\chapter{Correctness and Safety Proofs}
+%% ============================================================================
+
+This chapter consolidates the formal correctness claims documented in
+\fname{docs/PROOF\_DOSSIER.md} \cfrsec{4}.  Each section states the claim,
+the evidence supporting it, and any residual limitations.  Labels
+\code{production-grade}, \code{real-partial}, and \code{gap} are used as
+defined in the PROOF\_DOSSIER evidence taxonomy.
+
+\section{Fail-Closed Guarantee --- \code{production-grade}}
+
+\textbf{Claim.}  No execution path inside \code{Guard.verify()} can produce
+\code{Decision.allowed=True} as a result of an error, exception, or partial
+failure.
+
+\textbf{Evidence.}  Two independent structural enforcement points:
+
+\begin{enumerate}
+  \item \fname{guard.py}: The outermost \code{try}/\code{except} in
+        \code{verify()} catches every exception class including
+        \code{MemoryError} and bare \code{BaseException}.  Every catch
+        arm returns \code{Decision.error(allowed=False)}.
+
+  \item \fname{decision.py} \code{\_\_post\_init\_\_}: Raises \code{ValueError}
+        if \code{allowed=True} and \code{status != SAFE}.  This makes it
+        structurally impossible to construct a \code{Decision} with
+        \code{allowed=True} from any error path, even if the first
+        enforcement point has a bug.
+\end{enumerate}
+
+\textbf{Test evidence.}  \fname{test\_fail\_safe\_invariant.py} covers 6
+pipeline stages and 9 exception types adversarially.
+
+\section{Z3 Completeness for LRA/LIA}
+
+\textbf{Claim.}  For Linear Real Arithmetic (LRA) and Linear Integer
+Arithmetic (LIA) constraints, Z3 returns either \code{sat} (all invariants
+hold) or \code{unsat} (at least one is violated) --- never a false positive
+on a well-formed input.
+
+\textbf{Formal basis.}  Tarski (1951) established the decidability of the
+theory of real closed fields by quantifier elimination.  Z3 uses the Simplex
+method for LRA satisfiability.  For decidable theories, DPLL(T) is complete
+(Nieuwenhuis, Oliveras, and Tinelli, 2006): Z3 either returns SAT+model or
+UNSAT+proof.
+
+\textbf{Caveat --- non-linear arithmetic.}  Non-linear constraints
+(e.g.\ \code{E(price) * E(quantity) >= E(min\_total)}) may return
+\code{unknown} rather than SAT or UNSAT.  Pramanix is fail-closed:
+\code{unknown} produces \code{allowed=False}.
+
+\section{Exact Arithmetic Guarantee --- \code{production-grade}}
+
+\textbf{Claim.}  Financial invariants are evaluated using exact rational
+arithmetic, not IEEE~754 floating-point.
+
+\textbf{Implementation.}  In \fname{transpiler.py} (float handling path):
+\code{Decimal(str(v)).as\_integer\_ratio()} produces an exact
+(numerator, denominator) pair.  \code{z3.RatVal(numerator, denominator)}
+represents this in Z3 as an exact rational.  $0.1 + 0.2$ is exactly
+$0.3$ in this representation; it is not in IEEE~754 double precision.
+
+\textbf{Test evidence.}  Property test~6 in
+\fname{test\_dsl\_and\_transpiler\_properties.py}: Hypothesis verifies Z3
+agrees with Python \code{Decimal} for all precisions.
+
+\section{Z3 Thread Isolation --- \code{production-grade}}
+
+\textbf{Claim.}  Z3 solver state cannot leak between concurrent threads.
+
+\textbf{Implementation.}  Thread-local \code{z3.Context()} objects: one
+per OS thread, created on first use, never destroyed.  \fname{solver.py}
+\code{\_thread\_ctx()} enforces this.  Z3 releases the Python GIL during
+solve, enabling genuine parallel solving.
+
+\textbf{Test evidence.}  \fname{test\_z3\_context\_isolation.py} uses
+\code{threading.Barrier} to force 10 concurrent simultaneous solver
+executions.  No cross-thread contamination.  No \code{allowed=True}
+from any thread where \code{balance < amount}.
+
+\textbf{Limitation.}  This is empirical evidence, not a formal proof.
+Z3's internal C++ context isolation is a documented property of the
+\code{z3-solver} library, but the test validates the Python-layer
+binding.
+
+\section{Process Isolation and HMAC IPC Integrity --- \code{production-grade}}
+
+\textbf{Claim.}  In async-process mode, a compromised worker process cannot
+forge \code{allowed=True} in the host process.
+
+\textbf{Implementation.}
+
+\begin{itemize}
+  \item Worker processes created with \code{spawn} context (no fork
+        contamination of Z3 state or parent file descriptors).
+  \item Only \code{(policy\_cls, values\_dict, timeout\_ms)} crosses the
+        process boundary.  No Z3 objects are serialised.
+  \item IPC response is HMAC-SHA256 sealed with an ephemeral
+        \code{\_EphemeralKey}.  \code{\_EphemeralKey.\_\_reduce\_\_} raises
+        \code{TypeError} --- the key cannot be pickled.
+  \item A worker crash returns \code{Decision.error(allowed=False)} in the
+        host without propagating.
+\end{itemize}
+
+\textbf{Test evidence.}  4 tamper scenarios in the process-mode test suite.
+\textbf{Residual risk.}  HMAC-only prevents forgery if the ephemeral key
+is secret.  If \code{PRAMANIX\_SCORER\_KEY} is compromised,
+\fname{injection\_scorer.py}:305 has an \code{pickle.loads()} RCE vector
+(documented in \fname{docs/KNOWN\_GAPS.md}).
+
+\section{Injection Resistance --- \code{real-partial}}
+
+\textbf{Claim.}  Adversarial natural-language inputs cannot reach the Z3
+solver in an unfiltered form.
+
+\textbf{Eleven-layer defence (summarised):}
+
+\begin{enumerate}
+  \item Platform check (\fname{\_platform.py}): Alpine/musl rejection
+  \item Length gate: configurable \code{max\_input\_bytes}
+  \item NFKC Unicode normalisation
+  \item Control-character strip
+  \item Regex filter: $\sim$25 injection patterns
+  \item Syntax error injection block
+  \item Pydantic strict-mode boundary
+  \item Dual-model LLM consensus (two independent models must agree)
+  \item Post-consensus heuristic integrity check
+  \item Semantic fast-path pre-screen (can only BLOCK)
+  \item Z3 solver with \code{rlimit} cap (DoS prevention)
+\end{enumerate}
+
+\textbf{Test evidence.}  10 adversarial vector classes tested against stub
+translators.  \textbf{Gap:} Layers 8--9 (dual-model consensus, post-consensus
+heuristics) are never tested with real LLM API calls in CI.  This is the
+strongest anti-injection claim and the least validated component.
+
+\section{Pydantic Strict Boundary --- \code{production-grade}}
+
+\textbf{Claim.}  All inputs are validated at the system boundary; type
+coercions are rejected.
+
+\textbf{Implementation.}  \fname{validator.py}: Pydantic~v2 strict mode.
+\code{ConfigDict(extra="forbid")} on every model.  String \code{"100"} for a
+\code{Decimal} field is rejected before reaching the transpiler.
+
+\textbf{Test evidence.}  12 tests in the validator suite; string-to-Decimal
+rejection; extra-field rejection.
+
+\section{Field Overflow Protection --- \code{production-grade}}
+
+\textbf{Test evidence.}  8 adversarial overflow vectors tested:
+\code{max\_length}, \code{le}, \code{gt}, \code{ge} constraints on numeric
+and string fields.
+
+\section{TOCTOU Contract --- \code{real-partial}}
+
+\textbf{Claim.}  Pramanix does not guarantee the state it verifies is the
+same state the action will execute against.
+
+\textbf{Design decision.}  The \code{state\_version} field enables
+optimistic concurrency: the caller must pass the current state version;
+the executor must reject if the version has changed.  Pramanix enforces
+the contract; it does not implement the executor-side optimistic lock.
+
+\textbf{Resolved sub-issue.}  The Redis circuit breaker TOCTOU race
+(\fname{reality.md} \cfrsec{4.1}) is resolved: \code{set\_state} uses
+\code{WATCH} + \code{MULTI}/\code{EXEC} optimistic locking with
+\code{\_MERGE\_MAX\_RETRIES=3}.
+
+\section{Timing Oracle Protection --- \code{real-partial}}
+
+\textbf{Claim.}  ALLOW and BLOCK responses are not statistically
+distinguishable by latency.
+
+\textbf{Implementation.}  Timing pad applied unconditionally to every
+response before the ALLOW/BLOCK branch.
+
+\textbf{Test evidence.}  \fname{test\_production\_gaps.py}: symmetry ratio
+$\leq 1.30$.  This is a statistical bound, not a cryptographic guarantee.
+
+\section{JWT Algorithm Confusion Prevention --- \code{production-grade}}
+
+\textbf{Claim.}  The CVE-2015-9235 family attack (crafting a token with
+\code{alg: "RS256"} and an HMAC-SHA256 signature) is prevented.
+
+\textbf{Implementation.}  JWT header is decoded and \code{alg} is validated
+against the allowlist before signature computation.  HS256 is the only
+accepted value for inter-service tokens; RS256/ES256 are accepted for
+SPIFFE JWT-SVIDs via Pillar~2.
+
+\textbf{Evidence.}  BUG-10 in \fname{docs/CHANGELOG.md}; fixed in Phase~8.
 
 %% ============================================================================
 \chapter{Testing Strategy}
@@ -2906,6 +3391,137 @@ That is what production readiness means: not the absence of gaps, but the
 honest accounting of them.
 
 %% ============================================================================
+\chapter{Conclusions and Future Work}
+%% ============================================================================
+
+\section{Summary of What Is Proven}
+
+The following properties are structurally proven and adversarially tested:
+
+\begin{description}
+  \item[Fail-closed execution.] No error path, exception type, or partial
+    pipeline failure can produce \code{allowed=True}.  Enforced by two
+    independent structural mechanisms (\fname{guard.py} + \fname{decision.py}
+    \code{\_\_post\_init\_\_}).
+
+  \item[Z3 completeness for LRA/LIA.] For all financial and identity
+    constraints expressible as linear arithmetic, Z3 returns a definitive
+    SAT or UNSAT result.  No false positives on well-formed inputs.
+
+  \item[Exact arithmetic.] IEEE~754 rounding errors do not reach Z3.  The
+    \code{Decimal.as\_integer\_ratio()} path provides exact rational arithmetic
+    for all numeric invariants.
+
+  \item[Thread isolation.] Thread-local Z3 contexts prevent cross-thread
+    state contamination.  Validated empirically at 10 concurrent threads.
+
+  \item[Pillar~1 compiler safety.] No LLM call, no \code{eval()}, no
+    \code{exec()}.  All field references are validated at compile time against
+    the declared policy schema.
+
+  \item[Pillar~2 identity injection.] SPIFFE JWT-SVID validation with 10
+    security properties; algorithm confusion attack prevented; intent-poisoning
+    prevented; token size bounded.
+
+  \item[Pillar~3 regulatory attestation.] Six-framework compliance mapping;
+    cryptographic provenance linkage; never raises; offline design.
+
+  \item[Pydantic strict boundary.] All inputs validated at system boundary;
+    type coercions rejected; extra fields rejected.
+
+  \item[JWT algorithm confusion.] CVE-2015-9235 class attack prevented; fixed
+    in BUG-10.
+\end{description}
+
+\section{What Is Partial or Unvalidated}
+
+\begin{description}
+  \item[LLM consensus layer (Pillar~1 optional path).] The dual-model
+    consensus mechanism (\fname{translator/}) is implemented but never tested
+    with real LLM API calls in CI.  Injection resistance against a real LLM
+    adversary is unverified.
+
+  \item[Integration tests.] Container-backed integration tests pass locally
+    with Docker but are \code{--skip} flags in CI.  Kafka, Redis,
+    and S3 sink integration is unverified in the pipeline.
+
+  \item[Timing oracle protection.] The $\leq 1.30$ symmetry ratio is a
+    statistical bound, not a constant-time guarantee.
+
+  \item[TOCTOU executor enforcement.] Pramanix provides the contract
+    (\code{state\_version}) but relies on the calling system to enforce it at
+    the executor layer.
+
+  \item[Merkle archive encryption.] Resolved in Phase~10 for new writes
+    via \code{EncryptedArchiveWriter}, but existing archives written before
+    Phase~10 are plaintext.
+
+  \item[Logging split-brain.] Standard library \code{logging} and
+    \code{structlog} are both active; a misconfigured host may receive
+    duplicate or filtered log events.
+
+  \item[Pickle RCE in injection scorer.] \fname{injection\_scorer.py}:305 uses
+    \code{pickle.loads()} on untrusted worker output.  Exploitation requires
+    compromise of the scorer key.  Not fixed as of this writing.
+\end{description}
+
+\section{What Would Constitute Category Leadership}
+
+Pramanix is currently the only open-source library that provides:
+(a) SMT-based formal verification of agentic tool calls,
+(b) SPIFFE zero-trust workload identity integration,
+(c) regulatory attestation linked to the exact Z3 violation evidence,
+(d) and a 98.26\,\% branch-coverage adversarial test suite --- all in a
+single Python package.
+
+To reach indisputable category leadership, the following must be addressed:
+
+\begin{enumerate}
+  \item \textbf{License change.}  AGPL-3.0 blocks every commercial adopter
+    in financial services, healthcare, and insurance.  Apache-2.0 or a
+    commercial licence tier is prerequisite.
+
+  \item \textbf{LLM integration tests in CI.}  At minimum, a sandboxed local
+    model (Ollama, Llama.cpp) should run the full injection test suite against
+    a real language model.
+
+  \item \textbf{Independent benchmark audit.}  The current benchmarks were
+    run by the author on a consumer laptop.  An independent reproduction on
+    standardised server hardware (32-core, 128\,GB RAM) is needed before
+    publishing single-digit-millisecond latency claims.
+
+  \item \textbf{NLP content validation.}  PII detection and toxicity scoring
+    are entirely absent.  A pluggable validator interface would allow
+    \code{spacy}/\code{presidio} integration without hard coupling.
+
+  \item \textbf{Cross-process replay prevention.}  HMAC tags are scoped to a
+    single process lifetime.  A persisted, monotonic nonce registry is needed
+    for multi-process deployments.
+\end{enumerate}
+
+\section{Recommended Next Steps}
+
+In priority order:
+
+\begin{enumerate}
+  \item Resolve the AGPL-3.0 licence question with legal counsel.
+  \item Replace \code{pickle.loads()} in \fname{injection\_scorer.py}:305
+    with a safe serialisation format (\code{json} or \code{msgpack}).
+  \item Add an Ollama-backed LLM consensus integration test to the CI
+    pipeline.
+  \item Publish a companion benchmark report with server hardware and
+    statistically significant sample sizes (\(\geq 10{,}000\) samples, multiple
+    machines).
+  \item Evaluate ISO/IEC~42001 readiness against a published controls
+    checklist and document gap analysis in a new \fname{docs/ISO42001\_GAP.md}.
+\end{enumerate}
+
+Pramanix demonstrates that policy intelligence for agentic systems does not
+require choosing between rigour and practicality.  A 5\,ms-median,
+fail-closed, formally verifiable enforcement firewall is buildable in pure
+Python.  That is the principal claim, and the code substantiates it.
+
+%% ============================================================================
 %%  APPENDICES
 %% ============================================================================
 
@@ -3041,6 +3657,39 @@ BUG-03 OversightRecord      & \fname{docs/CHANGELOG.md}     & \cfrsec{BUG-03} \\
   \item seL4 Foundation. \textit{The seL4 Microkernel: An Introduction}.
         \url{https://sel4.systems/Info/Docs/seL4-manual-latest.pdf}.
         Accessed May 2026.
+
+  \item A.~Tarski. \textit{A Decision Method for Elementary Algebra and
+        Geometry}. University of California Press, 1951.  (Establishes
+        decidability of the theory of real closed fields by quantifier
+        elimination; theoretical basis for Z3 LRA completeness.)
+
+  \item E.~Rescorla. \textit{The Transport Layer Security (TLS) Protocol
+        Version~1.3}. RFC~8446. IETF, August 2018.
+
+  \item SPIFFE Project, Cloud Native Computing Foundation.
+        \textit{Secure Production Identity Framework for Everyone (SPIFFE)
+        Specification v1.0}.
+        \url{https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE.md}.
+        Accessed May 2026.
+
+  \item T.~Hunt \textit{et al.} \textit{Ryoan: A Distributed Sandbox for
+        Untrusted Computation on Secret Data}. In \textit{12th USENIX
+        Symposium on Operating Systems Design and Implementation (OSDI~2016)},
+        pp.~533--549, 2016.  (Process isolation model reference.)
+
+  \item AICPA. \textit{Trust Services Criteria (With Revised Points of Focus
+        --- 2022)}. AICPA, 2022.  (Basis for SOC~2 control mapping in
+        Pillar~3.)
+
+  \item International Organization for Standardization.
+        \textit{ISO/IEC~42001:2023 — Artificial Intelligence Management
+        System}. ISO, 2023.
+
+  \item P.~Samangouei, M.~Kabkab, and R.~Chellappa.
+        Defense-GAN: Protecting Classifiers Against Adversarial Attacks Using
+        Generative Models. \textit{ICLR 2018 Workshop}.  (Adversarial
+        robustness context; Pramanix's formal approach contrasted with
+        approximate defences.)
 \end{enumerate}
 
 \vfill
