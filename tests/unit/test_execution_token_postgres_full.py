@@ -11,6 +11,7 @@ All PostgresExecutionTokenVerifier database tests (consume, double-spend, pool
 reuse, consume_within, etc.) live in:
   tests/integration/test_postgres_token.py
 """
+
 from __future__ import annotations
 
 import time
@@ -19,6 +20,7 @@ import pytest
 
 from pramanix.decision import Decision, SolverStatus
 from pramanix.execution_token import ExecutionToken, ExecutionTokenSigner
+from tests.unit.conftest import requires_docker
 
 _SECRET = b"test_secret_key_32_bytes_exact!!"
 
@@ -73,14 +75,15 @@ def test_init_raises_value_error_for_short_key() -> None:
 # ── RedisExecutionTokenVerifier state_version mismatch ───────────────────────
 
 
-def test_redis_verifier_rejects_token_with_state_version_mismatch() -> None:
+@requires_docker
+def test_redis_verifier_rejects_token_with_state_version_mismatch(redis_url: str) -> None:
     """RedisExecutionTokenVerifier returns False when state_version != expected."""
-    import fakeredis
+    import redis as _real_redis
 
     from pramanix.execution_token import RedisExecutionTokenVerifier
 
-    redis = fakeredis.FakeRedis()
-    verifier = RedisExecutionTokenVerifier(_SECRET, redis)
+    redis_client = _real_redis.Redis.from_url(redis_url)
+    verifier = RedisExecutionTokenVerifier(_SECRET, redis_client)
     signer = ExecutionTokenSigner(_SECRET, ttl_seconds=60.0)
 
     token = signer.mint(_allowed_decision(), state_version="v1")

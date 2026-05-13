@@ -28,6 +28,7 @@ from pramanix.exceptions import PolicyCompilationError
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
+from tests.unit.conftest import requires_docker
 
 # ── Shared minimal policy ─────────────────────────────────────────────────────
 
@@ -355,13 +356,14 @@ class TestRedisLoaderErrorPath:
 class TestTranslatorCacheEdgeCases:
     """_RedisCache.clear() with no keys; IntentCache fallback on Redis ping failure."""
 
-    def test_redis_cache_clear_with_no_matching_keys(self) -> None:
+    @requires_docker
+    def test_redis_cache_clear_with_no_matching_keys(self, redis_url: str) -> None:
         """Lines 153->155: scan returns empty keys list — delete branch not entered."""
-        import fakeredis
+        import redis as _real_redis
 
         from pramanix.translator._cache import _RedisCache
 
-        r = fakeredis.FakeRedis(decode_responses=True)
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=True)
         cache = _RedisCache(redis_client=r, ttl_seconds=60)
         cache.clear()  # must not raise; empty keyspace just loops through scan
 

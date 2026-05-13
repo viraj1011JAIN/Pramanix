@@ -30,6 +30,7 @@ Usage::
     if blocked:
         raise InjectionBlockedError(reason)
 """
+
 from __future__ import annotations
 
 import re
@@ -60,8 +61,7 @@ _COMBINED_RE: re.Pattern[str] = re.compile(
 
 # Individual patterns compiled for reason attribution (on a hit only).
 _INDIVIDUAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(pat, re.IGNORECASE), label)
-    for pat, label in INJECTION_PATTERNS
+    (re.compile(pat, re.IGNORECASE), label) for pat, label in INJECTION_PATTERNS
 ]
 
 
@@ -122,8 +122,7 @@ class InjectionFilter:
                 if m:
                     return (
                         True,
-                        f"injection_pattern_detected label={label!r} "
-                        f"matched={m.group()!r}",
+                        f"injection_pattern_detected label={label!r} " f"matched={m.group()!r}",
                     )
 
             # Fallback: combined matched but no individual did.
@@ -154,6 +153,11 @@ class InjectionFilter:
                 m = pattern.search(text)
                 if m:
                     results.append((label, m.group()))
-        except Exception:
-            pass
+        except Exception as _exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "injection_filter: pattern matching error (partial results returned): %s",
+                _exc,
+            )
         return results

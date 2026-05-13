@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Viraj Jain
+"""Unit-test conftest — provides a real Redis testcontainer for all unit tests
+that previously relied on fakeredis.
+
+The ``redis_url`` fixture starts a real Redis 7-alpine instance in Docker for
+the duration of the test session.  Tests decorated with ``@requires_docker``
+are skipped automatically when Docker is unavailable.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+try:
+    import docker as _docker
+
+    _c = _docker.from_env()
+    _c.ping()
+    _DOCKER_AVAILABLE = True
+except Exception:
+    _DOCKER_AVAILABLE = False
+
+#: Attach this mark to any test that needs a live Docker daemon.
+requires_docker = pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker daemon not available")
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> str:  # type: ignore[return]
+    """Real Redis 7-alpine URL backed by a testcontainer.
+
+    The container is started once per test session and torn down afterwards.
+    Tests that use this fixture are automatically skipped when Docker is
+    unavailable (``_DOCKER_AVAILABLE == False``).
+    """
+    if not _DOCKER_AVAILABLE:
+        pytest.skip("Docker daemon not available")
+
+    pytest.importorskip("testcontainers")
+    from testcontainers.redis import RedisContainer
+
+    with RedisContainer("redis:7-alpine") as redis:
+        yield redis.get_connection_url()

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -57,6 +56,7 @@ from pramanix.natural_policy.verifier import (
     _reconstruct_constraint,
     _tokenise,
 )
+from tests.helpers.real_protocols import _RecordingTranslator
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -98,11 +98,9 @@ def _make_schema(
     )
 
 
-def _make_mock_translator(response: dict[str, Any]) -> AsyncMock:
-    """Return an AsyncMock Translator whose extract() returns *response*."""
-    translator = AsyncMock()
-    translator.extract = AsyncMock(return_value=response)
-    return translator
+def _make_mock_translator(response: dict[str, Any]) -> _RecordingTranslator:
+    """Return a real _RecordingTranslator whose extract() returns *response*."""
+    return _RecordingTranslator(response)
 
 
 # ── Z3TypeEnum / schema type mapping ──────────────────────────────────────────
@@ -468,7 +466,7 @@ class TestASTBuilder:
         # NaturalPolicySchema validates cross-field refs, so bypass it by constructing
         # ASTBuilder directly and calling _resolve_field.
         builder = ASTBuilder.__new__(ASTBuilder)
-        builder._schema = MagicMock()
+        builder._schema = None
         builder._fields = {"amount": Field("amount", Decimal, "Real")}
         node = _cmp("balance_check", "balance", ComparisonOp.GTE, 0, "Balance >= 0")
         with pytest.raises(PolicyCompilationError, match="balance"):

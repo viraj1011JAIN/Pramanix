@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Tests for RedisDistributedBackend (C-5)."""
+
 from __future__ import annotations
 
 import pytest
@@ -18,6 +19,7 @@ from pramanix.exceptions import ConfigurationError
 def test_redis_backend_raises_config_error_without_redis(monkeypatch: pytest.MonkeyPatch) -> None:
     """ConfigurationError raised when redis is not installed."""
     import sys
+
     monkeypatch.setitem(sys.modules, "redis", None)
     monkeypatch.setitem(sys.modules, "redis.asyncio", None)
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[redis\\]'"):
@@ -92,46 +94,39 @@ async def test_clear_single_namespace() -> None:
     assert state.circuit_state == CircuitState.CLOSED.value
 
 
-# ── RedisDistributedBackend with fakeredis ────────────────────────────────────
+# ── RedisDistributedBackend with real Redis testcontainer ─────────────────────
+
+from tests.unit.conftest import requires_docker
 
 
-try:
-    import fakeredis.aioredis  # type: ignore[import-untyped]  # noqa: F401
-    HAS_FAKEREDIS = True
-except ImportError:
-    HAS_FAKEREDIS = False
-
-needs_fakeredis = pytest.mark.skipif(not HAS_FAKEREDIS, reason="fakeredis not installed")
-
-
-@needs_fakeredis
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_get_default(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_redis_backend_get_default(redis_url: str) -> None:
     """Redis backend returns default CLOSED state when key is absent."""
-    import fakeredis.aioredis as fake_aioredis
+    import redis.asyncio as aioredis
 
     backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = "redis://localhost"
+    backend._redis_url = redis_url
     backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:"
+    backend._prefix = "pramanix:cb:get_default:"
     backend._ttl = 300
-    backend._client = fake_aioredis.FakeRedis(decode_responses=True)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
 
     state = await backend.get_state("test_ns")
     assert state.circuit_state == CircuitState.CLOSED.value
 
 
-@needs_fakeredis
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_set_and_get(monkeypatch: pytest.MonkeyPatch) -> None:
-    import fakeredis.aioredis as fake_aioredis
+async def test_redis_backend_set_and_get(redis_url: str) -> None:
+    import redis.asyncio as aioredis
 
     backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = "redis://localhost"
+    backend._redis_url = redis_url
     backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:"
+    backend._prefix = "pramanix:cb:set_and_get:"
     backend._ttl = 300
-    backend._client = fake_aioredis.FakeRedis(decode_responses=True)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
 
     await backend.set_state(
         "my_ns",
@@ -147,17 +142,17 @@ async def test_redis_backend_set_and_get(monkeypatch: pytest.MonkeyPatch) -> Non
     assert state.failure_count == 5
 
 
-@needs_fakeredis
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_conservative_merge(monkeypatch: pytest.MonkeyPatch) -> None:
-    import fakeredis.aioredis as fake_aioredis
+async def test_redis_backend_conservative_merge(redis_url: str) -> None:
+    import redis.asyncio as aioredis
 
     backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = "redis://localhost"
+    backend._redis_url = redis_url
     backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:"
+    backend._prefix = "pramanix:cb:conservative_merge:"
     backend._ttl = 300
-    backend._client = fake_aioredis.FakeRedis(decode_responses=True)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
 
     await backend.set_state(
         "merge_ns",
@@ -172,7 +167,6 @@ async def test_redis_backend_conservative_merge(monkeypatch: pytest.MonkeyPatch)
     assert state.circuit_state == CircuitState.OPEN.value
 
 
-@needs_fakeredis
 @pytest.mark.asyncio
 async def test_redis_backend_unavailable_fails_safe() -> None:
     """Redis failures return OPEN (fail-safe) so unknown state blocks requests."""
@@ -182,12 +176,15 @@ async def test_redis_backend_unavailable_fails_safe() -> None:
     backend._sync_interval = 1.0
     backend._prefix = "pramanix:cb:"
     backend._ttl = 300
+
     # Simulate Redis failure by giving a client that always raises
     class _FailClient:
         async def hgetall(self, *a: object, **kw: object) -> dict:
             raise ConnectionError("Redis unavailable")
+
         async def pipeline(self, *a: object, **kw: object) -> object:
             raise ConnectionError("Redis unavailable")
+
     backend._client = _FailClient()
     state = await backend.get_state("fail_ns")
     # On Redis failure the circuit breaker must fail SAFE (OPEN), not fail-open

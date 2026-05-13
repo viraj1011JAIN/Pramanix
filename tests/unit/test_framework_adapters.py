@@ -2,19 +2,19 @@
 """Tests for framework adapters: Haystack, SemanticKernel, PydanticAI (F-1).
 
 All tests use real Guard instances from tests.helpers.real_protocols.
-The only MagicMock usage is for sys.modules stubs to simulate absent optional
-SDK packages (semantic_kernel, pydantic_ai) — these stub the import boundary,
-not any Pramanix behaviour.
+The only mock-like usage is ``types.ModuleType(...)`` stubs injected into
+sys.modules to simulate absent optional SDK packages (semantic_kernel,
+pydantic_ai) — these stub the import boundary, not any Pramanix behaviour.
 """
+
 from __future__ import annotations
 
 import sys
-from unittest.mock import MagicMock
+import types
 
 import pytest
 
 from pramanix.exceptions import ConfigurationError, GuardViolationError
-
 from tests.helpers.real_protocols import (
     ALLOW_INTENT,
     ALLOW_STATE,
@@ -22,7 +22,6 @@ from tests.helpers.real_protocols import (
     make_allow_guard,
     make_block_guard,
 )
-
 
 # ── HaystackGuardedComponent ──────────────────────────────────────────────────
 
@@ -96,12 +95,13 @@ def test_sk_raises_config_error_without_semantic_kernel(
         from pramanix.integrations.semantic_kernel import (
             PramanixSemanticKernelPlugin,
         )
+
         PramanixSemanticKernelPlugin(make_allow_guard())
 
 
 def test_sk_plugin_verify_returns_json() -> None:
     """verify() returns JSON string with allowed/status/explanation (real Guard)."""
-    mock_sk = MagicMock()
+    mock_sk = types.ModuleType("semantic_kernel")
     sys.modules.setdefault("semantic_kernel", mock_sk)
     sys.modules.setdefault("semantic_kernel.functions", mock_sk)
 
@@ -125,7 +125,7 @@ async def test_sk_plugin_verify_async_returns_json() -> None:
     """verify_async() exercises the real async Guard path."""
     import json
 
-    mock_sk = MagicMock()
+    mock_sk = types.ModuleType("semantic_kernel")
     sys.modules.setdefault("semantic_kernel", mock_sk)
     sys.modules.setdefault("semantic_kernel.functions", mock_sk)
 
@@ -153,12 +153,13 @@ def test_pydantic_ai_raises_config_error_without_pydantic_ai(
         from pramanix.integrations.pydantic_ai import (
             PramanixPydanticAIValidator,
         )
+
         PramanixPydanticAIValidator(make_allow_guard())
 
 
 def test_pydantic_ai_check_allowed_returns_decision() -> None:
     """check() returns the Decision on ALLOW (real Guard — Z3 verified)."""
-    mock_pai = MagicMock()
+    mock_pai = types.ModuleType("pydantic_ai")
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
     if "pramanix.integrations.pydantic_ai" in sys.modules:
@@ -173,7 +174,7 @@ def test_pydantic_ai_check_allowed_returns_decision() -> None:
 
 def test_pydantic_ai_check_blocked_raises_guard_violation() -> None:
     """check() raises GuardViolationError when Z3 finds a constraint violated."""
-    mock_pai = MagicMock()
+    mock_pai = types.ModuleType("pydantic_ai")
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
     if "pramanix.integrations.pydantic_ai" in sys.modules:
@@ -192,7 +193,7 @@ def test_pydantic_ai_check_blocked_raises_guard_violation() -> None:
 @pytest.mark.asyncio
 async def test_pydantic_ai_check_async_allowed() -> None:
     """check_async() exercises the real async Guard path with ALLOW result."""
-    mock_pai = MagicMock()
+    mock_pai = types.ModuleType("pydantic_ai")
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
     if "pramanix.integrations.pydantic_ai" in sys.modules:
@@ -208,7 +209,7 @@ async def test_pydantic_ai_check_async_allowed() -> None:
 @pytest.mark.asyncio
 async def test_pydantic_ai_check_async_blocked_raises() -> None:
     """check_async() raises GuardViolationError when Z3 blocks (async path)."""
-    mock_pai = MagicMock()
+    mock_pai = types.ModuleType("pydantic_ai")
     sys.modules.setdefault("pydantic_ai", mock_pai)
 
     if "pramanix.integrations.pydantic_ai" in sys.modules:
@@ -230,6 +231,7 @@ def test_dspy_unavailable_sets_fallback(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.delitem(sys.modules, "pramanix.integrations.dspy", raising=False)
     monkeypatch.setitem(sys.modules, "dspy", None)
     import importlib
+
     dspy_mod = importlib.import_module("pramanix.integrations.dspy")
     assert dspy_mod._DSPY_AVAILABLE is False
     assert dspy_mod._ModuleBase is object
@@ -243,6 +245,7 @@ def test_fastapi_starlette_absent_sets_fallback(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delitem(sys.modules, "pramanix.integrations.fastapi", raising=False)
     monkeypatch.setitem(sys.modules, "starlette.middleware.base", None)
     import importlib
+
     fa_mod = importlib.import_module("pramanix.integrations.fastapi")
     assert fa_mod._STARLETTE_AVAILABLE is False
     assert fa_mod._BaseHTTPMiddleware is object

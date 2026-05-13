@@ -16,7 +16,7 @@ import asyncio
 import importlib
 import sys
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -49,6 +49,28 @@ from pramanix.transpiler import (
     compile_policy,
     transpile,
 )
+from tests.helpers.real_protocols import (
+    _AwsSecretsClientError,
+    _AzureIdentityModuleStub,
+    _AzureKVModuleStub,
+    _AzureKVSecretsModuleStub,
+    _AzureModuleStub,
+    _AzureSecretClientError,
+    _Boto3ModuleStub,
+    _GcpCloudModuleStub,
+    _GcpModuleStub,
+    _GcpSecretClientError,
+    _GcpSecretManagerModuleStub,
+    _GeminiGenaiModuleStub,
+    _GoogleProtobufModuleStub,
+    _HvacModuleStub,
+    _TrackingPingRedisClient,
+    _TrackingRedisModule,
+    _VaultKvClientError,
+    _VaultKvClientMissingField,
+    make_allow_guard,
+)
+from tests.unit.conftest import requires_docker
 
 # ── Shared policy fixture ─────────────────────────────────────────────────────
 
@@ -1020,15 +1042,14 @@ class TestKeyProviderRefreshCacheErrors:
     def test_aws_refresh_cache_wraps_exception(self) -> None:
         from pramanix.key_provider import AwsKmsKeyProvider
 
-        mock_client = MagicMock()
-        mock_client.get_secret_value.side_effect = ConnectionError("no route to AWS")
-        # boto3 is an optional dep; mock it so the constructor import succeeds
+        real_client = _AwsSecretsClientError()
+        # boto3 is an optional dep; stub it so the constructor import succeeds
         # even when pramanix[aws] is not installed.  The real client is never
         # used because _client is injected directly.
-        with patch.dict(sys.modules, {"boto3": MagicMock()}):
+        with patch.dict(sys.modules, {"boto3": _Boto3ModuleStub()}):
             provider = AwsKmsKeyProvider(
                 secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k",
-                _client=mock_client,
+                _client=real_client,
             )
         with pytest.raises(RuntimeError, match="AwsKmsKeyProvider: failed to fetch secret"):
             provider.private_key_pem()
@@ -1036,23 +1057,20 @@ class TestKeyProviderRefreshCacheErrors:
     def test_azure_refresh_cache_wraps_exception(self) -> None:
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        mock_client = MagicMock()
-        mock_client.get_secret.side_effect = ConnectionError("Azure vault unreachable")
-        # azure-keyvault-secrets and azure-identity are optional deps; mock them.
-        _azure_mock = MagicMock()
+        real_client = _AzureSecretClientError()
         with patch.dict(
             sys.modules,
             {
-                "azure": _azure_mock,
-                "azure.identity": _azure_mock,
-                "azure.keyvault": _azure_mock,
-                "azure.keyvault.secrets": _azure_mock,
+                "azure": _AzureModuleStub(),
+                "azure.identity": _AzureIdentityModuleStub(),
+                "azure.keyvault": _AzureKVModuleStub(),
+                "azure.keyvault.secrets": _AzureKVSecretsModuleStub(),
             },
         ):
             provider = AzureKeyVaultKeyProvider(
                 vault_url="https://test.vault.azure.net",
                 secret_name="my-key",
-                _client=mock_client,
+                _client=real_client,
             )
         with pytest.raises(RuntimeError, match="AzureKeyVaultKeyProvider: failed to fetch"):
             provider.private_key_pem()
@@ -1060,22 +1078,19 @@ class TestKeyProviderRefreshCacheErrors:
     def test_gcp_refresh_cache_wraps_exception(self) -> None:
         from pramanix.key_provider import GcpKmsKeyProvider
 
-        mock_client = MagicMock()
-        mock_client.access_secret_version.side_effect = ConnectionError("GCP unreachable")
-        # google-cloud-secret-manager is an optional dep; mock it.
-        _gcp_mock = MagicMock()
+        real_client = _GcpSecretClientError()
         with patch.dict(
             sys.modules,
             {
-                "google": _gcp_mock,
-                "google.cloud": _gcp_mock,
-                "google.cloud.secretmanager": _gcp_mock,
+                "google": _GcpModuleStub(),
+                "google.cloud": _GcpCloudModuleStub(),
+                "google.cloud.secretmanager": _GcpSecretManagerModuleStub(),
             },
         ):
             provider = GcpKmsKeyProvider(
                 project_id="my-project",
                 secret_id="my-secret",
-                _client=mock_client,
+                _client=real_client,
             )
         with pytest.raises(RuntimeError, match="GcpKmsKeyProvider: failed to fetch"):
             provider.private_key_pem()
@@ -1083,14 +1098,12 @@ class TestKeyProviderRefreshCacheErrors:
     def test_vault_refresh_cache_wraps_exception(self) -> None:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        mock_client = MagicMock()
-        mock_client.secrets.kv.v2.read_secret_version.side_effect = OSError("Vault sealed")
-        # hvac is an optional dep; mock it so the constructor import succeeds.
-        with patch.dict(sys.modules, {"hvac": MagicMock()}):
+        real_client = _VaultKvClientError()
+        with patch.dict(sys.modules, {"hvac": _HvacModuleStub()}):
             provider = HashiCorpVaultKeyProvider(
                 url="https://vault.example.com:8200",
                 secret_path="pramanix/key",
-                _client=mock_client,
+                _client=real_client,
             )
         with pytest.raises(RuntimeError, match="HashiCorpVaultKeyProvider: failed to read"):
             provider.private_key_pem()
@@ -1099,19 +1112,13 @@ class TestKeyProviderRefreshCacheErrors:
         from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        mock_client = MagicMock()
-        mock_client.secrets.kv.v2.read_secret_version.return_value = {
-            "data": {
-                "data": {"other_field": "some-value"},
-                "metadata": {"version": 1},
-            }
-        }
-        with patch.dict(sys.modules, {"hvac": MagicMock()}):
+        real_client = _VaultKvClientMissingField()
+        with patch.dict(sys.modules, {"hvac": _HvacModuleStub()}):
             provider = HashiCorpVaultKeyProvider(
                 url="https://vault.example.com:8200",
                 secret_path="pramanix/key",
                 field="private_key_pem",
-                _client=mock_client,
+                _client=real_client,
             )
         with pytest.raises(ConfigurationError, match="field 'private_key_pem' not found"):
             provider.private_key_pem()
@@ -1132,21 +1139,21 @@ class TestCircuitBreakerPrometheusEarlyReturn:
     def test_adaptive_update_prometheus_early_return(self) -> None:
         from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
-        cb = AdaptiveCircuitBreaker(guard=MagicMock(), config=CircuitBreakerConfig())
+        cb = AdaptiveCircuitBreaker(guard=make_allow_guard(), config=CircuitBreakerConfig())
         cb._metrics_available = False
         cb._update_prometheus()  # line 349 — early return
 
     def test_adaptive_increment_pressure_early_return(self) -> None:
         from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
-        cb = AdaptiveCircuitBreaker(guard=MagicMock(), config=CircuitBreakerConfig())
+        cb = AdaptiveCircuitBreaker(guard=make_allow_guard(), config=CircuitBreakerConfig())
         cb._metrics_available = False
         cb._increment_pressure_metric()  # line 361 — early return
 
     def test_distributed_update_prometheus_early_return(self) -> None:
         from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
 
-        dcb = DistributedCircuitBreaker(guard=MagicMock(), config=CircuitBreakerConfig())
+        dcb = DistributedCircuitBreaker(guard=make_allow_guard(), config=CircuitBreakerConfig())
         dcb._metrics_available = False
         dcb._update_prometheus()  # line 626 — early return
 
@@ -1192,10 +1199,11 @@ class _AlwaysWatchErrorClient:
 
 
 class TestCircuitBreakerRedisEdgeCases:
+    @requires_docker
     @pytest.mark.asyncio
-    async def test_set_state_redis_exceptions_import_fallback(self) -> None:
+    async def test_set_state_redis_exceptions_import_fallback(self, redis_url: str) -> None:
         """Lines 789-792: WatchError = Exception fallback when redis.exceptions absent."""
-        import fakeredis.aioredis as aioredis
+        import redis.asyncio as aioredis
 
         from pramanix.circuit_breaker import (
             CircuitState,
@@ -1203,8 +1211,9 @@ class TestCircuitBreakerRedisEdgeCases:
             _DistributedState,
         )
 
-        backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-        backend._client = aioredis.FakeRedis(decode_responses=True)
+        backend = RedisDistributedBackend(redis_url=redis_url)
+        backend._client = aioredis.from_url(redis_url, decode_responses=True)
+        backend._prefix = "pramanix:cb:import_fallback:"
 
         with patch.dict(sys.modules, {"redis.exceptions": None}):
             await backend.set_state(
@@ -1215,10 +1224,11 @@ class TestCircuitBreakerRedisEdgeCases:
         result = await backend.get_state("ns_import_fallback")
         assert result.circuit_state == CircuitState.OPEN.value
 
+    @requires_docker
     @pytest.mark.asyncio
-    async def test_set_state_malformed_hash_uses_default(self) -> None:
+    async def test_set_state_malformed_hash_uses_default(self, redis_url: str) -> None:
         """Lines 820-821: malformed failure_count → default _DistributedState as merge base."""
-        import fakeredis.aioredis as aioredis
+        import redis.asyncio as aioredis
 
         from pramanix.circuit_breaker import (
             CircuitState,
@@ -1226,11 +1236,12 @@ class TestCircuitBreakerRedisEdgeCases:
             _DistributedState,
         )
 
-        backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-        fake_client = aioredis.FakeRedis(decode_responses=True)
-        backend._client = fake_client
+        backend = RedisDistributedBackend(redis_url=redis_url)
+        real_client = aioredis.from_url(redis_url, decode_responses=True)
+        backend._client = real_client
+        backend._prefix = "pramanix:cb:malformed:"
 
-        await fake_client.hset(
+        await real_client.hset(
             backend._key("ns_malformed"),
             mapping={
                 "circuit_state": CircuitState.OPEN.value,
@@ -1255,10 +1266,11 @@ class TestCircuitBreakerRedisEdgeCases:
 
         await backend.set_state("ns_watch_err", _DistributedState())
 
+    @requires_docker
     @pytest.mark.asyncio
-    async def test_clear_from_within_running_event_loop(self) -> None:
+    async def test_clear_from_within_running_event_loop(self, redis_url: str) -> None:
         """Lines 891-898: clear() schedules background task when called inside a loop."""
-        import fakeredis.aioredis as aioredis
+        import redis.asyncio as aioredis
 
         from pramanix.circuit_breaker import (
             CircuitState,
@@ -1266,8 +1278,9 @@ class TestCircuitBreakerRedisEdgeCases:
             _DistributedState,
         )
 
-        backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-        backend._client = aioredis.FakeRedis(decode_responses=True)
+        backend = RedisDistributedBackend(redis_url=redis_url)
+        backend._client = aioredis.from_url(redis_url, decode_responses=True)
+        backend._prefix = "pramanix:cb:sync_clear:"
 
         await backend.set_state(
             "ns_sync_clear",
@@ -1445,14 +1458,13 @@ def test_gemini_no_api_key_client_is_none(monkeypatch: pytest.MonkeyPatch) -> No
     # google-generativeai is optional; mock it so the constructor runs without
     # the package installed.  The real genai client is never built because
     # api_key resolves to None (no env var, no argument).
-    _genai_mock = MagicMock()
-    _genai_mock.Client = None  # simulate older SDK that lacks per-instance Client
+    _genai_stub = _GeminiGenaiModuleStub()
     with patch.dict(
         sys.modules,
         {
-            "google": MagicMock(),
-            "google.protobuf": MagicMock(),
-            "google.generativeai": _genai_mock,
+            "google": _GcpModuleStub(),
+            "google.protobuf": _GoogleProtobufModuleStub(),
+            "google.generativeai": _genai_stub,
         },
     ):
         # Force re-import since gemini module may be cached with a bad state.
@@ -1484,16 +1496,14 @@ def test_intent_cache_redis_backend_path(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv(_cache_mod.IntentCache._ENV_ENABLED, "true")
     monkeypatch.setenv(_cache_mod.IntentCache._ENV_REDIS, "redis://localhost:6379/0")
 
-    mock_redis_client = MagicMock()
-    mock_redis_client.ping.return_value = True
-    mock_redis_module = MagicMock()
-    mock_redis_module.from_url.return_value = mock_redis_client
+    tracking_client = _TrackingPingRedisClient()
+    tracking_module = _TrackingRedisModule(tracking_client)
 
-    monkeypatch.setitem(sys.modules, "redis", mock_redis_module)
+    monkeypatch.setitem(sys.modules, "redis", tracking_module)
 
     cache = _cache_mod.IntentCache.from_env()
     assert cache.enabled is True
-    mock_redis_client.ping.assert_called_once()
+    assert tracking_client.ping_call_count == 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

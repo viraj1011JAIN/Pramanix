@@ -15,11 +15,11 @@ Design rules
 3. No MagicMock, AsyncMock, or patch() imported or used in this file.
 4. All async methods are real coroutines, not mocked awaitables.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
-
 
 # ── HTTP client close helpers (translator lifecycle) ──────────────────────────
 
@@ -117,9 +117,9 @@ def make_allow_guard():
         @classmethod
         def invariants(cls):
             return [
-                (E(_amt) >= Decimal("0")).named("non_negative").explain(
-                    "Amount must be non-negative"
-                )
+                (E(_amt) >= Decimal("0"))
+                .named("non_negative")
+                .explain("Amount must be non-negative")
             ]
 
     return Guard(_AllowPolicy, GuardConfig(execution_mode="sync"))
@@ -146,9 +146,9 @@ def make_block_guard():
         @classmethod
         def invariants(cls):
             return [
-                (E(_amt) > Decimal("9999")).named("above_threshold").explain(
-                    "Amount must exceed 9999 — always blocked for test inputs"
-                )
+                (E(_amt) > Decimal("9999"))
+                .named("above_threshold")
+                .explain("Amount must exceed 9999 — always blocked for test inputs")
             ]
 
     return Guard(_BlockPolicy, GuardConfig(execution_mode="sync"))
@@ -312,7 +312,7 @@ class _GrpcRpcHandler:
         self._replace_kwargs: dict[str, Any] = {}
         self.replace_called: bool = False
 
-    def _replace(self, **kwargs: Any) -> "_GrpcRpcHandler":
+    def _replace(self, **kwargs: Any) -> _GrpcRpcHandler:
         """Real namedtuple._replace() analogue — updates attrs, records kwargs, returns self."""
         self._replace_kwargs.update(kwargs)
         self.replace_called = True
@@ -355,7 +355,7 @@ class _ErrorCounter:
     def inc(self) -> None:
         raise Exception("prom error")
 
-    def labels(self, **kw: Any) -> "_ErrorCounter":
+    def labels(self, **kw: Any) -> _ErrorCounter:
         return self
 
 
@@ -451,6 +451,7 @@ class _NullContentMistralApiResponse:
 
     def __init__(self) -> None:
         import types
+
         msg = types.SimpleNamespace(content=None)
         self.choices = [types.SimpleNamespace(message=msg)]
 
@@ -461,14 +462,14 @@ class _MistralChatApi:
     def __init__(self, content: str = '{"amount": 5.0}') -> None:
         self._content = content
 
-    async def complete_async(self, **kw: Any) -> "_MistralApiResponse":
+    async def complete_async(self, **kw: Any) -> _MistralApiResponse:
         return _MistralApiResponse(self._content)
 
 
 class _NullContentMistralChatApi:
     """Mistral ``chat`` namespace that returns ``content=None`` (old-SDK empty path)."""
 
-    async def complete_async(self, **kw: Any) -> "_NullContentMistralApiResponse":
+    async def complete_async(self, **kw: Any) -> _NullContentMistralApiResponse:
         return _NullContentMistralApiResponse()
 
 
@@ -562,7 +563,7 @@ class _PgPool:
         self._conn = conn
         self.acquire_called: bool = False
 
-    def acquire(self) -> "_AsyncCtxManager":
+    def acquire(self) -> _AsyncCtxManager:
         self.acquire_called = True
         return _AsyncCtxManager(self._conn)
 
@@ -635,7 +636,7 @@ class _ErrorGauge:
     Not a mock — ``labels()`` has a real body that raises a real ``Exception``.
     """
 
-    def labels(self, **kw: Any) -> "_ErrorGauge":
+    def labels(self, **kw: Any) -> _ErrorGauge:
         raise RuntimeError("gauge error")
 
     def set(self, value: float) -> None:
@@ -682,7 +683,7 @@ class _CounterRecorder:
     def inc(self) -> None:
         self.inc_count += 1
 
-    def labels(self, **kw: Any) -> "_CounterRecorder":
+    def labels(self, **kw: Any) -> _CounterRecorder:
         return self
 
 
@@ -796,7 +797,7 @@ class _AnthropicStream:
     def __init__(self, text: str) -> None:
         self._text = text
 
-    async def __aenter__(self) -> "_AnthropicStream":
+    async def __aenter__(self) -> _AnthropicStream:
         return self
 
     async def __aexit__(self, *_: Any) -> None:
@@ -812,7 +813,7 @@ class _AnthropicRaisingStream:
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
-    async def __aenter__(self) -> "_AnthropicRaisingStream":
+    async def __aenter__(self) -> _AnthropicRaisingStream:
         raise self._exc
 
     async def __aexit__(self, *_: Any) -> None:
@@ -829,7 +830,7 @@ class _AnthropicMessagesNS:
     def __init__(self, text: str = '{"amount": 100}') -> None:
         self._text = text
 
-    def stream(self, **kwargs: Any) -> "_AnthropicStream":
+    def stream(self, **kwargs: Any) -> _AnthropicStream:
         return _AnthropicStream(self._text)
 
 
@@ -839,7 +840,7 @@ class _AnthropicErrorMessagesNS:
     def __init__(self, exc: Exception) -> None:
         self._exc = exc
 
-    def stream(self, **kwargs: Any) -> "_AnthropicRaisingStream":
+    def stream(self, **kwargs: Any) -> _AnthropicRaisingStream:
         return _AnthropicRaisingStream(self._exc)
 
 
@@ -942,7 +943,9 @@ class _AzureSecretClient:
         import types
 
         self.calls += 1
-        return types.SimpleNamespace(value=self._value, properties=types.SimpleNamespace(version=self._version_id))
+        return types.SimpleNamespace(
+            value=self._value, properties=types.SimpleNamespace(version=self._version_id)
+        )
 
 
 # ── Gemini genai module helpers ───────────────────────────────────────────────
@@ -957,7 +960,7 @@ class _GeminiResponse:
 class _GeminiModelInstance:
     """Real Gemini ``GenerativeModel`` duck-type."""
 
-    async def generate_content_async(self, prompt: str) -> "_GeminiResponse":
+    async def generate_content_async(self, prompt: str) -> _GeminiResponse:
         return _GeminiResponse()
 
 
@@ -976,7 +979,7 @@ class _GeminiGenaiModule:
         pass
 
     @staticmethod
-    def GenerativeModel(**kw: Any) -> "_GeminiModelInstance":
+    def GenerativeModel(**kw: Any) -> _GeminiModelInstance:
         return _GeminiModelInstance()
 
     @staticmethod
@@ -996,6 +999,7 @@ class _GeminiAsyncModelInstance:
 
     def __init__(self, response_text: str = '{"amount": 5.0}') -> None:
         import types as _t
+
         self._text = response_text
         self.call_count: int = 0
         self._types = _t
@@ -1015,6 +1019,7 @@ class _GeminiSyncOnlyModelInstance:
 
     def __init__(self, response_text: str = '{"amount": 5.0}') -> None:
         import types as _t
+
         self._text = response_text
         self.call_count: int = 0
         self._types = _t
@@ -1039,6 +1044,7 @@ class _GeminiRaisingModelInstance:
     async def generate_content_async(self, prompt: str) -> Any:
         try:
             import google.api_core.exceptions as _gapi_exc
+
             raise _gapi_exc.DeadlineExceeded("server down")
         except ImportError:
             raise Exception("server down")
@@ -1223,6 +1229,7 @@ class _CohereChatV5Stub:
 
     def __init__(self, text: str = '{"amount": 5.0}') -> None:
         import types
+
         content_item = types.SimpleNamespace(text=text)
         message = types.SimpleNamespace(content=[content_item])
         self._response = types.SimpleNamespace(message=message)
@@ -1299,7 +1306,7 @@ class _CohereLegacySyncClient:
     def __init__(self, text: str) -> None:
         self._response = _CohereLegacySyncResponse(text)
 
-    def chat(self, **kw: Any) -> "_CohereLegacySyncResponse":
+    def chat(self, **kw: Any) -> _CohereLegacySyncResponse:
         return self._response
 
 
@@ -1315,7 +1322,7 @@ class _CohereLegacyModule:
     def __init__(self, text: str) -> None:
         self._client_instance = _CohereLegacySyncClient(text)
 
-    def Client(self, **kw: Any) -> "_CohereLegacySyncClient":  # noqa: N802
+    def Client(self, **kw: Any) -> _CohereLegacySyncClient:  # noqa: N802
         return self._client_instance
 
 
@@ -1493,10 +1500,10 @@ class _KafkaAuditModule:
     Replaces ``MagicMock()`` as the confluent_kafka sys.modules stub.
     """
 
-    def __init__(self, producer: "_KafkaAuditProducer") -> None:
+    def __init__(self, producer: _KafkaAuditProducer) -> None:
         self._producer = producer
 
-    def Producer(self, config: Any) -> "_KafkaAuditProducer":  # noqa: N802
+    def Producer(self, config: Any) -> _KafkaAuditProducer:  # noqa: N802
         return self._producer
 
 
@@ -1609,3 +1616,310 @@ class _LlamaCppModule:
     def Llama(self, model_path: str = "", **kw: Any) -> _LlamaCppLlm:  # noqa: N802
         return self._llm
 
+
+# ── Error-raising cloud SDK clients ──────────────────────────────────────────
+# These replace MagicMock() clients in TestKeyProviderRefreshCacheErrors.
+# Each class raises the same exception the real SDK would raise on network
+# failure so the provider's _refresh_cache except-block executes.
+
+
+class _AwsSecretsClientError:
+    """AWS secretsmanager client duck-type — always raises ConnectionError.
+
+    Replaces ``MagicMock(side_effect=ConnectionError(...))`` in
+    ``test_aws_refresh_cache_wraps_exception``.
+    """
+
+    def get_secret_value(self, **kwargs: Any) -> dict:
+        raise ConnectionError("no route to AWS")
+
+
+class _AzureSecretClientError:
+    """Azure SecretClient duck-type — always raises ConnectionError on get_secret.
+
+    Replaces ``MagicMock(side_effect=ConnectionError(...))`` in
+    ``test_azure_refresh_cache_wraps_exception``.
+    """
+
+    def get_secret(self, secret_name: str, **kwargs: Any) -> object:
+        raise ConnectionError("Azure vault unreachable")
+
+
+class _GcpSecretClientError:
+    """GCP SecretManagerServiceClient duck-type — always raises ConnectionError.
+
+    Replaces ``MagicMock(side_effect=ConnectionError(...))`` in
+    ``test_gcp_refresh_cache_wraps_exception``.
+    """
+
+    def access_secret_version(self, **kwargs: Any) -> object:
+        raise ConnectionError("GCP unreachable")
+
+
+class _VaultKvV2Error:
+    def read_secret_version(self, **kwargs: Any) -> dict:
+        raise OSError("Vault sealed")
+
+
+class _VaultKvError:
+    v2 = _VaultKvV2Error()
+
+
+class _VaultSecretsError:
+    kv = _VaultKvError()
+
+
+class _VaultKvClientError:
+    """hvac.Client duck-type — read_secret_version raises OSError.
+
+    Replaces ``MagicMock(side_effect=OSError(...))`` in
+    ``test_vault_refresh_cache_wraps_exception``.
+    """
+
+    secrets = _VaultSecretsError()
+
+
+class _VaultKvV2MissingField:
+    def read_secret_version(self, **kwargs: Any) -> dict:
+        return {
+            "data": {
+                "data": {"other_field": "some-value"},
+                "metadata": {"version": 1},
+            }
+        }
+
+
+class _VaultKvMissingField:
+    v2 = _VaultKvV2MissingField()
+
+
+class _VaultSecretsMissingField:
+    kv = _VaultKvMissingField()
+
+
+class _VaultKvClientMissingField:
+    """hvac.Client duck-type — returns a response that is missing the expected key field.
+
+    Replaces ``MagicMock(return_value={...})`` in
+    ``test_vault_missing_field_raises_configuration_error``.
+    """
+
+    secrets = _VaultSecretsMissingField()
+
+
+# ── Real module stubs (replace MagicMock() used as sys.modules entries) ───────
+# These are real types.ModuleType instances — not MagicMock.  They satisfy
+# the minimum import requirements of optional-dependency providers without
+# any auto-attribute magic.
+
+import types as _types_module  # local alias to avoid shadowing the outer namespace
+
+
+class _Boto3ModuleStub(_types_module.ModuleType):
+    """Minimal boto3 module stub for key provider constructor tests.
+
+    The ``client()`` factory raises AssertionError so tests that accidentally
+    call it instead of injecting ``_client=`` directly fail loudly.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("boto3")
+        self.__package__ = "boto3"
+
+    def client(self, service_name: str, **kwargs: Any) -> object:
+        raise AssertionError("boto3.client() must not be called when _client is injected")
+
+
+class _AzureModuleStub(_types_module.ModuleType):
+    """Top-level ``azure`` package stub."""
+
+    def __init__(self) -> None:
+        super().__init__("azure")
+        self.__package__ = "azure"
+
+
+class _AzureIdentityModuleStub(_types_module.ModuleType):
+    """``azure.identity`` module stub — provides DefaultAzureCredential class."""
+
+    DefaultAzureCredential = type("DefaultAzureCredential", (), {})
+
+    def __init__(self) -> None:
+        super().__init__("azure.identity")
+        self.__package__ = "azure"
+
+
+class _AzureKVModuleStub(_types_module.ModuleType):
+    """``azure.keyvault`` module stub."""
+
+    def __init__(self) -> None:
+        super().__init__("azure.keyvault")
+        self.__package__ = "azure"
+
+
+class _AzureKVSecretsModuleStub(_types_module.ModuleType):
+    """``azure.keyvault.secrets`` module stub — provides SecretClient class."""
+
+    SecretClient = type("SecretClient", (), {})
+
+    def __init__(self) -> None:
+        super().__init__("azure.keyvault.secrets")
+        self.__package__ = "azure"
+
+
+class _GcpModuleStub(_types_module.ModuleType):
+    """Top-level ``google`` package stub."""
+
+    def __init__(self) -> None:
+        super().__init__("google")
+        self.__package__ = "google"
+
+
+class _GcpCloudModuleStub(_types_module.ModuleType):
+    """``google.cloud`` package stub."""
+
+    def __init__(self) -> None:
+        super().__init__("google.cloud")
+        self.__package__ = "google"
+
+
+class _GcpSecretManagerModuleStub(_types_module.ModuleType):
+    """``google.cloud.secretmanager`` module stub — provides SecretManagerServiceClient."""
+
+    SecretManagerServiceClient = type("SecretManagerServiceClient", (), {})
+
+    def __init__(self) -> None:
+        super().__init__("google.cloud.secretmanager")
+        self.__package__ = "google"
+
+
+class _GoogleProtobufModuleStub(_types_module.ModuleType):
+    """``google.protobuf`` module stub (needed by some gemini path tests)."""
+
+    def __init__(self) -> None:
+        super().__init__("google.protobuf")
+        self.__package__ = "google"
+
+
+class _GeminiGenaiModuleStub(_types_module.ModuleType):
+    """``google.generativeai`` module stub with ``Client = None``.
+
+    Simulates the older SDK shape that lacks a per-instance Client class,
+    causing ``GeminiTranslator.__init__`` to set ``self._client = None``
+    when no API key is provided.
+    """
+
+    Client: Any = None  # older SDK: no per-instance Client
+
+    def __init__(self) -> None:
+        super().__init__("google.generativeai")
+        self.__package__ = "google"
+
+
+class _HvacModuleStub(_types_module.ModuleType):
+    """``hvac`` module stub — provides a Client class that accepts keyword args."""
+
+    Client = type("Client", (), {"__init__": lambda self, **kw: None})
+
+    def __init__(self) -> None:
+        super().__init__("hvac")
+        self.__package__ = "hvac"
+
+
+# ── Tracking Redis client + module stub ───────────────────────────────────────
+
+
+class _TrackingPingRedisClient:
+    """Sync Redis client duck-type whose ``ping()`` tracks call count.
+
+    Used in tests that need to assert ``ping()`` was called once after
+    ``IntentCache.from_env()`` sets up the redis backend path.
+    Provides all the methods ``_RedisCache`` may call so the constructor
+    does not raise.
+    """
+
+    ping_call_count: int = 0
+
+    def ping(self) -> bool:
+        _TrackingPingRedisClient.ping_call_count += 1
+        return True
+
+    def set(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def get(self, name: str, **kwargs: Any) -> Any:
+        return None
+
+    def setex(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def delete(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def scan(self, cursor: int = 0, **kwargs: Any) -> tuple:
+        return (0, [])
+
+    def ttl(self, name: str) -> int:
+        return -1
+
+    def close(self) -> None:
+        pass
+
+
+class _TrackingRedisModule:
+    """Minimal ``redis`` module duck-type providing ``from_url()``.
+
+    Returns a fresh ``_TrackingPingRedisClient`` instance whose per-instance
+    ``ping_call_count`` starts at 0 so each test gets its own tracker.
+    """
+
+    def from_url(self, url: str, **kwargs: Any) -> _TrackingPingRedisClient:
+        client = _TrackingPingRedisClient()
+        _TrackingPingRedisClient.ping_call_count = 0  # reset counter per call
+        return client
+
+
+# ── Recording async translator (replaces AsyncMock in natural policy tests) ───
+
+
+class _RecordingTranslator:
+    """Real async translator duck-type — not AsyncMock.
+
+    Has a real async ``extract()`` coroutine that returns a pre-configured
+    response dict.  Tracks ``call_count`` and the last prompt for assertions
+    without requiring any MagicMock/AsyncMock API.
+
+    Usage::
+
+        translator = _RecordingTranslator({"amount_lte_50k": True, ...})
+        policy = await NaturalLanguagePolicy.build(translator, ...)
+        assert translator.call_count == 1
+    """
+
+    def __init__(self, response: dict) -> None:
+        self._response = response
+        self.call_count: int = 0
+        self.last_prompt: str | None = None
+        self.last_schema: object = None
+
+    async def extract(self, prompt: str, schema: object, config: object = None) -> dict:
+        self.call_count += 1
+        self.last_prompt = prompt
+        self.last_schema = schema
+        return self._response
+
+    async def aclose(self) -> None:
+        pass
+
+
+# ── Worker-process duck-type (replaces MagicMock for multiprocessing tests) ───
+
+
+class _FakeWorkerProcess:
+    """Real process duck-type with ``.name`` attribute for ``_warmup_worker`` tests.
+
+    Replaces ``MagicMock(); fake_proc.name = "ForkPoolWorker-1"`` in
+    ``test_hardening.py`` tests that check whether the current process name
+    indicates a worker.
+    """
+
+    name: str = "ForkPoolWorker-1"

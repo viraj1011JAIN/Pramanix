@@ -376,6 +376,68 @@ All six are also re-exported from `pramanix` top-level (see `__init__.py`).
 
 ---
 
+## Policy Compiler / IR
+
+```python
+from pramanix.compiler import (
+    PolicyCompiler, PolicyIR, Rule, Condition,
+    Operator, Logic, FieldSource, FieldReference, LiteralValue,
+    MappingMatchKind, Decompiler,
+)
+```
+
+| Name | Type | Notes |
+|---|---|---|
+| `PolicyCompiler` | class | Compiles `Policy` subclasses to a portable `PolicyIR` (intermediate representation). |
+| `PolicyIR` | dataclass | Serialisable intermediate representation of a compiled policy. |
+| `Rule` | dataclass | Single compiled rule: conditions + action. |
+| `Condition` | dataclass | Atomic predicate: `field op value`. |
+| `Operator` | StrEnum | Comparison operator: `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`, `IN`, `NOT_IN`. |
+| `Logic` | StrEnum | Logical combinator between conditions: `AND`, `OR`. |
+| `FieldSource` | StrEnum | Whether the field comes from `INTENT` or `STATE`. |
+| `FieldReference` | dataclass | Resolved field path with its `FieldSource`. |
+| `LiteralValue` | dataclass | Typed literal used on the right-hand side of a `Condition`. |
+| `MappingMatchKind` | StrEnum | How a policy rule was matched: `EXACT`, `PREFIX`, `WILDCARD`. |
+| `Decompiler` | class | Reconstructs a human-readable policy description from a `PolicyIR`. |
+
+---
+
+## Compliance Oracle
+
+```python
+from pramanix.compliance.oracle import (
+    ComplianceOracle, ComplianceAttestation, RegulatoryFramework,
+    ControlMapping, ControlSatisfactionResult, ControlEnforcementResult,
+    FrameworkAttestation,
+)
+```
+
+| Name | Type | Notes |
+|---|---|---|
+| `ComplianceOracle` | class | Maps policy invariant labels to regulatory control identifiers. |
+| `ComplianceAttestation` | dataclass | Signed record asserting compliance with a framework at a point in time. |
+| `RegulatoryFramework` | StrEnum | `SOC2`, `GDPR`, `HIPAA`, `PCI_DSS`, `ISO27001`, `NIST_CSF`. |
+| `ControlMapping` | dataclass | Mapping from a policy invariant label to a framework control ID. |
+| `ControlSatisfactionResult` | dataclass | Whether a specific control was satisfied, with evidence. |
+| `ControlEnforcementResult` | dataclass | Aggregate enforcement result across all controls for a framework. |
+| `FrameworkAttestation` | dataclass | Per-framework compliance summary with a list of `ControlSatisfactionResult`. |
+
+---
+
+## Mesh Authentication (SPIFFE/SPIRE)
+
+```python
+from pramanix.mesh.authenticator import MeshAuthenticator, SpiffeIdentity, MeshAuthenticationError
+```
+
+| Name | Type | Notes |
+|---|---|---|
+| `MeshAuthenticator` | class | Validates SPIFFE SVIDs against a configurable trust domain. |
+| `SpiffeIdentity` | dataclass | Parsed SPIFFE identity: `trust_domain`, `path`, `workload_id`. |
+| `MeshAuthenticationError` | exception | Raised when SVID validation fails. Subclass of `PramanixError`. |
+
+---
+
 ## Internal — Not public API
 
 Do not import these directly. They have no stability guarantees.

@@ -198,8 +198,8 @@ def main() -> int:
     calib_cmd.add_argument(
         "--output",
         required=True,
-        metavar="PKL_FILE",
-        help="Write the fitted scorer pickle to this path.",
+        metavar="SCORER_FILE",
+        help="Write the fitted scorer (.npz) to this path.",
     )
     calib_cmd.add_argument(
         "--min-examples",
@@ -892,7 +892,7 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
     Reads a JSONL file where each line is:
         {"text": "...", "is_injection": true|false}
 
-    Fits a ``CalibratedScorer`` and pickles it to ``--output``.
+    Fits a ``CalibratedScorer`` and saves it as a NumPy ``.npz`` archive to ``--output``.
 
     Exit codes:
         0 — scorer fitted and saved

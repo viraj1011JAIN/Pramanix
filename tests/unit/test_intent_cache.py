@@ -5,18 +5,20 @@
 Verifies security invariants, LRU eviction, TTL expiry, thread safety,
 and disabled-by-default behaviour.
 """
+
 from __future__ import annotations
 
 import threading
 import time
 
-import fakeredis as _fakeredis_module
+import redis as _real_redis
 
 from pramanix.translator._cache import (
     IntentCache,
     _InProcessLRUCache,
     _normalize_key,
 )
+from tests.unit.conftest import requires_docker
 
 # ── Tests: _normalize_key ─────────────────────────────────────────────────────
 
@@ -307,38 +309,62 @@ class TestInProcessLRUCacheEdgeCases:
         backend.invalidate("does_not_exist")  # Must not raise
 
 
-# ── _RedisCache unit tests (real fakeredis) ────────────────────────────────────
+# ── _RedisCache unit tests (real Redis testcontainer) ────────────────────────
 
 
-# ── Error-injection subclasses — real fakeredis with one overridden method ─────
+# ── Error-injection proxy wrappers — delegate to real Redis, override one method ─
 
 
-class _ErrorOnGet(_fakeredis_module.FakeRedis):
-    """fakeredis that raises ConnectionError on get() — tests silent degradation."""
+class _ErrorOnGet:
+    """Proxy to real Redis that raises ConnectionError on get()."""
+
+    def __init__(self, redis_url: str) -> None:
+        self._real = _real_redis.Redis.from_url(redis_url, decode_responses=False)
 
     def get(self, name, **kwargs):
         raise ConnectionError("Redis down")
 
+    def __getattr__(self, item: str):
+        return getattr(self._real, item)
 
-class _ErrorOnSetex(_fakeredis_module.FakeRedis):
-    """fakeredis that raises ConnectionError on setex() — tests silent degradation."""
+
+class _ErrorOnSetex:
+    """Proxy to real Redis that raises ConnectionError on setex()."""
+
+    def __init__(self, redis_url: str) -> None:
+        self._real = _real_redis.Redis.from_url(redis_url, decode_responses=False)
 
     def setex(self, name, time, value, **kwargs):
         raise ConnectionError("Redis down")
 
+    def __getattr__(self, item: str):
+        return getattr(self._real, item)
 
-class _ErrorOnDelete(_fakeredis_module.FakeRedis):
-    """fakeredis that raises ConnectionError on delete() — tests silent degradation."""
+
+class _ErrorOnDelete:
+    """Proxy to real Redis that raises ConnectionError on delete()."""
+
+    def __init__(self, redis_url: str) -> None:
+        self._real = _real_redis.Redis.from_url(redis_url, decode_responses=False)
 
     def delete(self, *names, **kwargs):
         raise ConnectionError("Redis down")
 
+    def __getattr__(self, item: str):
+        return getattr(self._real, item)
 
-class _ErrorOnScan(_fakeredis_module.FakeRedis):
-    """fakeredis that raises ConnectionError on scan() — tests silent degradation."""
+
+class _ErrorOnScan:
+    """Proxy to real Redis that raises ConnectionError on scan()."""
+
+    def __init__(self, redis_url: str) -> None:
+        self._real = _real_redis.Redis.from_url(redis_url, decode_responses=False)
 
     def scan(self, cursor=0, match=None, count=None, **kwargs):
         raise ConnectionError("Redis down")
+
+    def __getattr__(self, item: str):
+        return getattr(self._real, item)
 
 
 class _PaginatedScanRedis:
@@ -350,10 +376,12 @@ class _PaginatedScanRedis:
     """
 
     def __init__(self) -> None:
-        self._pages = iter([
-            (1, [b"pramanix:intent:key1"]),
-            (0, [b"pramanix:intent:key2"]),
-        ])
+        self._pages = iter(
+            [
+                (1, [b"pramanix:intent:key1"]),
+                (0, [b"pramanix:intent:key2"]),
+            ]
+        )
         self.scan_call_count = 0
         self.delete_call_count = 0
 
@@ -375,94 +403,96 @@ class _PaginatedScanRedis:
         pass
 
 
+@requires_docker
 class TestRedisCache:
-    """Tests for _RedisCache using real fakeredis — no MagicMock."""
+    """Tests for _RedisCache using a real Redis testcontainer — no MagicMock."""
 
-    def test_init_stores_config(self):
+    def test_init_stores_config(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
         cache = _RedisCache(redis_client=r, ttl_seconds=60, key_prefix="test:")
         assert cache._redis is r
         assert cache._ttl == 60
         assert cache._prefix == "test:"
 
-    def test_get_returns_dict_on_hit(self):
+    def test_get_returns_dict_on_hit(self, redis_url: str):
         import json
 
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
         r.set("pramanix:intent:anykey", json.dumps({"amount": "100"}).encode())
         cache = _RedisCache(redis_client=r)
         result = cache.get("anykey")
         assert result == {"amount": "100"}
 
-    def test_get_returns_none_on_miss(self):
+    def test_get_returns_none_on_miss(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()  # empty — no keys set
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
         cache = _RedisCache(redis_client=r)
-        result = cache.get("anykey")
+        result = cache.get("miss_key_unique_xyz_123")
         assert result is None
 
-    def test_get_returns_none_on_redis_error(self):
+    def test_get_returns_none_on_redis_error(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _ErrorOnGet()
+        r = _ErrorOnGet(redis_url)
         cache = _RedisCache(redis_client=r)
         result = cache.get("anykey")
         assert result is None  # Silent degradation
 
-    def test_set_stores_value_with_prefix_and_ttl(self):
+    def test_set_stores_value_with_prefix_and_ttl(self, redis_url: str):
         import json
 
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
         cache = _RedisCache(redis_client=r, ttl_seconds=300, key_prefix="pfx:")
-        cache.set("mykey", {"amount": "500"})
-        stored_raw = r.get("pfx:mykey")
+        cache.set("mykey_set_ttl", {"amount": "500"})
+        stored_raw = r.get("pfx:mykey_set_ttl")
         assert stored_raw is not None
         assert json.loads(stored_raw) == {"amount": "500"}
-        ttl = r.ttl("pfx:mykey")
+        ttl = r.ttl("pfx:mykey_set_ttl")
         assert 0 < ttl <= 300
 
-    def test_set_silent_on_redis_error(self):
+    def test_set_silent_on_redis_error(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _ErrorOnSetex()
+        r = _ErrorOnSetex(redis_url)
         cache = _RedisCache(redis_client=r)
         cache.set("mykey", {"amount": "500"})  # Must not raise
 
-    def test_invalidate_removes_key(self):
+    def test_invalidate_removes_key(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()
-        r.set("pfx:mykey", "some_value")
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
+        r.set("pfx:mykey_inv", "some_value")
         cache = _RedisCache(redis_client=r, key_prefix="pfx:")
-        cache.invalidate("mykey")
-        assert r.get("pfx:mykey") is None
+        cache.invalidate("mykey_inv")
+        assert r.get("pfx:mykey_inv") is None
 
-    def test_invalidate_silent_on_redis_error(self):
+    def test_invalidate_silent_on_redis_error(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _ErrorOnDelete()
+        r = _ErrorOnDelete(redis_url)
         cache = _RedisCache(redis_client=r)
         cache.invalidate("mykey")  # Must not raise
 
-    def test_clear_deletes_only_matching_keys(self):
+    def test_clear_deletes_only_matching_keys(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()
-        r.set("pramanix:intent:k1", "v1")
-        r.set("pramanix:intent:k2", "v2")
-        r.set("other:key", "v3")  # Different prefix — must NOT be deleted
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
+        r.set("pramanix:intent:k1_clr", "v1")
+        r.set("pramanix:intent:k2_clr", "v2")
+        r.set("other:key_clr", "v3")  # Different prefix — must NOT be deleted
         cache = _RedisCache(redis_client=r)
         cache.clear()
-        assert r.get("pramanix:intent:k1") is None
-        assert r.get("pramanix:intent:k2") is None
-        assert r.get("other:key") is not None  # Untouched
+        assert r.get("pramanix:intent:k1_clr") is None
+        assert r.get("pramanix:intent:k2_clr") is None
+        assert r.get("other:key_clr") is not None  # Untouched
+        r.delete("other:key_clr")  # cleanup
 
     def test_clear_handles_multiple_pages(self):
         from pramanix.translator._cache import _RedisCache
@@ -474,20 +504,20 @@ class TestRedisCache:
         assert r.scan_call_count == 2
         assert r.delete_call_count == 2
 
-    def test_clear_silent_on_redis_error(self):
+    def test_clear_silent_on_redis_error(self, redis_url: str):
         from pramanix.translator._cache import _RedisCache
 
-        r = _ErrorOnScan()
+        r = _ErrorOnScan(redis_url)
         cache = _RedisCache(redis_client=r)
         cache.clear()  # Must not raise
 
-    def test_intent_cache_with_redis_backend_hit(self):
-        """IntentCache end-to-end: real fakeredis hit returns cached dict."""
+    def test_intent_cache_with_redis_backend_hit(self, redis_url: str):
+        """IntentCache end-to-end: real Redis hit returns cached dict."""
         import json
 
         from pramanix.translator._cache import _normalize_key, _RedisCache
 
-        r = _fakeredis_module.FakeRedis()
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
         hashed = _normalize_key("transfer 500")
         r.set(f"pramanix:intent:{hashed}", json.dumps({"amount": "500"}).encode())
         backend = _RedisCache(redis_client=r)
@@ -496,14 +526,14 @@ class TestRedisCache:
         assert result == {"amount": "500"}
         assert cache.stats["hits"] == 1
 
-    def test_intent_cache_with_redis_backend_miss(self):
-        """IntentCache.get() returns None when key is absent in fakeredis."""
+    def test_intent_cache_with_redis_backend_miss(self, redis_url: str):
+        """IntentCache.get() returns None when key is absent in real Redis."""
         from pramanix.translator._cache import _RedisCache
 
-        r = _fakeredis_module.FakeRedis()  # empty
+        r = _real_redis.Redis.from_url(redis_url, decode_responses=False)
         backend = _RedisCache(redis_client=r)
         cache = IntentCache(enabled=True, backend=backend)
-        result = cache.get("no such key")
+        result = cache.get("no_such_key_miss_xyz_987")
         assert result is None
         assert cache.stats["misses"] == 1
 

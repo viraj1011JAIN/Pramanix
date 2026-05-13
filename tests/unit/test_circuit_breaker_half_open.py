@@ -9,6 +9,7 @@ Targets:
 Design:  _record_solve() is called directly to drive deterministic state
 transitions without sleeping — the same pattern as test_circuit_breaker.py.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -261,6 +262,7 @@ def test_redis_distributed_backend_config_error_without_redis() -> None:
             # Force module reload to pick up missing redis check at instantiation
             pass
         from pramanix.circuit_breaker import RedisDistributedBackend
+
         with pytest.raises(ConfigurationError, match="redis\\[asyncio\\]"):
             RedisDistributedBackend(redis_url="redis://localhost/0")
     finally:
@@ -272,36 +274,40 @@ def test_redis_distributed_backend_config_error_without_redis() -> None:
 
 # ── Redis backend: _get_client() cached path (lines 623-625) ─────────────────
 
+from tests.unit.conftest import requires_docker
 
+
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_get_client_returns_cached_instance() -> None:
+async def test_redis_backend_get_client_returns_cached_instance(redis_url: str) -> None:
     """Lines 623-625: second call to _get_client() returns the already-created client."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend
 
-    backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-    fake_client = aioredis.FakeRedis(decode_responses=True)
-    backend._client = fake_client  # pre-inject so _get_client returns cached
+    backend = RedisDistributedBackend(redis_url=redis_url)
+    real_client = aioredis.from_url(redis_url, decode_responses=True)
+    backend._client = real_client  # pre-inject so _get_client returns cached
 
     client1 = await backend._get_client()
     client2 = await backend._get_client()
-    assert client1 is client2 is fake_client
+    assert client1 is client2 is real_client
 
 
 # ── Redis backend: set_state() conservative merge ────────────────────────────
 
 
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_set_state_lower_severity_not_overwritten() -> None:
+async def test_redis_backend_set_state_lower_severity_not_overwritten(redis_url: str) -> None:
     """Lines 698-700: conservative merge keeps existing state when it has higher severity."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
-    backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-    fake_client = aioredis.FakeRedis(decode_responses=True)
-    backend._client = fake_client
+    backend = RedisDistributedBackend(redis_url=redis_url)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    backend._prefix = "pramanix:cb:lower_sev:"
 
     # First write: OPEN state (higher severity)
     await backend.set_state(
@@ -319,15 +325,17 @@ async def test_redis_backend_set_state_lower_severity_not_overwritten() -> None:
     assert result.circuit_state == CircuitState.OPEN.value
 
 
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_set_state_higher_severity_wins() -> None:
+async def test_redis_backend_set_state_higher_severity_wins(redis_url: str) -> None:
     """Conservative merge: OPEN overwrites CLOSED (higher severity wins)."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
-    backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-    backend._client = aioredis.FakeRedis(decode_responses=True)
+    backend = RedisDistributedBackend(redis_url=redis_url)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    backend._prefix = "pramanix:cb:higher_sev:"
 
     await backend.set_state(
         "ns2",
@@ -343,15 +351,17 @@ async def test_redis_backend_set_state_higher_severity_wins() -> None:
     assert result.failure_count == 3
 
 
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_set_state_accumulates_failure_count() -> None:
+async def test_redis_backend_set_state_accumulates_failure_count(redis_url: str) -> None:
     """set_state() failure_count is summed (lines 708-716)."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
-    backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-    backend._client = aioredis.FakeRedis(decode_responses=True)
+    backend = RedisDistributedBackend(redis_url=redis_url)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    backend._prefix = "pramanix:cb:accum:"
 
     await backend.set_state(
         "ns3",
@@ -366,31 +376,34 @@ async def test_redis_backend_set_state_accumulates_failure_count() -> None:
     assert result.failure_count == 5
 
 
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_get_state_returns_closed_on_empty() -> None:
+async def test_redis_backend_get_state_returns_closed_on_empty(redis_url: str) -> None:
     """get_state() returns default CLOSED state when no data in Redis."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend
 
-    backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-    backend._client = aioredis.FakeRedis(decode_responses=True)
+    backend = RedisDistributedBackend(redis_url=redis_url)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    backend._prefix = "pramanix:cb:empty:"
 
     result = await backend.get_state("nonexistent_namespace")
     assert result.circuit_state == CircuitState.CLOSED.value
     assert result.failure_count == 0
 
 
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_clear_specific_namespace() -> None:
+async def test_redis_backend_clear_specific_namespace(redis_url: str) -> None:
     """clear() removes only the specified namespace (lines 719-729)."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
-    backend = RedisDistributedBackend(redis_url="redis://localhost/0")
-    fake_client = aioredis.FakeRedis(decode_responses=True)
-    backend._client = fake_client
+    backend = RedisDistributedBackend(redis_url=redis_url)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    backend._prefix = "pramanix:cb:clear_spec:"
 
     await backend.set_state(
         "ns_to_clear",
@@ -409,18 +422,19 @@ async def test_redis_backend_clear_specific_namespace() -> None:
     assert kept.circuit_state == CircuitState.CLOSED.value
 
 
+@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_clear_all_namespaces() -> None:
+async def test_redis_backend_clear_all_namespaces(redis_url: str) -> None:
     """clear(None) removes all namespace keys under the prefix."""
-    import fakeredis.aioredis as aioredis
+    import redis.asyncio as aioredis
 
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
     backend = RedisDistributedBackend(
-        redis_url="redis://localhost/0",
+        redis_url=redis_url,
         key_prefix="pramanix:cb:clearall:",
     )
-    backend._client = aioredis.FakeRedis(decode_responses=True)
+    backend._client = aioredis.from_url(redis_url, decode_responses=True)
 
     await backend.set_state(
         "ns_a",

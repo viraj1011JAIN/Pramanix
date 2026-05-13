@@ -5,9 +5,8 @@
 Design principles
 -----------------
 * **No AsyncMock / MagicMock** for any real service boundary (Redis).
-  ``TestRedisStateLoader`` uses ``fakeredis.aioredis.FakeRedis()`` — a
-  complete in-memory implementation of the redis-py async API that
-  exercises real serialisation, key-prefix logic, and error paths.
+  ``TestRedisStateLoader`` uses a real Redis testcontainer (redis:7-alpine)
+  that exercises real serialisation, key-prefix logic, and error paths.
 
 * **No MagicMock** for the ``state_loader`` or ``request`` objects.
   ``_NoopStateLoader`` is a real implementation of the ``StateLoader``
@@ -18,6 +17,7 @@ Design principles
 * JWT cryptographic operations (HMAC-SHA256, base64url encoding/decoding,
   expiry checks) are exercised with real stdlib calls — no patching.
 """
+
 from __future__ import annotations
 
 import base64
@@ -28,8 +28,8 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal
 
-import fakeredis.aioredis as fakeredis
 import pytest
+import redis.asyncio as aioredis
 
 from pramanix.identity.linker import (
     IdentityClaims,
@@ -40,6 +40,7 @@ from pramanix.identity.linker import (
     StateLoadError,
 )
 from pramanix.identity.redis_loader import RedisStateLoader
+from tests.unit.conftest import requires_docker
 
 _SECRET_32 = "s" * 32
 _SECRET_64 = "s" * 64
@@ -47,13 +48,15 @@ _SECRET_64 = "s" * 64
 # ── Minimal real implementations (NOT mocks) ──────────────────────────────────
 
 
-def _make_noop_loader() -> RedisStateLoader:
-    """Return a real RedisStateLoader backed by an empty fakeredis instance.
+def _make_noop_loader(redis_url: str = "") -> RedisStateLoader:
+    """Return a real RedisStateLoader backed by a real Redis testcontainer instance.
 
-    Used in JWT tests that verify token validation only — the loader is
-    never called, but a real implementation satisfies the protocol contract.
+    When redis_url is empty (JWT-only tests that never call load()), we use a
+    placeholder URL — the loader is constructed but never invoked.
+    For tests that do call load(), pass the real redis_url fixture.
     """
-    return RedisStateLoader(redis_client=fakeredis.FakeRedis(), key_prefix="pramanix:state:")
+    url = redis_url or "redis://127.0.0.1:6379/0"
+    return RedisStateLoader(redis_client=aioredis.from_url(url), key_prefix="pramanix:state:")
 
 
 @dataclass
@@ -199,9 +202,7 @@ class TestVerifyToken:
     def test_rejects_wrong_key(self) -> None:
         payload = _make_valid_payload()
         token = _make_token(payload, secret=_SECRET_32)
-        wrong_linker = JWTIdentityLinker(
-            state_loader=_make_noop_loader(), jwt_secret="w" * 32
-        )
+        wrong_linker = JWTIdentityLinker(state_loader=_make_noop_loader(), jwt_secret="w" * 32)
         with pytest.raises(JWTVerificationError, match="signature"):
             wrong_linker._verify_token(token)
 
@@ -270,15 +271,16 @@ class TestVerifyToken:
 
 
 class TestExtractAndLoad:
-    """Integration tests: JWT linker + real RedisStateLoader + real fakeredis."""
+    """Integration tests: JWT linker + real RedisStateLoader + real Redis testcontainer."""
 
+    @requires_docker
     @pytest.fixture(autouse=True)
-    async def setup(self) -> None:
-        self._redis = fakeredis.FakeRedis()
+    async def setup(self, redis_url: str) -> None:
+        url_db2 = redis_url.rstrip("/0").rstrip("/") + "/2"
+        self._redis = aioredis.from_url(url_db2, decode_responses=False)
+        await self._redis.flushdb()
         self._loader = RedisStateLoader(redis_client=self._redis, key_prefix="pramanix:state:")
-        self.linker = JWTIdentityLinker(
-            state_loader=self._loader, jwt_secret=_SECRET_32
-        )
+        self.linker = JWTIdentityLinker(state_loader=self._loader, jwt_secret=_SECRET_32)
 
     @pytest.mark.asyncio
     async def test_returns_claims_and_state(self) -> None:
@@ -355,17 +357,18 @@ class TestB64urlHelpers:
 
 
 class TestRedisStateLoader:
-    """Tests for RedisStateLoader using real fakeredis (NOT AsyncMock).
+    """Tests for RedisStateLoader using a real Redis testcontainer.
 
-    fakeredis.aioredis.FakeRedis() implements the complete redis-py async
-    interface including connection handling, byte encoding, and error
-    propagation.  Every test here performs real set/get operations against
-    an in-memory Redis server.
+    Every test here performs real set/get operations against a Redis container.
     """
 
+    @requires_docker
     @pytest.fixture(autouse=True)
-    async def setup_redis(self) -> None:
-        self._redis = fakeredis.FakeRedis()
+    async def setup_redis(self, redis_url: str) -> None:
+        # Use DB 1 for identity tests to avoid conflicts with circuit breaker tests (DB 0)
+        url_db1 = redis_url.rstrip("/0").rstrip("/") + "/1"
+        self._redis = aioredis.from_url(url_db1, decode_responses=False)
+        await self._redis.flushdb()
 
     def _make_claims(self, sub: str = "user-123") -> IdentityClaims:
         return IdentityClaims(
@@ -607,8 +610,8 @@ class TestAlgorithmConfusion:
     def test_rs256_linker_rejects_hs256_token(self) -> None:
         """RS256 linker must reject a valid HS256 token (algorithm mismatch)."""
         pytest.importorskip("cryptography")
-        from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
 
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         public_pem = private_key.public_key().public_bytes(
@@ -628,8 +631,8 @@ class TestAlgorithmConfusion:
     def test_rs256_rejects_ec_key_pem(self) -> None:
         """RS256 linker must reject an EC (P-256) public key at construction time."""
         pytest.importorskip("cryptography")
-        from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
 
         ec_key = ec.generate_private_key(ec.SECP256R1())
         ec_pem = ec_key.public_key().public_bytes(
@@ -646,8 +649,8 @@ class TestAlgorithmConfusion:
     def test_es256_rejects_rsa_key_pem(self) -> None:
         """ES256 linker must reject an RSA public key at construction time."""
         pytest.importorskip("cryptography")
-        from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
 
         rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         rsa_pem = rsa_key.public_key().public_bytes(

@@ -16,19 +16,19 @@ in __getattr__ then imports the pramanix integration sub-module, which
 in turn imports the stub. We verify that __getattr__ returns the expected
 class/callable without instantiating it.
 """
+
 from __future__ import annotations
 
 import importlib
 import sys
 import types
-from unittest.mock import MagicMock
 
 import pytest
 
 
 def _stub_module(name: str) -> types.ModuleType:
-    """Return a minimal stub MagicMock module for *name*."""
-    stub = MagicMock(spec=types.ModuleType(name))
+    """Return a real types.ModuleType stub for *name*."""
+    stub = types.ModuleType(name)
     stub.__name__ = name
     stub.__package__ = name.split(".")[0]
     stub.__spec__ = None

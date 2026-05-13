@@ -490,9 +490,8 @@ class TestGeminiTranslatorCoverage:
 
     def test_no_api_key_sets_client_to_none(self) -> None:
         """When no api_key provided, _client is None (line 82)."""
-        from unittest.mock import MagicMock
-
         from pramanix.translator.gemini import GeminiTranslator
+        from tests.helpers.real_protocols import _GeminiGenaiModule
 
         # Use __new__ to bypass the google.generativeai import guard so the
         # test runs without the optional dependency being installed.
@@ -500,7 +499,7 @@ class TestGeminiTranslatorCoverage:
         t.model = "gemini-pro"
         t._api_key = None
         t._timeout = 30.0
-        t._genai = MagicMock()
+        t._genai = _GeminiGenaiModule()
         t._client = None  # exercises the else-branch: no api_key → _client=None
         assert t._client is None
 

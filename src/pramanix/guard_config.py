@@ -102,21 +102,27 @@ _SHARED_LOG_PROCESSORS: list[Any] = [
 ]
 
 structlog.configure(
-    processors=_SHARED_LOG_PROCESSORS + [structlog.processors.JSONRenderer()],
+    processors=_SHARED_LOG_PROCESSORS
+    + [
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
     context_class=dict,
-    logger_factory=structlog.PrintLoggerFactory(),
-    wrapper_class=structlog.BoundLogger,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
     cache_logger_on_first_use=True,
 )
 
 # ── Stdlib logging bridge ─────────────────────────────────────────────────────
-# Modules that use logging.getLogger(__name__) (worker.py, solver.py,
-# decision.py, etc.) bypass structlog's pipeline and therefore bypass
-# _redact_secrets_processor.  The bridge below routes the entire
-# "pramanix.*" stdlib logger tree through the same redaction + JSON pipeline.
+# Structlog is configured with LoggerFactory=stdlib.LoggerFactory() above, so
+# every structlog.get_logger() call is backed by a stdlib logging.Logger.
+# This means ALL log records — whether from structlog.get_logger() or
+# logging.getLogger() — flow through the same stdlib handler chain below.
+# The ProcessorFormatter applies _SHARED_LOG_PROCESSORS (including
+# _redact_secrets_processor) to BOTH sources, then renders to JSON.
+# There is exactly ONE output pipeline; no split-brain.
 #
 # foreign_pre_chain applies _SHARED_LOG_PROCESSORS to stdlib LogRecord objects
-# before the final JSONRenderer renders them — identical output, no split-brain.
+# that did NOT originate from structlog (e.g. worker.py's stdlib logger calls).
 _stdlib_formatter = structlog.stdlib.ProcessorFormatter(
     processor=structlog.processors.JSONRenderer(),
     foreign_pre_chain=_SHARED_LOG_PROCESSORS,

@@ -25,6 +25,7 @@ Usage:
     decision = await breaker.verify_async(intent=intent, state=state)
     # Prometheus: pramanix_circuit_state{namespace="banking", state="closed"} 1
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -412,7 +413,9 @@ class InMemoryDistributedBackend:
             }
             new_severity = severity.get(state.circuit_state, 0)
             existing_severity = severity.get(existing.circuit_state, 0)
-            merged_state = state.circuit_state if new_severity >= existing_severity else existing.circuit_state
+            merged_state = (
+                state.circuit_state if new_severity >= existing_severity else existing.circuit_state
+            )
             cls._store[namespace] = _DistributedState(
                 circuit_state=merged_state,
                 failure_count=existing.failure_count + state.failure_count,
@@ -534,7 +537,9 @@ class DistributedCircuitBreaker:
             if solve_ms > self._config.pressure_threshold_ms:
                 self._local_failure_count += 1
                 if self._local_failure_count >= self._config.consecutive_pressure_count:
-                    await self._push_state(CircuitState.OPEN, delta_failures=self._local_failure_count)
+                    await self._push_state(
+                        CircuitState.OPEN, delta_failures=self._local_failure_count
+                    )
                     self._local_failure_count = 0
                     log.error(
                         "DistributedCircuitBreaker: OPEN (namespace=%s)",
@@ -682,6 +687,7 @@ class RedisDistributedBackend:
     ) -> None:
         try:
             import importlib as _il
+
             _il.import_module("redis.asyncio")
             del _il
         except ImportError as exc:
@@ -806,16 +812,10 @@ class RedisDistributedBackend:
                         # Parse existing state, defaulting to CLOSED if absent.
                         try:
                             current = _DistributedState(
-                                circuit_state=raw.get(
-                                    "circuit_state", CircuitState.CLOSED.value
-                                ),
+                                circuit_state=raw.get("circuit_state", CircuitState.CLOSED.value),
                                 failure_count=int(raw.get("failure_count", 0)),
-                                last_failure_time=float(
-                                    raw.get("last_failure_time", 0.0)
-                                ),
-                                open_episode_count=int(
-                                    raw.get("open_episode_count", 0)
-                                ),
+                                last_failure_time=float(raw.get("last_failure_time", 0.0)),
+                                open_episode_count=int(raw.get("open_episode_count", 0)),
                             )
                         except (ValueError, KeyError):
                             current = _DistributedState()
@@ -825,9 +825,7 @@ class RedisDistributedBackend:
                         new_sev = self._STATE_SEVERITY.get(state.circuit_state, 0)
                         merged = _DistributedState(
                             circuit_state=(
-                                state.circuit_state
-                                if new_sev >= cur_sev
-                                else current.circuit_state
+                                state.circuit_state if new_sev >= cur_sev else current.circuit_state
                             ),
                             failure_count=current.failure_count + state.failure_count,
                             last_failure_time=max(
@@ -910,8 +908,8 @@ class RedisDistributedBackend:
                     await client.delete(*keys)
             else:
                 await client.delete(self._key(namespace))
-        except Exception:
-            pass
+        except Exception as _exc:
+            log.debug("RedisDistributedBackend._async_clear error (non-fatal): %s", _exc)
 
 
 # ── TranslatorCircuitBreaker ──────────────────────────────────────────────────

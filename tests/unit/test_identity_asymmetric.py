@@ -16,6 +16,7 @@ Properties verified:
 8. ES256 extracts correct IdentityClaims (sub, roles, exp, iat).
 9. PEM string input (str) works as well as bytes input for public_key_pem.
 """
+
 from __future__ import annotations
 
 import base64
@@ -26,13 +27,14 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("cryptography", reason="cryptography not installed — skipping asymmetric JWT tests")
+pytest.importorskip(
+    "cryptography", reason="cryptography not installed — skipping asymmetric JWT tests"
+)
 
+import redis.asyncio as aioredis
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.ec import ECDSA, SECP256R1
-
-import fakeredis.aioredis as fakeredis
 
 from pramanix.identity.linker import (
     JWTAlgorithm,
@@ -41,7 +43,6 @@ from pramanix.identity.linker import (
     JWTVerificationError,
 )
 from pramanix.identity.redis_loader import RedisStateLoader
-
 
 # ── Key-pair fixtures (module-scoped — generate once per test session) ─────────
 
@@ -117,7 +118,10 @@ def _valid_payload(sub: str = "user-asymmetric", exp_offset: int = 3600) -> dict
 
 
 def _make_noop_loader() -> RedisStateLoader:
-    return RedisStateLoader(redis_client=fakeredis.FakeRedis(), key_prefix="pramanix:state:")
+    # These tests never call load() — a placeholder URL is sufficient
+    return RedisStateLoader(
+        redis_client=aioredis.from_url("redis://127.0.0.1:6379/0"), key_prefix="pramanix:state:"
+    )
 
 
 # ── TestRS256Linker ────────────────────────────────────────────────────────────
@@ -138,9 +142,7 @@ class TestRS256Linker:
         assert claims.sub == "alice"
         assert claims.roles == ["agent"]
 
-    def test_rejects_token_signed_with_different_key(
-        self, rsa_key_pair, rsa_alt_key_pair
-    ) -> None:
+    def test_rejects_token_signed_with_different_key(self, rsa_key_pair, rsa_alt_key_pair) -> None:
         _private_key, public_pem = rsa_key_pair
         alt_private, _alt_public = rsa_alt_key_pair
         linker = JWTIdentityLinker(
@@ -250,9 +252,7 @@ class TestES256Linker:
         assert claims.sub == "ec-user"
         assert claims.roles == ["agent"]
 
-    def test_rejects_token_signed_with_different_ec_key(
-        self, ec_key_pair, ec_alt_key_pair
-    ) -> None:
+    def test_rejects_token_signed_with_different_ec_key(self, ec_key_pair, ec_alt_key_pair) -> None:
         _private_key, public_pem = ec_key_pair
         alt_private, _alt_public = ec_alt_key_pair
         linker = JWTIdentityLinker(

@@ -17,7 +17,7 @@ Do NOT update the snapshots without completing all three steps.
 
 Contracts locked at v0.9.0:
 
-  1. pramanix.__all__            — exact set of 43 exported names.
+  1. pramanix.__all__            — exact set of 151 exported names.
   2. SolverStatus                — exact 9 members, wire values, iteration order.
   3. Decision.to_dict()          — exact 13-key schema + per-field type semantics.
   4. GuardConfig field names     — exact 29 fields, all-defaults constructor, frozen.
@@ -226,6 +226,30 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "ProvenanceRecord",
         # Governance config bundle (v1.0.0+)
         "GovernanceConfig",
+        # Policy compiler / IR (v1.0.0+)
+        "Condition",
+        "Decompiler",
+        "FieldReference",
+        "FieldSource",
+        "LiteralValue",
+        "Logic",
+        "MappingMatchKind",
+        "Operator",
+        "PolicyCompiler",
+        "PolicyIR",
+        "Rule",
+        # Compliance oracle (v1.0.0+)
+        "ComplianceAttestation",
+        "ComplianceOracle",
+        "ControlEnforcementResult",
+        "ControlMapping",
+        "ControlSatisfactionResult",
+        "FrameworkAttestation",
+        "RegulatoryFramework",
+        # Mesh / SPIFFE authentication (v1.0.0+)
+        "MeshAuthenticationError",
+        "MeshAuthenticator",
+        "SpiffeIdentity",
     }
 )
 

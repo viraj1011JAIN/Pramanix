@@ -85,6 +85,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Policy Compiler / IR** (`pramanix.compiler`) — 11 new top-level exports:
+  `PolicyCompiler`, `PolicyIR`, `Rule`, `Condition`, `Operator`, `Logic`,
+  `FieldSource`, `FieldReference`, `LiteralValue`, `MappingMatchKind`, `Decompiler`.
+  Compiles `Policy` subclasses to a portable serialisable intermediate
+  representation and provides a human-readable `Decompiler`. Beta stability.
+
+- **Compliance Oracle** (`pramanix.compliance.oracle`) — 7 new top-level exports:
+  `ComplianceOracle`, `ComplianceAttestation`, `RegulatoryFramework`,
+  `ControlMapping`, `ControlSatisfactionResult`, `ControlEnforcementResult`,
+  `FrameworkAttestation`. Maps policy invariant labels to regulatory controls
+  (SOC2, GDPR, HIPAA, PCI-DSS, ISO27001, NIST-CSF) and produces signed
+  attestation records. Beta stability.
+
+- **Mesh Authentication** (`pramanix.mesh.authenticator`) — 3 new top-level exports:
+  `MeshAuthenticator`, `SpiffeIdentity`, `MeshAuthenticationError`.
+  Validates SPIFFE SVIDs against a configurable trust domain for zero-trust
+  service-mesh deployments. Beta stability.
+
+- **Zero-tolerance mock elimination in test suite:** All `MagicMock`,
+  `AsyncMock`, and `fakeredis` usages replaced with real implementations:
+  real Redis testcontainer (`redis:7-alpine`) via `testcontainers[redis]`,
+  duck-typed protocol classes in `tests/helpers/real_protocols.py`, and
+  `types.ModuleType` stubs for absent optional SDK packages. `fakeredis`
+  removed from dev dependencies.
+
+- **`REQUIRED_INTEGRATIONS.md`** — comprehensive listing of all external
+  integrations, required credentials, environment variables, and
+  Docker-provisioned services needed for the full test suite.
+
+### Added
+
 - **`pramanix.logging_helpers`** — new module providing:
   - `configure_production_logging(level, fmt, stream, logger_name)` —
     idempotent `StreamHandler` setup (JSON or text) for the `pramanix`

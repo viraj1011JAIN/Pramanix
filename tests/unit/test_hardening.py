@@ -20,6 +20,7 @@ Each test class maps directly to one hardening measure:
  H14  State-Intent Divergence      — policy_hash present and correct in Decision
  H15  Additional hardening gaps    — policy_hash in to_dict(), fail-closed signing
 """
+
 from __future__ import annotations
 
 import secrets
@@ -249,12 +250,12 @@ class TestPPIDWatchdog:
         thinks it is running inside a subprocess.
         """
         import threading
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from pramanix.worker import _warmup_worker
+        from tests.helpers.real_protocols import _FakeWorkerProcess
 
-        fake_proc = MagicMock()
-        fake_proc.name = "ForkPoolWorker-1"  # any name != "MainProcess"
+        fake_proc = _FakeWorkerProcess()
 
         started_event = threading.Event()
         warmup_error: list[Exception] = []
@@ -276,9 +277,7 @@ class TestPPIDWatchdog:
             raise AssertionError(f"_warmup_worker raised: {warmup_error[0]}") from warmup_error[0]
 
         daemon_watchdogs = [
-            th
-            for th in threading.enumerate()
-            if "ppid-watchdog" in th.name and th.daemon
+            th for th in threading.enumerate() if "ppid-watchdog" in th.name and th.daemon
         ]
         assert len(daemon_watchdogs) >= 1, (
             "No daemon thread named 'ppid-watchdog' found after _warmup_worker() "
@@ -288,6 +287,7 @@ class TestPPIDWatchdog:
     def test_warmup_no_watchdog_in_main_process(self):
         """_warmup_worker must NOT start a ppid-watchdog thread in the main process."""
         import threading
+
         from pramanix.worker import _warmup_worker
 
         before = {th.name for th in threading.enumerate() if "ppid-watchdog" in th.name}
@@ -587,8 +587,7 @@ class TestZ3ThreadSafety:
             if d.allowed != expected_allowed:
                 with lock:
                     errors.append(
-                        f"amount={amount}: expected allowed={expected_allowed}, "
-                        f"got {d.allowed}"
+                        f"amount={amount}: expected allowed={expected_allowed}, " f"got {d.allowed}"
                     )
 
         cases = [("100", True), ("-1", False), ("0", True), ("-50", False), ("9999", True)]
@@ -780,11 +779,7 @@ class TestLogInjection:
 
             @classmethod
             def invariants(cls):
-                return [
-                    (E(_x) >= 0)
-                    .named("safe")
-                    .explain("%(injection)s\n{injection}\x00NULL")
-                ]
+                return [(E(_x) >= 0).named("safe").explain("%(injection)s\n{injection}\x00NULL")]
 
         guard = Guard(_P, GuardConfig(execution_mode="sync"))
         d = guard.verify(
@@ -836,9 +831,7 @@ class TestSolverDeterminism:
                 state={"state_version": "1.0"},
             )
             hashes.add(d.decision_hash)
-        assert len(hashes) == 1, (
-            f"Non-deterministic hashes across 100 identical calls: {hashes}"
-        )
+        assert len(hashes) == 1, f"Non-deterministic hashes across 100 identical calls: {hashes}"
 
     def test_blocked_decision_hash_is_deterministic(self):
         guard = _make_guard()
@@ -917,9 +910,7 @@ class TestSideChannelTiming:
         )
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         # Should finish well under 100 ms without a forced sleep
-        assert elapsed_ms < 500, (
-            f"Unexpected delay ({elapsed_ms:.1f} ms) with min_response_ms=0."
-        )
+        assert elapsed_ms < 500, f"Unexpected delay ({elapsed_ms:.1f} ms) with min_response_ms=0."
 
     def test_blocked_decision_also_padded(self):
         """BLOCK decisions must also respect the timing floor."""
@@ -934,9 +925,9 @@ class TestSideChannelTiming:
         elapsed_ms = (time.perf_counter() - start) * 1000.0
 
         assert not d.allowed
-        assert elapsed_ms >= (min_ms - 20), (
-            f"BLOCK response completed in {elapsed_ms:.1f} ms < floor {min_ms} ms."
-        )
+        assert elapsed_ms >= (
+            min_ms - 20
+        ), f"BLOCK response completed in {elapsed_ms:.1f} ms < floor {min_ms} ms."
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
