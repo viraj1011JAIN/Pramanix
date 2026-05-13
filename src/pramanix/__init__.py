@@ -73,6 +73,16 @@ from pramanix.compiler import (
     PolicyIR,
     Rule,
 )
+from pramanix.compliance import (
+    ComplianceAttestation,
+    ComplianceOracle,
+    ControlEnforcementResult,
+    ControlMapping,
+    ControlSatisfactionResult,
+    FrameworkAttestation,
+    MappingMatchKind,
+    RegulatoryFramework,
+)
 from pramanix.crypto import PramanixSigner, PramanixVerifier
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
@@ -221,6 +231,15 @@ __all__ = [
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
+    # Pillar 3 — Compliance Oracle: regulatory attestation engine
+    "ComplianceAttestation",
+    "ComplianceOracle",
+    "ControlEnforcementResult",
+    "ControlMapping",
+    "ControlSatisfactionResult",
+    "FrameworkAttestation",
+    "MappingMatchKind",
+    "RegulatoryFramework",
     "ConfigurationError",
     # Phase D-1 — Consensus strictness control
     "ConsensusStrictness",
