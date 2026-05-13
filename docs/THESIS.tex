@@ -188,6 +188,15 @@ the LLM's output can cause.
         \textbf{Four of these --- DSPy, Haystack, Semantic Kernel, and
         Pydantic AI --- are stub implementations} as of v1.0.0, documented
         in \fname{docs/KNOWN\_GAPS.md}.
+  \item A strict Intermediate Representation (IR) compiler
+        (\fname{src/pramanix/compiler.py}) --- Pillar~1 of the
+        Neuro-Symbolic Policy Engine --- that accepts \code{PolicyIR}, a
+        Pydantic-typed JSON schema usable directly as an LLM
+        \code{response\_format}, and lowers it deterministically to
+        \code{ConstraintExpr} invariants identical to hand-authored ones.
+        A companion \code{Decompiler} walks the compiled DSL AST and
+        produces a timestamped structured-English audit report for CISO
+        sign-off.  No LLM call is made by the compiler itself.
 \end{itemize}
 
 \textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): \textbf{4,002 passed},
@@ -482,6 +491,75 @@ Raising at compilation time surfaces the bug immediately rather than silently
 producing wrong constraints. Both \code{ExpressionNode.\_\_bool\_\_} (line~787)
 and \code{ConstraintExpr.\_\_bool\_\_} (line~931) raise \code{TypeError} with
 an explanatory message directing authors to use \code{\&}/\code{|}/\code{\~{}}.
+
+\subsection{Layer~2a --- Pillar~1 IR Compiler (\fname{src/pramanix/compiler.py})}
+
+\fname{compiler.py} is the deterministic boundary between structured LLM
+output and the Z3 verification engine.  It is distinct from
+\fname{natural\_policy/} (Phase~2), which requires an active LLM client for
+text-to-policy translation.  The IR compiler receives a Pydantic-validated
+\code{PolicyIR} and lowers it to \code{ConstraintExpr} invariants that are
+functionally identical to hand-authored ones --- the same objects
+\fname{transpiler.py} receives from \code{Policy.invariants()}.
+
+The module has four isolated layers:
+
+\begin{enumerate}
+  \item \textbf{IR schema.}  \code{FieldReference}, \code{Operator},
+        \code{Condition}, \code{Rule}, \code{PolicyIR} --- pure Pydantic~v2,
+        zero Z3, zero I/O.  \code{ConfigDict(extra="forbid", frozen=True)}
+        on every model.  \code{Rule} is recursive (self-referential) via
+        \code{Rule.model\_rebuild()}.  \code{PolicyIR} enforces globally
+        unique rule names via a \code{model\_validator} --- duplicate names
+        would produce duplicate invariant labels, which the Z3 attribution
+        phase cannot disambiguate.
+
+  \item \textbf{PolicyCompiler.}  Stateless;
+        \code{compile(ir, policy\_cls) -> list[ConstraintExpr]}.  Validates
+        at compile time: (a)~field existence against
+        \code{Policy.fields()}; (b)~Z3 sort compatibility between \code{lhs}
+        and a scalar \code{rhs}; (c)~field-to-field sort compatibility when
+        \code{rhs} is also a \code{FieldReference}; (d)~ordering operators
+        (\code{GT}, \code{LT}, \code{GTE}, \code{LTE}) rejected on
+        \code{Bool}-sorted fields; (e)~\code{IN}/\code{NOT\_IN} requires a
+        list RHS.  Every violation raises \code{PolicyCompilationError} ---
+        partial compilation is architecturally impossible.  Uses
+        \code{Decimal(str(scalar))} for \code{Real}-sorted scalars,
+        consistent with \fname{transpiler.py}'s exact arithmetic path.
+
+  \item \textbf{Fail-closed validation.}  Seven compile-time error classes
+        are detected before any Z3 formula is constructed: unknown field;
+        scalar type incompatible with field Z3 sort; field-to-field sort
+        mismatch; ordering operator on \code{Bool} sort; membership operator
+        on non-list RHS; empty membership set; \code{bool} literal as
+        ordering RHS.
+
+  \item \textbf{Decompiler.}  Reverse translation:
+        $\code{list[ConstraintExpr]} \to \text{str}$.  Walks the internal
+        DSL AST (\code{\_FieldRef}, \code{\_Literal}, \code{\_BinOp},
+        \code{\_CmpOp}, \code{\_BoolOp}, \code{\_InOp}) without touching Z3.
+        Produces a timestamped CISO sign-off report.  Unknown AST node types
+        degrade gracefully to a \code{<TypeName>} placeholder --- the
+        decompiler is intentionally forward-compatible.  Deterministic and
+        idempotent.
+\end{enumerate}
+
+\textbf{Security invariants.}  No \code{eval()}, no \code{exec()}, no
+dynamic code generation.  The LLM is never called by this module.  Every
+field reference is validated against the \code{Policy} class's declared
+\code{Field} attributes at compile time --- a hallucinated field name in the
+LLM output is caught before any Z3 formula is constructed.  The \code{Operator}
+and \code{FieldSource} enumerations are closed (\code{StrEnum} values) ---
+an unknown operator string is rejected by Pydantic validation before the
+compiler is invoked.
+
+\textbf{Relationship to Phase~2 (\fname{natural\_policy/}).}  Phase~2's
+\code{NaturalPolicyCompiler} is the management-plane component: it calls an
+LLM and translates raw English text to a \code{NaturalPolicySchema}.
+Pillar~1's \code{PolicyCompiler} is the data-plane compiler: it operates on
+an already-structured \code{PolicyIR} with no LLM dependency.  The two can
+be composed --- an intermediate adapter converts \code{NaturalPolicySchema}
+to \code{PolicyIR} --- but each is independently usable.
 
 \subsection{Layer~3 --- The Transpiler (\fname{transpiler.py})}
 
@@ -1187,6 +1265,79 @@ The pytest upgrade from 7.4.4 to 8.4.2 changed skip semantics for several
 \code{anyio}-backed fixtures (anyio 4.12.1, asyncio-mode \texttt{AUTO});
 39 previously-skipped tests now execute and pass, raising the passing count
 from 3,925 to 4,002 with no new failures.
+
+% ───────────────────────────────────────────────────────────────────────────────
+\subsection*{Phase~3 (Pillar~1 IR Compiler) --- v1.2: Strict IR Compiler and Decompiler}
+% ───────────────────────────────────────────────────────────────────────────────
+
+\paragraph{Motivation.}
+Phase~2 (\fname{natural\_policy/}) established a text-to-policy pipeline but
+required an active LLM client and produced output tied to the
+\code{NaturalPolicySchema} intermediate representation.  For deployments
+already receiving structured JSON from the LLM via Structured Outputs or
+JSON Mode, the full Phase~2 pipeline is heavier than necessary.  More
+importantly, Phase~2's compiler lacks field-to-field comparison support,
+recursive rule nesting, and \code{IN}/\code{NOT\_IN} membership operators.
+Pillar~1 addresses all three, with no LLM dependency of its own.
+
+\paragraph{Design Principles.}
+
+\begin{enumerate}
+\item \textbf{Standalone.}  \code{PolicyCompiler} has zero imports from any
+  LLM library or from \fname{natural\_policy/}.  It operates on a
+  fully-validated \code{PolicyIR} object.
+\item \textbf{No LLM on the hot path.}  The compiler, IR models, and
+  \code{Decompiler} have no dependency on any LLM client library.  The LLM's
+  only role is to produce the \code{PolicyIR} JSON via Structured Outputs;
+  the compiler takes it from there.
+\item \textbf{Richer IR.}  \code{PolicyIR} supports field-to-field
+  comparisons (\code{FieldReference} RHS), recursive rule nesting,
+  \code{IN}/\code{NOT\_IN} membership operators, and eight binary comparison
+  operators.
+\item \textbf{CISO auditability.}  Every compiled policy can be decompiled
+  back to structured English via \code{Decompiler} --- a timestamped report
+  for CISO review before a dynamically compiled policy is deployed.
+\end{enumerate}
+
+\paragraph{Module Architecture.}
+
+\[
+  \underbrace{\text{LLM structured output}}_{\text{JSON}}
+  \;\xrightarrow{\text{Pydantic validate}}\;
+  \code{PolicyIR}
+  \;\xrightarrow{\code{PolicyCompiler}}\;
+  \code{list[ConstraintExpr]}
+  \;\xrightarrow{\code{Decompiler}}\;
+  \text{CISO report}
+\]
+
+\code{PolicyIR.model\_json\_schema()} is the \code{response\_format} passed
+to the LLM.  Any malformed LLM output is rejected by Pydantic~v2 before
+\code{PolicyCompiler} is ever invoked.
+
+\paragraph{Compile-Time Error Classes.}
+Seven categories of policy error are detected before any Z3 formula is
+constructed:
+\begin{enumerate}
+\item Unknown field referenced (LLM hallucination).
+\item Scalar type incompatible with field Z3 sort (\code{String} field vs.\
+  integer literal).
+\item Field-to-field sort mismatch (\code{Real}-sorted vs.\ \code{Bool}-sorted).
+\item Ordering operator (\code{>}, \code{<}, \code{>=}, \code{<=}) on a
+  \code{Bool}-sorted field.
+\item Membership operator (\code{IN}/\code{NOT\_IN}) with a non-list RHS.
+\item Empty membership set (vacuously unsatisfiable).
+\item \code{bool} literal as RHS of an ordering operator.
+\end{enumerate}
+All seven raise \code{PolicyCompilationError} with full context.  No partial
+result is ever returned --- fail-closed is structural, not conventional.
+
+\paragraph{Public Surface.}
+Nine symbols are exported via both \code{compiler.\_\_all\_\_} and
+\code{pramanix.\_\_init\_\_}:
+\code{Condition}, \code{Decompiler}, \code{FieldReference},
+\code{FieldSource}, \code{Logic}, \code{Operator}, \code{PolicyCompiler},
+\code{PolicyIR}, \code{Rule}.
 
 \subsection*{Phase~12: Metric-Registry Bug and Coverage Completeness}
 

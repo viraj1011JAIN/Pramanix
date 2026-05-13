@@ -60,6 +60,17 @@ from pramanix.circuit_breaker import (
     InMemoryDistributedBackend,
     RedisDistributedBackend,
 )
+from pramanix.compiler import (
+    Condition,
+    Decompiler,
+    FieldReference,
+    FieldSource,
+    Logic,
+    Operator,
+    PolicyCompiler,
+    PolicyIR,
+    Rule,
+)
 from pramanix.crypto import PramanixSigner, PramanixVerifier
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
@@ -201,6 +212,8 @@ __all__ = [
     "CircuitBreakerConfig",
     # IFC — classified data
     "ClassifiedData",
+    # Pillar 1 — IR compiler: single predicate condition
+    "Condition",
     "ComplianceReport",
     # Phase 11 — Pillar 4: Compliance reporter
     "ComplianceReporter",
@@ -211,6 +224,8 @@ __all__ = [
     "DatadogAuditSink",
     # A-4: Datetime field
     "DatetimeField",
+    # Pillar 1 — IR compiler: CISO report generator
+    "Decompiler",
     # Core result
     "Decision",
     # Phase 9 — Pillar 1: Cryptographic audit
@@ -238,6 +253,10 @@ __all__ = [
     "Field",
     # Lifecycle diff
     "FieldChange",
+    # Pillar 1 — IR compiler: typed field pointer
+    "FieldReference",
+    # Pillar 1 — IR compiler: intent vs state origin tag
+    "FieldSource",
     "FieldTypeError",
     "FileKeyProvider",
     # IFC flow control
@@ -281,6 +300,8 @@ __all__ = [
     # E-3: KMS/HSM key providers
     "KeyProvider",
     "LLMTimeoutError",
+    # Pillar 1 — IR compiler: AND / OR connective
+    "Logic",
     "MerkleAnchor",
     # E-2: Merkle pruning and archival
     "MerkleArchiver",
@@ -293,12 +314,18 @@ __all__ = [
     "NestedField",
     # Oversight record
     "OversightRecord",
+    # Pillar 1 — IR compiler: binary comparison operator enum
+    "Operator",
     "OversightRequiredError",
     "PemKeyProvider",
     # Phase 12 — Hardening: persistent Merkle anchoring
     "PersistentMerkleAnchor",
     # Policy
     "Policy",
+    # Pillar 1 — IR compiler: main compiler class
+    "PolicyCompiler",
+    # Pillar 1 — IR compiler: top-level LLM-facing schema
+    "PolicyIR",
     # Lifecycle
     "PolicyDiff",
     # Limitations overrides: static policy coverage analysis
@@ -338,6 +365,8 @@ __all__ = [
     # Resolver cache (data-bleed guard) — singleton excluded intentionally:
     # interact with the registry through Guard configuration, not directly.
     "ResolverRegistry",
+    # Pillar 1 — IR compiler: logical rule grouping
+    "Rule",
     "S3AuditSink",
     "SQLiteExecutionTokenVerifier",
     # Privilege separation
