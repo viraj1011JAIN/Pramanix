@@ -13,6 +13,8 @@ skipped when Docker is unavailable.
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 try:
@@ -29,7 +31,7 @@ requires_docker = pytest.mark.skipif(not _DOCKER_AVAILABLE, reason="Docker daemo
 
 
 @pytest.fixture(scope="session")
-def redis_url() -> str:  # type: ignore[return]
+def redis_url() -> Generator[str, None, None]:
     """Real Redis 7-alpine URL backed by a testcontainer.
 
     The container is started once per test session and torn down afterwards.

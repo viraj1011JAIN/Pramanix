@@ -85,7 +85,14 @@ class SemanticFastPath:
             try:
                 if Decimal(str(val)) < Decimal("0"):
                     return f"Amount must be non-negative (got {val})"
-            except Exception:
+            except Exception as _exc:
+                log.warning(
+                    "fast_path.negative_amount: could not parse %r as Decimal "
+                    "— passing through to Z3/semantic check (%s: %s)",
+                    val,
+                    type(_exc).__name__,
+                    _exc,
+                )
                 return None
             return None
 
@@ -103,7 +110,14 @@ class SemanticFastPath:
             try:
                 if Decimal(str(val)) <= Decimal("0"):
                     return "Account balance is zero or negative"
-            except Exception:
+            except Exception as _exc:
+                log.warning(
+                    "fast_path.zero_or_negative_balance: could not parse %r as Decimal "
+                    "— passing through to Z3/semantic check (%s: %s)",
+                    val,
+                    type(_exc).__name__,
+                    _exc,
+                )
                 return None
             return None
 
@@ -138,7 +152,14 @@ class SemanticFastPath:
             try:
                 if Decimal(str(val)) > cap_decimal:
                     return f"Amount exceeds hard cap of {cap}"
-            except Exception:
+            except Exception as _exc:
+                log.warning(
+                    "fast_path.exceeds_hard_cap: could not parse %r as Decimal "
+                    "— passing through to Z3/semantic check (%s: %s)",
+                    val,
+                    type(_exc).__name__,
+                    _exc,
+                )
                 return None
             return None
 
@@ -165,7 +186,16 @@ class SemanticFastPath:
                 balance = Decimal(str(balance_val))
                 if amount > balance:
                     return "Insufficient balance for transfer"
-            except Exception:
+            except Exception as _exc:
+                log.warning(
+                    "fast_path.amount_exceeds_balance: could not parse "
+                    "amount=%r or balance=%r as Decimal "
+                    "— passing through to Z3/semantic check (%s: %s)",
+                    amount_val,
+                    balance_val,
+                    type(_exc).__name__,
+                    _exc,
+                )
                 return None
             return None
 

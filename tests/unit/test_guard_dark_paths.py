@@ -263,8 +263,10 @@ class TestSemanticPostConsensusCheck:
             },
         )
 
-    def test_non_numeric_balance_is_skipped(self) -> None:
-        self._call({"amount": "100"}, {"balance": "not-a-number"})
+    def test_non_numeric_balance_raises_semantic_violation(self) -> None:
+        """Non-numeric balance → SemanticPolicyViolation (fail-closed §4.12)."""
+        with pytest.raises(SemanticPolicyViolation, match="safe-default deny applied"):
+            self._call({"amount": "100"}, {"balance": "not-a-number"})
 
     # ── Healthcare: dosage checks ────────────────────────────────────────────
 
@@ -292,8 +294,10 @@ class TestSemanticPostConsensusCheck:
     def test_no_dosage_field_skips_healthcare_checks(self) -> None:
         self._call({"other": "value"}, {"max_daily_dose": "300", "total_daily_dose": "200"})
 
-    def test_non_numeric_dosage_is_skipped(self) -> None:
-        self._call({"dosage": "not-a-number"}, {})
+    def test_non_numeric_dosage_raises_semantic_violation(self) -> None:
+        """Non-numeric dosage → SemanticPolicyViolation (fail-closed §4.12)."""
+        with pytest.raises(SemanticPolicyViolation, match="safe-default deny applied"):
+            self._call({"dosage": "not-a-number"}, {})
 
     # ── Infra: replica and resource checks ──────────────────────────────────
 
@@ -328,8 +332,10 @@ class TestSemanticPostConsensusCheck:
     def test_memory_request_within_limit_passes(self) -> None:
         self._call({"memory_request": "2048"}, {"memory_limit": "4096"})
 
-    def test_non_numeric_replicas_are_skipped(self) -> None:
-        self._call({"requested_replicas": "not-a-number"}, {"max_replicas": 10})
+    def test_non_numeric_replicas_raises_semantic_violation(self) -> None:
+        """Non-numeric requested_replicas → SemanticPolicyViolation (fail-closed §4.12)."""
+        with pytest.raises(SemanticPolicyViolation, match="safe-default deny applied"):
+            self._call({"requested_replicas": "not-a-number"}, {"max_replicas": 10})
 
 
 # ===============================================================

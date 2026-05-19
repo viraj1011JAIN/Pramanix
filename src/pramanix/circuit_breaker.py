@@ -52,6 +52,36 @@ log = logging.getLogger(__name__)
 _METRICS_LOCK = threading.Lock()
 _REGISTERED_METRICS: dict[str, Any] = {}
 
+# Split-brain detection counter — incremented whenever the DistributedCircuitBreaker
+# cannot sync state to/from Redis.  Alert on non-zero values in Grafana.
+# Lazy-initialized to avoid import-time prometheus_client dependency.
+_CB_SYNC_FAILURE_COUNTER: Any = None
+_CB_SYNC_FAILURE_LOCK = threading.Lock()
+
+
+def _inc_sync_failure_counter() -> None:
+    """Increment pramanix_circuit_breaker_state_sync_failure_total."""
+    global _CB_SYNC_FAILURE_COUNTER
+    if _CB_SYNC_FAILURE_COUNTER is None:
+        with _CB_SYNC_FAILURE_LOCK:
+            if _CB_SYNC_FAILURE_COUNTER is None:
+                try:
+                    from prometheus_client import Counter as _Counter
+                    _CB_SYNC_FAILURE_COUNTER = _prom_register(
+                        _Counter,
+                        "pramanix_circuit_breaker_state_sync_failure_total",
+                        "Total Redis state-sync failures in DistributedCircuitBreaker "
+                        "(non-zero indicates split-brain risk)",
+                        [],
+                    )
+                except Exception:
+                    return
+    try:
+        if _CB_SYNC_FAILURE_COUNTER is not None:
+            _CB_SYNC_FAILURE_COUNTER.inc()
+    except Exception:
+        pass
+
 
 def _prom_register(factory: Any, name: str, description: str, labelnames: list[str]) -> Any:
     """Register a Prometheus metric or return the already-registered instance.
@@ -588,8 +618,23 @@ class DistributedCircuitBreaker:
         OPEN, returns a failsafe :class:`~pramanix.decision.Decision` without
         invoking Z3.  Otherwise delegates to the underlying Guard.
         """
-        async with self._lock:
-            current = await self._sync_state()
+        try:
+            async with self._lock:
+                current = await self._sync_state()
+        except Exception as _sync_exc:
+            # Redis unreachable during state read — fail-SAFE: treat as OPEN.
+            # A circuit breaker that cannot read distributed state must block
+            # rather than allow traffic through a potentially degraded cluster.
+            log.error(
+                "DistributedCircuitBreaker: Redis state sync FAILED for namespace=%r — "
+                "applying fail-safe OPEN (possible split-brain). "
+                "Restore Redis connectivity to resume normal operation. Error: %s",
+                self._config.namespace,
+                _sync_exc,
+                exc_info=True,
+            )
+            _inc_sync_failure_counter()
+            return self._make_open_decision(CircuitState.OPEN)
 
         if current in (CircuitState.OPEN, CircuitState.ISOLATED):
             return self._make_open_decision(current)
@@ -602,16 +647,37 @@ class DistributedCircuitBreaker:
             if solve_ms > self._config.pressure_threshold_ms:
                 self._local_failure_count += 1
                 if self._local_failure_count >= self._config.consecutive_pressure_count:
-                    await self._push_state(
-                        CircuitState.OPEN, delta_failures=self._local_failure_count
-                    )
+                    try:
+                        await self._push_state(
+                            CircuitState.OPEN, delta_failures=self._local_failure_count
+                        )
+                    except Exception as _push_exc:
+                        log.error(
+                            "DistributedCircuitBreaker: Redis state push FAILED for "
+                            "namespace=%r (OPEN transition not persisted — split-brain risk). "
+                            "Error: %s",
+                            self._config.namespace,
+                            _push_exc,
+                            exc_info=True,
+                        )
+                        _inc_sync_failure_counter()
                     self._local_failure_count = 0
                     log.error(
                         "DistributedCircuitBreaker: OPEN (namespace=%s)",
                         self._config.namespace,
                     )
                 else:
-                    await self._push_state(CircuitState.CLOSED, delta_failures=1)
+                    try:
+                        await self._push_state(CircuitState.CLOSED, delta_failures=1)
+                    except Exception as _push_exc:
+                        log.error(
+                            "DistributedCircuitBreaker: Redis state push FAILED for "
+                            "namespace=%r (failure delta not replicated). Error: %s",
+                            self._config.namespace,
+                            _push_exc,
+                            exc_info=True,
+                        )
+                        _inc_sync_failure_counter()
             else:
                 self._local_failure_count = 0
 

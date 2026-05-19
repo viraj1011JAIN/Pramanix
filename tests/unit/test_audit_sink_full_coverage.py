@@ -146,22 +146,18 @@ def test_increment_overflow_metric_calls_inc_when_counter_set() -> None:
 
 def test_kafka_sink_raises_config_error_without_package() -> None:
     """ConfigurationError when confluent_kafka is not installed."""
+    from unittest.mock import patch
+
     from pramanix.exceptions import ConfigurationError
 
-    prev = sys.modules.get("confluent_kafka")
-    sys.modules["confluent_kafka"] = None  # type: ignore[assignment]
-    try:
+    with patch.dict(sys.modules, {"confluent_kafka": None}):
         import pramanix.audit_sink as _sink_mod
         importlib.reload(_sink_mod)
         from pramanix.audit_sink import KafkaAuditSink
         with pytest.raises(ConfigurationError, match="confluent-kafka"):
             KafkaAuditSink(topic="t", producer_conf={})
-    finally:
-        if prev is None:
-            sys.modules.pop("confluent_kafka", None)
-        else:
-            sys.modules["confluent_kafka"] = prev
-        importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    # Restore the module to its real state after patch.dict exits.
+    importlib.reload(importlib.import_module("pramanix.audit_sink"))
 
 
 def test_kafka_sink_queue_overflow_drops_decision() -> None:
@@ -190,22 +186,17 @@ def test_kafka_sink_queue_overflow_drops_decision() -> None:
 
 def test_s3_sink_raises_config_error_without_boto3() -> None:
     """ConfigurationError when boto3 is not installed."""
+    from unittest.mock import patch
+
     from pramanix.exceptions import ConfigurationError
 
-    prev = sys.modules.get("boto3")
-    sys.modules["boto3"] = None  # type: ignore[assignment]
-    try:
+    with patch.dict(sys.modules, {"boto3": None}):
         import pramanix.audit_sink as _sink_mod
         importlib.reload(_sink_mod)
         from pramanix.audit_sink import S3AuditSink
         with pytest.raises(ConfigurationError, match="boto3"):
             S3AuditSink(bucket="b", prefix="")
-    finally:
-        if prev is None:
-            sys.modules.pop("boto3", None)
-        else:
-            sys.modules["boto3"] = prev
-        importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    importlib.reload(importlib.import_module("pramanix.audit_sink"))
 
 
 def test_s3_sink_upload_failure_is_swallowed() -> None:
@@ -270,22 +261,17 @@ def test_splunk_sink_bare_token_gets_prefixed() -> None:
 
 def test_datadog_sink_raises_config_error_without_package() -> None:
     """ConfigurationError when datadog-api-client is not installed."""
+    from unittest.mock import patch
+
     from pramanix.exceptions import ConfigurationError
 
-    prev = sys.modules.get("datadog_api_client")
-    sys.modules["datadog_api_client"] = None  # type: ignore[assignment]
-    try:
+    with patch.dict(sys.modules, {"datadog_api_client": None}):
         import pramanix.audit_sink as _sink_mod
         importlib.reload(_sink_mod)
         from pramanix.audit_sink import DatadogAuditSink
         with pytest.raises(ConfigurationError, match="datadog-api-client"):
             DatadogAuditSink(api_key="key")
-    finally:
-        if prev is None:
-            sys.modules.pop("datadog_api_client", None)
-        else:
-            sys.modules["datadog_api_client"] = prev
-        importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    importlib.reload(importlib.import_module("pramanix.audit_sink"))
 
 
 def test_datadog_sink_emit_does_not_raise() -> None:

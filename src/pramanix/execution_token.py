@@ -902,7 +902,20 @@ class RedisExecutionTokenVerifier:
                 count += len(keys)
                 if cursor == 0:
                     break
-        except Exception:
+        except Exception as _e:
+            # fail-open for monitoring: return 0 so callers don't crash, but
+            # LOG at WARNING so operators know the quota/rate-limit count is
+            # unreliable — a falsely-low 0 may permit requests that should be
+            # blocked if a quota check is based on this value.
+            import logging as _etlog
+            _etlog.getLogger(__name__).warning(
+                "execution_token.RedisExecutionTokenVerifier.consumed_count(): "
+                "Redis SCAN failed — returning 0 (fail-open for monitoring). "
+                "Quota or rate-limit checks using this value may be too permissive "
+                "while Redis is degraded. Error: %s",
+                _e,
+                exc_info=True,
+            )
             return 0
         return count
 

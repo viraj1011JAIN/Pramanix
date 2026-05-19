@@ -49,9 +49,39 @@ if not _RE2_AVAILABLE:
 
 # ── ML backend detection (lazy, zero import-time cost) ────────────────────────
 
+# Prometheus gauges for NLP model availability (set at module load time).
+# Operators can alert on pramanix_nlp_model_available{model="..."} == 0.
+_NLP_GAUGE: Any = None  # set below after load attempts
+_NLP_GAUGE_LOCK = __import__("threading").Lock()
+
+
+def _get_nlp_gauge() -> Any:
+    """Return (or lazily create) the pramanix_nlp_model_available gauge."""
+    global _NLP_GAUGE
+    if _NLP_GAUGE is not None:
+        return _NLP_GAUGE
+    with _NLP_GAUGE_LOCK:
+        if _NLP_GAUGE is not None:
+            return _NLP_GAUGE
+        try:
+            from prometheus_client import Gauge
+            _NLP_GAUGE = Gauge(
+                "pramanix_nlp_model_available",
+                "1 if the named NLP safety model loaded successfully, 0 if degraded",
+                ["model"],
+            )
+        except Exception:
+            pass
+    return _NLP_GAUGE
+
 
 def _try_detoxify_scorer() -> Any:
-    """Return a Detoxify-backed score function, or None if unavailable."""
+    """Return a Detoxify-backed score function, or None if unavailable.
+
+    On failure, emits a WARNING log and sets the
+    ``pramanix_nlp_model_available{model="detoxify"}`` gauge to 0 so
+    operators can alert before the first request reaches the safety scorer.
+    """
     try:
         from detoxify import Detoxify  # type: ignore[import-not-found]
 
@@ -61,18 +91,63 @@ def _try_detoxify_scorer() -> Any:
             results = _model.predict(text)
             return float(results.get("toxicity", 0.0))
 
+        g = _get_nlp_gauge()
+        if g is not None:
+            try:
+                g.labels(model="detoxify").set(1)
+            except Exception:
+                pass
         return _score
-    except Exception:
+    except Exception as _exc:
+        _log.warning(
+            "pramanix.nlp.validators: Detoxify model failed to load (%s: %s) — "
+            "toxicity scoring is DISABLED. Injection attacks and toxic prompts "
+            "will NOT be caught by this safety layer. "
+            "Fix: ensure 'detoxify' is installed and GPU/CPU resources are sufficient.",
+            type(_exc).__name__,
+            _exc,
+        )
+        g = _get_nlp_gauge()
+        if g is not None:
+            try:
+                g.labels(model="detoxify").set(0)
+            except Exception:
+                pass
         return None
 
 
 def _try_sentence_transformer() -> Any:
-    """Return a SentenceTransformer model, or None if unavailable."""
+    """Return a SentenceTransformer model, or None if unavailable.
+
+    On failure, emits a WARNING log and sets the
+    ``pramanix_nlp_model_available{model="sentence_transformer"}`` gauge to 0.
+    """
     try:
         from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
 
-        return SentenceTransformer("all-MiniLM-L6-v2")
-    except Exception:
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        g = _get_nlp_gauge()
+        if g is not None:
+            try:
+                g.labels(model="sentence_transformer").set(1)
+            except Exception:
+                pass
+        return model
+    except Exception as _exc:
+        _log.warning(
+            "pramanix.nlp.validators: SentenceTransformer model failed to load (%s: %s) — "
+            "semantic injection detection is DISABLED. Prompt-injection attacks that "
+            "alter intent semantically will NOT be detected by this safety layer. "
+            "Fix: ensure 'sentence-transformers' is installed and model files are present.",
+            type(_exc).__name__,
+            _exc,
+        )
+        g = _get_nlp_gauge()
+        if g is not None:
+            try:
+                g.labels(model="sentence_transformer").set(0)
+            except Exception:
+                pass
         return None
 
 

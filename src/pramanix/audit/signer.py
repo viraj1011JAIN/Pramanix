@@ -66,7 +66,37 @@ class SignedDecision:
 
 
 class DecisionSigner:
-    """Signs Decision objects with HMAC-SHA-256 for verifiable audit trails."""
+    """Signs Decision objects with HMAC-SHA-256 for verifiable audit trails.
+
+    A valid signing key (≥ 32 characters) is required at construction time.
+    Constructing a ``DecisionSigner`` without a key raises
+    :exc:`~pramanix.exceptions.ConfigurationError` immediately — a signer that
+    cannot sign is not a signer; it is a misconfiguration waiting to produce
+    silent audit-trail gaps.
+
+    For deployments that intentionally operate without decision signing, do not
+    instantiate this class.  Use ``DecisionSigner.optional()`` to get a signer
+    instance only when a key is present::
+
+        signer = DecisionSigner.optional()   # returns None if no key configured
+        if signer:
+            signed = signer.sign(decision)
+
+    Generate a production key::
+
+        python -c "import secrets; print(secrets.token_hex(64))"
+
+    Store it in the ``PRAMANIX_SIGNING_KEY`` environment variable or pass it
+    directly as ``signing_key``.
+
+    Migration note (v0.9 → v1.0):
+        Previously, constructing ``DecisionSigner()`` without a key silently
+        set ``self._key = None`` and ``sign()`` returned ``None``.  This
+        allowed misconfigured deployments to produce unsigned decision records
+        without any error signal.  The new behaviour raises
+        ``ConfigurationError`` immediately, surfacing misconfiguration at
+        startup rather than silently at audit-review time.
+    """
 
     _ALG = "HS256"
     _TYP = "PRAMANIX-PROOF"
@@ -74,25 +104,61 @@ class DecisionSigner:
     _MIN_KEY_LENGTH = 32
 
     def __init__(self, signing_key: str | None = None) -> None:
+        from pramanix.exceptions import ConfigurationError
+
         raw = signing_key or os.environ.get(self._ENV_KEY, "")
-        if raw and len(raw) >= self._MIN_KEY_LENGTH:
-            self._key: bytes | None = raw.encode()
-        else:
-            self._key = None
+        if not raw:
+            raise ConfigurationError(
+                "DecisionSigner requires a signing key. "
+                f"Set the {self._ENV_KEY!r} environment variable to a "
+                f"hex string of at least {self._MIN_KEY_LENGTH} characters, "
+                "or pass signing_key= explicitly. "
+                "Generate a key: python -c \"import secrets; print(secrets.token_hex(64))\". "
+                "To operate without signing, do not instantiate DecisionSigner "
+                "(or use DecisionSigner.optional() which returns None when no key is set)."
+            )
+        if len(raw) < self._MIN_KEY_LENGTH:
+            raise ConfigurationError(
+                f"DecisionSigner signing key is too short "
+                f"({len(raw)} chars, minimum {self._MIN_KEY_LENGTH}). "
+                "Short keys are cryptographically weak. "
+                "Generate a secure key: "
+                "python -c \"import secrets; print(secrets.token_hex(64))\""
+            )
+        self._key: bytes = raw.encode()
+
+    @classmethod
+    def optional(cls, signing_key: str | None = None) -> "DecisionSigner | None":
+        """Return a ``DecisionSigner`` if a key is configured, or ``None``.
+
+        Use this in application code that should function with or without
+        decision signing::
+
+            signer = DecisionSigner.optional()
+            token = signer.sign(decision) if signer else None
+
+        Returns ``None`` when no key is set rather than raising, making
+        "signing is optional" an explicit, readable design choice instead of
+        a misconfiguration that silently does nothing.
+        """
+        raw = signing_key or os.environ.get(cls._ENV_KEY, "")
+        if not raw or len(raw) < cls._MIN_KEY_LENGTH:
+            return None
+        return cls(signing_key=raw)
 
     @property
     def is_active(self) -> bool:
-        """True if a valid signing key is configured."""
-        return self._key is not None
+        """Always True — a DecisionSigner with a valid key is always active."""
+        return True
 
     def sign(self, decision: Decision) -> SignedDecision | None:
         """Sign a Decision and return a JWS compact token.
 
-        Returns None if no signing key is configured.
-        Never raises — signing failures return None.
+        Returns a :class:`SignedDecision` on success, or ``None`` if an
+        internal signing error occurs (logged at ERROR with full traceback).
+        Never raises — callers must treat ``None`` as a signing failure and
+        alert accordingly (e.g. emit a metric, skip the audit record, retry).
         """
-        if not self._key:
-            return None
         try:
             header = self._b64url(
                 json.dumps(

@@ -141,7 +141,18 @@ def _is_picklable(obj: Any) -> bool:
     except _pickle_mod.PicklingError as e:
         _log_pickle.getLogger(__name__).warning("Not picklable: %s", e)
         return False
-    except Exception:
+    except Exception as _exc:
+        # Log unexpected non-pickling errors (MemoryError, RecursionError,
+        # SystemError) at WARNING so operators can distinguish infrastructure
+        # pressure from a legitimate serialisation incompatibility.
+        if not isinstance(_exc, (AttributeError, TypeError)):
+            _log_pickle.getLogger(__name__).warning(
+                "_is_picklable: unexpected %s during serialisation check — "
+                "returning False; this may indicate memory pressure or a "
+                "Python runtime issue, not merely a non-picklable object",
+                type(_exc).__name__,
+                exc_info=_exc,
+            )
         return False
 
 
@@ -183,8 +194,20 @@ def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[st
         _c = _translator_counters[counter_name]
         for model in models:
             _c.labels(model=model).inc()
-    except Exception:
-        pass
+    except Exception as _metric_exc:
+        # A prometheus_client failure here means the extraction/consensus failure
+        # counter stops incrementing — operators lose the signal that LLM
+        # extraction or consensus is degraded.  Log at WARNING so the metric
+        # infrastructure issue is visible without blocking the guard path.
+        import logging as _guard_log
+        _guard_log.getLogger(__name__).warning(
+            "pramanix.guard: Prometheus metric emit failed for %r — "
+            "LLM failure counter not incremented (%s: %s). "
+            "Check prometheus_client registry health.",
+            counter_name,
+            type(_metric_exc).__name__,
+            _metric_exc,
+        )
 
 
 # ── _CBWrappedTranslator ──────────────────────────────────────────────────────

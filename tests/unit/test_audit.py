@@ -17,6 +17,7 @@ import pytest
 
 from pramanix.audit.merkle import MerkleAnchor
 from pramanix.audit.signer import DecisionSigner, SignedDecision
+from pramanix.exceptions import ConfigurationError
 from pramanix.audit.verifier import DecisionVerifier
 from pramanix.decision import Decision
 
@@ -39,16 +40,25 @@ def _make_allow_decision() -> Decision:
 
 
 class TestDecisionSigner:
-    def test_sign_returns_none_without_key(self, monkeypatch):
+    def test_constructor_raises_config_error_without_key(self, monkeypatch):
+        """DecisionSigner() with no key raises ConfigurationError immediately (§4.10/25)."""
         monkeypatch.delenv("PRAMANIX_SIGNING_KEY", raising=False)
-        signer = DecisionSigner(signing_key=None)
-        d = _make_block_decision()
-        assert signer.sign(d) is None
+        with pytest.raises(ConfigurationError, match="PRAMANIX_SIGNING_KEY"):
+            DecisionSigner(signing_key=None)
 
-    def test_sign_returns_none_with_short_key(self):
-        signer = DecisionSigner(signing_key="short")
-        d = _make_block_decision()
-        assert signer.sign(d) is None
+    def test_optional_returns_none_without_key(self, monkeypatch):
+        """DecisionSigner.optional() returns None when no key is configured."""
+        monkeypatch.delenv("PRAMANIX_SIGNING_KEY", raising=False)
+        assert DecisionSigner.optional(signing_key=None) is None
+
+    def test_constructor_raises_config_error_with_short_key(self):
+        """DecisionSigner() with a key shorter than 32 chars raises ConfigurationError (§4.10/25)."""
+        with pytest.raises(ConfigurationError, match="too short"):
+            DecisionSigner(signing_key="short")
+
+    def test_optional_returns_none_with_short_key(self):
+        """DecisionSigner.optional() returns None when the key is too short."""
+        assert DecisionSigner.optional(signing_key="short") is None
 
     def test_sign_returns_signed_decision_with_valid_key(self):
         signer = DecisionSigner(signing_key=_KEY_64)
@@ -82,10 +92,11 @@ class TestDecisionSigner:
         assert result is not None
         assert result.decision_id == d.decision_id
 
-    def test_is_active_false_without_key(self, monkeypatch):
+    def test_is_active_true_with_valid_key_only(self, monkeypatch):
+        """is_active is always True when a valid key is set (§4.10/25)."""
         monkeypatch.delenv("PRAMANIX_SIGNING_KEY", raising=False)
-        signer = DecisionSigner(signing_key=None)
-        assert signer.is_active is False
+        signer = DecisionSigner(signing_key=_KEY_64)
+        assert signer.is_active is True
 
     def test_is_active_true_with_valid_key(self):
         signer = DecisionSigner(signing_key=_KEY_64)

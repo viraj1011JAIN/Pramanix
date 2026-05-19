@@ -91,7 +91,20 @@ def _semantic_post_consensus_check(
             except SemanticPolicyViolation:
                 raise
             except Exception as _exc:
-                _log.debug("balance check skipped — non-numeric value", exc_info=_exc)
+                # Fail-closed: a non-numeric or corrupted balance value means
+                # the safety check cannot be performed.  Applying a safe-default
+                # DENY is the only correct response — allowing the request through
+                # when state integrity is unknown creates an injection attack surface.
+                _log.warning(
+                    "guard_pipeline: balance safety check received non-numeric value "
+                    "%r — applying safe-default DENY (fail-closed)",
+                    raw_balance,
+                    exc_info=_exc,
+                )
+                raise SemanticPolicyViolation(
+                    f"balance value {raw_balance!r} is not a valid number; "
+                    "safe-default deny applied (state integrity cannot be confirmed)."
+                ) from _exc
 
         # Daily limit check
         raw_daily_limit = state_values.get("daily_limit")
@@ -107,7 +120,18 @@ def _semantic_post_consensus_check(
             except SemanticPolicyViolation:
                 raise
             except Exception as _exc:
-                _log.debug("daily-limit check skipped — non-numeric value", exc_info=_exc)
+                _log.warning(
+                    "guard_pipeline: daily-limit safety check received non-numeric value "
+                    "(daily_limit=%r, daily_spent=%r) — applying safe-default DENY",
+                    raw_daily_limit,
+                    state_values.get("daily_spent"),
+                    exc_info=_exc,
+                )
+                raise SemanticPolicyViolation(
+                    f"daily_limit or daily_spent value is not a valid number "
+                    f"(daily_limit={raw_daily_limit!r}); "
+                    "safe-default deny applied."
+                ) from _exc
 
     # ── Healthcare: dosage checks ────────────────────────────────────────
     raw_dosage = intent_dict.get("dosage")
@@ -131,11 +155,31 @@ def _semantic_post_consensus_check(
                 except SemanticPolicyViolation:
                     raise
                 except Exception as _exc:
-                    _log.debug("dosage limit check skipped — non-numeric value", exc_info=_exc)
+                    _log.warning(
+                        "guard_pipeline: dosage-limit safety check received non-numeric value "
+                        "(max_daily_dose=%r, total_daily_dose=%r) — applying safe-default DENY",
+                        raw_max_daily_dose,
+                        raw_total_daily_dose,
+                        exc_info=_exc,
+                    )
+                    raise SemanticPolicyViolation(
+                        f"max_daily_dose or total_daily_dose is not a valid number "
+                        f"(max_daily_dose={raw_max_daily_dose!r}); "
+                        "safe-default deny applied."
+                    ) from _exc
         except SemanticPolicyViolation:
             raise
         except Exception as _exc:
-            _log.debug("dosage check skipped — non-numeric value", exc_info=_exc)
+            _log.warning(
+                "guard_pipeline: dosage safety check received non-numeric value "
+                "%r — applying safe-default DENY",
+                raw_dosage,
+                exc_info=_exc,
+            )
+            raise SemanticPolicyViolation(
+                f"dosage value {raw_dosage!r} is not a valid number; "
+                "safe-default deny applied."
+            ) from _exc
 
     # ── Infra: resource request vs limit checks ──────────────────────────
     raw_requested_replicas = intent_dict.get("requested_replicas") or intent_dict.get("replica_count")
@@ -157,11 +201,29 @@ def _semantic_post_consensus_check(
                 except SemanticPolicyViolation:
                     raise
                 except Exception as _exc:
-                    _log.debug("replica limit check skipped — non-numeric value", exc_info=_exc)
+                    _log.warning(
+                        "guard_pipeline: replica-limit safety check received non-numeric "
+                        "max_replicas=%r — applying safe-default DENY",
+                        raw_max_replicas,
+                        exc_info=_exc,
+                    )
+                    raise SemanticPolicyViolation(
+                        f"max_replicas value {raw_max_replicas!r} is not a valid integer; "
+                        "safe-default deny applied."
+                    ) from _exc
         except SemanticPolicyViolation:
             raise
         except Exception as _exc:
-            _log.debug("replica check skipped — non-numeric value", exc_info=_exc)
+            _log.warning(
+                "guard_pipeline: replica safety check received non-numeric value "
+                "%r — applying safe-default DENY",
+                raw_requested_replicas,
+                exc_info=_exc,
+            )
+            raise SemanticPolicyViolation(
+                f"requested_replicas value {raw_requested_replicas!r} is not a valid integer; "
+                "safe-default deny applied."
+            ) from _exc
 
     raw_cpu_request = intent_dict.get("cpu_request")
     raw_cpu_limit = state_values.get("cpu_limit")
@@ -176,7 +238,17 @@ def _semantic_post_consensus_check(
         except SemanticPolicyViolation:
             raise
         except Exception as _exc:
-            _log.debug("cpu check skipped — non-numeric value", exc_info=_exc)
+            _log.warning(
+                "guard_pipeline: cpu safety check received non-numeric value "
+                "(cpu_request=%r, cpu_limit=%r) — applying safe-default DENY",
+                raw_cpu_request,
+                raw_cpu_limit,
+                exc_info=_exc,
+            )
+            raise SemanticPolicyViolation(
+                f"cpu_request or cpu_limit is not a valid number "
+                f"(cpu_request={raw_cpu_request!r}); safe-default deny applied."
+            ) from _exc
 
     raw_mem_request = intent_dict.get("memory_request")
     raw_mem_limit = state_values.get("memory_limit")
@@ -191,7 +263,17 @@ def _semantic_post_consensus_check(
         except SemanticPolicyViolation:
             raise
         except Exception as _exc:
-            _log.debug("memory check skipped — non-numeric value", exc_info=_exc)
+            _log.warning(
+                "guard_pipeline: memory safety check received non-numeric value "
+                "(memory_request=%r, memory_limit=%r) — applying safe-default DENY",
+                raw_mem_request,
+                raw_mem_limit,
+                exc_info=_exc,
+            )
+            raise SemanticPolicyViolation(
+                f"memory_request or memory_limit is not a valid number "
+                f"(memory_request={raw_mem_request!r}); safe-default deny applied."
+            ) from _exc
 
 
 # ── Policy fingerprint ────────────────────────────────────────────────────────

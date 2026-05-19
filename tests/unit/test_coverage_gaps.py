@@ -626,9 +626,10 @@ class TestSemanticPostConsensusCheck:
                 {"balance": "1000"},  # reserve defaults to 0
             )
 
-    def test_non_numeric_balance_silently_ignored(self):
-        """Lines 356-357: non-numeric balance → except Exception: pass, no raise."""
-        self._check({"amount": "100"}, {"balance": "not-a-number"})  # must not raise
+    def test_non_numeric_balance_raises_semantic_violation(self):
+        """Non-numeric balance → SemanticPolicyViolation (fail-closed §4.12)."""
+        with pytest.raises(SemanticPolicyViolation, match="safe-default deny applied"):
+            self._check({"amount": "100"}, {"balance": "not-a-number"})
 
     def test_no_balance_skips_balance_check_goes_to_daily_limit(self):
         """Branch 340->360 False: no balance key → skips balance block, checks daily limit."""
@@ -647,13 +648,13 @@ class TestSemanticPostConsensusCheck:
                 {"balance": "1000", "daily_limit": "400", "daily_spent": "200"},
             )
 
-    def test_non_numeric_daily_limit_silently_ignored(self):
-        """Lines 372-373: non-numeric daily_limit → except Exception: pass, no raise."""
-        # Both present but non-numeric → Decimal conversion fails → swallowed
-        self._check(
-            {"amount": "100"},
-            {"daily_limit": "not-a-limit", "daily_spent": "0"},
-        )  # must not raise
+    def test_non_numeric_daily_limit_raises_semantic_violation(self):
+        """Non-numeric daily_limit → SemanticPolicyViolation (fail-closed §4.12)."""
+        with pytest.raises(SemanticPolicyViolation, match="safe-default deny applied"):
+            self._check(
+                {"amount": "100"},
+                {"daily_limit": "not-a-limit", "daily_spent": "0"},
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
