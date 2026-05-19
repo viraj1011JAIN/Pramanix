@@ -20,6 +20,7 @@ Run:
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -89,7 +90,7 @@ _pct = st.decimals(
 
 
 @given(balance=_positive_decimal, amount=_positive_decimal)
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=timedelta(seconds=5))
 def test_sufficient_balance_no_float_drift(balance: Decimal, amount: Decimal) -> None:
     """SAT result matches exact Decimal comparison — no float drift.
 
@@ -108,7 +109,7 @@ def test_sufficient_balance_no_float_drift(balance: Decimal, amount: Decimal) ->
 
 
 @given(balance=_positive_decimal, amount=_positive_decimal, extra=_positive_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=timedelta(seconds=5))
 def test_sufficient_balance_monotone_balance_increase(
     balance: Decimal, amount: Decimal, extra: Decimal
 ) -> None:
@@ -131,7 +132,7 @@ _CTR_THRESHOLD = Decimal("10000")
 
 
 @given(amount=_non_negative_decimal)
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=timedelta(seconds=5))
 def test_anti_structuring_threshold_exactness(amount: Decimal) -> None:
     """SAT ↔ amount < 10,000 — Z3 agrees with Python for all Decimal precisions."""
     inv = [AntiStructuring(_cumulative, _CTR_THRESHOLD)]
@@ -156,7 +157,7 @@ def test_anti_structuring_threshold_exactness(amount: Decimal) -> None:
     haircut=_pct,
     extra_collateral=_positive_decimal,
 )
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=timedelta(seconds=5))
 def test_collateral_haircut_monotone(
     collateral: Decimal,
     loan: Decimal,
@@ -175,7 +176,7 @@ def test_collateral_haircut_monotone(
 
 
 @given(collateral=_positive_decimal, loan=_positive_decimal, haircut=_pct)
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=timedelta(seconds=5))
 def test_collateral_haircut_no_float_drift(
     collateral: Decimal, loan: Decimal, haircut: Decimal
 ) -> None:
@@ -199,11 +200,22 @@ def test_collateral_haircut_no_float_drift(
 
 
 @given(current=_positive_decimal, peak=_positive_decimal, max_dd=_pct)
-@settings(max_examples=1_000, deadline=None)
-def test_max_drawdown_agrees_with_python(current: Decimal, peak: Decimal, max_dd: Decimal) -> None:
-    """Z3 agrees with Python: (peak - current) <= max_dd * peak iff SAT."""
-    assume(peak >= current)  # drawdown semantics require current <= peak
-    assume(peak > Decimal("0"))
+@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+def test_max_drawdown_agrees_with_python(
+    current: Decimal, peak: Decimal, max_dd: Decimal
+) -> None:
+    """Z3 agrees with Python: (peak - current) <= max_dd * peak iff SAT.
+
+    MaxDrawdown uses multiplication (not division), so peak == 0 is a valid
+    input: both Python and Z3 agree that (0 - current) <= max_dd * 0 = 0,
+    i.e. -current <= 0, which is True iff current >= 0 (always True for
+    _positive_decimal).
+
+    assume(peak >= current) is kept as a domain-constraint: the invariant is
+    designed for the normal-drawdown regime (current has not exceeded peak).
+    Behaviour for current > peak is separately tested in TestMaxDrawdownEdgeCases.
+    """
+    assume(peak >= current)
 
     inv = [MaxDrawdown(_current_nav, _peak_nav, max_dd)]
     result = solve(inv, {"current_nav": current, "peak_nav": peak}, timeout_ms=5_000)
@@ -226,7 +238,7 @@ def test_max_drawdown_agrees_with_python(current: Decimal, peak: Decimal, max_dd
     position=_positive_decimal,
     margin=_pct,
 )
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=timedelta(seconds=5))
 def test_margin_requirement_no_float_drift(
     equity: Decimal, position: Decimal, margin: Decimal
 ) -> None:
@@ -247,7 +259,7 @@ def test_margin_requirement_no_float_drift(
     margin=_pct,
     extra=_positive_decimal,
 )
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=timedelta(seconds=5))
 def test_margin_requirement_monotone_equity(
     equity: Decimal, position: Decimal, margin: Decimal, extra: Decimal
 ) -> None:
@@ -266,6 +278,89 @@ def test_margin_requirement_monotone_equity(
     assert better_result.sat is True
 
 
+# ── MaxDrawdown edge-case unit tests (#33) ────────────────────────────────────
+
+
+class TestMaxDrawdownEdgeCases:
+    """Explicit unit tests for inputs excluded from the MaxDrawdown property.
+
+    MaxDrawdown uses (peak - current) <= max_pct * peak (no division), so:
+    - peak == 0 is safe: both Python and Z3 evaluate -current <= 0, which is
+      True for any positive current (always SAT).
+    - peak < current (inverted — current exceeds historical high): the LHS
+      is negative, so (peak - current) <= max_pct * peak with peak > 0 is
+      True whenever -drawdown_abs <= max_pct * peak — almost always SAT.
+
+    These unit tests document and verify that assumption-excluded inputs
+    are handled correctly rather than crashing or diverging. (#33)
+    """
+
+    def test_peak_zero_with_positive_current_is_sat(self) -> None:
+        """peak=0, current>0: (0 - current) <= max_pct * 0 = 0 → -current <= 0.
+
+        Since current > 0, -current < 0 <= 0 is True → always SAT.
+        Python and Z3 must agree: no ZeroDivisionError (formula uses *, not /).
+        """
+        inv = [MaxDrawdown(_current_nav, _peak_nav, Decimal("0.20"))]
+        result = solve(
+            inv,
+            {"current_nav": Decimal("100"), "peak_nav": Decimal("0")},
+            timeout_ms=5_000,
+        )
+        expected = (Decimal("0") - Decimal("100")) <= Decimal("0.20") * Decimal("0")
+        assert result.sat == expected
+
+    def test_peak_equals_current_is_sat(self) -> None:
+        """peak == current: (peak - current) == 0 <= max_pct * peak — always SAT."""
+        inv = [MaxDrawdown(_current_nav, _peak_nav, Decimal("0.10"))]
+        result = solve(
+            inv,
+            {"current_nav": Decimal("500"), "peak_nav": Decimal("500")},
+            timeout_ms=5_000,
+        )
+        assert result.sat is True
+
+    def test_current_exceeds_peak_is_sat(self) -> None:
+        """peak < current (recovery above peak): LHS is negative → SAT.
+
+        (peak - current) = negative <= max_pct * peak = positive → True.
+        This is not a normal drawdown scenario but must not crash.
+        """
+        inv = [MaxDrawdown(_current_nav, _peak_nav, Decimal("0.20"))]
+        result = solve(
+            inv,
+            {"current_nav": Decimal("600"), "peak_nav": Decimal("500")},
+            timeout_ms=5_000,
+        )
+        assert result.sat is True
+
+    def test_drawdown_at_exact_limit_is_sat(self) -> None:
+        """Drawdown exactly at the limit: (peak - current) == max_pct * peak → SAT."""
+        peak = Decimal("1000")
+        max_pct = Decimal("0.20")
+        current = peak - max_pct * peak  # exactly at limit
+        inv = [MaxDrawdown(_current_nav, _peak_nav, max_pct)]
+        result = solve(
+            inv,
+            {"current_nav": current, "peak_nav": peak},
+            timeout_ms=5_000,
+        )
+        assert result.sat is True
+
+    def test_drawdown_beyond_limit_is_unsat(self) -> None:
+        """Drawdown exceeds limit: (peak - current) > max_pct * peak → UNSAT."""
+        peak = Decimal("1000")
+        max_pct = Decimal("0.20")
+        current = peak - max_pct * peak - Decimal("1")  # 1 unit below limit
+        inv = [MaxDrawdown(_current_nav, _peak_nav, max_pct)]
+        result = solve(
+            inv,
+            {"current_nav": current, "peak_nav": peak},
+            timeout_ms=5_000,
+        )
+        assert result.sat is False
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # VelocityCheck — integer boundary
 # "tx_count == window_limit must always be SAT (<=, not <)"
@@ -273,7 +368,7 @@ def test_margin_requirement_monotone_equity(
 
 
 @given(window_limit=st.integers(min_value=1, max_value=1_000))
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=timedelta(seconds=5))
 def test_velocity_check_exact_boundary_is_sat(window_limit: int) -> None:
     """Exactly at the velocity limit is always allowed (constraint is <=)."""
     inv = [VelocityCheck(_tx_count, window_limit)]
@@ -282,7 +377,7 @@ def test_velocity_check_exact_boundary_is_sat(window_limit: int) -> None:
 
 
 @given(window_limit=st.integers(min_value=1, max_value=1_000))
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=timedelta(seconds=5))
 def test_velocity_check_one_over_limit_is_unsat(window_limit: int) -> None:
     """One transaction over the limit is always rejected."""
     inv = [VelocityCheck(_tx_count, window_limit)]

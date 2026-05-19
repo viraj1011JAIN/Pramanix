@@ -30,6 +30,8 @@ from decimal import Decimal
 
 import pytest
 import z3
+from datetime import timedelta
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -59,7 +61,7 @@ def _fresh_ctx() -> z3.Context:
         # future-proof and suitable for Big Finance.
     )
 )
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=timedelta(seconds=5))
 def test_decimal_z3_roundtrip(value: Decimal) -> None:
     """Decimal survives the Z3 RealVal encoding at arbitrary precision.
 

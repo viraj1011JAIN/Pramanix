@@ -341,3 +341,59 @@ class TestCircuitBreakerStatus:
         breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD, config=config)
         await _inject_pressure(breaker, count=2, solve_ms=55.0)
         assert breaker.state == CircuitState.OPEN
+
+
+# ── §4.9 residual gap: concurrent-mutation lock linearizability test ───────────
+
+
+class TestCircuitBreakerLockLinearizability:
+    """Verify that @functools.cached_property _lock provides real mutual exclusion.
+
+    The §4.9 fix changed all three `_lock` properties from
+    `@property def _lock(self) -> asyncio.Lock: return asyncio.Lock()` (which
+    created a fresh lock on every access — providing zero mutual exclusion) to
+    `@functools.cached_property` (single lock instance per breaker).
+
+    This test proves the fix is correct: 200 coroutines racing to enter
+    `async with cb._lock:` must produce exactly 200 linearizable increments
+    with no count lost to a race.  If the old property were in place every
+    coroutine would acquire its own independent lock and proceed concurrently,
+    making the counter non-atomic and the final count non-deterministic.
+    """
+
+    N = 200
+
+    @pytest.mark.asyncio
+    async def test_lock_is_same_object_on_repeated_access(self) -> None:
+        """cached_property must return the identical Lock object every time."""
+        breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD)
+        lock_a = breaker._lock
+        lock_b = breaker._lock
+        assert lock_a is lock_b
+
+    @pytest.mark.asyncio
+    async def test_200_concurrent_increments_are_linearizable(self) -> None:
+        """200 coroutines entering async with cb._lock: must produce exactly 200.
+
+        If _lock returns a new asyncio.Lock() on every property access (the old
+        bug), each coroutine enters its own uncontended lock and all run
+        concurrently — the shared counter races and the final value is
+        non-deterministic.  With cached_property there is one lock and the
+        increments are fully serialised: count == N is guaranteed.
+        """
+        breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD)
+        counter = 0
+
+        async def _increment() -> None:
+            nonlocal counter
+            async with breaker._lock:
+                current = counter
+                await asyncio.sleep(0)  # yield to maximise interleaving
+                counter = current + 1
+
+        await asyncio.gather(*[_increment() for _ in range(self.N)])
+        assert counter == self.N, (
+            f"Lock did not serialise access: expected {self.N} but got {counter}. "
+            "This indicates _lock returned distinct objects (old bug) instead of "
+            "a single shared lock (cached_property fix)."
+        )

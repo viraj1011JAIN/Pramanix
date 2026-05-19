@@ -977,15 +977,39 @@ class TestAnthropicTranslator:
 
         assert exc_info.value.model == "claude-opus-4-6"
 
-    @pytest.mark.asyncio
-    async def test_api_status_error_raises_extraction_failure(self) -> None:
-        """Unreachable via proxy (proxy ignores api_key) — covered by # pragma in source."""
-        pytest.skip("APIStatusError path cannot be triggered via the VS Code proxy")
 
-    @pytest.mark.asyncio
-    async def test_empty_content_raises_extraction_failure(self) -> None:
-        """Streaming API assembles text via get_final_text() — empty-content path removed."""
-        pytest.skip("Streaming API always returns text; empty-content path is pragma: no cover")
+
+# ── AnthropicTranslator error paths (respx-mocked, no real key required) ───────
+
+
+@pytest.mark.asyncio
+async def test_anthropic_api_status_error_raises_extraction_failure() -> None:
+    """anthropic.py lines 129-132: APIStatusError (401) → ExtractionFailureError.
+
+    The VS Code dev proxy always returns 200 (ignores api_key), so this
+    path cannot be hit via real HTTP in the dev environment.  We use
+    respx to return a 401 response from the Anthropic endpoint, which
+    causes the SDK to raise APIStatusError; AnthropicTranslator.extract()
+    catches it and re-raises as ExtractionFailureError.
+    """
+    pytest.importorskip("anthropic")
+    from pramanix.translator.anthropic import AnthropicTranslator
+
+    translator = AnthropicTranslator("claude-opus-4-6", api_key="sk-ant-bad")
+
+    with respx.mock(assert_all_called=False) as mock:
+        mock.post("https://api.anthropic.com/v1/messages").respond(
+            401,
+            json={
+                "type": "error",
+                "error": {
+                    "type": "authentication_error",
+                    "message": "invalid x-api-key",
+                },
+            },
+        )
+        with pytest.raises(ExtractionFailureError, match="401"):
+            await translator.extract("pay 300 to Carol", SimpleIntent)
 
 
 # ── Guard.parse_and_verify ────────────────────────────────────────────────────
