@@ -3,12 +3,12 @@
 # For architectural decisions and proof of correctness, please refer to:
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
-"""Unit-test conftest — provides a real Redis testcontainer for all unit tests
-that previously relied on fakeredis.
+"""Unit-test conftest — provides a real Redis 7-alpine testcontainer.
 
 The ``redis_url`` fixture starts a real Redis 7-alpine instance in Docker for
-the duration of the test session.  Tests decorated with ``@requires_docker``
-are skipped automatically when Docker is unavailable.
+the duration of the test session and tears it down afterwards.
+Tests that declare ``redis_url`` as a fixture parameter are automatically
+skipped when Docker is unavailable.
 """
 
 from __future__ import annotations

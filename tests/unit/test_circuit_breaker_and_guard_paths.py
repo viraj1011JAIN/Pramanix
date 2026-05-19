@@ -55,8 +55,6 @@ from tests.helpers.real_protocols import (
     _RpcContext,
     _SyncScanRedis,
 )
-from tests.unit.conftest import requires_docker
-
 # ── Helper factories ─────────────────────────────────────────────────────────
 
 
@@ -243,6 +241,31 @@ class TestTranslatorCircuitBreaker:
         assert result == "ok"
         assert cb._consecutive_failures == 0
 
+    @pytest.mark.asyncio
+    async def test_call_rejects_concurrent_probe_when_probing_flag_set(self) -> None:
+        """Line 1139: OPEN + recovery elapsed + _probing=True → ExtractionFailureError.
+
+        §4.3 fix: TranslatorCircuitBreaker already had _probing logic; this test
+        covers the line (1139) that was missing from branch coverage.
+        """
+        from pramanix.circuit_breaker import CircuitState, TranslatorCircuitBreaker
+        from pramanix.exceptions import ExtractionFailureError
+
+        cb = TranslatorCircuitBreaker("m-probe-race", failure_threshold=1, recovery_seconds=0.001)
+
+        # Arrange: OPEN with recovery elapsed and another probe already running.
+        cb._state = CircuitState.OPEN
+        cb._opened_at = time.monotonic() - 999.0
+        cb._probing = True
+
+        async def _ok() -> str:
+            return "would succeed"
+
+        with pytest.raises(ExtractionFailureError, match="probe already in progress"):
+            await cb.call(_ok)
+
+        assert cb._probing is True  # not cleared — only the probing caller clears it
+
 
 # ── circuit_breaker: prometheus registry recovery paths ──────────────────────
 
@@ -372,7 +395,6 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         await backend.close()  # must not raise
         assert backend._client is None
 
-    @requires_docker
     @pytest.mark.asyncio
     async def test_redis_backend_clear_async(self, redis_url: str) -> None:
         """RedisDistributedBackend.clear_async() deletes the key for a namespace."""
@@ -380,18 +402,10 @@ class TestCircuitBreakerPrometheusRegistryPaths:
 
         from pramanix.circuit_breaker import RedisDistributedBackend
 
-        try:
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        except Exception:
-            pytest.skip("RedisDistributedBackend not constructable without redis")
-
         real_redis = aioredis.from_url(redis_url, decode_responses=True)
-        backend._client = real_redis
-        backend._redis_url = redis_url
-        backend._prefix = "pramanix:cb:clear_async:"
-        backend._ttl = 300
-        backend._sync_interval = 1.0
-        backend._last_sync = 0.0
+        backend = RedisDistributedBackend(
+            redis_client=real_redis, key_prefix="pramanix:cb:clear_async:"
+        )
 
         # Pre-set the key so we can verify it is deleted.
         await real_redis.set("pramanix:cb:clear_async:test", "value")
@@ -401,7 +415,6 @@ class TestCircuitBreakerPrometheusRegistryPaths:
 
         assert await real_redis.exists("pramanix:cb:clear_async:test") == 0
 
-    @requires_docker
     @pytest.mark.asyncio
     async def test_redis_backend_async_clear_with_keys(self, redis_url: str) -> None:
         """_async_clear(namespace=None) deletes all matching keys."""
@@ -409,18 +422,10 @@ class TestCircuitBreakerPrometheusRegistryPaths:
 
         from pramanix.circuit_breaker import RedisDistributedBackend
 
-        try:
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        except Exception:
-            pytest.skip("RedisDistributedBackend not constructable without redis")
-
         real_redis = aioredis.from_url(redis_url, decode_responses=True)
-        backend._client = real_redis
-        backend._redis_url = redis_url
-        backend._prefix = "pramanix:cb:async_clear_keys:"
-        backend._ttl = 300
-        backend._sync_interval = 1.0
-        backend._last_sync = 0.0
+        backend = RedisDistributedBackend(
+            redis_client=real_redis, key_prefix="pramanix:cb:async_clear_keys:"
+        )
 
         # Pre-set two matching keys and one non-matching key.
         await real_redis.set("pramanix:cb:async_clear_keys:ns1", "1")
@@ -433,7 +438,6 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         assert await real_redis.exists("pramanix:cb:async_clear_keys:ns2") == 0
         assert await real_redis.exists("other:key") == 1  # untouched
 
-    @requires_docker
     @pytest.mark.asyncio
     async def test_redis_backend_async_clear_no_keys(self, redis_url: str) -> None:
         """_async_clear(namespace=None) with empty key list skips delete."""
@@ -441,18 +445,10 @@ class TestCircuitBreakerPrometheusRegistryPaths:
 
         from pramanix.circuit_breaker import RedisDistributedBackend
 
-        try:
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        except Exception:
-            pytest.skip("RedisDistributedBackend not constructable without redis")
-
         real_redis = aioredis.from_url(redis_url, decode_responses=True)
-        backend._client = real_redis
-        backend._redis_url = redis_url
-        backend._prefix = "pramanix:cb:async_clear_no_keys:"
-        backend._ttl = 300
-        backend._sync_interval = 1.0
-        backend._last_sync = 0.0
+        backend = RedisDistributedBackend(
+            redis_client=real_redis, key_prefix="pramanix:cb:async_clear_no_keys:"
+        )
 
         # No keys with the prefix — clear should be a no-op.
         await backend._async_clear(namespace=None)

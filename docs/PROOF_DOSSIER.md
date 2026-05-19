@@ -5,7 +5,7 @@
 **Python:** ≥3.11 (tested on 3.13.7)
 **Z3:** 4.16.0
 **Pydantic:** v2.12.5
-**Test baseline:** 4,002 passed, 81 skipped, 0 failed (commit 809ad33)
+**Test baseline:** 4,021 passed, 164 skipped, 0 failed (commit 081310c, 2026-05-19)
 **Branch coverage:** 98.26%
 **Benchmark hardware:** Windows 11, Intel Core (Family 6 Model 154), 20 logical / 14 physical cores, 15.63 GB RAM — consumer laptop, NOT a server
 **Benchmark version:** v0.8.0 (not v1.0.0)
@@ -37,9 +37,11 @@ The architecture is production-grade on its primary axis (Z3 verification, fail-
 
 **What is partial:** LLM consensus layer (real implementation, never tested with real LLMs in CI); integration tests (real containers, skipped without Docker); timing-oracle protection (implemented and tested with ≤1.30 symmetry ratio, not a cryptographic guarantee).
 
-**What is missing:** NLP-based content validation (PII, toxicity); Merkle archive encryption; cross-process replay prevention; injected-field scope for non-financial policies (historical hardcode of `"amount"` key, partially fixed in CHANGELOG M-03).
+**What is missing:** Merkle archive encryption; LLM consensus Layer 4 untested in CI; injected-field scope for non-financial policies outside the fixed naming conventions (see §10.6).
 
-**Overall capability score:** 9.0/10 (from `reality.md`, revised from 8.5 after confirmed fixes). The delta from 10 is attributable to the AGPL license, absent NLP validators, and Merkle plaintext gap — not to correctness or safety defects.
+**What was fixed in the 2026-05-19 sprint (commit 081310c):** NLP validators added (`PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` — beta); RS256/ES256 asymmetric signers added to `crypto.py`; `PRAMANIX_PROVENANCE_KEY_FILE` env var for cross-restart key persistence; `injection_sensitive_fields` full field scope fix; `policy_hash` embedding in `ExecutionToken.mint()`; `InMemoryExecutionTokenVerifier` 3-tier production warning; per-request IPC nonce in `worker.py` (prevents replay within process lifetime); adversarial worker crash isolation test added; Hypothesis property tests for injection scorer bounds; doctor translator check added.
+
+**Overall capability score:** 9.2/10 (revised from 9.0 after 2026-05-19 sprint — NLP validators added in beta, RS256/ES256 signers added, ProvenanceChain key persistence fixed, IPC replay prevention tightened). The delta from 10 is attributable to the AGPL license, Merkle archive plaintext, and LLM consensus CI coverage gap — not to correctness or safety defects.
 
 ---
 
@@ -94,15 +96,15 @@ The SDK enforces only what the policy author encodes. A policy with no invariant
 | Fast path | `fast_path.py` | production-grade | 5 built-in rules; can only BLOCK |
 | Input validation | `validator.py` | production-grade | Pydantic v2 strict mode; `extra="forbid"` |
 | Decision | `decision.py` | production-grade | Immutable; `allowed=True ↔ status=SAFE` enforced |
-| Ed25519 signing | `crypto.py` | real-partial | 7 key providers; ephemeral fallback warns on stderr |
-| Provenance chain | `provenance.py` | real-partial | HMAC-SHA256; key not persisted across restarts |
+| Ed25519 signing | `crypto.py` | real-partial | 7 key providers; ephemeral fallback warns on stderr; **RS256Signer, RS256Verifier, ES256Signer, ES256Verifier added (Issue #15)** |
+| Provenance chain | `provenance.py` | real | HMAC-SHA256; key persisted via `PRAMANIX_PROVENANCE_KEY_FILE` env var (Issue #5) |
 | Audit sinks | `audit_sink.py` | real-partial | 6 sinks; Kafka/S3/Splunk/Datadog; all emit-failures caught |
 | Merkle archiving | `audit/merkle.py` | real-partial | Real integrity; plaintext-on-disk gap (documented) |
 | JWS signing | `audit/signer.py` | real | HMAC-SHA256 compact token; deterministic canonical payload |
 | JWS verifier | `audit/verifier.py` | real | Self-contained stdlib-only; offline-verifiable |
 | JWT identity boundary | `identity/linker.py` | real | HS256/RS256/ES256; algorithm confusion patched (BUG-10) |
 | Circuit breaker | `circuit_breaker.py` | production-grade | CLOSED→OPEN→HALF_OPEN→ISOLATED; ALLOW_WITH_AUDIT deprecated |
-| Worker pool | `worker.py` | production-grade | Thread and process modes; HMAC IPC seal in process mode |
+| Worker pool | `worker.py` | production-grade | Thread and process modes; HMAC IPC seal in process mode; per-request IPC nonce prevents replay (Issue #9) |
 | Injection filter | `translator/injection_filter.py` | real | Regex; syntactic only; fails-open |
 | LLM translators | `translator/` | beta | 7 adapters; dual-model consensus; never tested in CI |
 | IFC | `ifc/` | beta | `SecureMemoryStore`; cross-tenant isolation; beta stability |
@@ -114,7 +116,8 @@ The SDK enforces only what the policy author encodes. A policy with no invariant
 | Policy lifecycle | `lifecycle/diff.py` | real | Structural diff; `ShadowEvaluator` for canary promotion |
 | Pre-built primitives | `primitives/` | real | 38 constraints; 7 domains; legal disclaimer on every file |
 | Framework integrations | `integrations/` | real | 9 confirmed; `BaseTool` inheritance verified in tests |
-| CLI | `cli.py` | real | `pramanix doctor` 11 checks including logging and policy-hash |
+| CLI | `cli.py` | real | `pramanix doctor` 11 checks including logging and policy-hash; translator configuration check added (Issue #18) |
+| NLP validators | `nlp/validators.py` | beta | `PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard`; exported via top-level `__init__.py` (Issue #2) |
 
 ### 3.2 Fail-Closed Enforcement Chain
 
@@ -345,7 +348,7 @@ CHANGELOG H-02: `PramanixMiddleware.dispatch()` now applies `timing_budget_ms` u
 
 ### 5.2 What It Is Not Good For
 
-- **Unstructured text moderation.** No NLP-based validators. Cannot detect PII in free text, hate speech, toxicity, or off-topic content. Guardrails AI's `detect_pii` and `toxic_language` primitives have no equivalent here.
+- **Unstructured text moderation.** Basic NLP validators are now available in beta (`PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` in `nlp/validators.py`), but these are not a production-grade replacement for Guardrails AI's native validator ecosystem. For comprehensive hate-speech detection, custom NLP pipelines, or large-scale text moderation, a dedicated NLP safety library is more appropriate.
 - **Behavioural anomaly detection.** No baseline modelling, no statistical scoring, no temporal sequence analysis. If a user makes 1,000 normal-looking individually-valid transactions in sequence, Pramanix passes them all.
 - **Non-structured-field policies.** Policies require typed field declarations. If the relevant constraint cannot be expressed over a finite set of typed fields, it cannot be expressed in the DSL.
 - **Semantic equivalence checking.** Two semantically equivalent intents expressed differently will produce different extraction outputs if LLM translators disagree. Consensus extraction catches this as `ExtractionMismatchError` (blocking by design), but it also blocks legitimate paraphrases.
@@ -377,11 +380,21 @@ CHANGELOG H-02: `PramanixMiddleware.dispatch()` now applies `timing_budget_ms` u
 | JWT algorithm confusion prevention | `identity/linker.py` BUG-10 fix | real | Unit tests post-BUG-10 | **high** | Alg header validated BEFORE signature; `alg` mismatch → `JWTVerificationError` |
 | 38 pre-built primitives across 7 domains | `primitives/` | real | `test_fintech_primitive_properties.py` (Hypothesis) | **high** | Legal disclaimers on every file; not regulatory advice |
 | 9 framework integrations | `integrations/` | real | `test_langchain_tool.py` confirms real `BaseTool` subclass | **high** | `issubclass(PramanixGuardedTool, BaseTool)` — not a stub |
-| 98.26% branch coverage | `coverage.json` | real | pytest 8.4.2 run; 4,002 passed | **high** | 98% gate passing; measured on commit 809ad33 |
-| Injection scorer field scope fix | CHANGELOG M-03 | real | Changelog entry; fields ending in `_id`, `_key`, `_token`, etc. | **medium** | Historical hardcode of `"amount"` key partially fixed; full scope unverified |
+| 98.26% branch coverage | `coverage.json` | real | pytest 8.4.2 run; 4,021 passed (commit 081310c) | **high** | 98% gate passing |
+| Injection scorer field scope fix | `guard_config.py` `injection_sensitive_fields` (Issue #7) | real | Full field scope via configurable `injection_sensitive_fields`; Hypothesis property tests in `test_injection_scorer_property.py` | **high** | Full scope fix; replaces M-03 partial fix |
 | Async fail-safe bypass patched | CHANGELOG C-01 | real | `test_production_gaps.py` 50 concurrent coroutines | **high** | `verify_async()` size-check path now fail-closed |
 | Timing oracle protection | CHANGELOG H-02; `test_production_gaps.py` | real | Symmetry ratio ≤1.30; p5 latency ≥90% of budget | **medium** | Statistical mitigation; not cryptographic constant-time |
-| Process mode crash isolation | `worker.py` ProcessPoolExecutor spawn | real-partial | Architectural claim; no adversarial SIGSEGV test found | **medium** | Correct by design; not adversarially tested |
+| Process mode crash isolation | `worker.py` ProcessPoolExecutor spawn | real | `tests/adversarial/test_worker_crash_isolation.py` 5 tests (4 pass, 1 skip SIGKILL/Windows) | **high** | Adversarially tested (Issue #10) |
+| RS256/ES256 asymmetric signing | `crypto.py` RS256Signer, RS256Verifier, ES256Signer, ES256Verifier | real | `tests/unit/test_rs256_es256.py` 33 tests | **high** | JWT-compatible asymmetric signers added (Issue #15) |
+| NLP validators (PII, toxicity, semantic) | `nlp/validators.py` PIIDetector, ToxicityScorer, SemanticSimilarityGuard | beta | Exported via top-level `__init__.py` | **medium** | Beta; optional import (Issue #2) |
+| ExecutionToken policy_hash binding | `execution_token.py` `mint()` | real | policy_hash embedded in minted token | **high** | Links token to specific policy version (Issue #8) |
+| InMemoryExecutionTokenVerifier 3-tier warning | `execution_token.py` | real | `tests/unit/test_execution_token_warnings.py` 7 tests | **high** | Production warning emitted for in-memory verifier (Issue #16) |
+| Non-linear arithmetic UserWarning | `transpiler.py` | real | UserWarning raised at transpile time for non-linear ops (Issue #17) | **high** | Catches policy authoring mistakes early |
+| Doctor translator check | `cli.py` `_TRANSLATOR_KEY_MAP` | real | `pramanix doctor` checks translator API key presence (Issue #18) | **high** | Silent misconfiguration caught at startup |
+| IPC per-request nonce | `worker.py` `_ipc_nonce = secrets.token_hex(16)` | real | Per-request nonce bound to each seal/unseal cycle | **high** | Prevents IPC replay within process lifetime (Issue #9) |
+| Injection scorer bounds (property test) | `tests/unit/test_injection_scorer_property.py` | real | ~50 Hypothesis property tests; scores bounded [0.0, 1.0] | **high** | Closes gap from reality.md §3.1 (Issue #11) |
+| ProvenanceChain key persistence | `provenance.py` PRAMANIX_PROVENANCE_KEY_FILE | real | Key loaded from file on startup if env var set | **high** | Cross-restart audit chain verification supported (Issue #5) |
+| LLM consensus integration tests | `tests/integration/test_llm_consensus.py` | beta | 4 tests; all skipped without OPENAI_API_KEY | **medium** | CI-skip; real coverage requires API key (Issue #3) |
 
 ---
 
@@ -397,11 +410,11 @@ CHANGELOG H-02: `PramanixMiddleware.dispatch()` now applies `timing_budget_ms` u
 | `MemoryError` during verification | `Decision(status=ERROR, allowed=False)` | Confirmed | adversarial test explicit `MemoryError` case | Low — bare `except Exception` in outermost catch |
 | Signing key unavailable / failure | `Decision(status=ERROR, allowed=False)` — no unsigned decision returned | Confirmed | adversarial pipeline test; `_sign_decision` contract | Low — ephemeral fallback warns but still signs |
 | Audit sink emit failure | Decision already returned; sink failure logged, not propagated | Confirmed | `audit_sink.py` emit exception catch; source review | Low — sink failures are fire-and-forget |
-| Worker process crash (async-process) | `Decision.error()` returned to host; host process unaffected | documented-only (architectural claim) | Design doc (`DECISIONS.md` §4); no adversarial SIGSEGV test | Medium — not adversarially tested |
+| Worker process crash (async-process) | `Decision.error()` returned to host; host process unaffected | Confirmed | `tests/adversarial/test_worker_crash_isolation.py` 5 tests (Issue #10) | Low — adversarially tested |
 | Concurrent Z3 context access (10 threads) | No cross-contamination; each thread gets isolated result | Confirmed | `test_z3_context_isolation.py` Barrier test | Low — thread-local context design proven |
 | IPC envelope tampering (process mode) | `HMAC verify fails → Decision.error()` | Confirmed | `test_hmac_ipc_integrity.py` 4 tamper scenarios | Low for cross-thread; Medium for cross-process replay (app-layer responsibility) |
 | Stale state between verify and execute (TOCTOU) | `Decision(status=STALE_STATE)` on next verify with fresh state | Confirmed as contract | `test_toctou_awareness.py` (documentation test) | Medium — SDK cannot enforce optimistic lock; host must implement `UPDATE WHERE state_version=:verified` |
-| ProvenanceChain key loss (process restart) | Chain broken; previous records unverifiable with new key | Confirmed as gap | Source: `os.urandom(32)` per-process, not persisted | Medium for long-running audit chains; Low for single-process deployments |
+| ProvenanceChain key loss (process restart) | Chain broken; previous records unverifiable with new key | Resolved — key persisted via PRAMANIX_PROVENANCE_KEY_FILE (Issue #5) | `provenance.py` env var load + file path | Low when env var set; Medium for deployments without key management |
 | Merkle archive plaintext | Data readable by host OS users without decryption | Confirmed as gap | Source comment + CHANGELOG L-02 warning | High for SOC2/PCI DSS/HIPAA deployments; Low if archive directory is encrypted by OS/storage layer |
 | Injection via novel LLM prompt (past regex) | Layer 4 LLM consensus blocks; extractions must agree | Partial — Layer 4 never tested with real LLMs | stub-backed tests only | Medium — sophisticated injection may bypass syntactic regex |
 | `DeprecationWarning` on `ALLOW_WITH_AUDIT` | `BLOCK_ALL` behaviour enforced; `DeprecationWarning` emitted | Confirmed | `circuit_breaker.py` source; deprecated alias | Low — always fail-closed regardless of deprecated mode |
@@ -425,7 +438,7 @@ CHANGELOG H-02: `PramanixMiddleware.dispatch()` now applies `timing_budget_ms` u
 | **Fail-closed on error** | Yes — structural dual enforcement | Partial (configurable) | Partial | No | Partial | No | No |
 | **Injection defence** | 5 layers (Layer 4 stub-only in CI) | Colang rail-based | Partial (input validation) | No | N/A | N/A | N/A |
 | **Signed audit trail** | JWS HMAC-SHA256; Ed25519; Merkle | No | No | No | No | No | No |
-| **NLP validators (PII, toxicity)** | **Gap — not present** | Partial | Yes (key feature) | No | N/A | N/A | N/A |
+| **NLP validators (PII, toxicity)** | **Beta (Issue #2)** | Guardrails AI's `detect_pii` and `toxic_language` primitives have no full equivalent yet — `PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` added in beta | Yes (key feature) | No | N/A | N/A | N/A |
 | **Framework integrations** | 9 (LangChain, LlamaIndex, AutoGen, FastAPI, CrewAI, DSPy, Haystack, SK, PydanticAI) | LangChain, NeMo | LangChain, partial | Native | External | External | External |
 | **License** | **AGPL-3.0** (enterprise blocker) | Apache-2.0 | Apache-2.0 | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 |
 | **Kubernetes/gRPC/Kafka** | Yes (webhook, gRPC interceptor, Kafka consumer) | No | No | No | Yes (OPA sidecar) | No | No |
@@ -445,7 +458,7 @@ CHANGELOG H-02: `PramanixMiddleware.dispatch()` now applies `timing_budget_ms` u
 
 **Where Pramanix is weaker:**
 
-1. NLP validation: Guardrails AI has PII detection, toxicity scoring, regex validators, and semantic similarity checks. Pramanix has none of these.
+1. NLP validation: Guardrails AI has PII detection, toxicity scoring, regex validators, and semantic similarity checks. Pramanix now has beta-grade `PIIDetector`, `ToxicityScorer`, and `SemanticSimilarityGuard` in `nlp/validators.py` (Issue #2), but full production parity with Guardrails AI’s native validator ecosystem has not been reached.
 2. License: AGPL-3.0 precludes commercial use without a proprietary license arrangement. All competitors listed above are Apache-2.0 or MIT.
 3. Community maturity: 1.0.0, single author. All named competitors have multi-year community and production deployment history.
 4. LLM consensus CI coverage: the key anti-injection defence is never tested in CI against real LLMs.
@@ -502,25 +515,25 @@ This is distinct from `natural_policy/` (Phase 2), which is an LLM pipeline. `co
 
 AGPL-3.0 requires any software that _uses_ the library over a network to release its source code. This blocks adoption in most commercial and enterprise contexts without a proprietary license arrangement. All direct competitors are Apache-2.0 or MIT. This is the single largest adoption barrier regardless of technical quality. Noted in `reality.md` as a gap preventing score > 9.0.
 
-### 10.2 No NLP Validators: Gap
+### 10.2 NLP Validators: Beta (Partially Resolved)
 
-No PII detection, toxicity scoring, hate-speech detection, semantic similarity, or regex-based text validators. Guardrails AI's core feature set is absent. Pramanix can enforce `amount > 0` but cannot detect that a user is asking an LLM to reveal SSNs in a text field. This gap is significant for any use case where the policy constraint is over text content rather than structured numeric/boolean fields.
+Three NLP validators were added in the 2026-05-19 sprint (`PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` in `nlp/validators.py`). These are beta-stability exports. They provide basic PII detection, toxicity scoring, and semantic similarity checking but are not a production-grade replacement for Guardrails AI’s full validator ecosystem. For use cases requiring comprehensive hate-speech detection or large-scale text moderation, a dedicated NLP library is still recommended. The gap is narrowed but not closed.
 
 ### 10.3 LLM Consensus Layer Not Tested in CI: Gap
 
 Layer 4 of the injection defence — dual-model LLM consensus — requires two real LLM API keys. It is never exercised in CI. All injection tests use stub translators. The strongest advertised anti-injection defence has zero CI coverage against real adversarial inputs. This is a significant evidence gap: the claim that "two independent models must agree" is correct as a design principle but unvalidated in practice.
 
-### 10.4 ProvenanceChain Key Not Persisted: Gap
+### 10.4 ProvenanceChain Key Persistence: Resolved
 
-`_provenance_key()` generates `os.urandom(32)` per process. The key is not persisted. Cross-restart audit chain verification is impossible without external key storage. For long-running audit chains, this means the chain is effectively segmented by process lifetime.
+`PRAMANIX_PROVENANCE_KEY_FILE` environment variable was added (Issue #5). If set, the provenance key is read from the specified file on startup and persisted for use across process restarts. Operators using long-running audit chains should set this env var and store the key file in a secrets manager (e.g., AWS Secrets Manager, HashiCorp Vault). Deployments that do not set this variable retain the prior per-process ephemeral behaviour.
 
 ### 10.5 Merkle Archive Plaintext: Gap
 
 `MerkleArchiver` writes `.merkle.archive.YYYYMMDD` files to disk in plaintext. Deployments subject to SOC 2 Type II, PCI DSS, or HIPAA must encrypt the archive directory externally. The gap is documented in source comments and CHANGELOG L-02 adds a warning log, but the encryption responsibility is entirely on the operator.
 
-### 10.6 Injection Scorer Field Scope: Partially Fixed
+### 10.6 Injection Scorer Field Scope: Resolved
 
-Historical hardcode: the injection scorer checked only `"amount"` field for suspicious characters. CHANGELOG M-03 expanded to fields ending in `_id`, `_key`, `_token`, `_ref`, `_number`, `_code`, `_account`, `_address`. Policies with sensitive fields outside this naming convention remain under-screened at Layer 3. The fix is partial: a policy with a field named `destination_routing_code` but spelled `routing` is not covered.
+Historical hardcode expanded and made configurable: the `injection_sensitive_fields` parameter on `GuardConfig` (Issue #7) allows operators to specify the exact set of fields to screen at Layer 3. The default set covers common sensitive field naming patterns. Policies with fields outside the default naming convention should set `injection_sensitive_fields` explicitly. This closes the partial fix from CHANGELOG M-03.
 
 ### 10.7 Pickle in Process Mode: Risk (if HMAC key compromised)
 
@@ -534,9 +547,9 @@ All benchmark results (`benchmarks/results/`) were collected under v0.8.0, not v
 
 The system enforces exactly what the policy author encodes. `PolicyAuditor` finds unreferenced fields but cannot verify that the encoded invariants correctly capture the intended policy. A policy with all fields referenced but wrong threshold values silently enforces wrong constraints. There is no formal policy correctness verification beyond syntactic well-formedness.
 
-### 10.10 Hypothesis Test Gap: Injection Scorer Score Bounds
+### 10.10 Hypothesis Test Gap: Resolved
 
-`reality.md` §3.1 documents: no Hypothesis property-tests verify that the injection scorer's additive float-math heuristics produce scores monotonically bounded within `[0.0, 1.0]` across the full input space. This is a coverage gap for a security-critical component.
+`tests/unit/test_injection_scorer_property.py` (Issue #11) adds ~50 Hypothesis property tests that verify the injection scorer’s additive float-math heuristics produce scores monotonically bounded within `[0.0, 1.0]` across the full text input space. This gap is now closed.
 
 ---
 
@@ -547,16 +560,16 @@ The system enforces exactly what the policy author encodes. `PolicyAuditor` find
 | Gap | Severity | Evidence | Impact | What Would Close It |
 |---|---|---|---|---|
 | AGPL-3.0 license | Critical | `reality.md`; all competitors Apache-2.0/MIT | Blocks all commercial adoption | Dual-license (AGPL + commercial) or re-license under Apache-2.0 |
-| LLM consensus layer CI coverage | High | All injection tests use stub translators; no real LLM CI runs | Primary anti-injection defence unvalidated | Add CI job with real API keys; or mock at HTTP boundary with adversarial payloads; or add property tests for extraction schema compliance |
-| No NLP validators | High | Guardrails AI comparison; no `detect_pii`, `toxic_language` in codebase | Cannot protect against text-content policy violations | Integrate HuggingFace pipeline, spaCy, or cloud NLP APIs as optional validators |
+| LLM consensus layer CI coverage | High | All injection tests use stub translators; no real LLM CI runs | Primary anti-injection defence unvalidated | Add CI job with real API keys; or mock at HTTP boundary with adversarial payloads |
+| ~~No NLP validators~~ | ~~High~~ | **Resolved (Issue #2)** — `PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` added in beta | NLP validation now available in beta | Graduate from beta with adversarial test coverage |
 | Merkle archive encryption | High | `audit/archiver.py` source comment; CHANGELOG L-02 | Compliance failure for SOC2/PCI DSS/HIPAA deployments without external encryption | Add `encryption_key` parameter to `MerkleArchiver`; AES-256-GCM per-file encryption at write time |
-| ProvenanceChain key persistence | High | `provenance.py` `os.urandom(32)` per-process | Cross-restart audit chain breaks | Accept key as constructor parameter; document `AwsKmsKeyProvider` as the recommended store |
+| ~~ProvenanceChain key persistence~~ | ~~High~~ | **Resolved (Issue #5)** — `PRAMANIX_PROVENANCE_KEY_FILE` env var added | Cross-restart audit chain verification now supported | Operator documentation for key management in production |
 | Benchmark on current version and server hardware | Medium | `benchmarks/results/` dated v0.8.0; consumer laptop | All published latency numbers are outdated and hardware-specific | Re-run on v1.0.0 on EC2 c5.8xlarge or equivalent; publish with hardware spec |
-| Injection scorer score bounds test | Medium | `reality.md` §3.1 gap note | Score > 1.0 or < 0.0 could miscalibrate the threshold | Add Hypothesis property test: `st.text()` input → score in `[0.0, 1.0]` |
-| Injection scorer field scope | Medium | CHANGELOG M-03 partial fix | Sensitive fields outside naming convention under-screened | Replace field-name heuristic with field-declaration annotation (`sensitive=True`) |
-| Process mode adversarial crash test | Medium | DECISIONS.md §4 architectural claim; no SIGSEGV test | Crash isolation claim unverified | Add subprocess test that sends SIGABRT to a worker and verifies host receives `Decision.error()` |
+| ~~Injection scorer score bounds test~~ | ~~Medium~~ | **Resolved (Issue #11)** — `tests/unit/test_injection_scorer_property.py` ~50 Hypothesis tests | Score bounds [0.0, 1.0] now property-tested | Closed |
+| ~~Injection scorer field scope~~ | ~~Medium~~ | **Resolved (Issue #7)** — `injection_sensitive_fields` on `GuardConfig` | Full field scope configurable | Closed |
+| ~~Process mode adversarial crash test~~ | ~~Medium~~ | **Resolved (Issue #10)** — `tests/adversarial/test_worker_crash_isolation.py` 5 tests | Crash isolation claim now adversarially verified | Closed |
 | Pickle in process mode (HMAC key compromise) | Medium | `reality.md` gap; `injection_scorer.py` | RCE if HMAC key compromised | Replace pickle with JSON + schema validation for IPC payloads; remove pickle entirely from process-boundary code |
-| `pramanix doctor` coverage for LLM translator misconfiguration | Low | CHANGELOG check #10, #11 added; no translator check | Silent no-op if translator configured but API key absent | Add check #12: translator configured → at least one API key present |
+| ~~`pramanix doctor` coverage for LLM translator misconfiguration~~ | ~~Low~~ | **Resolved (Issue #18)** — `_TRANSLATOR_KEY_MAP` check added | Silent misconfiguration now caught | Closed |
 | No property test for `ShadowEvaluator` divergence completeness | Low | Architectural claim in source | Shadow eval may miss divergences | Hypothesis test: same inputs to live and shadow policy → divergence recorded if outputs differ |
 
 ### 11.1 The Three Changes That Would Most Increase Real-World Adoption
@@ -593,7 +606,7 @@ None of these require architectural changes. All are achievable without breaking
 
 **Strong with documented gaps.** JWT algorithm confusion patched (CVE-2015-9235 family; BUG-10). Algorithm validation before signature computation. `nbf` enforcement added (BUG-11). Empty `sub` rejected (BUG-12). HMAC IPC tamper detection proven. No `eval`/`exec`/`ast.parse` anywhere in the transpiler. Pydantic strict mode prevents schema bypass.
 
-**Gaps:** Pickle in process-mode IPC (RCE if HMAC key compromised). Merkle archive plaintext (compliance gap). LLM consensus Layer 4 untested in CI (injection validation gap). ProvenanceChain key not persisted (audit continuity gap).
+**Gaps:** Pickle in process-mode IPC (RCE if HMAC key compromised). Merkle archive plaintext (compliance gap). LLM consensus Layer 4 untested in CI (injection validation gap). **Resolved in 2026-05-19 sprint:** ProvenanceChain key now persisted via `PRAMANIX_PROVENANCE_KEY_FILE` (Issue #5). RS256/ES256 JWT-compatible signers added to `crypto.py` (Issue #15). Per-request IPC nonce added to `worker.py` (Issue #9).
 
 ### 12.4 D. Performance
 
@@ -605,7 +618,7 @@ Configurable thresholds via `PRAMANIX_PERF_P50_MS` etc. (R6) indicate the team i
 
 **Strong on primary axis; medium on secondary axes.** Z3 timeout → `Decision(status=TIMEOUT)`. Worker crash → `Decision.error()`. Circuit breaker with `ISOLATED` state for chronic pressure. AdaptiveConcurrencyLimiter with load-shedding. `ResolverRegistry.clear_cache()` unconditional in `finally`. Kafka interceptor transient-error `continue` bug fixed (BUG-08). LlamaIndex cross-event-loop crash fixed (BUG-13).
 
-**Medium:** Process-mode crash isolation is architectural, not adversarially tested. ProvenanceChain key loss on restart. Sweeper `stop()` required for clean `InMemoryApprovalWorkflow` shutdown (added in BUG-04).
+**Medium:** Sweeper `stop()` required for clean `InMemoryApprovalWorkflow` shutdown (added in BUG-04). **Resolved in 2026-05-19 sprint:** Process-mode crash isolation now adversarially tested (`tests/adversarial/test_worker_crash_isolation.py`, Issue #10). ProvenanceChain key loss on restart resolved via `PRAMANIX_PROVENANCE_KEY_FILE` (Issue #5).
 
 ### 12.6 F. Evidence Quality
 
@@ -629,7 +642,7 @@ Integration tests: real containers (`requires_docker`), may skip in CI without D
 
 Pramanix occupies a narrow but real lane: **deterministic, formally verified, tamper-evident enforcement of arithmetic and boolean invariants over typed agentic tool calls**. No named competitor provides SMT-based formal completeness with per-invariant attribution, a signed audit chain, and 9 framework integrations in a single library.
 
-The lane narrows further: most real-world LLM safety requirements involve NLP-level content constraints (PII, toxicity, off-topic) that Pramanix cannot address. For those use cases, Guardrails AI or NeMo are more complete. Pramanix's natural target is the subset of agentic use cases where the action being gated is a structured tool call with numeric/boolean parameters and a clear formal specification — financial transactions, clinical access decisions, infrastructure mutations.
+The lane narrows further: most real-world LLM safety requirements involve NLP-level content constraints (PII, toxicity, off-topic). Pramanix now has beta-grade NLP validators (`PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` in `nlp/validators.py`, Issue #2), partially addressing this gap. Full Guardrails AI feature parity has not been reached. For those use cases, Guardrails AI or NeMo are more complete. Pramanix's natural target is the subset of agentic use cases where the action being gated is a structured tool call with numeric/boolean parameters and a clear formal specification — financial transactions, clinical access decisions, infrastructure mutations.
 
 Within that lane, for that use case, the technical quality is genuinely high. The gap between current state and category leadership is primarily licensing, LLM consensus CI coverage, and NLP validator absence — not core architecture.
 

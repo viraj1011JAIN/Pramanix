@@ -8,6 +8,7 @@
 Verifies that raw field values from intent/state are never
 included in block feedback strings.
 """
+
 from pramanix.decision import Decision
 from pramanix.integrations._feedback import format_autogen_rejection, format_block_feedback
 
@@ -33,9 +34,11 @@ def test_format_block_feedback_never_includes_field_names_not_in_explain():
     d = _make_block_decision()
     intent = {"secret_field": "secret_value", "amount": "999"}
     result = format_block_feedback(d, intent)
-    assert "secret_value" not in result
-    assert "secret_field" not in result
-    assert "999" not in result
+    # Strip decision_id before checking: UUID hex can coincidentally contain digits
+    result_without_id = result.replace(d.decision_id, "<id>")
+    assert "secret_value" not in result_without_id
+    assert "secret_field" not in result_without_id
+    assert "999" not in result_without_id
 
 
 def test_format_block_feedback_includes_decision_id():

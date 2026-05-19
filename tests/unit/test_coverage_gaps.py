@@ -73,8 +73,6 @@ from tests.helpers.real_protocols import (
     _VaultKvClientMissingField,
     make_allow_guard,
 )
-from tests.unit.conftest import requires_docker
-
 # ── Shared policy fixture ─────────────────────────────────────────────────────
 
 _amount = Field("amount", Decimal, "Real")
@@ -1202,7 +1200,6 @@ class _AlwaysWatchErrorClient:
 
 
 class TestCircuitBreakerRedisEdgeCases:
-    @requires_docker
     @pytest.mark.asyncio
     async def test_set_state_redis_exceptions_import_fallback(self, redis_url: str) -> None:
         """Lines 789-792: WatchError = Exception fallback when redis.exceptions absent."""
@@ -1227,7 +1224,6 @@ class TestCircuitBreakerRedisEdgeCases:
         result = await backend.get_state("ns_import_fallback")
         assert result.circuit_state == CircuitState.OPEN.value
 
-    @requires_docker
     @pytest.mark.asyncio
     async def test_set_state_malformed_hash_uses_default(self, redis_url: str) -> None:
         """Lines 820-821: malformed failure_count → default _DistributedState as merge base."""
@@ -1269,7 +1265,6 @@ class TestCircuitBreakerRedisEdgeCases:
 
         await backend.set_state("ns_watch_err", _DistributedState())
 
-    @requires_docker
     @pytest.mark.asyncio
     async def test_clear_from_within_running_event_loop(self, redis_url: str) -> None:
         """Lines 891-898: clear() schedules background task when called inside a loop."""

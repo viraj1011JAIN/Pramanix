@@ -8,7 +8,7 @@
 These tests cover logic that does NOT require a real database:
   - ExecutionToken.is_allowed() (pure dataclass method)
   - PostgresExecutionTokenVerifier constructor validation (ValueError before pool)
-  - RedisExecutionTokenVerifier state_version mismatch (uses real fakeredis)
+  - RedisExecutionTokenVerifier state_version mismatch (uses real Docker Redis testcontainer)
 
 All PostgresExecutionTokenVerifier database tests (consume, double-spend, pool
 reuse, consume_within, etc.) live in:
@@ -23,8 +23,6 @@ import pytest
 
 from pramanix.decision import Decision, SolverStatus
 from pramanix.execution_token import ExecutionToken, ExecutionTokenSigner
-from tests.unit.conftest import requires_docker
-
 _SECRET = b"test_secret_key_32_bytes_exact!!"
 
 
@@ -78,7 +76,6 @@ def test_init_raises_value_error_for_short_key() -> None:
 # ── RedisExecutionTokenVerifier state_version mismatch ───────────────────────
 
 
-@requires_docker
 def test_redis_verifier_rejects_token_with_state_version_mismatch(redis_url: str) -> None:
     """RedisExecutionTokenVerifier returns False when state_version != expected."""
     import redis as _real_redis

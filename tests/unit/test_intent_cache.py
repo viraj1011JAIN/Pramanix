@@ -21,8 +21,6 @@ from pramanix.translator._cache import (
     _InProcessLRUCache,
     _normalize_key,
 )
-from tests.unit.conftest import requires_docker
-
 # ── Tests: _normalize_key ─────────────────────────────────────────────────────
 
 
@@ -406,7 +404,6 @@ class _PaginatedScanRedis:
         pass
 
 
-@requires_docker
 class TestRedisCache:
     """Tests for _RedisCache using a real Redis testcontainer — no MagicMock."""
 

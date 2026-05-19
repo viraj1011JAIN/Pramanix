@@ -99,37 +99,25 @@ async def test_clear_single_namespace() -> None:
 
 # ── RedisDistributedBackend with real Redis testcontainer ─────────────────────
 
-from tests.unit.conftest import requires_docker
 
-
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_get_default(redis_url: str) -> None:
     """Redis backend returns default CLOSED state when key is absent."""
     import redis.asyncio as aioredis
 
-    backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = redis_url
-    backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:get_default:"
-    backend._ttl = 300
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    backend = RedisDistributedBackend(redis_client=client, key_prefix="pramanix:cb:get_default:")
 
     state = await backend.get_state("test_ns")
     assert state.circuit_state == CircuitState.CLOSED.value
 
 
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_set_and_get(redis_url: str) -> None:
     import redis.asyncio as aioredis
 
-    backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = redis_url
-    backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:set_and_get:"
-    backend._ttl = 300
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    backend = RedisDistributedBackend(redis_client=client, key_prefix="pramanix:cb:set_and_get:")
 
     await backend.set_state(
         "my_ns",
@@ -145,17 +133,14 @@ async def test_redis_backend_set_and_get(redis_url: str) -> None:
     assert state.failure_count == 5
 
 
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_conservative_merge(redis_url: str) -> None:
     import redis.asyncio as aioredis
 
-    backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = redis_url
-    backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:conservative_merge:"
-    backend._ttl = 300
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    backend = RedisDistributedBackend(
+        redis_client=client, key_prefix="pramanix:cb:conservative_merge:"
+    )
 
     await backend.set_state(
         "merge_ns",

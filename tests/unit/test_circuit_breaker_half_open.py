@@ -123,6 +123,62 @@ async def test_half_open_successful_probe_recovers_to_closed() -> None:
     assert cb._state == CircuitState.CLOSED
 
 
+# ── §4.3 double-probe rejection: lines 258 and 268 ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_verify_open_with_probing_flag_returns_open_decision() -> None:
+    """Line 258: OPEN state + recovery elapsed + _probing=True → OPEN decision (no guard call).
+
+    §4.3 fix: a second caller arriving while a probe is already in progress is
+    immediately rejected so only one probe can execute at a time.
+    """
+    import time
+
+    config = CircuitBreakerConfig(
+        namespace="test_double_probe_258",
+        pressure_threshold_ms=50,
+        consecutive_pressure_count=1,
+        recovery_seconds=0.0,
+    )
+    cb = AdaptiveCircuitBreaker(_GUARD, config)
+
+    # Arrange: OPEN with recovery elapsed and a probe already in progress.
+    cb._state = CircuitState.OPEN
+    cb._last_transition = time.monotonic() - 999.0
+    cb._probing = True
+
+    decision = await cb.verify_async(intent=_ALLOW_INTENT, state=_STATE)
+
+    assert not decision.allowed
+    assert cb._probing is True  # probe flag is not cleared by the rejected caller
+
+
+@pytest.mark.asyncio
+async def test_verify_half_open_with_probing_flag_returns_open_decision() -> None:
+    """Line 268: HALF_OPEN state + _probing=True → OPEN decision for concurrent caller.
+
+    §4.3 fix: when the circuit is already in HALF_OPEN with an active probe, a
+    concurrent caller that didn't set is_probe=True is immediately rejected.
+    """
+    config = CircuitBreakerConfig(
+        namespace="test_double_probe_268",
+        pressure_threshold_ms=50,
+        consecutive_pressure_count=1,
+        recovery_seconds=0.0,
+    )
+    cb = AdaptiveCircuitBreaker(_GUARD, config)
+
+    # Arrange: HALF_OPEN with a probe already in progress (is_probe=False for this caller).
+    cb._state = CircuitState.HALF_OPEN
+    cb._probing = True
+
+    decision = await cb.verify_async(intent=_ALLOW_INTENT, state=_STATE)
+
+    assert not decision.allowed
+    assert cb._probing is True  # probe flag is not cleared by the rejected caller
+
+
 # ── Race condition: double-OPEN prevention (branch 189->194) ─────────────────
 
 
@@ -277,48 +333,38 @@ def test_redis_distributed_backend_config_error_without_redis() -> None:
 
 # ── Redis backend: _get_client() cached path (lines 623-625) ─────────────────
 
-from tests.unit.conftest import requires_docker
 
-
-@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_get_client_returns_cached_instance(redis_url: str) -> None:
+async def test_redis_backend_get_client_returns_cached_instance(
+    redis_url: str,
+) -> None:
     """Lines 623-625: second call to _get_client() returns the already-created client."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend
 
     backend = RedisDistributedBackend(redis_url=redis_url)
-    real_client = aioredis.from_url(redis_url, decode_responses=True)
-    backend._client = real_client  # pre-inject so _get_client returns cached
 
     client1 = await backend._get_client()
     client2 = await backend._get_client()
-    assert client1 is client2 is real_client
+    assert client1 is client2  # cached — same instance returned
 
 
 # ── Redis backend: set_state() conservative merge ────────────────────────────
 
 
-@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_set_state_lower_severity_not_overwritten(redis_url: str) -> None:
+async def test_redis_backend_set_state_lower_severity_not_overwritten(
+    redis_url: str,
+) -> None:
     """Lines 698-700: conservative merge keeps existing state when it has higher severity."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
     backend = RedisDistributedBackend(redis_url=redis_url)
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
     backend._prefix = "pramanix:cb:lower_sev:"
 
-    # First write: OPEN state (higher severity)
     await backend.set_state(
         "ns1",
         _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=1),
     )
-
-    # Second write: CLOSED state (lower severity) — existing OPEN should survive
     await backend.set_state(
         "ns1",
         _DistributedState(circuit_state=CircuitState.CLOSED.value, failure_count=0),
@@ -328,16 +374,12 @@ async def test_redis_backend_set_state_lower_severity_not_overwritten(redis_url:
     assert result.circuit_state == CircuitState.OPEN.value
 
 
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_set_state_higher_severity_wins(redis_url: str) -> None:
     """Conservative merge: OPEN overwrites CLOSED (higher severity wins)."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
     backend = RedisDistributedBackend(redis_url=redis_url)
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
     backend._prefix = "pramanix:cb:higher_sev:"
 
     await backend.set_state(
@@ -354,16 +396,14 @@ async def test_redis_backend_set_state_higher_severity_wins(redis_url: str) -> N
     assert result.failure_count == 3
 
 
-@requires_docker
 @pytest.mark.asyncio
-async def test_redis_backend_set_state_accumulates_failure_count(redis_url: str) -> None:
+async def test_redis_backend_set_state_accumulates_failure_count(
+    redis_url: str,
+) -> None:
     """set_state() failure_count is summed (lines 708-716)."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
     backend = RedisDistributedBackend(redis_url=redis_url)
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
     backend._prefix = "pramanix:cb:accum:"
 
     await backend.set_state(
@@ -379,16 +419,12 @@ async def test_redis_backend_set_state_accumulates_failure_count(redis_url: str)
     assert result.failure_count == 5
 
 
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_get_state_returns_closed_on_empty(redis_url: str) -> None:
     """get_state() returns default CLOSED state when no data in Redis."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend
 
     backend = RedisDistributedBackend(redis_url=redis_url)
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
     backend._prefix = "pramanix:cb:empty:"
 
     result = await backend.get_state("nonexistent_namespace")
@@ -396,16 +432,12 @@ async def test_redis_backend_get_state_returns_closed_on_empty(redis_url: str) -
     assert result.failure_count == 0
 
 
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_clear_specific_namespace(redis_url: str) -> None:
     """clear() removes only the specified namespace (lines 719-729)."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
     backend = RedisDistributedBackend(redis_url=redis_url)
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
     backend._prefix = "pramanix:cb:clear_spec:"
 
     await backend.set_state(
@@ -425,19 +457,15 @@ async def test_redis_backend_clear_specific_namespace(redis_url: str) -> None:
     assert kept.circuit_state == CircuitState.CLOSED.value
 
 
-@requires_docker
 @pytest.mark.asyncio
 async def test_redis_backend_clear_all_namespaces(redis_url: str) -> None:
     """clear(None) removes all namespace keys under the prefix."""
-    import redis.asyncio as aioredis
-
     from pramanix.circuit_breaker import RedisDistributedBackend, _DistributedState
 
     backend = RedisDistributedBackend(
         redis_url=redis_url,
         key_prefix="pramanix:cb:clearall:",
     )
-    backend._client = aioredis.from_url(redis_url, decode_responses=True)
 
     await backend.set_state(
         "ns_a",

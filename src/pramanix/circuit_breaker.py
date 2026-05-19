@@ -732,30 +732,32 @@ class RedisDistributedBackend:
 
     def __init__(
         self,
-        redis_url: str,
+        redis_url: str = "",
         *,
+        redis_client: Any = None,
         sync_interval_seconds: float = 1.0,
         key_prefix: str = "pramanix:cb:",
         ttl_seconds: int = 300,
     ) -> None:
-        try:
-            import importlib as _il
+        if redis_client is None:
+            try:
+                import importlib as _il
 
-            _il.import_module("redis.asyncio")
-            del _il
-        except ImportError as exc:
-            from pramanix.exceptions import ConfigurationError
+                _il.import_module("redis.asyncio")
+                del _il
+            except ImportError as exc:
+                from pramanix.exceptions import ConfigurationError
 
-            raise ConfigurationError(
-                "redis[asyncio] is required for RedisDistributedBackend. "
-                "Install it with: pip install 'pramanix[redis]'"
-            ) from exc
+                raise ConfigurationError(
+                    "redis[asyncio] is required for RedisDistributedBackend. "
+                    "Install it with: pip install 'pramanix[redis]'"
+                ) from exc
 
         self._redis_url = redis_url
         self._sync_interval = sync_interval_seconds
         self._prefix = key_prefix
         self._ttl = ttl_seconds
-        self._client: Any = None
+        self._client: Any = redis_client
         self._clear_tasks: set[asyncio.Future] = set()
 
     async def _get_client(self) -> Any:

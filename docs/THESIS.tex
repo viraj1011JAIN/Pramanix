@@ -112,7 +112,7 @@
   Engineering Design, Research Foundations, and Production Evidence
 }
 \author{Viraj Jain}
-\date{Audit Date: 12 May 2026}
+\date{Audit Date: 19 May 2026}
 
 %% ============================================================================
 \begin{document}
@@ -158,7 +158,7 @@ does not make the LLM more accurate.  It enforces a hard envelope around what
 the LLM's output can cause.
 
 \textbf{What the codebase delivers} (verified against source as of
-2026-05-12 in \fname{reality.md}):
+2026-05-19 in \fname{reality.md}):
 \begin{itemize}
   \item A Python-native DSL that lowers to Z3 AST without \code{eval} or
         \code{exec} anywhere in the codebase (\fname{docs/DECISIONS.md}
@@ -188,6 +188,20 @@ the LLM's output can cause.
         \textbf{Four of these --- DSPy, Haystack, Semantic Kernel, and
         Pydantic AI --- are stub implementations} as of v1.0.0, documented
         in \fname{docs/KNOWN\_GAPS.md}.
+  \item RS256 (RSA-PKCS1v15-SHA256) and ES256 (ECDSA-P256-SHA256) JWT-compatible
+        asymmetric signers (\code{RS256Signer}, \code{RS256Verifier},
+        \code{ES256Signer}, \code{ES256Verifier}) in \fname{crypto.py}
+        (18-issue sprint, Issue~\#15).
+  \item Beta NLP validators (\code{PIIDetector}, \code{ToxicityScorer},
+        \code{SemanticSimilarityGuard}) in \fname{nlp/validators.py},
+        exported via \code{pramanix.\_\_init\_\_}
+        (18-issue sprint, Issue~\#2).
+  \item \code{ExecutionToken.mint()} now embeds \code{policy\_hash} for
+        tamper-detection; \code{InMemoryExecutionTokenVerifier} emits a
+        production-deployment warning at tier~3 (Issues~\#8, \#16).
+  \item \code{pramanix doctor} now checks for LLM translator
+        misconfiguration (Issue~\#18); transpiler emits
+        \code{UserWarning} on non-linear arithmetic (Issue~\#17).
   \item A strict Intermediate Representation (IR) compiler
         (\fname{src/pramanix/compiler.py}) --- Pillar~1 of the
         Neuro-Symbolic Policy Engine --- that accepts \code{PolicyIR}, a
@@ -199,16 +213,19 @@ the LLM's output can cause.
         sign-off.  No LLM call is made by the compiler itself.
 \end{itemize}
 
-\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): \textbf{4,002 passed},
-81 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
-passing).
+\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): \textbf{4,021 passed},
+164 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
+passing).  Baseline: commit~\code{081310c}, 2026-05-19 (18-issue sprint).
 
 \textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
 audit was conducted by the author against the author's own source code.  It
 is not an independent third-party audit.  The structured rubric in
-\fname{reality.md} produced a self-assigned score of 9.0/10 (revised upward from
-8.5 after Phase~10 confirmed resolution of the Merkle archive encryption gap,
-the injection scorer field-name gap, and the async fail-safe bypass).  The primary
+\fname{reality.md} produced a self-assigned score of 9.2/10 (revised upward from
+9.0 after the 18-issue sprint of 2026-05-19 confirmed resolution of the NLP
+validators gap, ProvenanceChain key persistence, injection scorer field scope,
+process crash isolation, RS256/ES256 signers, and IPC per-request nonce;
+originally 8.5 after Phase~10 confirmed the Merkle encryption gap and async
+fail-safe bypass).  The primary
 adoption blocker is the AGPL-3.0-only license: any organization deploying
 Pramanix as part of a network service must release the complete corresponding
 source code of that service to users.  No commercial software company in
@@ -753,6 +770,14 @@ The iterative Merkle root construction (replacing recursive) was a deliberate
 correctness fix (\fname{docs/DECISIONS.md} \cfrsec{18}). The recursive
 implementation hits Python's call stack limit at approximately 1,000 decisions.
 The iterative version uses $O(1)$ stack depth.
+
+\textbf{ProvenanceChain key persistence (18-issue sprint, Issue~\#5):} The HMAC
+signing key is now persisted across process restarts when
+\code{PRAMANIX\_PROVENANCE\_KEY\_FILE} is set to a file path in the environment.
+If the variable is absent, the prior per-process ephemeral key behaviour is
+preserved (backwards compatible).  For long-running audit chains, set this env
+var and store the key file in a secrets manager to ensure cross-restart
+chain continuity.
 
 \subsection{Layer~9 --- The Governance Gates}
 
@@ -1352,6 +1377,16 @@ Ed25519 signing (\fname{crypto.py}), \code{MerkleAnchor} and
 a correctness fix --- the recursive implementation hit Python's stack limit at
 1,000 decisions (\fname{docs/DECISIONS.md} \cfrsec{18}).
 
+\textbf{18-issue sprint extension (Issue~\#15):} \fname{crypto.py} was
+extended with four new asymmetric signers: \code{RS256Signer}
+(RSA-PKCS1v15-SHA256), \code{RS256Verifier}, \code{ES256Signer}
+(ECDSA-P256-SHA256), and \code{ES256Verifier}.  All four are JWT-compatible,
+tested in \fname{tests/unit/test\_rs256\_es256.py} (33 tests), and exported
+via \code{pramanix.\_\_init\_\_}.  PEM keys can be provided via environment
+variables (\code{PRAMANIX\_RS256\_SIGNING\_KEY\_PEM} and
+\code{PRAMANIX\_ES256\_SIGNING\_KEY\_PEM}) or directly as constructor
+arguments.
+
 \subsection{Phase~7 --- v0.9: Enterprise Integrations}
 
 Nine framework adapters: LangChain, LlamaIndex, AutoGen, FastAPI, CrewAI,
@@ -1423,6 +1458,15 @@ After Phase~2 (Natural Policy Engine) additions and test-suite bug fixes:
 After pytest upgrade (7.4.4~$\to$~8.4.2) and full re-run (2026-05-13):
 \textbf{4,002 passed}, \textbf{81 skipped}, \textbf{0 failed}.  Coverage:
 \textbf{98.26\,\%} (gate: \textbf{passing}).  Wall time: 437.91\,s.
+
+After 18-issue sprint (2026-05-19, commit~\code{081310c}):
+\textbf{4,021 passed}, \textbf{164 skipped}, \textbf{0 failed}.  Coverage:
+\textbf{98.26\,\%} (gate: \textbf{passing}).  Five new test files added:
+\fname{test\_injection\_scorer\_property.py} ($\approx$50 Hypothesis tests),
+\fname{test\_rs256\_es256.py} (33 tests), \fname{test\_execution\_token\_warnings.py}
+(7 tests), \fname{test\_worker\_crash\_isolation.py} (5 tests, 1 skip on
+Windows), \fname{test\_llm\_consensus.py} (4 tests, all skip without
+\code{OPENAI\_API\_KEY}).
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection*{Phase~2 (Natural Policy Engine) --- v1.1: Natural Language Policy Compiler}
@@ -2061,7 +2105,15 @@ forge \code{allowed=True} in the host process.
         host without propagating.
 \end{itemize}
 
-\textbf{Test evidence.}  4 tamper scenarios in the process-mode test suite.
+\textbf{Per-request nonce (18-issue sprint, Issue~\#9):} \fname{worker.py}
+now generates \code{\_ipc\_nonce = secrets.token\_hex(16)} per request and
+binds each sealed IPC envelope to that nonce via \code{\_unseal\_decision}.
+This prevents replay of a sealed result from an earlier request within the
+same process lifetime.
+
+\textbf{Test evidence.}  4 tamper scenarios in the process-mode test suite;
+\fname{tests/adversarial/test\_worker\_crash\_isolation.py} adds 5 adversarial
+crash tests (4 pass, 1 skipped on Windows for SIGKILL, Issue~\#10).
 \textbf{Residual risk.}  HMAC-only prevents forgery if the ephemeral key
 is secret.  If \code{PRAMANIX\_SCORER\_KEY} is compromised,
 \fname{injection\_scorer.py}:305 has an \code{pickle.loads()} RCE vector
@@ -2187,6 +2239,13 @@ Known gap (\fname{reality.md} \cfrsec{3.1}): The \fname{\_sanitise.py}
 injection scorer has complex additive float-math heuristics. No Hypothesis
 property tests verify that score combinations are monotonically bounded within
 $[0.0, 1.0]$ across the full input space.
+
+\textit{Resolved in 18-issue sprint (Issue~\#11):}
+\fname{tests/unit/test\_injection\_scorer\_property.py} adds $\approx$50
+Hypothesis property tests verifying that the injection scorer's additive
+float-math heuristics produce scores bounded within $[0.0, 1.0]$ across the
+full \code{st.text()} input space.  The gap documented in \fname{reality.md}
+\cfrsec{3.1} is closed.
 
 \section{Real Infrastructure Integration Tests}
 
@@ -2537,10 +2596,13 @@ content cannot use that content to bypass the policy.
         process restart clears it. \code{RedisExecutionTokenVerifier} closes
         this for Redis deployments.
 
-  \item \textbf{No NLP Validators}. No PII redaction, toxicity scoring, or
-        free-text classification. Pramanix is built exclusively for structured
-        intent verification. Pramanix~$+$ Guardrails~AI are complementary,
-        not alternatives.
+  \item \textbf{NLP Validators (Beta)}. \code{PIIDetector},
+        \code{ToxicityScorer}, and \code{SemanticSimilarityGuard} are now
+        available in \fname{nlp/validators.py} (18-issue sprint, Issue~\#2),
+        exported via \code{pramanix.\_\_init\_\_}.  These are
+        beta-stability components.  For structured intent verification,
+        Pramanix remains the primary tool; for text-content policies, these
+        beta NLP validators now provide initial coverage.
 
   \item \textbf{Injection Scorer Field Name}
         (\fname{\_sanitise.py}). \textit{[Resolved — Phase~10]}.
@@ -2575,8 +2637,16 @@ content cannot use that content to bypass the policy.
   \item License change: AGPL-3.0 $\to$ Apache~2.0 (unchanged blocker)
   \item Logging split-brain fix: route stdlib logging through
         \code{structlog.stdlib.ProcessorFormatter}
-  \item RS256/ES256 JWT support
-  \item Hypothesis property tests for injection scorer
+  \item \textit{[Done --- 18-issue sprint, Issue~\#15]} RS256/ES256 JWT support
+        (\code{RS256Signer}, \code{RS256Verifier}, \code{ES256Signer},
+        \code{ES256Verifier} in \fname{crypto.py}; 33 tests in
+        \fname{test\_rs256\_es256.py})
+  \item \textit{[Done --- 18-issue sprint, Issue~\#11]} Hypothesis property
+        tests for injection scorer ($\approx$50 tests in
+        \fname{test\_injection\_scorer\_property.py})
+  \item \textit{[Done --- 18-issue sprint, Issue~\#10]} Worker process crash
+        adversarial tests (5 tests in
+        \fname{tests/adversarial/test\_worker\_crash\_isolation.py})
   \item Close optional-dependency coverage gaps in
         \fname{integrations/langchain.py},
         \fname{integrations/haystack.py},
@@ -3381,8 +3451,11 @@ The license must change. The Redis circuit breaker race must be fixed. The
 logging split-brain must be unified.  \textit{[Done --- Phase~10]} The Merkle
 archive encryption is now pluggable (\code{EncryptedArchiveWriter}).
 
-After those three remaining changes (license, Redis race, logging split-brain),
-Pramanix is ready for external release. Not because
+After the 18-issue sprint (commit~\code{081310c}, 2026-05-19), two of the
+three blockers have been resolved: the Redis circuit breaker race was fixed
+in Phase~10, and logging split-brain was unified in Phase~10.  The
+AGPL-3.0 licence remains the single largest adoption blocker.
+After the licence change, Pramanix is ready for external release. Not because
 the system is perfect --- the 14 known gaps in \fname{docs/KNOWN\_GAPS.md}
 document what remains. But because every gap is known, named, and honest, and
 the core contract has not been broken.
@@ -3490,13 +3563,18 @@ To reach indisputable category leadership, the following must be addressed:
     standardised server hardware (32-core, 128\,GB RAM) is needed before
     publishing single-digit-millisecond latency claims.
 
-  \item \textbf{NLP content validation.}  PII detection and toxicity scoring
-    are entirely absent.  A pluggable validator interface would allow
-    \code{spacy}/\code{presidio} integration without hard coupling.
+  \item \textbf{NLP content validation (Beta — partially resolved).}
+    \code{PIIDetector}, \code{ToxicityScorer}, and
+    \code{SemanticSimilarityGuard} were added in the 18-issue sprint
+    (Issue~\#2).  A full pluggable validator interface with
+    \code{spacy}/\code{presidio} hard-coupling avoidance remains a future
+    hardening item.
 
-  \item \textbf{Cross-process replay prevention.}  HMAC tags are scoped to a
-    single process lifetime.  A persisted, monotonic nonce registry is needed
-    for multi-process deployments.
+  \item \textbf{Cross-process replay prevention (resolved for
+    within-session replay, Issue~\#9).}  \fname{worker.py} now generates
+    a per-request \code{secrets.token\_hex(16)} nonce binding each sealed
+    IPC envelope.  A persisted, monotonic nonce registry for multi-process
+    deployments across restarts remains a future hardening item.
 \end{enumerate}
 
 \section{Recommended Next Steps}
@@ -3560,7 +3638,7 @@ P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} &
 AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
 Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
 Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
-4,002 tests (post-upgrade)  & \fname{reality.md}            & \cfrsec{3.1} \\
+4,021 tests (sprint baseline) & \fname{reality.md}            & \cfrsec{3.1} \\
 3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
 3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
 EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\

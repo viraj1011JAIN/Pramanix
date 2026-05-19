@@ -103,6 +103,74 @@ class TestDecisionSigner:
         assert result is None
 
 
+# ── TestIncSigningFailure ─────────────────────────────────────────────────────
+
+
+class _BoomCounter:
+    """Counter-like whose .inc() always raises — covers the outer except Exception path."""
+
+    def inc(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("simulated inc failure")
+
+
+class TestIncSigningFailure:
+    """Branch coverage for _inc_signing_failure() — lines 44->52, 50-51, 53-56."""
+
+    def test_counter_already_set_increments_directly(self) -> None:
+        """44->52: when _signing_failure_counter is not None, go directly to .inc()."""
+        import pramanix.audit.signer as _mod
+
+        # Ensure counter is initialised at least once.
+        _mod._inc_signing_failure()
+        assert _mod._signing_failure_counter is not None
+
+        # Second call must take the False branch of `if _signing_failure_counter is None:`
+        # (44->52) and call .inc() directly — no exception must propagate.
+        _mod._inc_signing_failure()
+
+    def test_value_error_on_re_registration_silenced(self) -> None:
+        """50-51: re-registering an already-registered metric raises ValueError — caught."""
+        import pramanix.audit.signer as _mod
+
+        # Make sure "pramanix_signing_failures_total" is registered in the global registry.
+        _mod._inc_signing_failure()
+        saved = _mod._signing_failure_counter
+        try:
+            # Reset so the next call tries to create the counter again.
+            # prometheus_client raises ValueError for duplicate metric names.
+            _mod._signing_failure_counter = None
+            _mod._inc_signing_failure()  # hits lines 50-51: except ValueError: return
+        finally:
+            _mod._signing_failure_counter = saved
+
+    def test_import_error_silenced(self) -> None:
+        """53-54: ImportError when prometheus_client is unavailable is suppressed."""
+        import sys
+
+        import pramanix.audit.signer as _mod
+
+        orig = sys.modules.get("prometheus_client", _MISSING := object())
+        sys.modules["prometheus_client"] = None  # blocks `from prometheus_client import …`
+        try:
+            _mod._inc_signing_failure()  # must not raise
+        finally:
+            if orig is _MISSING:
+                del sys.modules["prometheus_client"]
+            else:
+                sys.modules["prometheus_client"] = orig  # type: ignore[assignment]
+
+    def test_unexpected_exception_from_inc_silenced(self) -> None:
+        """55-56: generic exception from counter.inc() is caught by the outer except."""
+        import pramanix.audit.signer as _mod
+
+        saved = _mod._signing_failure_counter
+        try:
+            _mod._signing_failure_counter = _BoomCounter()
+            _mod._inc_signing_failure()  # .inc() raises RuntimeError → lines 55-56
+        finally:
+            _mod._signing_failure_counter = saved
+
+
 # ── TestDecisionVerifier ──────────────────────────────────────────────────────
 
 

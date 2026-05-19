@@ -28,8 +28,6 @@ from pramanix import (
 )
 from pramanix.decision import Decision
 from pramanix.execution_token import ExecutionTokenVerifier
-from tests.unit.conftest import requires_docker
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -73,15 +71,6 @@ class _SetOnlyRedis:
         pass
 
 
-def _signer_verifier(ttl: float = 30.0):
-    """Return a matched (signer, in-memory verifier, redis verifier) triple."""
-    key = secrets.token_bytes(32)
-    signer = ExecutionTokenSigner(secret_key=key, ttl_seconds=ttl)
-    mem_verifier = ExecutionTokenVerifier(secret_key=key)
-    redis_verifier = RedisExecutionTokenVerifier(secret_key=key, redis_client=_fresh_redis())
-    return signer, mem_verifier, redis_verifier
-
-
 # ── Construction / validation ──────────────────────────────────────────────────
 
 
@@ -108,7 +97,6 @@ class TestRedisVerifierConstruction:
                 redis_client=bad,
             )
 
-    @requires_docker
     def test_custom_prefix_accepted(self, redis_url: str):
         r = _fresh_redis(redis_url)
         v = RedisExecutionTokenVerifier(
@@ -118,7 +106,6 @@ class TestRedisVerifierConstruction:
         )
         assert v._prefix == "myapp:tok:"
 
-    @requires_docker
     def test_default_prefix(self, redis_url: str):
         v = RedisExecutionTokenVerifier(
             secret_key=secrets.token_bytes(32), redis_client=_fresh_redis(redis_url)
@@ -129,7 +116,6 @@ class TestRedisVerifierConstruction:
 # ── Happy path ─────────────────────────────────────────────────────────────────
 
 
-@requires_docker
 class TestRedisVerifierHappyPath:
     def test_valid_token_consumed_once(self, redis_url: str):
         signer, _, redis_v = _signer_verifier(redis_url)
@@ -155,7 +141,6 @@ class TestRedisVerifierHappyPath:
 # ── Cross-instance (distributed) guarantee ────────────────────────────────────
 
 
-@requires_docker
 class TestCrossInstanceSingleUse:
     """Simulate two server processes sharing the same Redis backend."""
 
@@ -216,7 +201,6 @@ class TestCrossInstanceSingleUse:
 # ── Security: tampered / wrong-key tokens ─────────────────────────────────────
 
 
-@requires_docker
 class TestRedisVerifierSecurity:
     def test_wrong_key_rejected(self, redis_url: str):
         key_a = secrets.token_bytes(32)
@@ -298,7 +282,6 @@ class TestRedisVerifierSecurity:
 # ── Concurrency ────────────────────────────────────────────────────────────────
 
 
-@requires_docker
 class TestRedisVerifierConcurrency:
     def test_concurrent_consume_exactly_one_wins(self, redis_url: str):
         """50 threads race to consume the same token  -- exactly one succeeds."""
@@ -355,7 +338,6 @@ class TestRedisVerifierConcurrency:
 # ── consumed_count ─────────────────────────────────────────────────────────────
 
 
-@requires_docker
 class TestRedisConsumedCount:
     def test_zero_initially(self, redis_url: str):
         _, _, redis_v = _signer_verifier(redis_url)
@@ -401,7 +383,6 @@ class TestRedisConsumedCount:
 # ── Redis key format ───────────────────────────────────────────────────────────
 
 
-@requires_docker
 class TestRedisKeyFormat:
     def test_key_uses_prefix_and_token_id(self, redis_url: str):
         key = secrets.token_bytes(32)
@@ -513,7 +494,6 @@ class TestRedisConnectionFailure:
 # ── Compatibility: matches in-memory verifier ──────────────────────────────────
 
 
-@requires_docker
 class TestCompatibilityWithInMemory:
     """RedisExecutionTokenVerifier must accept tokens minted for the in-memory verifier."""
 

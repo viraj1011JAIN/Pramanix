@@ -43,7 +43,6 @@ from pramanix.identity.linker import (
     StateLoadError,
 )
 from pramanix.identity.redis_loader import RedisStateLoader
-from tests.unit.conftest import requires_docker
 
 _SECRET_32 = "s" * 32
 _SECRET_64 = "s" * 64
@@ -276,7 +275,6 @@ class TestVerifyToken:
 class TestExtractAndLoad:
     """Integration tests: JWT linker + real RedisStateLoader + real Redis testcontainer."""
 
-    @requires_docker
     @pytest.fixture(autouse=True)
     async def setup(self, redis_url: str) -> None:
         url_db2 = redis_url.rstrip("/0").rstrip("/") + "/2"
@@ -365,7 +363,6 @@ class TestRedisStateLoader:
     Every test here performs real set/get operations against a Redis container.
     """
 
-    @requires_docker
     @pytest.fixture(autouse=True)
     async def setup_redis(self, redis_url: str) -> None:
         # Use DB 1 for identity tests to avoid conflicts with circuit breaker tests (DB 0)

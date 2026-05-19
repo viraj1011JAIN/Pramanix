@@ -356,6 +356,14 @@ filterwarnings = [
     # GuardConfig emits a production-mode advisory when PRAMANIX_ENV=production;
     # tests that set this env var are explicitly testing that path.
     "ignore:GuardConfig:UserWarning",
+    # requests detects a urllib3/chardet version mismatch — upstream packaging
+    # issue between requests and urllib3; does not affect test correctness.
+    "ignore:urllib3.*doesn't match a supported version",
+    "ignore:chardet.*doesn't match a supported version",
+    # Pramanix intentionally emits a UserWarning when Z3 receives a non-linear
+    # arithmetic expression (variable × variable).  Tests that trigger this path
+    # are explicitly exercising the constraint DSL; suppress the advisory.
+    "ignore:Non-linear arithmetic detected:UserWarning",
 ]
 
 [tool.coverage.run]
