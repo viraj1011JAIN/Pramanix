@@ -354,9 +354,6 @@ filterwarnings = [
     # the coroutine is never awaited when the GC collects the client object.
     # This is an upstream SDK issue; suppress to keep the test output clean.
     "ignore:coroutine 'AsyncClient.aclose' was never awaited:RuntimeWarning",
-    # InMemoryExecutionTokenVerifier intentionally warns in tests that use it;
-    # the warning is the expected behaviour under test.
-    "ignore:InMemoryExecutionTokenVerifier:UserWarning",
     # GuardConfig emits a production-mode advisory when PRAMANIX_ENV=production;
     # tests that set this env var are explicitly testing that path.
     "ignore:GuardConfig:UserWarning",

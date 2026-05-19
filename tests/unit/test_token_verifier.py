@@ -26,11 +26,11 @@ from pramanix import (
     Field,
     Guard,
     GuardConfig,
-    InMemoryExecutionTokenVerifier,
     Policy,
     SQLiteExecutionTokenVerifier,
 )
 from pramanix.execution_token import ExecutionToken
+from pramanix.testing import InMemoryExecutionTokenVerifier
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

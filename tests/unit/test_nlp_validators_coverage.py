@@ -191,6 +191,66 @@ def test_try_sentence_transformer_success_sets_gauge_to_one() -> None:
         )
 
 
+# ── re2 SecurityWarning on fallback (§4.8/#6) ────────────────────────────────
+
+
+def test_nlp_validators_re2_fallback_emits_security_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """nlp/validators.py emits SecurityWarning when re2 is absent.
+
+    The module-level fallback (validators.py lines 40-54) must warn
+    operators of the downgraded ReDoS protection before any PII pattern
+    is evaluated against untrusted input.
+    """
+    import importlib
+    import warnings as _warnings
+
+    monkeypatch.delitem(
+        sys.modules, "pramanix.nlp.validators", raising=False
+    )
+    with patch.dict(sys.modules, {"re2": None}):
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            importlib.import_module("pramanix.nlp.validators")
+
+    # SecurityWarning is a Python built-in; check by class name to avoid
+    # lint tools that don't enumerate all built-in warning categories.
+    sec = [w for w in caught if w.category.__name__ == "SecurityWarning"]
+    assert sec, "Expected SecurityWarning on re2 fallback in nlp/validators"
+    assert "re2" in str(sec[0].message).lower()
+
+
+def test_injection_filter_re2_fallback_emits_security_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """injection_filter.py emits SecurityWarning when re2 is absent.
+
+    The module-level fallback (injection_filter.py lines 57-68) must warn
+    operators of the downgraded ReDoS protection before injection scanning.
+    """
+    import importlib
+    import warnings as _warnings
+
+    monkeypatch.delitem(
+        sys.modules,
+        "pramanix.translator.injection_filter",
+        raising=False,
+    )
+    with patch.dict(sys.modules, {"re2": None}):
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            importlib.import_module(
+                "pramanix.translator.injection_filter"
+            )
+
+    sec = [w for w in caught if w.category.__name__ == "SecurityWarning"]
+    assert sec, (
+        "Expected SecurityWarning on re2 fallback in injection_filter"
+    )
+    assert "re2" in str(sec[0].message).lower()
+
+
 # ── _get_nlp_gauge: resilience when prometheus_client absent ───────────────────
 
 

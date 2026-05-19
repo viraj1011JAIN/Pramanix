@@ -90,7 +90,7 @@ _log = logging.getLogger(__name__)
 _asyncpg: types.ModuleType | None
 try:
     import asyncpg as _asyncpg  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover
+except ImportError:
     _asyncpg = None
 
 # Sentinel used in except clauses: empty tuple = catch nothing when asyncpg absent.
@@ -976,7 +976,7 @@ class PostgresExecutionTokenVerifier:
         import asyncio
         import threading
 
-        if _asyncpg is None:  # pragma: no cover
+        if _asyncpg is None:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(

@@ -494,6 +494,14 @@ class ExpressionNode:
     __slots__ = ("node",)
     __hash__ = object.__hash__
 
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "ExpressionNode cannot be used as a boolean condition. "
+            "Use the comparison operators (==, !=, <, <=, >, >=) or "
+            "the & / | bitwise operators to build ConstraintExpr objects, "
+            "then pass them to policy invariants()."
+        )
+
     def __init__(self, node: Any) -> None:
         self.node = node
 

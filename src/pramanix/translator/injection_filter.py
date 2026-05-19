@@ -38,9 +38,20 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from typing import Any
 
 _log = logging.getLogger(__name__)
+
+# SecurityWarning is a built-in in Python 3.12+.  On 3.11 we define a
+# compatible local class so warnings.warn(SecurityWarning) works on both.
+try:
+    SecurityWarning  # noqa: F821 — built-in on 3.12+
+except NameError:
+
+    class SecurityWarning(UserWarning):  # type: ignore[no-redef]
+        """Security advisory (Python 3.11 compatibility shim)."""
+
 
 __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 
@@ -58,6 +69,18 @@ try:
 except ImportError:
     _re_engine = re
     _RE2_AVAILABLE = False
+    warnings.warn(
+        "pramanix.translator.injection_filter: google-re2 is not installed — "
+        "falling back to stdlib re (ReDoS attack via crafted injection patterns is possible). "
+        "Install with: pip install 'pramanix[security]'",
+        SecurityWarning,
+        stacklevel=2,
+    )
+    _log.warning(
+        "pramanix.translator.injection_filter: google-re2 not installed — "
+        "stdlib re is in use; ReDoS via crafted injection patterns is possible. "
+        "pip install 'pramanix[security]'"
+    )
 
 
 # ── Injection pattern registry ─────────────────────────────────────────

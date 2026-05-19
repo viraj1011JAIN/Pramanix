@@ -20,7 +20,7 @@ Do NOT update the snapshots without completing all three steps.
 
 Contracts locked at v0.9.0:
 
-  1. pramanix.__all__            — exact set of 151 exported names.
+  1. pramanix.__all__            — exact set of 150 exported names.
   2. SolverStatus                — exact 9 members, wire values, iteration order.
   3. Decision.to_dict()          — exact 13-key schema + per-field type semantics.
   4. GuardConfig field names     — exact 29 fields, all-defaults constructor, frozen.
@@ -147,7 +147,7 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Decorator
         "guard",
         # Execution token verifiers (v1.0.0)
-        "InMemoryExecutionTokenVerifier",
+        # Note: InMemoryExecutionTokenVerifier moved to pramanix.testing (v1.0.0)
         "PostgresExecutionTokenVerifier",
         "SQLiteExecutionTokenVerifier",
         # Audit sinks (v1.0.0 additions)

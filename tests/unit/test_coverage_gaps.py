@@ -1367,17 +1367,9 @@ class TestAnthropicTranslatorImportErrors:
         """Lines 50-51: anthropic package absent → ImportError at construction."""
         from pramanix.translator.anthropic import AnthropicTranslator
 
-        _sentinel = object()
-        _orig = sys.modules.pop("anthropic", _sentinel)
-        sys.modules["anthropic"] = None  # type: ignore[assignment]
-        try:
+        with patch.dict(sys.modules, {"anthropic": None}):
             with pytest.raises(ImportError, match="anthropic package"):
                 AnthropicTranslator("claude-opus-4-6", api_key="test")
-        finally:
-            if _orig is _sentinel:
-                sys.modules.pop("anthropic", None)
-            else:
-                sys.modules["anthropic"] = _orig
 
     @pytest.mark.asyncio
     async def test_missing_tenacity_raises_import_error(self) -> None:
@@ -1385,18 +1377,10 @@ class TestAnthropicTranslatorImportErrors:
         from pramanix.translator.anthropic import AnthropicTranslator
 
         t = AnthropicTranslator("claude-opus-4-6", api_key="test")
-
-        _sentinel = object()
-        _orig = sys.modules.pop("tenacity", _sentinel)
-        sys.modules["tenacity"] = None  # type: ignore[assignment]
-        try:
+        with patch.dict(sys.modules, {"tenacity": None}):
             with pytest.raises(ImportError, match="tenacity"):
                 await t.extract("hello", {"type": "object", "properties": {}})
-        finally:
-            if _orig is _sentinel:
-                sys.modules.pop("tenacity", None)
-            else:
-                sys.modules["tenacity"] = _orig
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1552,33 +1536,22 @@ def test_injection_filter_scan_all_exception_returns_empty() -> None:
 def test_solver_span_noop_when_otel_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lines 94-98: _span() returns nullcontext() when opentelemetry is not installed.
 
-    Blocks the opentelemetry parent package (sys.modules["opentelemetry"] = None)
-    so that 'from opentelemetry import trace' raises ImportError during the fresh
-    module load.  The except ImportError branch then defines the no-op _span.
+    Uses monkeypatch for all sys.modules mutations — guaranteed cleanup even on
+    KeyboardInterrupt.  Evicts opentelemetry-* and pramanix.solver so the solver
+    module re-executes its top-level ImportError branch and defines the no-op _span.
     """
     import contextlib as _contextlib
 
-    # Save and evict ALL opentelemetry-* entries so no stale attributes remain.
-    otel_keys = [
-        k for k in list(sys.modules) if k == "opentelemetry" or k.startswith("opentelemetry.")
-    ]
-    saved_otel = {k: sys.modules.pop(k) for k in otel_keys}
+    # Evict ALL opentelemetry-* entries so the fresh solver import finds none.
+    for k in [k for k in list(sys.modules) if k == "opentelemetry" or k.startswith("opentelemetry.")]:
+        monkeypatch.delitem(sys.modules, k)
 
-    # Also evict the solver module so its top-level code reruns on import.
-    saved_solver = sys.modules.pop("pramanix.solver", None)
+    # Evict the solver so its module-level code re-runs on the next import.
+    monkeypatch.delitem(sys.modules, "pramanix.solver", raising=False)
 
-    # Block opentelemetry entirely — 'from opentelemetry import trace' → ImportError.
-    sys.modules["opentelemetry"] = None  # type: ignore[assignment]
-    try:
-        fresh = importlib.import_module("pramanix.solver")
-        span_result = fresh._span("test-op")
-        assert isinstance(span_result, _contextlib.nullcontext)
-    finally:
-        # Unblock and restore all opentelemetry modules.
-        sys.modules.pop("opentelemetry", None)
-        sys.modules.update(saved_otel)
-        # Restore original solver so subsequent tests see the real module.
-        if saved_solver is not None:
-            sys.modules["pramanix.solver"] = saved_solver
-        else:
-            sys.modules.pop("pramanix.solver", None)
+    # Block opentelemetry — 'from opentelemetry import trace' → ImportError.
+    monkeypatch.setitem(sys.modules, "opentelemetry", None)
+
+    fresh = importlib.import_module("pramanix.solver")
+    span_result = fresh._span("test-op")
+    assert isinstance(span_result, _contextlib.nullcontext)

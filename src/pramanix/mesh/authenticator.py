@@ -882,7 +882,7 @@ def _verify_signature(
     if alg == "RS256":
         try:
             from cryptography.hazmat.primitives.asymmetric import padding as asym_padding
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError("'cryptography' package is required for RS256 verification.") from exc
 
         try:
@@ -903,7 +903,7 @@ def _verify_signature(
     elif alg == "ES256":
         try:
             from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
-        except ImportError as exc:  # pragma: no cover
+        except ImportError as exc:
             raise ImportError("'cryptography' package is required for ES256 verification.") from exc
 
         try:

@@ -123,7 +123,6 @@ from pramanix.execution_token import (
     ExecutionToken,
     ExecutionTokenSigner,
     ExecutionTokenVerifier,
-    InMemoryExecutionTokenVerifier,
     PostgresExecutionTokenVerifier,
     RedisExecutionTokenVerifier,
     SQLiteExecutionTokenVerifier,
@@ -308,8 +307,6 @@ __all__ = [
     # Oversight workflow
     "InMemoryApprovalWorkflow",
     "InMemoryDistributedBackend",
-    # E-1: Redis-free token backends
-    "InMemoryExecutionTokenVerifier",
     "InjectionBlockedError",
     # D-4: Injection scorer
     "InjectionScorer",

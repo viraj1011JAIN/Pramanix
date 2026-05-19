@@ -21,6 +21,33 @@ provides concrete before/after code examples for each one.
 
 ## Upgrading to 1.0.x from 0.9.x
 
+### §4.5 — `InMemoryExecutionTokenVerifier` moved to `pramanix.testing`
+
+**Severity: Breaking**
+
+`InMemoryExecutionTokenVerifier` was removed from the top-level `pramanix`
+namespace and is now available only from `pramanix.testing`.
+
+**Before (v0.9.x):**
+
+```python
+from pramanix import InMemoryExecutionTokenVerifier
+```
+
+**After (v1.0.0+):**
+
+```python
+from pramanix.testing import InMemoryExecutionTokenVerifier
+# or equivalently:
+from pramanix.execution_token import InMemoryExecutionTokenVerifier
+```
+
+**Why:** `InMemoryExecutionTokenVerifier` is not safe for multi-worker
+production deployments.  Moving it to `pramanix.testing` signals that it
+belongs alongside test helpers, not production infrastructure.
+
+---
+
 ### H-03 — LangChain: `execute_fn=None` now raises instead of returning "OK"
 
 **Severity: Breaking**
