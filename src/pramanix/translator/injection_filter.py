@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 _log = logging.getLogger(__name__)
 
@@ -50,11 +51,12 @@ __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 #
 # If unavailable, stdlib re is used with a WARNING.  The injection patterns in
 # this file use only basic regex features compatible with both engines.
+_re_engine: Any  # re2 if available, stdlib re as fallback
 try:
     import re2 as _re_engine  # type: ignore[import-not-found]
     _RE2_AVAILABLE = True
 except ImportError:
-    _re_engine = re  # type: ignore[assignment]
+    _re_engine = re
     _RE2_AVAILABLE = False
 
 

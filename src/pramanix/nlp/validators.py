@@ -32,11 +32,12 @@ _log = logging.getLogger(__name__)
 # avoid lookbehind assertions (not supported by RE2).  The phone pattern uses
 # \b (word boundary) instead of the stdlib lookbehind — functionally equivalent
 # for the corpus of natural-language text this module targets.
+_re_engine: Any  # re2 if available, stdlib re as fallback
 try:
     import re2 as _re_engine  # type: ignore[import-not-found]
     _RE2_AVAILABLE = True
 except ImportError:
-    _re_engine = re  # type: ignore[assignment]
+    _re_engine = re
     _RE2_AVAILABLE = False
 
 if not _RE2_AVAILABLE:
