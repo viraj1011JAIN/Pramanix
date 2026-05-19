@@ -56,52 +56,40 @@ __all__ = [
     "wrap_tools",
 ]
 
-_FASTAPI_NAMES = {"PramanixMiddleware", "pramanix_route"}
-_LANGCHAIN_NAMES = {"PramanixGuardedTool", "wrap_tools"}
-_LLAMA_NAMES = {"PramanixFunctionTool", "PramanixQueryEngineTool"}
-_AUTOGEN_NAMES = {"PramanixToolCallback"}
-_CREWAI_NAMES = {"PramanixCrewAITool"}
-_DSPY_NAMES = {"PramanixGuardedModule"}
-_HAYSTACK_NAMES = {"HaystackGuardedComponent"}
-_SK_NAMES = {"PramanixSemanticKernelPlugin"}
-_PYDANTIC_AI_NAMES = {"PramanixPydanticAIValidator"}
+# Dispatch table: public name → submodule path.
+# Using importlib.import_module avoids the repeated `_m` local-variable
+# redefinitions that mypy flags as no-redef errors.
+_NAME_TO_MODULE: dict[str, str] = {
+    # FastAPI / ASGI
+    "PramanixMiddleware": "pramanix.integrations.fastapi",
+    "pramanix_route": "pramanix.integrations.fastapi",
+    # LangChain
+    "PramanixGuardedTool": "pramanix.integrations.langchain",
+    "wrap_tools": "pramanix.integrations.langchain",
+    # LlamaIndex
+    "PramanixFunctionTool": "pramanix.integrations.llamaindex",
+    "PramanixQueryEngineTool": "pramanix.integrations.llamaindex",
+    # AutoGen
+    "PramanixToolCallback": "pramanix.integrations.autogen",
+    # CrewAI
+    "PramanixCrewAITool": "pramanix.integrations.crewai",
+    # DSPy
+    "PramanixGuardedModule": "pramanix.integrations.dspy",
+    # Haystack
+    "HaystackGuardedComponent": "pramanix.integrations.haystack",
+    # Semantic Kernel
+    "PramanixSemanticKernelPlugin": "pramanix.integrations.semantic_kernel",
+    # PydanticAI
+    "PramanixPydanticAIValidator": "pramanix.integrations.pydantic_ai",
+}
 
 
 def __getattr__(name: str) -> object:
-    if name in _FASTAPI_NAMES:
-        from pramanix.integrations import fastapi as _m
+    import importlib
+    import types
 
-        return getattr(_m, name)
-    if name in _LANGCHAIN_NAMES:
-        from pramanix.integrations import langchain as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _LLAMA_NAMES:
-        from pramanix.integrations import llamaindex as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _AUTOGEN_NAMES:
-        from pramanix.integrations import autogen as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _CREWAI_NAMES:
-        from pramanix.integrations import crewai as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _DSPY_NAMES:
-        from pramanix.integrations import dspy as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _HAYSTACK_NAMES:
-        from pramanix.integrations import haystack as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _SK_NAMES:
-        from pramanix.integrations import semantic_kernel as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
-    if name in _PYDANTIC_AI_NAMES:
-        from pramanix.integrations import pydantic_ai as _m  # type: ignore[no-redef]
-
-        return getattr(_m, name)
+    module_path = _NAME_TO_MODULE.get(name)
+    if module_path is not None:
+        mod: types.ModuleType = importlib.import_module(module_path)
+        return getattr(mod, name)
     raise AttributeError(f"module 'pramanix.integrations' has no attribute {name!r}")

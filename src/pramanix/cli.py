@@ -1242,7 +1242,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     _log_status = _chk_log("pramanix")
     _check(
         "logging-handlers",
-        _log_status["level"],  # type: ignore[arg-type]
+        _log_status["level"],
         _log_status["detail"],
         hint=_log_status["hint"],
     )

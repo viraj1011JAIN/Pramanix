@@ -89,7 +89,10 @@ def _increment_signing_failure_counter() -> None:
                     return
             if _signing_failure_counter is _COUNTER_DISABLED:
                 return
-        _signing_failure_counter.inc()  # type: ignore[union-attr]
+            # Increment inside the lock after all None/_COUNTER_DISABLED guards
+            # so the type checker can see this path only executes for a real Counter.
+            counter: Counter = _signing_failure_counter
+        counter.inc()
     except ImportError:
         pass
     except Exception:

@@ -1078,8 +1078,9 @@ class PolicyCompiler:
                 f"_compile_field_comparison called with non-FieldReference RHS "
                 f"(got {type(cond.rhs).__name__!r}). This is an internal compiler bug."
             )
+        rhs_ref: FieldReference = cond.rhs  # narrowed; isinstance guard above enforces this
 
-        rhs_field: Field = self._resolve_field_ref(cond.rhs, policy_fields)
+        rhs_field: Field = self._resolve_field_ref(rhs_ref, policy_fields)
         rhs_node: ExpressionNode = E(rhs_field)
 
         self._check_ordering_op_on_sort(lhs_field, cond.op)
@@ -1090,7 +1091,7 @@ class PolicyCompiler:
         nl: str = cond.natural_language or (
             f"{cond.lhs.qualified_name()} "
             f"{_OP_PHRASE.get(cond.op, cond.op.value)} "
-            f"{cond.rhs.qualified_name()}"  # type: ignore[union-attr]  # cond.rhs is FieldReference here
+            f"{rhs_ref.qualified_name()}"
         )
         return expr.named(label).explain(nl)
 

@@ -61,13 +61,25 @@ from __future__ import annotations
 import logging
 import logging.handlers
 import sys
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO, TypedDict
 
 __all__ = [
     "PRAMANIX_LOGGER_NAMES",
+    "LoggingStatus",
     "check_logging_configuration",
     "configure_production_logging",
 ]
+
+
+class LoggingStatus(TypedDict):
+    """Return type for :func:`check_logging_configuration`."""
+
+    ok: bool
+    level: Literal["OK", "WARN"]
+    detail: str
+    hint: str
+    handlers: list[str]
+    using_last_resort: bool
 
 # Canonical logger names emitted by Pramanix.  Operators can subscribe to
 # any of these individually or to the root ``pramanix`` namespace.
@@ -162,7 +174,7 @@ def configure_production_logging(
 
 def check_logging_configuration(
     logger_name: str = "pramanix",
-) -> dict[str, Any]:
+) -> LoggingStatus:
     """Inspect whether the Pramanix logger namespace has reachable handlers.
 
     Walks the logger hierarchy from *logger_name* up to the root to find
