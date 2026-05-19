@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Real S3 integration tests for S3AuditSink via LocalStack — T-02.
 
 LocalStack provides a full AWS-compatible S3 API locally.

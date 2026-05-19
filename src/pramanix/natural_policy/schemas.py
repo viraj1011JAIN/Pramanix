@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Pydantic schemas for natural-language policy compiler LLM output.
 
 These types form the strict bridge between raw LLM text and the deterministic

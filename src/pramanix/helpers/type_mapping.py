@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Python type → Z3 sort mapping for the Pramanix DSL.
 
 This module centralises the compile-time mapping from Python ``type`` objects

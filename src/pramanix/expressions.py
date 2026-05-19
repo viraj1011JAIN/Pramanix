@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Pramanix DSL — lazy expression tree and field descriptors.
 
 This module provides the building blocks for writing policy constraints
@@ -31,11 +34,14 @@ Typical usage::
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from pramanix.exceptions import PolicyCompilationError
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -202,7 +208,13 @@ class NestedField:
                 if issubclass(annotation, _BaseModel):
                     return NestedField(full_path, annotation)
             except TypeError:
-                pass  # annotation is a generic, not a bare class
+                _log.warning(
+                    "pramanix.expressions.NestedField: field %r has generic annotation %r "
+                    "— treating as scalar Field (NestedField inference skipped). "
+                    "Use a concrete Pydantic model type for nested constraint support.",
+                    full_path,
+                    annotation,
+                )
 
         py_type: type = annotation if annotation is not None else object
         return Field(full_path, py_type, _infer_z3_type(py_type))

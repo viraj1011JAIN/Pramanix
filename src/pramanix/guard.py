@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Guard — the public SDK entrypoint for synchronous policy verification.
 
 Usage::
@@ -70,7 +73,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import dataclasses
+import secrets
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
@@ -634,8 +639,27 @@ class Guard:
                         sink_component=_snk_comp,
                     )
                     return _gb
-                except (ValueError, TypeError):
-                    pass  # malformed labels — skip gate silently
+                except (ValueError, TypeError) as _label_exc:
+                    # §2.4: Malformed IFC labels are an anomalous condition (possible
+                    # adversarial crafting).  Fail-closed: block the request rather
+                    # than silently skipping the gate, which would be fail-open.
+                    _log.error(
+                        "pramanix.guard.ifc_label_parse_failed: malformed IFC labels "
+                        "— blocking request (src=%r, snk=%r): %s",
+                        _src_label_raw,
+                        _snk_label_raw,
+                        _label_exc,
+                    )
+                    return Decision.governance_blocked(
+                        stage="ifc",
+                        reason=(
+                            f"Malformed IFC labels — request blocked. "
+                            f"source_label={_src_label_raw!r}, "
+                            f"sink_label={_snk_label_raw!r}"
+                        ),
+                        intent_dump=intent_values,
+                        state_dump=state_values,
+                    )
 
         return None  # all gates passed
 
@@ -721,7 +745,7 @@ class Guard:
                     )
                 )
 
-        decision_id = str(uuid.uuid4())
+        decision_id = str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
         _t0 = time.perf_counter()
         _metric_status = "error"  # overwritten before every return
         try:
@@ -762,6 +786,7 @@ class Guard:
                                 intent_values, state_values, self._string_enum_coercions
                             )
                         except ValueError as _enum_exc:
+                            _metric_status = "validation_failure"
                             return Decision.error(reason=str(_enum_exc))
                     # ── Int-field string guard ─────────────────────────────────────────
                     # If an Int-typed field still holds a str after coercion (or no
@@ -771,6 +796,7 @@ class Guard:
                         for _fval_dict in (intent_values, state_values):
                             for _fn in self._int_field_names & _fval_dict.keys():
                                 if isinstance(_fval_dict[_fn], str):
+                                    _metric_status = "validation_failure"
                                     return Decision.error(
                                         reason=(
                                             f"Field {_fn!r} is declared as Int but received "
@@ -986,12 +1012,14 @@ class Guard:
             _public_reason = (
                 "verification_error" if self._config.redact_violations else _verbose_reason
             )
-            import logging as _exc_log
-
             if self._config.redact_violations:
-                _exc_log.getLogger(__name__).error(
-                    "pramanix.guard.decision: internal error (redacted from caller): %s",
-                    _verbose_reason,
+                # §27.21: use structlog (_log) consistently — raw logging bypasses
+                # the structured pipeline and loses trace-id / policy context.
+                _log.error(
+                    "pramanix.guard.decision: internal error (redacted from caller)",
+                    decision_id=decision_id,
+                    policy=self._policy.__name__,
+                    exc_type=type(exc).__name__,
                 )
             decision = Decision.error(reason=_public_reason)
             _metric_status = decision.status.value
@@ -1072,8 +1100,11 @@ class Guard:
 
         # Sync mode: delegate entirely to sync verify() in a thread.
         # verify() handles its own sink emission and resolver-cache clearing.
+        # copy_context() propagates OTel SpanContext and structlog bound vars
+        # across the thread boundary (Python 3.11 does not copy automatically).
         if mode == "sync":
-            return await asyncio.to_thread(self.verify, intent, state)
+            _ctx = contextvars.copy_context()
+            return await asyncio.to_thread(_ctx.run, self.verify, intent, state)
 
         # ── H-01: max_input_bytes DoS pre-check (mirrors _verify_core) ────────
         if self._config.max_input_bytes > 0:
@@ -1261,10 +1292,12 @@ class Guard:
             )
 
         if mode == "async-thread":
-            # asyncio.to_thread() offloads the blocking submit_solve call.
-            # We are NOT nesting asyncio.to_thread() inside another — this is
-            # the first and only thread dispatch.
+            # Propagate OTel SpanContext / structlog vars across the thread
+            # boundary.  Python 3.11 asyncio.to_thread() does not copy
+            # contextvars automatically; copy_context() fixes the gap.
+            _ctx = contextvars.copy_context()
             decision = await asyncio.to_thread(
+                _ctx.run,
                 pool.submit_solve,
                 self._policy,
                 values,
@@ -1317,6 +1350,9 @@ class Guard:
             # seal_key is plain bytes — picklable.
             # Nothing Z3-flavoured crosses the process boundary.
             try:
+                # Process pool workers run in a separate OS process — context vars
+                # do NOT cross process boundaries, so no copy_context() wrapper is
+                # needed or useful here.  _ctx.run would fail to pickle regardless.
                 sealed = await loop.run_in_executor(
                     pool.executor,
                     _worker_solve_sealed,
@@ -1391,7 +1427,7 @@ class Guard:
                            fields.
             state:         Current system state (dict or validated BaseModel).
             models:        Two model-name strings used for dual-model consensus.
-                           Defaults to ``("gpt-4o", "claude-opus-4-5")``.
+                           Defaults to ``("gpt-4o", "claude-opus-4-7")``.
                            Routing: ``"gpt-*"``/``"o?-*"`` → OpenAI;
                            ``"claude-*"`` → Anthropic.
             context:       Optional :class:`~pramanix.translator.base.TranslatorContext`
@@ -1449,6 +1485,7 @@ class Guard:
                 injection_threshold=self._config.injection_threshold,
                 max_input_chars=self._config.max_input_chars,
                 injection_scorer_path=self._config.injection_scorer_path,
+                sensitive_fields=self._config.injection_sensitive_fields,
             )
 
             # ── Semantic post-consensus check: fast Python rules before Z3 ─────

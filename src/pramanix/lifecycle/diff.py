@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Policy lifecycle management: structural diffs and shadow evaluation.
 
 Provides tools to safely evolve policies across versions without blind-spot
@@ -24,6 +27,7 @@ Design constraints
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -388,6 +392,21 @@ class ShadowEvaluator:
         with self._lock:
             return [r for r in self._results if r.diverged]
 
+    async def arecord(
+        self,
+        intent: dict[str, Any],
+        state: dict[str, Any],
+        live_decision: Decision,
+    ) -> ShadowResult:
+        """Async variant of :meth:`record`.
+
+        Offloads the synchronous shadow ``verify()`` to the default thread-pool
+        executor so the calling event loop is not blocked by the Z3 solve.
+
+        See :meth:`record` for the full contract and return semantics.
+        """
+        return await asyncio.to_thread(self.record, intent, state, live_decision)
+
     def reset(self) -> None:
         """Clear all counters and history."""
         with self._lock:
@@ -409,7 +428,14 @@ def _collect_invariants(policy: type[Policy]) -> dict[str, str]:
     """
     try:
         invs = policy.invariants()
-    except Exception:  # — broken policies still need a diff
+    except Exception as exc:
+        _log.error(
+            "policy_diff._collect_invariants: %s.invariants() raised — "
+            "diff will treat policy as having no invariants: %s",
+            getattr(policy, "__name__", repr(policy)),
+            exc,
+            exc_info=True,
+        )
         return {}
     result: dict[str, str] = {}
     for inv in invs:

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """API contract lock tests — Phase 1.2.
 
 THESE TESTS ARE INTENTIONALLY BRITTLE.
@@ -250,6 +253,17 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "MeshAuthenticationError",
         "MeshAuthenticator",
         "SpiffeIdentity",
+        # Asymmetric JWT-compatible signers (v1.0.0+)
+        "ES256Signer",
+        "ES256Verifier",
+        "RS256Signer",
+        "RS256Verifier",
+        # NLP / content analysis (v1.0.0+)
+        "PIIDetector",
+        "PIIMatch",
+        "RegexClassifier",
+        "SemanticSimilarityGuard",
+        "ToxicityScorer",
     }
 )
 
@@ -536,6 +550,8 @@ _EXPECTED_DECISION_KEYS: frozenset[str] = frozenset(
         "policy_hash",
         # P0: hash algorithm version field (v1.0.0+)
         "hash_alg",
+        # Policy name for audit correlation (v1.0.0+)
+        "policy_name",
     }
 )
 
@@ -821,6 +837,8 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         "max_input_chars",
         # D-4: custom injection scorer path (v1.0.0)
         "injection_scorer_path",
+        # D-5: per-field injection sensitivity (v1.0.0)
+        "injection_sensitive_fields",
         # E-4: audit sinks (v1.0.0)
         "audit_sinks",
         # translator circuit breaker config (v1.0.0)
@@ -854,6 +872,7 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     "injection_threshold": 0.5,  # (*) injection confidence gate
     "max_input_chars": 512,  # (*) input character cap
     "injection_scorer_path": None,
+    "injection_sensitive_fields": frozenset(),
     "consensus_strictness": "semantic",
     "audit_sinks": (),
     "translator_circuit_breaker_config": None,

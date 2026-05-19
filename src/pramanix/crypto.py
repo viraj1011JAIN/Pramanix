@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Ed25519 cryptographic signing for Pramanix Decision objects.
 
 Every Decision produced by a Guard with a configured PramanixSigner
@@ -46,27 +49,49 @@ log = logging.getLogger(__name__)
 
 _ENV_KEY_PEM = "PRAMANIX_SIGNING_KEY_PEM"
 
+# Module-level cache avoids re-registration ValueError on repeated imports and
+# removes the need to reach into prometheus_client's private _names_to_collectors.
+_signing_failure_counter: Any = None
+_signing_failure_counter_lock = __import__("threading").Lock()
+
+
+_COUNTER_DISABLED = object()  # sentinel: collision detected, counter permanently disabled
+
 
 def _increment_signing_failure_counter() -> None:
     """Increment pramanix_signing_failure_total Prometheus counter (M-49).
 
-    Silent no-op when prometheus_client is not installed.
+    Silent no-op when prometheus_client is not installed or a metric-name
+    collision is detected.  Logs a one-time warning on first collision.
     """
+    global _signing_failure_counter
     try:
         from prometheus_client import Counter
 
-        try:
-            _c = Counter(
-                "pramanix_signing_failure_total",
-                "Total decision signing failures",
-            )
-        except ValueError:
-            from prometheus_client import REGISTRY
-            _collectors = getattr(REGISTRY, "_names_to_collectors", None)
-            _c = _collectors.get("pramanix_signing_failure_total") if _collectors is not None else None
-            if _c is None:
+        with _signing_failure_counter_lock:
+            if _signing_failure_counter is None:
+                try:
+                    _signing_failure_counter = Counter(
+                        "pramanix_signing_failure_total",
+                        "Total decision signing failures",
+                    )
+                except ValueError as e:
+                    # Counter already registered by external code.  Don't reach into
+                    # prometheus_client's private internals — set a sentinel so we
+                    # don't spam warnings on every subsequent signing failure.
+                    log.warning(
+                        "pramanix.crypto: Prometheus counter registration conflict: %s — "
+                        "pramanix_signing_failure_total will not be counted "
+                        "(ensure metric names are unique across your application).",
+                        e,
+                    )
+                    _signing_failure_counter = _COUNTER_DISABLED
+                    return
+            if _signing_failure_counter is _COUNTER_DISABLED:
                 return
-        _c.inc()
+        _signing_failure_counter.inc()  # type: ignore[union-attr]
+    except ImportError:
+        pass
     except Exception:
         pass
 
@@ -394,6 +419,409 @@ class PramanixVerifier:
             if recomputed != decision.decision_hash:
                 return False  # Fields were modified after signing
 
+            return self.verify(
+                decision_hash=decision.decision_hash,
+                signature=decision.signature,
+            )
+        except Exception:
+            return False
+
+
+# ── RS256 / ES256 asymmetric JWT-compatible signers ────────────────────────────
+
+
+class RS256Signer:
+    """RSA-PKCS1v15-SHA256 (RS256) signer for Pramanix Decision objects.
+
+    Drop-in replacement for :class:`PramanixSigner` when RSA signing is required.
+    Signatures are base64url-encoded without padding (same format as JWT).
+
+    Args:
+        private_key_pem: PEM-encoded RSA private key.  Minimum 2048-bit key.
+        force_ephemeral: Generate a 2048-bit key at startup for dev use only.
+
+    Env var fallback: ``PRAMANIX_RS256_SIGNING_KEY_PEM`` (PEM string or path).
+    """
+
+    _ENV_KEY = "PRAMANIX_RS256_SIGNING_KEY_PEM"
+    _ALGORITHM = "RS256"
+
+    def __init__(
+        self,
+        private_key_pem: bytes | str | None = None,
+        *,
+        force_ephemeral: bool = False,
+    ) -> None:
+        try:
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                NoEncryption,
+                PrivateFormat,
+                PublicFormat,
+                load_pem_private_key,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "The 'cryptography' package is required for RS256 signing. "
+                "Install it: pip install 'pramanix[crypto]'"
+            ) from exc
+
+        raw: bytes | None = None
+        if private_key_pem is not None:
+            raw = private_key_pem.encode() if isinstance(private_key_pem, str) else private_key_pem
+        else:
+            env_pem = os.environ.get(self._ENV_KEY, "")
+            if env_pem:
+                raw = env_pem.encode()
+            elif force_ephemeral:
+                _key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+                log.warning(
+                    "%s not set and force_ephemeral=True. "
+                    "Using ephemeral RSA-2048 key — NOT suitable for production.",
+                    self._ENV_KEY,
+                )
+                raw = _key.private_bytes(
+                    encoding=Encoding.PEM,
+                    format=PrivateFormat.PKCS8,
+                    encryption_algorithm=NoEncryption(),
+                )
+            else:
+                raise RuntimeError(
+                    "No RS256 signing key configured. Provide private_key_pem, "
+                    f"set {self._ENV_KEY}, or use force_ephemeral=True."
+                )
+
+        _loaded = load_pem_private_key(raw, password=None)  # type: ignore[arg-type]
+        if not isinstance(_loaded, RSAPrivateKey):
+            raise ValueError("PEM key is not an RSA private key.")
+        if _loaded.key_size < 2048:
+            raise ValueError(
+                f"RSA key size {_loaded.key_size} bits is too small. "
+                "Minimum 2048 bits required."
+            )
+        self._private_key: RSAPrivateKey = _loaded
+        self._public_key_obj = self._private_key.public_key()
+        self._public_pem = self._public_key_obj.public_bytes(
+            encoding=Encoding.PEM,
+            format=PublicFormat.SubjectPublicKeyInfo,
+        )
+        self._key_id = hashlib.sha256(self._public_pem).hexdigest()[:16]
+
+    @classmethod
+    def generate(cls, key_size: int = 2048) -> "RS256Signer":
+        """Generate a new RSA key pair for development use."""
+        if key_size < 2048:
+            raise ValueError("key_size must be at least 2048 bits.")
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+        )
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
+        pem = key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        )
+        return cls(private_key_pem=pem)
+
+    def sign(self, decision: "Decision") -> str:
+        """Sign ``decision.decision_hash`` with RSA-PKCS1v15-SHA256.
+
+        Returns a base64url-encoded signature.  Never raises; failures log ERROR.
+        """
+        try:
+            if not decision.decision_hash:
+                log.error("Cannot sign Decision with empty decision_hash")
+                return ""
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import padding
+
+            sig_bytes = self._private_key.sign(
+                decision.decision_hash.encode("utf-8"),
+                padding.PKCS1v15(),
+                hashes.SHA256(),
+            )
+            return _b64url(sig_bytes)
+        except Exception as exc:
+            log.error("RS256 signing failed: %s", exc, exc_info=True)
+            _increment_signing_failure_counter()
+            return ""
+
+    def public_key_pem(self) -> bytes:
+        """Return RSA public key in PEM (SubjectPublicKeyInfo) format."""
+        return self._public_pem
+
+    def key_id(self) -> str:
+        """Return 16-char hex key ID derived from SHA-256 of public key PEM."""
+        return self._key_id
+
+    def verify(self, decision_hash: str, signature: str) -> bool:
+        """Verify a base64url-encoded RS256 signature."""
+        return RS256Verifier(public_key_pem=self._public_pem).verify(
+            decision_hash=decision_hash, signature=signature
+        )
+
+
+class RS256Verifier:
+    """RSA-PKCS1v15-SHA256 signature verifier.
+
+    Args:
+        public_key_pem: PEM-encoded RSA public key.
+    """
+
+    def __init__(self, public_key_pem: bytes | str) -> None:
+        try:
+            from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+        except ImportError as exc:
+            raise ImportError(
+                "The 'cryptography' package is required for RS256 verification."
+            ) from exc
+
+        raw = public_key_pem.encode() if isinstance(public_key_pem, str) else public_key_pem
+        loaded = load_pem_public_key(raw)
+        if not isinstance(loaded, RSAPublicKey):
+            raise ValueError("PEM key is not an RSA public key.")
+        self._public_key: RSAPublicKey = loaded
+
+    def verify(self, decision_hash: str, signature: str) -> bool:
+        """Return ``True`` if *signature* is a valid RS256 signature over *decision_hash*."""
+        try:
+            from cryptography.exceptions import InvalidSignature
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import padding
+
+            sig_bytes = _b64url_decode(signature)
+            self._public_key.verify(
+                sig_bytes,
+                decision_hash.encode("utf-8"),
+                padding.PKCS1v15(),
+                hashes.SHA256(),
+            )
+            return True
+        except InvalidSignature:
+            return False
+        except Exception:
+            return False
+
+    def verify_decision(self, decision: "Decision") -> bool:
+        """Verify a Decision object's RS256 signature."""
+        try:
+            if not decision.signature or not decision.decision_hash:
+                return False
+            recomputed = decision._compute_hash()
+            if recomputed != decision.decision_hash:
+                return False
+            return self.verify(
+                decision_hash=decision.decision_hash,
+                signature=decision.signature,
+            )
+        except Exception:
+            return False
+
+
+class ES256Signer:
+    """ECDSA-P256-SHA256 (ES256) signer for Pramanix Decision objects.
+
+    Uses NIST P-256 (secp256r1) with RFC 6979 deterministic k-generation.
+    Smaller keys and faster operations than RS256 with equivalent 128-bit security.
+    Preferred over RS256 for new deployments.
+
+    Args:
+        private_key_pem: PEM-encoded EC private key on P-256 curve.
+        force_ephemeral: Generate a P-256 key at startup for dev use only.
+
+    Env var fallback: ``PRAMANIX_ES256_SIGNING_KEY_PEM``.
+    """
+
+    _ENV_KEY = "PRAMANIX_ES256_SIGNING_KEY_PEM"
+    _ALGORITHM = "ES256"
+
+    def __init__(
+        self,
+        private_key_pem: bytes | str | None = None,
+        *,
+        force_ephemeral: bool = False,
+    ) -> None:
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ec import (
+                SECP256R1,
+                EllipticCurvePrivateKey,
+                generate_private_key,
+            )
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                NoEncryption,
+                PrivateFormat,
+                PublicFormat,
+                load_pem_private_key,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "The 'cryptography' package is required for ES256 signing. "
+                "Install it: pip install 'pramanix[crypto]'"
+            ) from exc
+
+        raw: bytes | None = None
+        if private_key_pem is not None:
+            raw = private_key_pem.encode() if isinstance(private_key_pem, str) else private_key_pem
+        else:
+            env_pem = os.environ.get(self._ENV_KEY, "")
+            if env_pem:
+                raw = env_pem.encode()
+            elif force_ephemeral:
+                _key = generate_private_key(SECP256R1())
+                log.warning(
+                    "%s not set and force_ephemeral=True. "
+                    "Using ephemeral ES256 P-256 key — NOT suitable for production.",
+                    self._ENV_KEY,
+                )
+                raw = _key.private_bytes(
+                    encoding=Encoding.PEM,
+                    format=PrivateFormat.PKCS8,
+                    encryption_algorithm=NoEncryption(),
+                )
+            else:
+                raise RuntimeError(
+                    "No ES256 signing key configured. Provide private_key_pem, "
+                    f"set {self._ENV_KEY}, or use force_ephemeral=True."
+                )
+
+        _loaded = load_pem_private_key(raw, password=None)  # type: ignore[arg-type]
+        if not isinstance(_loaded, EllipticCurvePrivateKey):
+            raise ValueError("PEM key is not an EC private key.")
+        _curve = _loaded.curve
+        if not isinstance(_curve, SECP256R1):
+            raise ValueError(
+                f"ES256Signer requires P-256 (secp256r1), got {type(_curve).__name__}."
+            )
+        self._private_key: EllipticCurvePrivateKey = _loaded
+        self._public_key_obj = self._private_key.public_key()
+        self._public_pem = self._public_key_obj.public_bytes(
+            encoding=Encoding.PEM,
+            format=PublicFormat.SubjectPublicKeyInfo,
+        )
+        self._key_id = hashlib.sha256(self._public_pem).hexdigest()[:16]
+
+    @classmethod
+    def generate(cls) -> "ES256Signer":
+        """Generate a new P-256 key pair for development use."""
+        from cryptography.hazmat.primitives.asymmetric.ec import (
+            SECP256R1,
+            generate_private_key,
+        )
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+        )
+
+        key = generate_private_key(SECP256R1())
+        pem = key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        )
+        return cls(private_key_pem=pem)
+
+    def sign(self, decision: "Decision") -> str:
+        """Sign ``decision.decision_hash`` with ECDSA-P256-SHA256.
+
+        Returns a base64url-encoded DER-encoded signature.  Never raises; failures log ERROR.
+        """
+        try:
+            if not decision.decision_hash:
+                log.error("Cannot sign Decision with empty decision_hash")
+                return ""
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+
+            sig_bytes = self._private_key.sign(
+                decision.decision_hash.encode("utf-8"),
+                ECDSA(hashes.SHA256()),
+            )
+            return _b64url(sig_bytes)
+        except Exception as exc:
+            log.error("ES256 signing failed: %s", exc, exc_info=True)
+            _increment_signing_failure_counter()
+            return ""
+
+    def public_key_pem(self) -> bytes:
+        """Return EC public key in PEM (SubjectPublicKeyInfo) format."""
+        return self._public_pem
+
+    def key_id(self) -> str:
+        """Return 16-char hex key ID derived from SHA-256 of public key PEM."""
+        return self._key_id
+
+    def verify(self, decision_hash: str, signature: str) -> bool:
+        """Verify a base64url-encoded ES256 signature."""
+        return ES256Verifier(public_key_pem=self._public_pem).verify(
+            decision_hash=decision_hash, signature=signature
+        )
+
+
+class ES256Verifier:
+    """ECDSA-P256-SHA256 signature verifier.
+
+    Args:
+        public_key_pem: PEM-encoded P-256 public key.
+    """
+
+    def __init__(self, public_key_pem: bytes | str) -> None:
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ec import (
+                SECP256R1,
+                EllipticCurvePublicKey,
+            )
+            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+        except ImportError as exc:
+            raise ImportError(
+                "The 'cryptography' package is required for ES256 verification."
+            ) from exc
+
+        raw = public_key_pem.encode() if isinstance(public_key_pem, str) else public_key_pem
+        loaded = load_pem_public_key(raw)
+        if not isinstance(loaded, EllipticCurvePublicKey):
+            raise ValueError("PEM key is not an EC public key.")
+        if not isinstance(loaded.curve, SECP256R1):
+            raise ValueError(
+                f"ES256Verifier requires P-256, got {type(loaded.curve).__name__}."
+            )
+        self._public_key: EllipticCurvePublicKey = loaded
+
+    def verify(self, decision_hash: str, signature: str) -> bool:
+        """Return ``True`` if *signature* is a valid ES256 signature over *decision_hash*."""
+        try:
+            from cryptography.exceptions import InvalidSignature
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+
+            sig_bytes = _b64url_decode(signature)
+            self._public_key.verify(
+                sig_bytes,
+                decision_hash.encode("utf-8"),
+                ECDSA(hashes.SHA256()),
+            )
+            return True
+        except InvalidSignature:
+            return False
+        except Exception:
+            return False
+
+    def verify_decision(self, decision: "Decision") -> bool:
+        """Verify a Decision object's ES256 signature."""
+        try:
+            if not decision.signature or not decision.decision_hash:
+                return False
+            recomputed = decision._compute_hash()
+            if recomputed != decision.decision_hash:
+                return False
             return self.verify(
                 decision_hash=decision.decision_hash,
                 signature=decision.signature,

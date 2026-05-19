@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Compliance report generation for Pramanix Decision objects.
 
 Maps Z3 unsat core labels (violated_invariants) to structured compliance
@@ -29,8 +32,11 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
+
+_log = logging.getLogger(__name__)
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -107,8 +113,17 @@ def _classify_severity(
         amount = Decimal(amount_str)
         if amount >= Decimal("100000"):
             return "CRITICAL_PREVENTION"
-    except Exception:
-        pass
+    except Exception as exc:
+        # Fail to CRITICAL_PREVENTION: a malformed amount is suspicious.
+        # Downgrading severity on parse failure would let an attacker
+        # inject malformed amounts to bypass high-value transaction rules.
+        _log.warning(
+            "pramanix.compliance: amount=%r could not be parsed as Decimal — "
+            "defaulting to CRITICAL_PREVENTION (fail-high): %s",
+            amount_str,
+            exc,
+        )
+        return "CRITICAL_PREVENTION"
 
     violated_set = set(violated_invariants)
     if violated_set & high_value_rules:

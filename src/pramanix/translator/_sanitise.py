@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Pre-LLM input sanitisation and injection confidence scoring.
 
 This module implements Pramanix's hardened input pipeline, providing two
@@ -121,8 +124,8 @@ def sanitise_user_input(
 
 def injection_confidence_score(
     user_input: str,
-    extracted_intent: dict[str, Any],
-    warnings: list[str],
+    extracted_intent: dict[str, Any] | None = None,
+    warnings: list[str] | None = None,
     *,
     sub_penny_threshold: Decimal = Decimal("0.10"),
     amount_field: str = "amount",
@@ -170,13 +173,17 @@ def injection_confidence_score(
         Float in *[0.0, 1.0]*.
     """
     score = 0.0
+    extracted_intent = extracted_intent or {}
+    warnings = warnings or []
 
     # Injection patterns found during sanitisation
     if any("injection_patterns_detected" in w for w in warnings):
         score += 0.6
 
-    # Very short inputs are suspicious (fuzzing / evasion probes)
-    if len(user_input.strip()) < 10:
+    # Very short non-empty inputs are suspicious (fuzzing / evasion probes).
+    # Empty strings are benign — they carry no injection signal.
+    stripped = user_input.strip()
+    if 0 < len(stripped) < 10:
         score += 0.2
 
     # Sub-threshold amounts are anomalous for financial transactions.

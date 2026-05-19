@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Miscellaneous coverage tests for small gaps in several modules.
 
 Targets:
@@ -39,6 +42,7 @@ from pramanix.expressions import (
     _LengthBetweenOp,
     _RegexMatchOp,
 )
+from pramanix.exceptions import ConfigurationError
 from pramanix.helpers.policy_auditor import _collect_field_names
 from pramanix.ifc.enforcer import FlowEnforcer
 from pramanix.ifc.flow_policy import FlowPolicy, FlowRule
@@ -423,7 +427,7 @@ class TestLangchainExecuteFnNone:
                 execute_fn=None,  # No execute_fn → should raise NotImplementedError
             )
 
-        with pytest.raises(NotImplementedError, match="execute_fn"):
+        with pytest.raises(ConfigurationError, match="execute_fn"):
             await tool._arun(json.dumps({"x": 5}))
 
 

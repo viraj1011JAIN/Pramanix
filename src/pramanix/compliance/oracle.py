@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Compliance Oracle — Pillar 3 of Pramanix: the Regulatory Attestation Engine.
 
 Overview
@@ -153,6 +156,7 @@ from __future__ import annotations
 import enum
 import fnmatch
 import logging
+import secrets
 import threading
 import uuid
 from collections import defaultdict
@@ -648,8 +652,10 @@ class ComplianceAttestation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     attestation_id: str = PF(
-        default_factory=lambda: str(uuid.uuid4()),
-        description="UUID4 uniquely identifying this attestation.",
+        default_factory=lambda: str(
+            uuid.UUID(bytes=secrets.token_bytes(16), version=4)
+        ),
+        description="UUID uniquely identifying this attestation.",
     )
     timestamp_utc: str = PF(
         ...,

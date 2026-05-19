@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Protocol-compliant structural helpers for testing — no unittest.mock.
 
 These helpers implement real protocols via duck typing or inheritance.
@@ -1868,11 +1871,18 @@ class _TrackingPingRedisClient:
 class _TrackingRedisModule:
     """Minimal ``redis`` module duck-type providing ``from_url()``.
 
-    Returns a fresh ``_TrackingPingRedisClient`` instance whose per-instance
-    ``ping_call_count`` starts at 0 so each test gets its own tracker.
+    When constructed with a client instance, ``from_url()`` returns that
+    exact instance so the caller can inspect its state after cache init.
+    When constructed without a client, a fresh ``_TrackingPingRedisClient``
+    is created on each ``from_url()`` call.
     """
 
+    def __init__(self, client: _TrackingPingRedisClient | None = None) -> None:
+        self._client = client
+
     def from_url(self, url: str, **kwargs: Any) -> _TrackingPingRedisClient:
+        if self._client is not None:
+            return self._client
         client = _TrackingPingRedisClient()
         _TrackingPingRedisClient.ping_call_count = 0  # reset counter per call
         return client
@@ -1901,10 +1911,20 @@ class _RecordingTranslator:
         self.last_prompt: str | None = None
         self.last_schema: object = None
 
-    async def extract(self, prompt: str, schema: object, config: object = None) -> dict:
+    async def extract(
+        self,
+        prompt: str = "",
+        schema: object = None,
+        config: object = None,
+        *,
+        text: str = "",
+        intent_schema: object = None,
+        context: object = None,
+        **kwargs: object,
+    ) -> dict:
         self.call_count += 1
-        self.last_prompt = prompt
-        self.last_schema = schema
+        self.last_prompt = text or prompt
+        self.last_schema = intent_schema or schema
         return self._response
 
     async def aclose(self) -> None:

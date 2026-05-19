@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """LlamaIndex integration for Pramanix — PramanixFunctionTool and PramanixQueryEngineTool.
 
 Install: pip install 'pramanix[llamaindex]'
@@ -24,14 +27,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import contextlib
 import json
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any, cast
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_block_feedback
+
+_log = logging.getLogger(__name__)
 
 __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 
@@ -49,23 +53,24 @@ except ImportError as _llama_import_exc:
 
     # Provide internal-only placeholder types so the rest of this module can
     # reference ToolMetadata/ToolOutput without llama_index installed.
-    # These are NOT exported and will raise at instantiation time.
-    @dataclass  # type: ignore[no-redef]
+    # These are NOT exported and WILL raise at instantiation time.
     class ToolMetadata:  # type: ignore[no-redef]
-        """Internal placeholder — raise at instantiation if llama_index absent."""
+        """Internal placeholder — raises ImportError at instantiation if llama_index absent."""
 
-        name: str = ""
-        description: str = ""
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise ImportError(
+                "LlamaIndex integration requires 'llama-index-core': "
+                "pip install 'pramanix[llamaindex]'"
+            ) from _llama_import_exc
 
-    @dataclass  # type: ignore[no-redef]
     class ToolOutput:  # type: ignore[no-redef]
-        """Internal placeholder — raise at instantiation if llama_index absent."""
+        """Internal placeholder — raises ImportError at instantiation if llama_index absent."""
 
-        content: str = ""
-        tool_name: str = ""
-        raw_input: dict[str, Any] = field(default_factory=dict)
-        raw_output: dict[str, Any] = field(default_factory=dict)
-        is_error: bool = False
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise ImportError(
+                "LlamaIndex integration requires 'llama-index-core': "
+                "pip install 'pramanix[llamaindex]'"
+            ) from _llama_import_exc
 
 
 # ── PramanixFunctionTool ──────────────────────────────────────────────────────
@@ -242,8 +247,14 @@ class PramanixFunctionTool:
         self._executor.shutdown(wait=False)
 
     def __del__(self) -> None:
-        with contextlib.suppress(Exception):
+        try:
             self.close()
+        except Exception as exc:
+            _log.warning(
+                "PramanixLlamaIndexTool.__del__: close() raised during GC — "
+                "executor may not have been shut down cleanly: %s",
+                exc,
+            )
 
     # ── State retrieval ───────────────────────────────────────────────────────
 

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Guard configuration — immutable GuardConfig dataclass, logging, observability.
 
 Extracted from ``guard.py`` to separate configuration concerns from orchestration.
@@ -49,6 +52,18 @@ _SECRET_KEY_RE = re.compile(
 _REDACTED = "<redacted>"
 
 
+def _redact_value(v: Any, depth: int = 0) -> Any:
+    """Recursively redact secret values in nested dicts (§14.2 fix)."""
+    if depth > 8:
+        return v  # guard against pathological nesting
+    if isinstance(v, dict):
+        return {
+            kk: (_REDACTED if _SECRET_KEY_RE.search(str(kk)) else _redact_value(vv, depth + 1))
+            for kk, vv in v.items()
+        }
+    return v
+
+
 def _redact_secrets_processor(
     _logger: Any,
     _method: str,
@@ -56,13 +71,19 @@ def _redact_secrets_processor(
 ) -> Any:
     """Structlog processor — redact any event-dict key that looks like a secret.
 
+    §14.2 fix: recurses into nested dicts so that ``{"config": {"api_key": "sk-..."}}``
+    is fully redacted, not just top-level keys.
+
     Applied as the first processor in the chain so that secret values are
     never visible in any downstream processor, renderer, or log sink.
 
     Matches keys containing: ``secret``, ``api_key``, ``apikey``, ``token``,
     ``hmac``, ``password``, ``passwd``, ``credential``, ``private_key``.
     """
-    return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else v) for k, v in event_dict.items()}
+    return {
+        k: (_REDACTED if _SECRET_KEY_RE.search(k) else _redact_value(v))
+        for k, v in event_dict.items()
+    }
 
 
 def _safe_add_logger_name(logger: Any, method_name: str, event_dict: Any) -> Any:
@@ -175,26 +196,46 @@ _solver_timeouts_total: Any = None
 _validation_failures_total: Any = None
 _PROM_AVAILABLE = False
 
+import threading as _gc_threading
+
+_GC_PROM_LOCK = _gc_threading.Lock()
+_GC_PROM_METRICS: dict[str, Any] = {}
+
+
+def _gc_prom_register(factory: Any, name: str, description: str, *args: Any, **kwargs: Any) -> Any:
+    """Register a guard_config Prometheus metric or return existing instance."""
+    with _GC_PROM_LOCK:
+        if name in _GC_PROM_METRICS:
+            return _GC_PROM_METRICS[name]
+        metric = factory(name, description, *args, **kwargs)
+        _GC_PROM_METRICS[name] = metric
+        return metric
+
+
 try:
     import prometheus_client as _prom
 
-    _decisions_total = _prom.Counter(
+    _decisions_total = _gc_prom_register(
+        _prom.Counter,
         "pramanix_decisions_total",
         "Total policy decisions by outcome",
         ["policy", "status"],
     )
-    _decision_latency = _prom.Histogram(
+    _decision_latency = _gc_prom_register(
+        _prom.Histogram,
         "pramanix_decision_latency_seconds",
         "End-to-end verify() latency in seconds",
         ["policy"],
         buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
     )
-    _solver_timeouts_total = _prom.Counter(
+    _solver_timeouts_total = _gc_prom_register(
+        _prom.Counter,
         "pramanix_solver_timeouts_total",
         "Number of Z3 solver timeouts by policy",
         ["policy"],
     )
-    _validation_failures_total = _prom.Counter(
+    _validation_failures_total = _gc_prom_register(
+        _prom.Counter,
         "pramanix_validation_failures_total",
         "Number of intent/state validation failures by policy",
         ["policy"],
@@ -203,6 +244,13 @@ try:
 
 except ImportError:
     pass
+except ValueError as _prom_val_err:
+    import logging as _gc_log
+    _gc_log.getLogger(__name__).warning(
+        "pramanix.guard_config: Prometheus metric registration error "
+        "(name collision with different labelset — this is a programming error): %s",
+        _prom_val_err,
+    )
 
 
 # ── Module-level resolver registry ───────────────────────────────────────────
@@ -366,6 +414,31 @@ class GuardConfig:
 
     Env var: ``PRAMANIX_INJECTION_SCORER_PATH`` (entry-point name, or empty to
     use the built-in scorer).
+    """
+
+    injection_sensitive_fields: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            f.strip()
+            for f in _env_str("INJECTION_SENSITIVE_FIELDS", "").split(",")
+            if f.strip()
+        )
+    )
+    """Set of extracted-intent field names whose string values are **additionally
+    scored** for injection attempts after consensus.
+
+    When non-empty, the string values of these fields are appended to the raw
+    user input before the post-consensus injection scorer runs.  This lets
+    operators flag free-text fields (e.g. ``"notes"``, ``"reason"``,
+    ``"message"``) for extra scrutiny without raising the global
+    ``injection_threshold``.
+
+    Use case: a payment policy with a ``notes: str`` field accepting
+    operator-visible memos should list ``"notes"`` here so adversarial content
+    embedded in that field (e.g. ``"notes: ignore previous instructions"``) is
+    caught even when the raw instruction text is benign.
+
+    Default: ``frozenset()`` (no extra field scanning).
+    Env var: ``PRAMANIX_INJECTION_SENSITIVE_FIELDS`` (comma-separated list).
     """
 
     consensus_strictness: str = field(
@@ -542,48 +615,56 @@ class GuardConfig:
                 stacklevel=2,
             )
         # ── Production safety: unsigned audit trail ────────────────────────────
+        # §11.1 fix: all production advisories also emit structlog ERROR so they
+        # are visible even when PYTHONWARNINGS=ignore (common in Docker/K8s images).
+        import logging as _prod_log
+        _prod_logger = _prod_log.getLogger(__name__)
         _is_prod = os.environ.get("PRAMANIX_ENV", "").lower() == "production"
         if _is_prod and self.signer is None:
-            warnings.warn(
+            _msg = (
                 "GuardConfig(signer=None) in production (PRAMANIX_ENV=production): "
                 "decisions are NOT cryptographically signed. An attacker who can write "
                 "to your audit log cannot be detected. "
-                "Configure a PramanixSigner with a real Ed25519 key.",
-                UserWarning,
-                stacklevel=2,
+                "Configure a PramanixSigner with a real Ed25519 key."
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.error("pramanix.guard_config.production_advisory: %s", _msg)
         # ── Production safety: no audit sinks configured ──────────────────────
+        # §11.2 fix: PRAMANIX_ALLOW_NO_AUDIT_SINKS escape hatch is now explicitly
+        # documented here and in REQUIRED_INTEGRATIONS.md.  It exists only for
+        # local testing — never set it in production (it disables audit-trail enforcement).
         if _is_prod and not self.audit_sinks and not _env_bool("ALLOW_NO_AUDIT_SINKS", False):
             raise ConfigurationError(
                 "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
                 "no audit sinks configured — decisions are not persisted. A regulated "
                 "deployment without a durable audit trail fails SOC 2 / HIPAA compliance. "
                 "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink). "
-                "To suppress this error only for local testing: "
-                "set PRAMANIX_ALLOW_NO_AUDIT_SINKS=1."
+                "To suppress this error in LOCAL TESTING ONLY: "
+                "set PRAMANIX_ALLOW_NO_AUDIT_SINKS=1.  "
+                "Never set this variable in production — it bypasses audit-trail enforcement."
             )
         # ── Production safety: resource limits disabled ────────────────────────
         if _is_prod and self.solver_rlimit == 0:
-            warnings.warn(
+            _msg = (
                 "GuardConfig(solver_rlimit=0) in production (PRAMANIX_ENV=production): "
                 "the Z3 resource limit is disabled. Adversarially crafted policies or "
                 "intent payloads can trigger near-infinite solver loops. "
-                "Set solver_rlimit to a positive value (default: 10_000_000).",
-                UserWarning,
-                stacklevel=2,
+                "Set solver_rlimit to a positive value (default: 10_000_000)."
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.error("pramanix.guard_config.production_advisory: %s", _msg)
         if _is_prod and self.max_input_bytes == 0:
-            warnings.warn(
+            _msg = (
                 "GuardConfig(max_input_bytes=0) in production (PRAMANIX_ENV=production): "
                 "the input size limit is disabled. Large payloads can exhaust memory "
                 "before reaching the solver. "
-                "Set max_input_bytes to a positive value (default: 65536).",
-                UserWarning,
-                stacklevel=2,
+                "Set max_input_bytes to a positive value (default: 65536)."
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.error("pramanix.guard_config.production_advisory: %s", _msg)
         # ── Production safety: no policy-version binding ──────────────────────
         if _is_prod and self.expected_policy_hash is None:
-            warnings.warn(
+            _msg = (
                 "GuardConfig(expected_policy_hash=None) in production "
                 "(PRAMANIX_ENV=production): policy-version binding is disabled. "
                 "A silent policy drift — a hot-reload, a misconfigured deploy, "
@@ -592,7 +673,7 @@ class GuardConfig:
                 "fingerprint of your compiled policy. Retrieve it after first "
                 "construction via guard.policy_hash, pin it in your deployment "
                 "config, and set GuardConfig(expected_policy_hash=<hash>) on "
-                "all subsequent deployments.",
-                UserWarning,
-                stacklevel=2,
+                "all subsequent deployments."
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.error("pramanix.guard_config.production_advisory: %s", _msg)

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Runtime provenance and chain-of-custody for Pramanix decisions.
 
 Every :class:`~pramanix.decision.Decision` can be wrapped in a
@@ -32,6 +35,7 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -53,15 +57,90 @@ _log = logging.getLogger(__name__)
 _PROVENANCE_KEY: bytes | None = None
 _KEY_LOCK = threading.Lock()
 
+# ── Environment variable: PRAMANIX_PROVENANCE_KEY ─────────────────────────────
+# Set to a 64-character hex string (= 32 bytes) to make provenance HMAC
+# tags deterministic across process restarts and replicas.
+#
+#   export PRAMANIX_PROVENANCE_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+#
+# When NOT set, Pramanix generates a fresh random key per process.  This is
+# safe within a single process lifetime but means that provenance records from
+# one run cannot be verified against another run's chain, and multi-process
+# deployments will have incompatible chain HMACs.
+_PROVENANCE_KEY_ENV = "PRAMANIX_PROVENANCE_KEY"
+
+# Optional file path: PRAMANIX_PROVENANCE_KEY_FILE points to a file whose
+# contents is the hex-encoded 32-byte key (same format as the env var).
+_PROVENANCE_KEY_FILE_ENV = "PRAMANIX_PROVENANCE_KEY_FILE"
+
 
 def _provenance_key() -> bytes:
-    """Return the stable per-process HMAC key."""
+    """Return the stable per-process HMAC key.
+
+    Resolution order (first match wins):
+
+    1. ``PRAMANIX_PROVENANCE_KEY`` environment variable — 64-char hex string.
+    2. ``PRAMANIX_PROVENANCE_KEY_FILE`` environment variable — path to a file
+       whose *first line* is a 64-char hex string.
+    3. In-process random key generated once per process startup (default).
+       Emits a :data:`logging.WARNING` so operators know the chain is
+       ephemeral.
+    """
     global _PROVENANCE_KEY
-    if _PROVENANCE_KEY is None:
-        with _KEY_LOCK:
-            if _PROVENANCE_KEY is None:
-                _PROVENANCE_KEY = os.urandom(32)
-    return _PROVENANCE_KEY
+    if _PROVENANCE_KEY is not None:
+        return _PROVENANCE_KEY
+
+    with _KEY_LOCK:
+        if _PROVENANCE_KEY is not None:
+            return _PROVENANCE_KEY
+
+        # ── 1. Env var hex ────────────────────────────────────────────────────
+        raw_hex = os.environ.get(_PROVENANCE_KEY_ENV, "").strip()
+        if raw_hex:
+            try:
+                key = bytes.fromhex(raw_hex)
+                if len(key) != 32:
+                    raise ValueError(f"key must be 32 bytes (got {len(key)})")
+                _PROVENANCE_KEY = key
+                return _PROVENANCE_KEY
+            except ValueError as exc:
+                _log.warning(
+                    "provenance: invalid %s value (%s) — falling back to ephemeral key",
+                    _PROVENANCE_KEY_ENV,
+                    exc,
+                )
+
+        # ── 2. Key file ───────────────────────────────────────────────────────
+        key_file = os.environ.get(_PROVENANCE_KEY_FILE_ENV, "").strip()
+        if key_file:
+            try:
+                import pathlib as _pathlib
+                file_hex = _pathlib.Path(key_file).read_text().strip()
+                key = bytes.fromhex(file_hex)
+                if len(key) != 32:
+                    raise ValueError(f"key must be 32 bytes (got {len(key)})")
+                _PROVENANCE_KEY = key
+                return _PROVENANCE_KEY
+            except (OSError, ValueError) as exc:
+                _log.warning(
+                    "provenance: cannot load key from %s=%r (%s) — falling back to ephemeral key",
+                    _PROVENANCE_KEY_FILE_ENV,
+                    key_file,
+                    exc,
+                )
+
+        # ── 3. Ephemeral random key ───────────────────────────────────────────
+        _PROVENANCE_KEY = os.urandom(32)
+        _log.warning(
+            "provenance: using an EPHEMERAL random HMAC key.  "
+            "ProvenanceChain records from this process cannot be verified "
+            "against records from a different process or after a restart.  "
+            "For persistent cross-process chain integrity set %s to a 64-char hex key "
+            "(e.g. export %s=$(python -c \"import secrets; print(secrets.token_hex(32))\")).",
+            _PROVENANCE_KEY_ENV,
+            _PROVENANCE_KEY_ENV,
+        )
+        return _PROVENANCE_KEY
 
 
 # ── Provenance record ─────────────────────────────────────────────────────────
@@ -88,7 +167,9 @@ class ProvenanceRecord:
         metadata:       Arbitrary key-value pairs for routing / display.
     """
 
-    record_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    record_id: str = field(
+        default_factory=lambda: str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
+    )
     decision_id: str = ""
     policy_hash: str = ""
     model_version: str = ""

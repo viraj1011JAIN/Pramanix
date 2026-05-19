@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Human-in-the-loop oversight workflows for high-impact agentic actions.
 
 Formal oversight ensures that actions with large blast radius, financial
@@ -29,12 +32,14 @@ Design constraints
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import hmac
 import logging
 import os
 import threading
 import time
+import secrets
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -94,7 +99,11 @@ class ApprovalRequest:
         metadata:       Arbitrary key-value pairs for routing/display.
     """
 
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    request_id: str = field(
+        default_factory=lambda: str(
+            uuid.UUID(bytes=secrets.token_bytes(16), version=4)
+        )
+    )
     principal_id: str = ""
     action: str = ""
     decision_id: str = ""
@@ -200,6 +209,91 @@ class OversightRecord:
             "decided_at": self.decision.decided_at,
             "hmac_tag": self._tag,
         }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        signing_key: bytes,
+    ) -> OversightRecord:
+        """Reconstruct an :class:`OversightRecord` from a serialised dict.
+
+        Reconstructs the :class:`ApprovalRequest` and :class:`ApprovalDecision`
+        from *data* (as produced by :meth:`to_dict`) and wires the stored
+        ``hmac_tag`` so that a subsequent :meth:`verify` call confirms integrity.
+
+        Args:
+            data:        A dict previously produced by :meth:`to_dict`.
+            signing_key: The same key that was used to sign the record.
+
+        Returns:
+            An :class:`OversightRecord` whose :meth:`verify` returns ``True``
+            when *data* has not been tampered with.
+
+        Raises:
+            KeyError:   If required fields are absent from *data*.
+            ValueError: If ``status`` is not a valid :class:`ApprovalStatus`.
+        """
+        request = ApprovalRequest(
+            request_id=str(data["request_id"]),
+            principal_id=str(data.get("principal_id", "")),
+            action=str(data.get("action", "")),
+            decision_id=str(data.get("decision_id", "")),
+            policy_hash=str(data.get("policy_hash", "")),
+            required_scopes=list(data.get("required_scopes", [])),
+            blast_radius=str(data.get("blast_radius", "unknown")),
+            reason=str(data.get("reason", "")),
+            created_at=float(data.get("created_at", 0.0)),
+            ttl_seconds=float(data.get("ttl_seconds", 300.0)),
+        )
+        decision = ApprovalDecision(
+            request_id=str(data["request_id"]),
+            status=ApprovalStatus(data["status"]),
+            reviewer_id=str(data.get("reviewer_id", "")),
+            comment=str(data.get("comment", "")),
+            decided_at=float(data.get("decided_at", 0.0)),
+        )
+        instance = cls(request, decision, signing_key=signing_key)
+        # Replace the freshly computed tag with the stored one; verify() will
+        # then compare the stored tag against a fresh recomputation.
+        instance._tag = str(data["hmac_tag"])
+        return instance
+
+    @classmethod
+    def verify_serialised(
+        cls,
+        data: dict[str, Any],
+        signing_key: bytes,
+    ) -> bool:
+        """Verify the HMAC tag of a serialised record without full reconstruction.
+
+        Suitable for fast offline audit scanning when full object
+        reconstruction is not needed.
+
+        Args:
+            data:        A dict previously produced by :meth:`to_dict`.
+            signing_key: The signing key used when the record was created.
+
+        Returns:
+            ``True`` if the tag matches; ``False`` if tampered or key mismatch.
+            Never raises — malformed dicts return ``False``.
+        """
+        try:
+            stored_tag: str = str(data["hmac_tag"])
+            payload = (
+                f"{data['request_id']}|"
+                f"{data.get('principal_id', '')}|"
+                f"{data.get('action', '')}|"
+                f"{data.get('decision_id', '')}|"
+                f"{data.get('policy_hash', '')}|"
+                f"{data['status']}|"
+                f"{data.get('reviewer_id', '')}|"
+                f"{data.get('decided_at', 0.0)}"
+            ).encode()
+            expected = hmac.HMAC(signing_key, payload, hashlib.sha256).hexdigest()
+            return hmac.compare_digest(stored_tag, expected)
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def _compute_tag(self) -> str:
         payload = (
@@ -387,12 +481,26 @@ class InMemoryApprovalWorkflow:
         *,
         auto_reject_after_s: float = 300.0,
         sweep_interval_s: float = 60.0,
+        max_records: int = 100_000,
+        max_decisions: int = 100_000,
     ) -> None:
-        self._key = signing_key or _process_key()
+        # Per-instance key: generate fresh entropy for each workflow instance so
+        # that test suites importing this module across multiple pytest workers or
+        # via importlib.reload() each get an isolated key.  Callers that need
+        # cross-instance record verification must pass the same signing_key
+        # explicitly to both instances.
+        self._key: bytes = signing_key if signing_key is not None else os.urandom(32)
         self._ttl = auto_reject_after_s
         self._queue = EscalationQueue()
-        self._decisions: dict[str, ApprovalDecision] = {}
-        self._records: list[OversightRecord] = []
+        # Bounded FIFO: oldest decisions are evicted when max_decisions is reached.
+        self._decisions: collections.OrderedDict[str, ApprovalDecision] = (
+            collections.OrderedDict()
+        )
+        self._max_decisions = max_decisions
+        # Bounded deque: oldest records are automatically evicted at max_records.
+        self._records: collections.deque[OversightRecord] = collections.deque(
+            maxlen=max_records
+        )
         self._lock = threading.Lock()
         self._stop_sweeper = threading.Event()
         self._sweeper = threading.Thread(
@@ -557,6 +665,13 @@ class InMemoryApprovalWorkflow:
         record = OversightRecord(req, dec, signing_key=self._key)
         with self._lock:
             self._decisions[request_id] = dec
+            if len(self._decisions) > self._max_decisions:
+                evicted_id, _ = self._decisions.popitem(last=False)
+                _log.warning(
+                    "oversight: _decisions capacity (%d) exceeded — evicted oldest entry %s",
+                    self._max_decisions,
+                    evicted_id,
+                )
             self._records.append(record)
         _log.info(
             "oversight.decided: request_id=%s status=%s reviewer=%s",
@@ -580,6 +695,13 @@ class InMemoryApprovalWorkflow:
             if req.request_id in self._decisions:
                 return  # Already decided — idempotent under concurrent calls.
             self._decisions[req.request_id] = dec
+            if len(self._decisions) > self._max_decisions:
+                evicted_id, _ = self._decisions.popitem(last=False)
+                _log.warning(
+                    "oversight: _decisions capacity (%d) exceeded — evicted oldest entry %s",
+                    self._max_decisions,
+                    evicted_id,
+                )
             self._records.append(record)
 
 

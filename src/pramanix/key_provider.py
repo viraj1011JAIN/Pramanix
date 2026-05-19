@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """KeyProvider — pluggable Ed25519 key sourcing for PramanixSigner.
 
 Phase E-3: abstracts key management from PramanixSigner so institutional
@@ -339,7 +342,11 @@ class AwsKmsKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            if self._cached_pem is None:
+                raise RuntimeError(
+                    "_refresh_cache() completed without setting _cached_pem — "
+                    "this is an internal invariant violation."
+                )
             return self._cached_pem
 
     def public_key_pem(self) -> bytes:
@@ -444,7 +451,11 @@ class AzureKeyVaultKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            if self._cached_pem is None:
+                raise RuntimeError(
+                    "_refresh_cache() completed without setting _cached_pem — "
+                    "this is an internal invariant violation."
+                )
             return self._cached_pem
 
     def public_key_pem(self) -> bytes:
@@ -460,16 +471,32 @@ class AzureKeyVaultKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
-        """Always False — upload a new secret version in Azure to rotate."""
-        return False
+        """True — rotation fetches the latest unversioned secret from Azure Key Vault."""
+        return True
 
     def rotate_key(self) -> None:
-        """Not supported; raises NotImplementedError."""
-        raise NotImplementedError(
-            "AzureKeyVaultKeyProvider does not support automatic rotation. "
-            "Upload a new secret version via the Azure portal or CLI, then "
-            "create a new AzureKeyVaultKeyProvider pointing at the new version."
-        )
+        """Rotate by fetching the latest secret version from Azure Key Vault.
+
+        Invalidates the local cache and re-fetches with ``version=None``
+        so the next call to :meth:`private_key_pem` picks up whatever new
+        PEM the operator has uploaded to the vault.
+
+        Raises:
+            RuntimeError: If the Azure Key Vault fetch fails.
+        """
+        with self._cache_lock:
+            # Force re-fetch on next access by expiring the cache and clearing
+            # the pinned version so the latest version is always used.
+            self._cache_expires = 0.0
+            self._cached_pem = None
+            self._cached_version = None
+            _pinned = self._secret_version
+            self._secret_version = None  # fetch latest version
+            try:
+                self._refresh_cache()
+            except Exception:
+                self._secret_version = _pinned  # restore on failure
+                raise
 
 
 class GcpKmsKeyProvider:
@@ -543,7 +570,11 @@ class GcpKmsKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            if self._cached_pem is None:
+                raise RuntimeError(
+                    "_refresh_cache() completed without setting _cached_pem — "
+                    "this is an internal invariant violation."
+                )
             return self._cached_pem
 
     def public_key_pem(self) -> bytes:
@@ -556,16 +587,29 @@ class GcpKmsKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
-        """Always False — add a new secret version in GCP to rotate."""
-        return False
+        """True — rotation re-fetches the 'latest' version from GCP Secret Manager."""
+        return True
 
     def rotate_key(self) -> None:
-        """Not supported; raises NotImplementedError."""
-        raise NotImplementedError(
-            "GcpKmsKeyProvider does not support automatic rotation. "
-            "Add a new secret version via the GCP console or gcloud CLI, then "
-            "create a new GcpKmsKeyProvider pointing at the new version."
-        )
+        """Rotate by fetching the latest secret version from GCP Secret Manager.
+
+        Invalidates the local cache and sets ``version_id`` to ``"latest"``
+        so the next :meth:`private_key_pem` call picks up the newest secret
+        version the operator has added to GCP Secret Manager.
+
+        Raises:
+            RuntimeError: If the GCP Secret Manager fetch fails.
+        """
+        with self._cache_lock:
+            _pinned = self._version_id
+            self._version_id = "latest"
+            self._cache_expires = 0.0
+            self._cached_pem = None
+            try:
+                self._refresh_cache()
+            except Exception:
+                self._version_id = _pinned
+                raise
 
 
 class HashiCorpVaultKeyProvider:
@@ -654,7 +698,11 @@ class HashiCorpVaultKeyProvider:
         with self._cache_lock:
             if not self._cache_valid():
                 self._refresh_cache()
-            assert self._cached_pem is not None  # _refresh_cache() always sets this
+            if self._cached_pem is None:
+                raise RuntimeError(
+                    "_refresh_cache() completed without setting _cached_pem — "
+                    "this is an internal invariant violation."
+                )
             return self._cached_pem
 
     def public_key_pem(self) -> bytes:
@@ -670,16 +718,26 @@ class HashiCorpVaultKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
-        """Always False — write a new secret version in Vault to rotate."""
-        return False
+        """True — rotation re-fetches the latest version from HashiCorp Vault KV v2."""
+        return True
 
     def rotate_key(self) -> None:
-        """Not supported; raises NotImplementedError."""
-        raise NotImplementedError(
-            "HashiCorpVaultKeyProvider does not support automatic rotation. "
-            "Write a new secret version via the vault CLI or API, then "
-            "create a new HashiCorpVaultKeyProvider pointing at the latest version."
-        )
+        """Rotate by fetching the latest secret version from HashiCorp Vault KV v2.
+
+        Invalidates the local PEM cache and calls
+        ``secrets.kv.v2.read_secret_version()`` without a version pin so that
+        the most recently written version is returned.  Call this after
+        writing a new PEM to the Vault secret path to complete zero-downtime
+        key rotation.
+
+        Raises:
+            RuntimeError: If the Vault fetch fails (sealed, unreachable, token expired).
+        """
+        with self._cache_lock:
+            self._cache_expires = 0.0
+            self._cached_pem = None
+            self._cached_version = None
+            self._refresh_cache()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

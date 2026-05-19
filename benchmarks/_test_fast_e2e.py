@@ -1,3 +1,6 @@
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """End-to-end smoke test for the fast worker architecture.
 
 Run with:  python benchmarks/_test_fast_e2e.py

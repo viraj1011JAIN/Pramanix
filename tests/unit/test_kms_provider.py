@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase E-3: Tests for KeyProvider implementations and PramanixSigner.from_provider()
 """Verifies KeyProvider protocol, built-in providers, and signer factory."""
 from __future__ import annotations
@@ -350,9 +353,13 @@ class TestAzureKeyVaultKeyProviderBehavior:
         client = _AzureSecretClient(test_pem.decode(), version_id="v20260401")
         assert self._provider(client).key_version() == "v20260401"
 
-    def test_rotate_raises_not_implemented(self) -> None:
-        with pytest.raises(NotImplementedError):
-            self._provider(_AzureSecretClient("")).rotate_key()
+    def test_rotate_succeeds_and_refreshes_cache(self, test_pem: bytes) -> None:
+        client = _AzureSecretClient(test_pem.decode())
+        p = self._provider(client)
+        assert p.supports_rotation is True
+        before = client.calls
+        p.rotate_key()
+        assert client.calls > before  # cache was invalidated and re-fetched
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
         assert isinstance(self._provider(_AzureSecretClient(test_pem.decode())), KeyProvider)
@@ -394,9 +401,13 @@ class TestGcpKmsKeyProviderBehavior:
     def test_key_version_returns_version_id(self) -> None:
         assert self._provider(_GcpSecretClient(b""), version_id="7").key_version() == "7"
 
-    def test_rotate_raises_not_implemented(self) -> None:
-        with pytest.raises(NotImplementedError):
-            self._provider(_GcpSecretClient(b"")).rotate_key()
+    def test_rotate_succeeds_and_refreshes_cache(self, test_pem: bytes) -> None:
+        client = _GcpSecretClient(test_pem)
+        p = self._provider(client)
+        assert p.supports_rotation is True
+        before = client.calls
+        p.rotate_key()
+        assert client.calls > before  # cache was invalidated and re-fetched
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
         assert isinstance(self._provider(_GcpSecretClient(test_pem)), KeyProvider)
@@ -431,9 +442,11 @@ class TestHashiCorpVaultKeyProviderBehavior:
     def test_key_version_from_metadata(self, test_pem: bytes) -> None:
         assert self._provider(_HvacClient(test_pem, version=7)).key_version() == "7"
 
-    def test_rotate_raises_not_implemented(self) -> None:
-        with pytest.raises(NotImplementedError):
-            self._provider(_HvacClient(b"PLACEHOLDER")).rotate_key()
+    def test_rotate_succeeds_and_refreshes_cache(self, test_pem: bytes) -> None:
+        client = _HvacClient(test_pem)
+        p = self._provider(client)
+        assert p.supports_rotation is True
+        p.rotate_key()  # should not raise — refreshes from Vault stub
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
         assert isinstance(self._provider(_HvacClient(_generate_test_pem())), KeyProvider)

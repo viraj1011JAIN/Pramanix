@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase C-4: Tests for AdaptiveCircuitBreaker.verify_sync()
 """Verifies synchronous circuit breaker interface works from non-async contexts."""
 from __future__ import annotations

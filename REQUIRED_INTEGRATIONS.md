@@ -161,4 +161,37 @@ COHERE_API_KEY
 MISTRAL_API_KEY
 DD_API_KEY
 DD_SITE
+PRAMANIX_SCORER_HMAC_KEY_HEX   # 64-char hex key for CalibratedScorer HMAC sidecar
+```
+
+---
+
+## Security extras (strongly recommended for production)
+
+### Google RE2 — ReDoS-immune regex engine (§27.18)
+
+Python's stdlib `re` module uses a backtracking engine that can CPU-spin on
+adversarially crafted inputs (ReDoS).  `google-re2` provides Google's RE2 engine
+which guarantees O(n) matching time.
+
+```bash
+pip install 'pramanix[security]'
+# or include in the full install:
+pip install 'pramanix[all]'
+```
+
+Once installed, `pramanix.translator.injection_filter` and `pramanix.nlp.validators`
+automatically use RE2 instead of stdlib re.  No environment variables required.
+Without it, a WARNING is logged at module import time.
+
+### Injection scorer HMAC key (CalibratedScorer)
+
+When using `CalibratedScorer.save()` / `CalibratedScorer.load()`, the serialised
+model is protected by an HMAC-SHA-256 sidecar.  Keep the key secure:
+
+```bash
+# Generate a fresh key
+python -c "import secrets; print(secrets.token_hex(32))"
+# Result: 64 hex characters — store this in PRAMANIX_SCORER_HMAC_KEY_HEX
+# NEVER commit this key to version control
 ```

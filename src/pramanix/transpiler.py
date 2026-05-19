@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """DSL expression-tree → Z3 AST transpiler.
 
 This module is the sole site where the Pramanix Python DSL is lowered to Z3.
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import enum
+import warnings
 from collections import deque
 from dataclasses import dataclass as _dataclass
 from decimal import Decimal
@@ -401,8 +405,41 @@ def transpile(
             if op == "sub":
                 return cast("z3.ExprRef", lz - rz)
             if op == "mul":
+                # Non-linear arithmetic warning (Issue #17): Z3's default
+                # arithmetic solver (linear arithmetic) may return "unknown"
+                # or time out when *both* operands are symbolic variables
+                # (variable × variable).  Multiplying a variable by a literal
+                # constant is always linear and safe.  Only variable × variable
+                # or variable / variable is non-linear.
+                _lhs_is_var = isinstance(l, _FieldRef)
+                _rhs_is_var = isinstance(r, _FieldRef)
+                if _lhs_is_var and _rhs_is_var:
+                    warnings.warn(
+                        f"Non-linear arithmetic detected: field '{l.field.name}' * "
+                        f"field '{r.field.name}'. Z3's linear arithmetic solver "
+                        "may return 'unknown' or time out for variable×variable "
+                        "multiplication. Consider rewriting the constraint as a "
+                        "linear approximation or introducing an auxiliary variable. "
+                        "See docs/DECISIONS.md §Non-linear Arithmetic for details.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
                 return cast("z3.ExprRef", lz * rz)
             if op == "div":
+                # Same caveat as mul — variable / variable is non-linear.
+                _lhs_is_var = isinstance(l, _FieldRef)
+                _rhs_is_var = isinstance(r, _FieldRef)
+                if _lhs_is_var and _rhs_is_var:
+                    warnings.warn(
+                        f"Non-linear arithmetic detected: field '{l.field.name}' / "
+                        f"field '{r.field.name}'. Z3's linear arithmetic solver "
+                        "may return 'unknown' or time out for variable÷variable "
+                        "division. Consider rewriting the constraint as a "
+                        "linear approximation or introducing an auxiliary variable. "
+                        "See docs/DECISIONS.md §Non-linear Arithmetic for details.",
+                        UserWarning,
+                        stacklevel=6,
+                    )
                 return cast("z3.ExprRef", lz / rz)
             raise TranspileError(f"Unknown BinOp operator: {op!r}")
 

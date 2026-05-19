@@ -272,3 +272,52 @@ Each entry records the decision, the alternatives that were considered, and the 
 **Why return `Decision.error()` rather than propagate:**
 - Fail-closed consistency: all failure paths return `Decision.error(allowed=False)`. Propagating an exception from `verify_async()` would break the no-raise contract and require callers to add exception handling to be safe.
 - The serialization failure is itself a signal that the input is malformed. Blocking is the correct outcome.
+
+## 21. Non-linear arithmetic in Z3 (variable × variable / variable ÷ variable)
+
+**Context (Issue #17):** Pramanix's expression DSL supports * and / operators via the `__mul__` / `__truediv__` dunder methods on `ExpressionNode`. These are lowered to Z3 `ArithRef` multiplication and division in `transpiler.py`. Z3's default arithmetic theory is **linear arithmetic (LRA / LIA)**; non-linear real arithmetic (NRA) is a fundamentally harder decision problem.
+
+**The problem:** If both operands of a `*` or `/` expression are *symbolic field variables* (variable × variable), the resulting constraint is non-linear. Z3 will either:
+
+1. Return `unknown` (solver gives up) — causes Pramanix to fail-closed with a `Decision.error()`; or
+2. Spend disproportionate time in NRA reasoning, degrading throughput.
+
+**What is safe:** Multiplying or dividing a field variable by a **literal constant** is always linear. `E(amount) * 0.01` (compute 1% fee) is linear; `E(amount) * E(rate)` (compute dynamic fee) is non-linear.
+
+**Decision:** Emit a `UserWarning` at transpile time when both operands of `mul` or `div` are `_FieldRef` nodes (variable × variable). The warning fires once per unique constraint site and appears at policy-definition time, so policy authors are notified before the policy reaches production.
+
+**Recommended workaround:** Introduce a pre-computed field that holds the product. For example, instead of constraining `amount * rate <= limit`, pre-multiply in the business logic layer and pass `fee = amount * rate` as a resolver-resolved field, then constrain `E(fee) <= E(limit)`.
+## 22. Z3 proves policies *as written*, not *as intended* (Policy Author Skill Dependency)
+
+**Context (Issue #14):** A common misconception is that Z3's `sat` result means "the action is always safe." In reality, Z3 evaluates exactly and only the constraints expressed in the policy's `rules()` and `invariants()` methods. If a policy author forgets a constraint (e.g. omits a check that `amount > 0`), Z3 will correctly allow negative-amount transfers because the policy never expressed that restriction.
+
+**The problem:** A policy that is *logically consistent* (all stated constraints satisfiable) may still be *semantically incomplete* (missing business-critical invariants). Z3 cannot know what the author *intended* — it only evaluates what was *written*.
+
+**Examples of under-specified policies:**
+
+`python
+# BAD — Z3 allows amount=-1000 because the lower bound is never stated.
+class TransferPolicy(Policy):
+    amount: Field[Decimal]
+    balance: Field[Decimal]
+
+    def rules(self):
+        return [E(self.amount) <= E(self.balance)]  # Missing: amount > 0
+
+# GOOD — explicit bounds on all business-meaningful ranges.
+class TransferPolicy(Policy):
+    amount: Field[Decimal]
+    balance: Field[Decimal]
+
+    def rules(self):
+        return [
+            E(self.amount) > 0,                         # positive amount
+            E(self.amount) <= E(self.balance),           # sufficient balance
+        ]
+`
+
+**Decision:** Document this constraint clearly. Policy authors are responsible for expressing **complete** intent. The Guard and Z3 are faithful executors of what is written; they are not intent-completion engines.
+
+**Mitigation tooling:** The `PolicyAuditor` helper in `pramanix.helpers.policy_auditor` can generate counterexamples for a policy with specific input bounds. Policy authors are encouraged to run the auditor as part of policy review to discover unintended SAT witnesses (inputs the policy allows that the author would not have expected).
+
+**Developer guidance added:** The docstring for `Policy.rules()` and the README now include an explicit warning box reminding authors that Z3 proves what is written.

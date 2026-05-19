@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Real tests for the three inline governance gates in Guard.
 
 Each gate is exercised in both sync (verify) and async (verify_async) modes.
@@ -349,8 +352,12 @@ class TestIFCGate:
         decision = guard.verify(intent=_IFC_ALLOW_INTENT, state={})
         assert decision.allowed
 
-    def test_sync_ifc_gate_passes_on_malformed_labels(self) -> None:
-        """Non-integer label values → ValueError silently skipped → ALLOW."""
+    def test_sync_ifc_gate_blocks_on_malformed_labels(self) -> None:
+        """§2.4 fix: non-integer label values → GOVERNANCE_BLOCKED (fail-closed).
+
+        An adversarially crafted or misconfigured IFC label that cannot be
+        parsed as a TrustLabel integer must never silently open the gate.
+        """
         guard = self._make_guard()
         intent = {
             **_IFC_ALLOW_INTENT,
@@ -360,7 +367,9 @@ class TestIFCGate:
             "_ifc_sink_label": "also_bad",
         }
         decision = guard.verify(intent=intent, state={})
-        assert decision.allowed
+        assert not decision.allowed
+        assert decision.status == SolverStatus.GOVERNANCE_BLOCKED
+        assert decision.metadata.get("stage") == "ifc"
 
     @pytest.mark.asyncio
     async def test_async_ifc_gate_blocks_denied_flow(self) -> None:

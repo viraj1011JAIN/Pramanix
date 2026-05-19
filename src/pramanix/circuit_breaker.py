@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Adaptive Circuit Breaker for Z3 solver pressure management.
 
 State machine:
@@ -29,9 +32,10 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import enum
+import functools
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -40,6 +44,40 @@ if TYPE_CHECKING:
     from pramanix.decision import Decision
 
 log = logging.getLogger(__name__)
+
+# ── Thread-safe Prometheus metric registry (no private _names_to_collectors) ──
+# Module-level cache avoids re-registration ValueError on repeated imports and
+# eliminates the need to reach into prometheus_client's private internals.
+_METRICS_LOCK = threading.Lock()
+_REGISTERED_METRICS: dict[str, Any] = {}
+
+
+def _prom_register(factory: Any, name: str, description: str, labelnames: list[str]) -> Any:
+    """Register a Prometheus metric or return the already-registered instance.
+
+    Thread-safe.  Returns None when the metric cannot be registered or recovered
+    so callers can set _metrics_available=False rather than crashing.
+    """
+    with _METRICS_LOCK:
+        if name in _REGISTERED_METRICS:
+            return _REGISTERED_METRICS[name]
+        try:
+            metric = factory(name, description, labelnames)
+        except ValueError:
+            # Metric already registered outside our cache (process-level collision).
+            # Return None to disable metrics for this callsite — using the private
+            # REGISTRY._names_to_collectors dict is fragile across prometheus_client
+            # versions.  Our module-level cache handles the common case; a collision
+            # from external code is an operator configuration issue, not ours to hide.
+            log.warning(
+                "pramanix.circuit_breaker: Prometheus metric %r already registered "
+                "by external code — disabling metrics for this callsite. Ensure "
+                "metric names are unique across your prometheus_client usage.",
+                name,
+            )
+            return None
+        _REGISTERED_METRICS[name] = metric
+        return metric
 
 
 class CircuitState(enum.StrEnum):
@@ -126,11 +164,21 @@ class AdaptiveCircuitBreaker:
         self._consecutive_pressure = 0
         self._open_episodes = 0
         self._last_transition = time.monotonic()
-        self._lock = asyncio.Lock()
+        # §4.3 fix: prevents double-probe in HALF_OPEN state.  Set to True when
+        # one caller is already probing; additional concurrent callers get an
+        # OPEN decision rather than firing a second simultaneous probe.
+        self._probing = False
+        # _lock is a cached_property — created lazily on first async use so it
+        # always binds to the running event loop (fixes asyncio.Lock outside loop).
         self._metrics_available = False
         self._state_gauge: Any = None
         self._pressure_counter: Any = None
         self._register_metrics()
+
+    @functools.cached_property
+    def _lock(self) -> asyncio.Lock:
+        """Lazily-created asyncio.Lock — always binds to the current event loop."""
+        return asyncio.Lock()
 
     @property
     def state(self) -> CircuitState:
@@ -177,6 +225,10 @@ class AdaptiveCircuitBreaker:
                 "AdaptiveCircuitBreaker.verify_sync() cannot be called from within "
                 "a running asyncio event loop.  Use verify_async() instead."
             )
+        # Reset the cached lock so the new asyncio.run() event loop owns a fresh
+        # asyncio.Lock.  Reusing a lock from a previous event loop raises RuntimeError
+        # in Python 3.12+ ("lock acquired by another loop").
+        self.__dict__.pop("_lock", None)
         return asyncio.run(self.verify_async(intent=intent, state=state))
 
     async def verify_async(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Decision:
@@ -190,6 +242,7 @@ class AdaptiveCircuitBreaker:
         # M-05: acquire the lock for the full state-check + routing decision so
         # two coroutines cannot simultaneously read CLOSED and both proceed into
         # the guard when one of them should have triggered the transition to OPEN.
+        is_probe = False
         async with self._lock:
             current_state = self._state
 
@@ -199,14 +252,32 @@ class AdaptiveCircuitBreaker:
             if current_state == CircuitState.OPEN:
                 elapsed = time.monotonic() - self._last_transition
                 if elapsed >= self._config.recovery_seconds:
+                    # §4.3 fix: only the first caller may probe in HALF_OPEN.
+                    # Reject concurrent callers to prevent double-probe race.
+                    if self._probing:
+                        return self._make_open_decision()
                     self._transition(CircuitState.HALF_OPEN)
+                    self._probing = True
+                    is_probe = True
                 else:
+                    return self._make_open_decision()
+
+            if current_state == CircuitState.HALF_OPEN:
+                # Already probing — reject concurrent callers.
+                if self._probing and not is_probe:
                     return self._make_open_decision()
             # Lock released before the blocking verify_async call so other
             # coroutines can check/update state concurrently during the solve.
 
         t0 = time.monotonic()
-        decision = await self._guard.verify_async(intent=intent, state=state)
+        try:
+            decision = await self._guard.verify_async(intent=intent, state=state)
+        finally:
+            # §4.3: always release the probe gate, even on exception, so a failed
+            # probe doesn't permanently lock out future recovery attempts.
+            if is_probe:
+                async with self._lock:
+                    self._probing = False
         solve_ms = (time.monotonic() - t0) * 1000
 
         async with self._lock:
@@ -311,39 +382,25 @@ class AdaptiveCircuitBreaker:
         try:
             from prometheus_client import Counter, Gauge
 
-            self._state_gauge = Gauge(
+            self._state_gauge = _prom_register(
+                Gauge,
                 "pramanix_circuit_state",
                 "Circuit breaker state (1=active for this state)",
                 ["namespace", "state"],
             )
-            self._pressure_counter = Counter(
+            self._pressure_counter = _prom_register(
+                Counter,
                 "pramanix_circuit_pressure_events_total",
                 "Z3 pressure events (solve_ms > threshold)",
                 ["namespace"],
             )
-            self._metrics_available = True
-            self._update_prometheus()
+            self._metrics_available = (
+                self._state_gauge is not None and self._pressure_counter is not None
+            )
+            if self._metrics_available:
+                self._update_prometheus()
         except ImportError:
             self._metrics_available = False
-        except ValueError:
-            # Metrics already registered (e.g., multiple instances in same process).
-            # Retrieve existing metrics from registry.
-            try:
-                from prometheus_client import REGISTRY
-
-                self._state_gauge = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
-                    "pramanix_circuit_state"
-                )
-                self._pressure_counter = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
-                    "pramanix_circuit_pressure_events_total"
-                )
-                self._metrics_available = (
-                    self._state_gauge is not None and self._pressure_counter is not None
-                )
-                if self._metrics_available:
-                    self._update_prometheus()
-            except Exception:
-                self._metrics_available = False
 
     def _update_prometheus(self) -> None:
         if not self._metrics_available:
@@ -354,14 +411,16 @@ class AdaptiveCircuitBreaker:
                     namespace=self._config.namespace,
                     state=s.value,
                 ).set(1 if self._state == s else 0)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("pramanix.circuit_breaker: Prometheus update failed: %s", exc)
 
     def _increment_pressure_metric(self) -> None:
         if not self._metrics_available:
             return
-        with contextlib.suppress(Exception):
+        try:
             self._pressure_counter.labels(namespace=self._config.namespace).inc()
+        except Exception as exc:
+            log.warning("pramanix.circuit_breaker: Prometheus increment failed: %s", exc)
 
 
 # ── Phase C-5: Distributed Circuit Breaker ───────────────────────────────────
@@ -469,12 +528,17 @@ class DistributedCircuitBreaker:
         self._local_state = CircuitState.CLOSED
         self._local_failure_count = 0
         self._last_transition = time.monotonic()
-        self._lock = asyncio.Lock()
+        # _lock is a cached_property — see AdaptiveCircuitBreaker for rationale.
         # M-04: Prometheus metrics — same set as AdaptiveCircuitBreaker.
         self._metrics_available = False
         self._state_gauge: Any = None
         self._pressure_counter: Any = None
         self._register_metrics()
+
+    @functools.cached_property
+    def _lock(self) -> asyncio.Lock:
+        """Lazily-created asyncio.Lock — always binds to the current event loop."""
+        return asyncio.Lock()
 
     @property
     def state(self) -> CircuitState:
@@ -570,6 +634,7 @@ class DistributedCircuitBreaker:
                 "DistributedCircuitBreaker.verify_sync() cannot be called from within "
                 "a running asyncio event loop.  Use verify_async() instead."
             )
+        self.__dict__.pop("_lock", None)
         return asyncio.run(self.verify_async(intent=intent, state=state))
 
     def reset(self) -> None:
@@ -594,37 +659,25 @@ class DistributedCircuitBreaker:
         try:
             from prometheus_client import Counter, Gauge
 
-            self._state_gauge = Gauge(
+            self._state_gauge = _prom_register(
+                Gauge,
                 "pramanix_distributed_circuit_state",
                 "Distributed circuit breaker state (1=active for this state)",
                 ["namespace", "state"],
             )
-            self._pressure_counter = Counter(
+            self._pressure_counter = _prom_register(
+                Counter,
                 "pramanix_distributed_circuit_pressure_events_total",
                 "Distributed Z3 pressure events (solve_ms > threshold)",
                 ["namespace"],
             )
-            self._metrics_available = True
-            self._update_prometheus()
+            self._metrics_available = (
+                self._state_gauge is not None and self._pressure_counter is not None
+            )
+            if self._metrics_available:
+                self._update_prometheus()
         except ImportError:
             self._metrics_available = False
-        except ValueError:
-            try:
-                from prometheus_client import REGISTRY
-
-                self._state_gauge = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
-                    "pramanix_distributed_circuit_state"
-                )
-                self._pressure_counter = REGISTRY._names_to_collectors.get(  # pyright: ignore[reportAttributeAccessIssue]
-                    "pramanix_distributed_circuit_pressure_events_total"
-                )
-                self._metrics_available = (
-                    self._state_gauge is not None and self._pressure_counter is not None
-                )
-                if self._metrics_available:
-                    self._update_prometheus()
-            except Exception:
-                self._metrics_available = False
 
     def _update_prometheus(self) -> None:
         if not self._metrics_available:
@@ -716,8 +769,14 @@ class RedisDistributedBackend:
     async def close(self) -> None:
         """Close the underlying Redis connection."""
         if self._client is not None:
-            with contextlib.suppress(Exception):
+            try:
                 await self._client.aclose()
+            except Exception as exc:
+                log.warning(
+                    "RedisDistributedBackend.close(): aclose() raised — "
+                    "Redis connection may not have been released cleanly: %s",
+                    exc,
+                )
             self._client = None
 
     def __del__(self) -> None:
@@ -792,10 +851,15 @@ class RedisDistributedBackend:
         """
         try:
             from redis.exceptions import WatchError
-        except ImportError:
-            # redis package not installed — skip silently (unit tests that
-            # inject a fake client will still work via duck-typing).
-            WatchError = Exception  # type: ignore[assignment,misc]
+        except ImportError as _redis_import_err:
+            # redis is a hard requirement for RedisDistributedBackend — the
+            # constructor already raises ConfigurationError if redis is absent.
+            # If we somehow reach here without redis, it is a bug, not a
+            # graceful degradation path.
+            raise RuntimeError(
+                "redis package required for RedisDistributedBackend.set_state(). "
+                "Install with: pip install 'pramanix[redis]'"
+            ) from _redis_import_err
 
         try:
             client = await self._get_client()
@@ -902,14 +966,23 @@ class RedisDistributedBackend:
         try:
             client = await self._get_client()
             if namespace is None:
-                # Delete all keys matching the prefix pattern.
-                keys = await client.keys(f"{self._prefix}*")
-                if keys:
-                    await client.delete(*keys)
+                # Use SCAN cursor iteration instead of KEYS to avoid the O(N)
+                # blocking command that pauses all Redis operations while scanning.
+                # KEYS is explicitly forbidden in production by Redis documentation.
+                cursor = 0
+                pattern = f"{self._prefix}*"
+                while True:
+                    cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                    if batch:
+                        await client.delete(*batch)
+                    if cursor == 0:
+                        break
             else:
                 await client.delete(self._key(namespace))
         except Exception as _exc:
-            log.debug("RedisDistributedBackend._async_clear error (non-fatal): %s", _exc)
+            log.warning(
+                "RedisDistributedBackend._async_clear error (non-fatal): %s", _exc
+            )
 
 
 # ── TranslatorCircuitBreaker ──────────────────────────────────────────────────
@@ -949,7 +1022,75 @@ class TranslatorCircuitBreaker:
         self._state = CircuitState.CLOSED
         self._consecutive_failures = 0
         self._opened_at: float | None = None
-        self._lock = asyncio.Lock()
+        # _lock is a cached_property — see AdaptiveCircuitBreaker for rationale.
+        # _probing prevents HALF_OPEN double-probe: only one concurrent caller
+        # may execute the probe; others see OPEN and raise ExtractionFailureError.
+        self._probing = False
+        self._metrics_available = False
+        self._state_gauge: Any = None
+        self._trips_counter: Any = None
+        self._probes_counter: Any = None
+        self._calls_counter: Any = None
+        self._register_metrics()
+
+    @functools.cached_property
+    def _lock(self) -> asyncio.Lock:
+        """Lazily-created asyncio.Lock — always binds to the current event loop."""
+        return asyncio.Lock()
+
+    def _register_metrics(self) -> None:
+        """Register per-model LLM circuit-breaker Prometheus metrics."""
+        try:
+            from prometheus_client import Counter, Gauge
+
+            self._state_gauge = _prom_register(
+                Gauge,
+                "pramanix_translator_cb_state",
+                "Translator circuit breaker state (1=active for this state)",
+                ["model", "state"],
+            )
+            self._trips_counter = _prom_register(
+                Counter,
+                "pramanix_translator_cb_trips_total",
+                "Number of times translator circuit breaker tripped OPEN",
+                ["model"],
+            )
+            self._probes_counter = _prom_register(
+                Counter,
+                "pramanix_translator_cb_probes_total",
+                "Number of HALF_OPEN probe attempts",
+                ["model", "outcome"],
+            )
+            self._calls_counter = _prom_register(
+                Counter,
+                "pramanix_translator_cb_calls_total",
+                "Translator circuit breaker call outcomes",
+                ["model", "outcome"],
+            )
+            self._metrics_available = all(
+                m is not None
+                for m in (
+                    self._state_gauge,
+                    self._trips_counter,
+                    self._probes_counter,
+                    self._calls_counter,
+                )
+            )
+            if self._metrics_available:
+                self._update_state_metric()
+        except ImportError:
+            self._metrics_available = False
+
+    def _update_state_metric(self) -> None:
+        if not self._metrics_available:
+            return
+        try:
+            for s in CircuitState:
+                self._state_gauge.labels(model=self.model, state=s.value).set(
+                    1 if self._state == s else 0
+                )
+        except Exception as exc:
+            log.warning("pramanix.translator_cb: Prometheus update failed: %s", exc)
 
     @property
     def state(self) -> CircuitState:
@@ -975,42 +1116,91 @@ class TranslatorCircuitBreaker:
         """
         from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 
+        is_probe = False
         async with self._lock:
             if self._state == CircuitState.OPEN:
                 elapsed = time.monotonic() - (self._opened_at or 0.0)
                 if elapsed < self._recovery_seconds:
+                    if self._metrics_available:
+                        try:
+                            self._calls_counter.labels(
+                                model=self.model, outcome="rejected_open"
+                            ).inc()
+                        except Exception:
+                            pass
                     raise ExtractionFailureError(
                         f"Translator circuit breaker OPEN for model {self.model!r}. "
                         f"Retry in {self._recovery_seconds - elapsed:.1f}s."
                     )
-                # Probe window — transition to HALF_OPEN
+                # Probe window reached — but only ONE caller may probe at a time.
+                # If another caller is already probing, reject this one to prevent
+                # double-probe race (§4.3 / gaps.md §17.3).
+                if self._probing:
+                    raise ExtractionFailureError(
+                        f"Translator circuit breaker HALF_OPEN probe already in "
+                        f"progress for model {self.model!r}. Retry later."
+                    )
                 self._state = CircuitState.HALF_OPEN
+                self._probing = True
+                is_probe = True
+                self._update_state_metric()
                 log.info(
                     "pramanix.translator_cb.half_open: model=%r probing after %.1fs",
                     self.model,
                     elapsed,
                 )
+                if self._metrics_available:
+                    try:
+                        self._probes_counter.labels(
+                            model=self.model, outcome="started"
+                        ).inc()
+                    except Exception:
+                        pass
 
         try:
             result = await coro_factory()
         except (ExtractionFailureError, LLMTimeoutError):
             async with self._lock:
+                self._probing = False
                 self._consecutive_failures += 1
                 if self._state == CircuitState.HALF_OPEN or (
                     self._consecutive_failures >= self._failure_threshold
                 ):
                     self._state = CircuitState.OPEN
                     self._opened_at = time.monotonic()
+                    self._update_state_metric()
                     log.warning(
                         "pramanix.translator_cb.opened: model=%r failures=%d",
                         self.model,
                         self._consecutive_failures,
                     )
+                    if self._metrics_available:
+                        try:
+                            self._trips_counter.labels(model=self.model).inc()
+                            if is_probe:
+                                self._probes_counter.labels(
+                                    model=self.model, outcome="failed"
+                                ).inc()
+                            self._calls_counter.labels(
+                                model=self.model, outcome="failure"
+                            ).inc()
+                        except Exception:
+                            pass
             raise
         except Exception:
+            async with self._lock:
+                self._probing = False
+            if self._metrics_available:
+                try:
+                    self._calls_counter.labels(
+                        model=self.model, outcome="error"
+                    ).inc()
+                except Exception:
+                    pass
             raise
         else:
             async with self._lock:
+                self._probing = False
                 if self._consecutive_failures > 0 or self._state != CircuitState.CLOSED:
                     log.info(
                         "pramanix.translator_cb.recovered: model=%r state=%s→closed",
@@ -1020,6 +1210,18 @@ class TranslatorCircuitBreaker:
                 self._consecutive_failures = 0
                 self._opened_at = None
                 self._state = CircuitState.CLOSED
+                self._update_state_metric()
+                if self._metrics_available:
+                    try:
+                        if is_probe:
+                            self._probes_counter.labels(
+                                model=self.model, outcome="succeeded"
+                            ).inc()
+                        self._calls_counter.labels(
+                            model=self.model, outcome="success"
+                        ).inc()
+                    except Exception:
+                        pass
             return result
 
     def reset(self) -> None:
@@ -1027,4 +1229,6 @@ class TranslatorCircuitBreaker:
         self._state = CircuitState.CLOSED
         self._consecutive_failures = 0
         self._opened_at = None
+        self._probing = False
+        self._update_state_metric()
         log.info("pramanix.translator_cb.reset: model=%r", self.model)

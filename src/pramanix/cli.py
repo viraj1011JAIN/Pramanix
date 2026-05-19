@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """pramanix CLI — verify cryptographic decision proofs and simulate policy checks.
 
 Usage:
@@ -1354,6 +1357,66 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "PRAMANIX_ENV != 'production' — audit sink check skipped",
         )
 
+    # ── 15. Translator API key configuration ──────────────────────────────────
+    # Warn when a translator backend looks configured but its API key env var
+    # is absent, so that LLM calls don't fail silently at request time.
+    _TRANSLATOR_KEY_MAP: list[tuple[str, str, str]] = [
+        # (module_name_hint, env_var, display_name)
+        ("openai", "OPENAI_API_KEY", "OpenAI"),
+        ("anthropic", "ANTHROPIC_API_KEY", "Anthropic"),
+        ("cohere", "COHERE_API_KEY", "Cohere"),
+        ("mistral", "MISTRAL_API_KEY", "Mistral"),
+        ("google.generativeai", "GOOGLE_API_KEY", "Google Gemini"),
+        ("together", "TOGETHER_API_KEY", "Together AI"),
+        ("groq", "GROQ_API_KEY", "Groq"),
+    ]
+
+    # Collect which translator packages are actually installed.
+    _installed_translators: list[tuple[str, str, str]] = [
+        (mod, envvar, name)
+        for mod, envvar, name in _TRANSLATOR_KEY_MAP
+        if _has(mod)
+    ]
+
+    if not _installed_translators:
+        _check(
+            "translator-api-keys",
+            "SKIP",
+            "No LLM translator packages detected — API key check skipped",
+            hint="Install a translator extra: pip install 'pramanix[translator]'",
+        )
+    else:
+        _missing_keys: list[str] = []
+        _present_keys: list[str] = []
+        for _mod, _envvar, _name in _installed_translators:
+            if os.environ.get(_envvar, "").strip():
+                _present_keys.append(f"{_name} ({_envvar})")
+            else:
+                _missing_keys.append(f"{_name} → set {_envvar}")
+
+        if _missing_keys and not _present_keys:
+            # All installed translators are missing their key.
+            _check(
+                "translator-api-keys",
+                "ERROR",
+                f"LLM translator packages installed but NO API keys configured. "
+                f"Missing: {', '.join(_missing_keys)}",
+                hint="Set the corresponding environment variable(s) before deploying.",
+            )
+        elif _missing_keys:
+            _check(
+                "translator-api-keys",
+                "WARN",
+                f"Some translator API keys missing: {'; '.join(_missing_keys)}",
+                hint="Set the missing environment variable(s) to enable those translators.",
+            )
+        else:
+            _check(
+                "translator-api-keys",
+                "OK",
+                f"Translator API key(s) configured: {', '.join(_present_keys)}",
+            )
+
     # ── Render results ────────────────────────────────────────────────────────
     has_error = any(c["level"] == "ERROR" for c in checks)
     has_warn = any(c["level"] == "WARN" for c in checks)
@@ -1469,7 +1532,8 @@ def _cmd_compile_policy(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        raw = open(policy_path).read()
+        with open(policy_path, encoding="utf-8") as _fh:
+            raw = _fh.read()
     except OSError as exc:
         print(f"ERROR: cannot read {policy_path!r}: {exc}", file=sys.stderr)
         return 1

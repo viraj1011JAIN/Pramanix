@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Zero-Trust JWT Identity Linker — HS256, RS256, ES256.
 
 Architecture:
@@ -256,7 +259,11 @@ class JWTIdentityLinker:
     # ── Internal — per-algorithm verification ─────────────────────────────────
 
     def _verify_hs256(self, signing_input: bytes, sig_b64: str) -> None:
-        assert self._secret is not None  # invariant: set in __init__ for HS256
+        if self._secret is None:
+            raise JWTVerificationError(
+                "HS256 secret is None — this is an internal invariant violation; "
+                "the linker should have set _secret during __init__ for HS256."
+            )
         expected_sig = hmac.new(self._secret, signing_input, hashlib.sha256).digest()
         if not hmac.compare_digest(sig_b64.encode(), self._b64url(expected_sig).encode()):
             raise JWTVerificationError("JWT signature verification failed")

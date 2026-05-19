@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Final coverage-gap tests — all small, achievable gaps across multiple files.
 
 Targets (by file):
@@ -318,8 +321,11 @@ class TestPolicyAuditorZ3Exception:
             name = "fake_real"
 
         result = _model_to_dict(z3_model, {"fake_real": _RealField()}, ctx, _bool_var_fn)  # type: ignore[arg-type]
-        # The bad conversion is silently skipped; result has no entry for the field
-        assert "fake_real" not in result
+        # §22.2 fix: instead of silently omitting the field (old behaviour that
+        # created false confidence in audit results), the field is now preserved
+        # with its raw Z3 string representation so boundary examples are complete.
+        assert "fake_real" in result
+        assert isinstance(result["fake_real"], str)  # raw Z3 repr, e.g. "True"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """E-2: Merkle Anchor Pruning & Archival.
 
 MerkleArchiver wraps the in-memory Merkle accumulation with segment-based
@@ -43,6 +46,7 @@ import logging
 import os
 import secrets
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -306,13 +310,54 @@ class MerkleArchiver:
         )
         self._writer: Callable[[Path, bytes], None] = archive_writer or _default_archive_writer
         self._active: list[_Leaf] = []
+        self._lock: threading.Lock = threading.Lock()
         if archive_writer is None:
-            _log.warning(
-                "MerkleArchiver: no archive_writer supplied — segments written as "
-                "PLAINTEXT UTF-8.  For SOC 2, PCI DSS, or HIPAA deployments pass "
-                "an encrypted archive_writer (e.g. AES-256-GCM).  "
-                "See MerkleArchiver docstring for an example."
-            )
+            # ── Auto-encrypt if PRAMANIX_MERKLE_ARCHIVE_KEY is set ────────────
+            # Operators may set PRAMANIX_MERKLE_ARCHIVE_KEY to a 64-char hex
+            # string (= 32 bytes) to enable AES-256-GCM encryption without
+            # needing to modify application code:
+            #
+            #   export PRAMANIX_MERKLE_ARCHIVE_KEY=$(python -c \
+            #       "import secrets; print(secrets.token_bytes(32).hex())")
+            #
+            _env_key_hex = os.environ.get("PRAMANIX_MERKLE_ARCHIVE_KEY", "").strip()
+            if _env_key_hex:
+                try:
+                    _key = bytes.fromhex(_env_key_hex)
+                    if len(_key) != 32:
+                        raise ValueError(f"key must be 32 bytes (got {len(_key)})")
+                    self._writer = EncryptedArchiveWriter(_key)
+                    _log.info(
+                        "MerkleArchiver: AES-256-GCM encryption enabled via "
+                        "PRAMANIX_MERKLE_ARCHIVE_KEY environment variable."
+                    )
+                except ValueError as exc:
+                    _log.warning(
+                        "MerkleArchiver: PRAMANIX_MERKLE_ARCHIVE_KEY is set but invalid "
+                        "(%s) — falling back to PLAINTEXT writer.  "
+                        "Fix the key or unset the variable.",
+                        exc,
+                    )
+                    # Emit the loud plaintext warning too (falls through below)
+                    _env_key_hex = ""  # clear so the plaintext warning fires
+
+            if not _env_key_hex:
+                _plaintext_ok = (
+                    os.environ.get("PRAMANIX_MERKLE_ARCHIVE_PLAINTEXT_OK", "").strip().lower()
+                    == "true"
+                )
+                if not _plaintext_ok:
+                    _log.warning(
+                        "MerkleArchiver: no archive_writer supplied and "
+                        "PRAMANIX_MERKLE_ARCHIVE_KEY is not set — segments written as "
+                        "PLAINTEXT UTF-8.  For SOC 2, PCI DSS, or HIPAA deployments:\n"
+                        "  Option A: set PRAMANIX_MERKLE_ARCHIVE_KEY=<64-char-hex> in the "
+                        "environment (auto-enables AES-256-GCM).\n"
+                        "  Option B: pass archive_writer=EncryptedArchiveWriter(key) to "
+                        "MerkleArchiver.  See MerkleArchiver docstring for examples.\n"
+                        "  (Silence this warning in tests: "
+                        "PRAMANIX_MERKLE_ARCHIVE_PLAINTEXT_OK=true)"
+                    )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -331,10 +376,10 @@ class MerkleArchiver:
         """
         ts = timestamp if timestamp is not None else time.time()
         leaf_hash = hashlib.sha256(decision_id.encode()).hexdigest()
-        self._active.append(_Leaf(decision_id=decision_id, leaf_hash=leaf_hash, ts=ts))
-
-        if len(self._active) >= self._max_active:
-            return self._archive_segment()
+        with self._lock:
+            self._active.append(_Leaf(decision_id=decision_id, leaf_hash=leaf_hash, ts=ts))
+            if len(self._active) >= self._max_active:
+                return self._archive_segment()
         return None
 
     def archive(self) -> ArchiveResult | None:
@@ -342,9 +387,10 @@ class MerkleArchiver:
 
         Returns ``None`` if there are no entries to archive.
         """
-        if not self._active:
-            return None
-        return self._archive_segment()
+        with self._lock:
+            if not self._active:
+                return None
+            return self._archive_segment()
 
     def flush_archive(self) -> ArchiveResult | None:
         """Archive all remaining active entries (call at shutdown).
@@ -355,17 +401,20 @@ class MerkleArchiver:
 
     def active_count(self) -> int:
         """Return the number of entries currently in the active chain."""
-        return len(self._active)
+        with self._lock:
+            return len(self._active)
 
     def root(self) -> str | None:
         """Return the Merkle root of all active leaves, or ``None`` if empty."""
-        if not self._active:
-            return None
-        return _build_root([leaf.leaf_hash for leaf in self._active])
+        with self._lock:
+            if not self._active:
+                return None
+            return _build_root([leaf.leaf_hash for leaf in self._active])
 
     def active_leaves(self) -> list[_Leaf]:
         """Return a copy of the active leaf list (for testing/inspection)."""
-        return list(self._active)
+        with self._lock:
+            return list(self._active)
 
     @classmethod
     def verify_archive(cls, archive_path: str | Path) -> bool:

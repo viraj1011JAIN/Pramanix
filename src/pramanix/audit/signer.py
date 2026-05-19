@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """JWS signing for Pramanix Decision objects.
 
 The signing key is loaded from PRAMANIX_SIGNING_KEY environment variable.
@@ -16,6 +19,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -23,6 +27,33 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
+
+_log = logging.getLogger(__name__)
+
+_signing_failure_counter_lock = __import__("threading").Lock()
+_signing_failure_counter: Any = None
+
+
+def _inc_signing_failure() -> None:
+    """Increment pramanix_signing_failures_total Prometheus counter."""
+    global _signing_failure_counter
+    try:
+        from prometheus_client import Counter
+
+        with _signing_failure_counter_lock:
+            if _signing_failure_counter is None:
+                try:
+                    _signing_failure_counter = Counter(
+                        "pramanix_signing_failures_total",
+                        "Total Decision signing failures (exception or missing key)",
+                    )
+                except ValueError:
+                    return
+        _signing_failure_counter.inc()
+    except ImportError:
+        pass
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -91,7 +122,15 @@ class DecisionSigner:
                 decision_id=decision.decision_id,
                 issued_at=int(time.time() * 1000),
             )
-        except Exception:
+        except Exception as exc:
+            _log.error(
+                "pramanix.audit.signer: sign() failed for decision_id=%s — "
+                "no signed token produced (audit trail integrity gap): %s",
+                getattr(decision, "decision_id", "<unknown>"),
+                exc,
+                exc_info=True,
+            )
+            _inc_signing_failure()
             return None
 
     def _canonicalize(self, decision: Decision) -> dict[str, Any]:

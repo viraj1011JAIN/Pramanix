@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """PolicyAuditor — static coverage analysis for Policy subclasses.
 
 Z3 can only verify what your invariants actually constrain.  A Field declared
@@ -32,10 +35,13 @@ Integrate with Guard startup::
 """
 from __future__ import annotations
 
+import logging
 import warnings
 from decimal import Decimal
 from fractions import Fraction
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 from pramanix.expressions import (
     ConstraintExpr,
@@ -117,8 +123,22 @@ def _model_to_dict(model: Any, fields: dict[str, Field], ctx: Any, z3_var_fn: An
                 result[name] = z3.is_true(val)
             elif field.z3_type == "String":
                 result[name] = val.as_string()
-        except Exception:
-            pass
+        except Exception as exc:
+            # §22.2: include raw Z3 string so boundary examples are never silently
+            # incomplete — a missing field creates false confidence in audit results.
+            try:
+                raw_repr = str(val)
+            except Exception:
+                raw_repr = "<unparseable>"
+            result[name] = raw_repr
+            _log.warning(
+                "pramanix.policy_auditor: _model_to_dict failed to extract field %r "
+                "(z3_type=%r) — using raw Z3 repr %r: %s",
+                name,
+                getattr(field, "z3_type", "unknown"),
+                raw_repr,
+                exc,
+            )
     return result
 
 
@@ -262,7 +282,13 @@ class PolicyAuditor:
 
         try:
             invariants = policy_cls.invariants()
-        except Exception:
+        except Exception as exc:
+            _log.error(
+                "pramanix.policy_auditor: %s.invariants() raised during boundary_examples() — "
+                "cannot generate audit examples. This is a policy definition error.",
+                policy_cls.__name__,
+                exc_info=exc,
+            )
             return {}
 
         all_fields = cls.declared_fields(policy_cls)
@@ -275,8 +301,15 @@ class PolicyAuditor:
             try:
                 node = inv.node if isinstance(inv, ConstraintExpr) else inv
                 z3_expr = transpile(node, ctx)
-            except Exception:
-                examples[label] = {"sat": None, "unsat": None}
+            except Exception as exc:
+                _log.error(
+                    "pramanix.policy_auditor: transpile() failed for invariant %r in %s — "
+                    "boundary example for this invariant cannot be generated: %s",
+                    label,
+                    policy_cls.__name__,
+                    exc,
+                )
+                examples[label] = {"sat": None, "unsat": None, "error": str(exc)}
                 continue
 
             sat_example: dict[str, Any] | None = None

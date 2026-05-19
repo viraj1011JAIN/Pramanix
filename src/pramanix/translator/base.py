@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Translator protocol and host-context dataclass.
 
 Both types are pure-Python with no optional dependencies so they can be
@@ -7,6 +10,7 @@ imported unconditionally even when *openai* / *anthropic* are not installed.
 """
 from __future__ import annotations
 
+import secrets
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -78,7 +82,9 @@ class TranslatorContext:
                             locale, currency, session metadata).
     """
 
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    request_id: str = field(
+        default_factory=lambda: str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
+    )
     user_id: str = ""
     available_accounts: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)

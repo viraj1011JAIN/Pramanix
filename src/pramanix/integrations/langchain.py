@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """LangChain integration for Pramanix.
 
 Install: pip install 'pramanix[langchain]'
@@ -9,13 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import contextlib
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_block_feedback
+
+_log = logging.getLogger(__name__)
 
 try:
     from langchain_core.tools import BaseTool
@@ -23,7 +28,17 @@ try:
     _LANGCHAIN_AVAILABLE = True
 except ImportError:
     _LANGCHAIN_AVAILABLE = False
-    BaseTool = object  # type: ignore[assignment, misc]
+
+    class BaseTool:  # type: ignore[no-redef]
+        """Internal placeholder — raises ConfigurationError at instantiation if langchain absent."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "LangChain integration requires 'langchain-core': "
+                "pip install 'pramanix[langchain]'"
+            )
 
 # Build model_config at module level to avoid polluting the class namespace
 # (Pydantic would treat an in-class `from pydantic import ConfigDict` as a field)
@@ -114,8 +129,14 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         executor.shutdown(wait=False)
 
     def __del__(self) -> None:
-        with contextlib.suppress(Exception):
+        try:
             self.close()
+        except Exception as exc:
+            _log.warning(
+                "PramanixGuardedTool.__del__: close() raised during GC — "
+                "executor may not have been shut down cleanly: %s",
+                exc,
+            )
 
     async def _arun(self, tool_input: str, **kwargs: Any) -> str:
         guard = object.__getattribute__(self, "_pramanix_guard")
@@ -138,9 +159,12 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
 
         if decision.allowed:
             if execute_fn is None:
-                raise NotImplementedError(
-                    f"PramanixGuardedTool '{self.name}' has no execute_fn. "
-                    "Pass execute_fn= at construction time."
+                from pramanix.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    f"PramanixGuardedTool '{self.name}': decision is ALLOW but no "
+                    "execute_fn was supplied at construction time. "
+                    "Pass execute_fn=<callable> when creating the tool."
                 )
             result = execute_fn(intent)
             if asyncio.iscoroutine(result):

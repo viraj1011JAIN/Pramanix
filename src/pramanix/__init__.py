@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """
 Pramanix: Deterministic Neuro-Symbolic Guardrails for Autonomous AI Agents.
 
@@ -83,7 +86,7 @@ from pramanix.compliance import (
     MappingMatchKind,
     RegulatoryFramework,
 )
-from pramanix.crypto import PramanixSigner, PramanixVerifier
+from pramanix.crypto import ES256Signer, ES256Verifier, PramanixSigner, PramanixVerifier, RS256Signer, RS256Verifier
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
 from pramanix.exceptions import (
@@ -202,6 +205,7 @@ from pramanix.privilege import (
     ScopeEnforcer,
     ToolCapability,
 )
+from pramanix.nlp import PIIDetector, PIIMatch, RegexClassifier, SemanticSimilarityGuard, ToxicityScorer
 from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.injection_scorer import BuiltinScorer, CalibratedScorer, InjectionScorer
@@ -376,6 +380,11 @@ __all__ = [
     "PramanixSemanticKernelPlugin",
     # Phase 11 — Pillar 2: Ed25519 cryptographic signing
     "PramanixSigner",
+    # RS256/ES256 asymmetric JWT-compatible signers
+    "RS256Signer",
+    "RS256Verifier",
+    "ES256Signer",
+    "ES256Verifier",
     # Integrations — beta
     "PramanixToolCallback",
     "PramanixVerifier",
@@ -431,4 +440,10 @@ __all__ = [
     "guard",
     "invariant_mixin",
     "model_dump_z3",
+    # NLP validators (Issue #2)
+    "PIIDetector",
+    "PIIMatch",
+    "RegexClassifier",
+    "SemanticSimilarityGuard",
+    "ToxicityScorer",
 ]

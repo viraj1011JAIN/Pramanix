@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Regression tests for all engineering-gap fixes.
 
 These tests verify every fix applied in the gap-hardening pass:

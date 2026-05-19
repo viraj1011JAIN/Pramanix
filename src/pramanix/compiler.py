@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Pramanix Pillar 1 — Neuro-Symbolic Policy Engine: Strict IR Compiler.
 
 This module implements the deterministic boundary between natural-language
@@ -836,10 +839,11 @@ class PolicyCompiler:
             # Defensive uniqueness check.  Pydantic's model_validator already
             # catches this at IR parse time, but we re-verify here to guard
             # against any direct Rule construction that bypassed validation.
-            assert invariant.label is not None, (
-                "_compile_rule must always return a labelled ConstraintExpr — "
-                "this is an internal compiler invariant."
-            )
+            if invariant.label is None:
+                raise PolicyCompilationError(
+                    "_compile_rule must always return a labelled ConstraintExpr — "
+                    "this is an internal compiler invariant."
+                )
             if invariant.label in seen_labels:
                 raise PolicyCompilationError(
                     f"PolicyIR '{ir.name}': duplicate invariant label "
@@ -921,14 +925,15 @@ class PolicyCompiler:
             The folded :class:`ConstraintExpr`.
 
         Raises:
-            AssertionError: If *exprs* is empty (programming error; the
+            PolicyCompilationError: If *exprs* is empty (programming error; the
                 ``min_length=1`` constraint on :attr:`Rule.conditions` prevents
                 this in normal usage).
         """
-        assert exprs, (
-            "_fold_exprs called with an empty list.  Rule.conditions has "
-            "min_length=1, so this indicates a compiler bug."
-        )
+        if not exprs:
+            raise PolicyCompilationError(
+                "_fold_exprs called with an empty list.  Rule.conditions has "
+                "min_length=1, so this indicates a compiler bug."
+            )
         if len(exprs) == 1:
             return exprs[0]
 
@@ -981,7 +986,12 @@ class PolicyCompiler:
         rhs_val = cond.rhs.value
         if cond.op in _MEMBERSHIP_OPERATORS:
             # model_validator guarantees rhs_val is a non-empty list at this point.
-            assert isinstance(rhs_val, list)
+            if not isinstance(rhs_val, list):
+                raise PolicyCompilationError(
+                    f"Operator '{cond.op.value}' requires a list RHS, "
+                    f"but got {type(rhs_val).__name__!r}. "
+                    "This is a model_validator contract violation."
+                )
             return self._compile_membership(cond, lhs_field, lhs_node, label, rhs_val)
 
         return self._compile_scalar_comparison(cond, lhs_field, lhs_node, label, rhs_val)
@@ -1063,7 +1073,11 @@ class PolicyCompiler:
             PolicyCompilationError: RHS field undeclared or sort incompatibility.
             FieldTypeError:          Ordering operator on Bool / String field.
         """
-        assert isinstance(cond.rhs, FieldReference)
+        if not isinstance(cond.rhs, FieldReference):
+            raise PolicyCompilationError(
+                f"_compile_field_comparison called with non-FieldReference RHS "
+                f"(got {type(cond.rhs).__name__!r}). This is an internal compiler bug."
+            )
 
         rhs_field: Field = self._resolve_field_ref(cond.rhs, policy_fields)
         rhs_node: ExpressionNode = E(rhs_field)

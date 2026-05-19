@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Unit tests for pramanix.natural_policy.
 
 All tests use a mock :class:`~pramanix.translator.Translator` — no real LLM
@@ -861,11 +864,8 @@ class TestNaturalPolicyCompiler:
             system_prompt_prefix="Domain: financial services.",
         )
         await compiler.compile("No transaction may exceed 50000.")
-        call_args = translator.extract.call_args
-        assert (
-            "Domain: financial services." in call_args.kwargs["text"]
-            or "Domain: financial services." in call_args.args[0]
-        )
+        assert translator.last_prompt is not None
+        assert "Domain: financial services." in translator.last_prompt
 
 
 # ── compile_from_schema synchronous path ──────────────────────────────────────

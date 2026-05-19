@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Pillar 2 — Zero-Trust Agent Mesh: SPIFFE JWT-SVID Authenticator.
 
 Architecture
@@ -69,6 +72,7 @@ Security guarantees
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
@@ -276,6 +280,9 @@ class MeshAuthenticator:
         # ── JWKS cache (only relevant when jwks_uri is set) ───────────────────
         self._jwks_cache: _JwksCache = _JwksCache()
         self._jwks_lock: threading.Lock = threading.Lock()
+        # Prevents concurrent threads from issuing duplicate JWKS fetches when
+        # the cache is expired.  Checked and set atomically under _jwks_lock.
+        self._jwks_fetching: bool = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -417,6 +424,29 @@ class MeshAuthenticator:
 
         return _parse_spiffe_uri(str(sub), payload)
 
+    async def authenticate_and_bind_async(
+        self,
+        token: str,
+        raw_intent: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Async variant of :meth:`authenticate_and_bind`.
+
+        Offloads the synchronous JWKS HTTP fetch and cryptographic work to the
+        default thread-pool executor so the calling event loop is not blocked.
+
+        See :meth:`authenticate_and_bind` for the full contract and error
+        semantics.
+        """
+        return await asyncio.to_thread(self.authenticate_and_bind, token, raw_intent)
+
+    async def verify_svid_async(self, token: str) -> SpiffeIdentity:
+        """Async variant of :meth:`verify_svid`.
+
+        Offloads to the thread-pool executor — safe to call from an async
+        handler without blocking the event loop.
+        """
+        return await asyncio.to_thread(self.verify_svid, token)
+
     # ── Internal — key resolution ─────────────────────────────────────────────
 
     def _resolve_key(self, header: dict[str, Any]) -> Any:
@@ -440,29 +470,52 @@ class MeshAuthenticator:
             return self._static_key
 
         # JWKS path
-        assert self._jwks_uri is not None  # invariant: enforced in __init__
+        if self._jwks_uri is None:
+            raise MeshAuthenticationError(
+                "_select_verification_key called without static_key or jwks_uri — "
+                "this is an internal invariant violation enforced by __init__."
+            )
         jwks_keys = self._get_cached_jwks_keys()
         return _select_jwk(jwks_keys, kid=header.get("kid"), alg=header.get("alg", ""))
 
     def _get_cached_jwks_keys(self) -> list[_JwkDict]:
         """Return the cached JWKS key list, refreshing from the endpoint if expired.
 
-        Thread-safe: the cache is read under the lock; the HTTP fetch is
-        performed outside the lock to avoid serialising requests during the
-        initial warm-up period.  Two threads may fetch concurrently on a cold
-        cache; this is safe because the refresh is idempotent.
+        Thread-safe via double-checked locking with a ``_jwks_fetching`` flag:
+
+        1. Read the cache under ``_jwks_lock``.  Return immediately on a hit.
+        2. If the cache is cold/expired and another thread is already fetching
+           (``_jwks_fetching=True``), return stale keys if any exist — the
+           caller gets slightly stale data for one request rather than issuing
+           a duplicate HTTP fetch.  On a cold cache with no stale keys the
+           thread joins the fetch (rare cold-start scenario; both fetches are
+           idempotent).
+        3. Claim the fetch slot atomically by setting ``_jwks_fetching=True``
+           inside the lock, then fetch outside the lock.
+        4. Store the result and clear the flag atomically under the lock.
         """
         with self._jwks_lock:
             age = time.monotonic() - self._jwks_cache.fetched_at
             if age < self._cache_ttl and self._jwks_cache.keys:
                 return list(self._jwks_cache.keys)
+            if self._jwks_fetching and self._jwks_cache.keys:
+                # Another thread is refreshing; serve stale keys rather than
+                # issuing a duplicate HTTP request.
+                return list(self._jwks_cache.keys)
+            # Claim the fetch slot (atomic because we're under the lock).
+            self._jwks_fetching = True
 
-        # Cache cold or expired — fetch outside the lock.
-        fresh_keys = self._fetch_jwks()
+        try:
+            fresh_keys = self._fetch_jwks()
+        except Exception:
+            with self._jwks_lock:
+                self._jwks_fetching = False
+            raise
 
         with self._jwks_lock:
             self._jwks_cache.keys = fresh_keys
             self._jwks_cache.fetched_at = time.monotonic()
+            self._jwks_fetching = False
 
         return fresh_keys
 
@@ -485,7 +538,11 @@ class MeshAuthenticator:
                 "JWKS endpoint support requires the 'httpx' package: " "pip install httpx"
             ) from exc
 
-        assert self._jwks_uri is not None  # invariant: enforced in __init__
+        if self._jwks_uri is None:
+            raise MeshAuthenticationError(
+                "_fetch_jwks called without jwks_uri — "
+                "this is an internal invariant violation enforced by __init__."
+            )
 
         try:
             response = httpx.get(

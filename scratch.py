@@ -1,25 +1,33 @@
-import sys
 import os
-import time
 
-print('Starting doctor test...')
-sys.stdout.flush()
+reference = """# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
+"""
 
-try:
-    import redis
-    print('Imported redis')
-    sys.stdout.flush()
-    start = time.time()
-    client = redis.from_url('redis://127.0.0.1:6379', socket_connect_timeout=3)
-    print('Created client in', time.time() - start)
-    sys.stdout.flush()
-    start = time.time()
-    try:
-        client.ping()
-        print('Ping successful in', time.time() - start)
-    except Exception as e:
-        print('Ping failed in', time.time() - start, 'with', e)
-    sys.stdout.flush()
-    client.close()
-except Exception as e:
-    print('Error:', e)
+def update_files(directory):
+    for root, dirs, files in os.walk(directory):
+        if '.venv' in dirs: dirs.remove('.venv')
+        if '__pycache__' in dirs: dirs.remove('__pycache__')
+        for file in files:
+            if file.endswith('.py'):
+                path = os.path.join(root, file)
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                if "docs/THESIS.tex" not in content:
+                    lines = content.split('\n')
+                    insert_idx = 0
+                    for i, line in enumerate(lines):
+                        if line.startswith('# SPDX-') or line.startswith('# Copyright'):
+                            insert_idx = i + 1
+                        elif not line.startswith('#'):
+                            break
+                    
+                    lines.insert(insert_idx, reference.strip())
+                    
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(lines))
+
+update_files(r'C:\Pramanix\benchmarks')
+print("Done benchmarks")

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Coverage for injection_filter.py and injection_scorer.py.
 
 injection_filter: is_injection (lines 199-209), scan_all (lines 230-238)

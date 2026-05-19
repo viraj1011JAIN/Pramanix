@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Decision — the immutable, JSON-serialisable result of a Guard verification.
 
 Every call to ``Guard.verify()`` returns exactly one :class:`Decision`.
@@ -40,6 +43,7 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import secrets
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -109,6 +113,7 @@ def _build_decision_canonical(
     state_dump: dict[str, Any],
     status: str,
     violated_invariants: Any,
+    policy_name: str | None = None,
 ) -> dict[str, Any]:
     """Build the canonical dict used for :meth:`Decision._compute_hash`.
 
@@ -121,10 +126,13 @@ def _build_decision_canonical(
         allowed:             ``Decision.allowed`` as a plain ``bool``.
         explanation:         Human-readable explanation string.
         intent_dump:         Serialised intent dict (``Decision.intent_dump``).
-        policy:              Policy name extracted from ``Decision.metadata``.
+        policy:              SHA-256 policy fingerprint (``Decision.policy_hash``).
         state_dump:          Serialised state dict (``Decision.state_dump``).
         status:              ``SolverStatus`` value string.
         violated_invariants: Iterable of invariant label strings.
+        policy_name:         Human-readable policy class name (e.g. ``'PaymentPolicy'``).
+                             Stored as ``"policy_name"`` in the canonical dict so
+                             offline verifiers can identify the policy by name.
 
     Returns:
         Canonical ``dict`` ready for :func:`_canonical_bytes`.
@@ -135,6 +143,7 @@ def _build_decision_canonical(
         "hash_alg": "sha256-v1",
         "intent_dump": _make_json_safe(dict(intent_dump) if intent_dump else {}),
         "policy": str(policy or ""),
+        "policy_name": str(policy_name or ""),
         "state_dump": _make_json_safe(dict(state_dump) if state_dump else {}),
         "status": str(status or ""),
         "violated_invariants": sorted(str(v) for v in (violated_invariants or ())),
@@ -254,7 +263,9 @@ class Decision:
     explanation: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     solver_time_ms: float = 0.0
-    decision_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    decision_id: str = field(
+        default_factory=lambda: str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
+    )
     intent_dump: dict[str, Any] = field(default_factory=dict)
     state_dump: dict[str, Any] = field(default_factory=dict)
     decision_hash: str = field(default="")
@@ -265,6 +276,11 @@ class Decision:
     """SHA-256 fingerprint of the policy that produced this decision.
     Set by Guard._sign_decision().  Not included in decision_hash (treated
     as metadata, like signature and public_key_id).
+    """
+    policy_name: str | None = None
+    """Human-readable policy class name (e.g. ``'PaymentPolicy'``).
+    Stored alongside policy_hash so offline audit tools can identify the
+    policy by name without decoding the hash.
     """
 
     # ── Cross-invariant validation ────────────────────────────────────────────
@@ -312,6 +328,7 @@ class Decision:
             state_dump=self.state_dump,
             status=status,
             violated_invariants=self.violated_invariants,
+            policy_name=self.policy_name,
         )
         try:
             serialized = _canonical_bytes(canonical)
@@ -348,6 +365,7 @@ class Decision:
             "signature": self.signature,
             "public_key_id": self.public_key_id,
             "policy_hash": self.policy_hash,
+            "policy_name": self.policy_name,
         }
 
     # ── Factory: SAFE ─────────────────────────────────────────────────────────
@@ -654,6 +672,23 @@ class Decision:
             signature=base.signature,
             public_key_id=base.public_key_id,
             policy_hash=base.policy_hash,
+            policy_name=base.policy_name,
+        )
+
+    # ── Cache-hit query ───────────────────────────────────────────────────────
+
+    def is_cache_hit(self) -> bool:
+        """Return ``True`` if this decision was served from the solver cache.
+
+        Cache-hit decisions are marked by ``metadata["_solver_status_tag"]``
+        set to ``SolverStatus.CACHE_HIT.value``.  The ``allowed`` / ``status``
+        fields reflect the underlying Z3 outcome as normal.
+
+        Use this to distinguish cold-path (Z3 ran) from warm-path (cache hit)
+        in monitoring dashboards or performance benchmarks.
+        """
+        return (
+            self.metadata.get("_solver_status_tag") == SolverStatus.CACHE_HIT.value
         )
 
     # ── Deserialisation ────────────────────────────────────────────────────────
@@ -704,6 +739,7 @@ class Decision:
             signature=d.get("signature"),
             public_key_id=d.get("public_key_id"),
             policy_hash=d.get("policy_hash"),
+            policy_name=d.get("policy_name"),
         )
 
     # ── Human-readable representation ────────────────────────────────────────

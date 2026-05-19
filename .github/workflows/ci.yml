@@ -134,6 +134,7 @@ jobs:
             'PRAMANIX_HMAC_SECRET\s*='
             'PRAMANIX_API_KEY\s*='
             'PRAMANIX_LLM_API_KEY\s*='
+            'PRAMANIX_SCORER_HMAC_KEY_HEX\s*=\s*"[a-fA-F0-9]{64}'
             'openai_api_key\s*=\s*"[a-zA-Z0-9]'
             'anthropic_api_key\s*=\s*"[a-zA-Z0-9]'
           )

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Intent extraction cache for Pramanix NLP mode.
 
 Caches LLM extraction results to eliminate repeated API calls for
@@ -21,7 +24,6 @@ Enabled via:
 """
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import logging
 import os
@@ -162,9 +164,15 @@ class _RedisCache:
             )  # Redis failure → silent (cache is best-effort)
 
     def invalidate(self, key: str) -> None:
-        """Delete key from Redis; silently drops on Redis failure."""
-        with contextlib.suppress(Exception):
+        """Delete key from Redis; logs and continues on Redis failure (cache is best-effort)."""
+        try:
             self._redis.delete(f"{self._prefix}{key}")
+        except Exception as exc:
+            _log.debug(
+                "pramanix.cache: Redis DELETE failed for key=%r — cache entry not invalidated: %s",
+                key,
+                exc,
+            )
 
     def clear(self) -> None:
         """Delete all cache entries matching this manager's key prefix."""
@@ -176,8 +184,12 @@ class _RedisCache:
                     self._redis.delete(*keys)
                 if cursor == 0:
                     break
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning(
+                "pramanix.cache: Redis SCAN/DELETE failed during clear() — "
+                "cache may contain stale entries: %s",
+                exc,
+            )
 
 
 class IntentCache:
@@ -209,6 +221,7 @@ class IntentCache:
         self._backend = backend
         self._hits = 0
         self._misses = 0
+        self._stats_lock = Lock()
 
     @classmethod
     def from_env(cls) -> IntentCache:
@@ -233,8 +246,13 @@ class IntentCache:
                 backend: _RedisCache | _InProcessLRUCache = _RedisCache(
                     redis_client=r, ttl_seconds=int(ttl)
                 )
-            except Exception:
-                # Redis unavailable → fall back to in-process LRU
+            except Exception as exc:
+                _log.warning(
+                    "pramanix.cache: Redis connection failed (url=%r) — "
+                    "falling back to in-process LRU cache: %s",
+                    redis_url,
+                    exc,
+                )
                 maxsize = int(os.environ.get(cls._ENV_MAX_SIZE, "1024"))
                 backend = _InProcessLRUCache(maxsize=maxsize, ttl_seconds=ttl)
         else:
@@ -251,13 +269,15 @@ class IntentCache:
     @property
     def stats(self) -> dict[str, Any]:
         """Return current cache hit/miss statistics as a dict."""
+        with self._stats_lock:
+            hits = self._hits
+            misses = self._misses
+        total = hits + misses
         return {
             "enabled": self._enabled,
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": (
-                self._hits / (self._hits + self._misses) if (self._hits + self._misses) > 0 else 0.0
-            ),
+            "hits": hits,
+            "misses": misses,
+            "hit_rate": (hits / total if total > 0 else 0.0),
         }
 
     def get(self, user_text: str) -> dict[str, Any] | None:
@@ -270,27 +290,35 @@ class IntentCache:
         try:
             key = _normalize_key(user_text)
             result = self._backend.get(key)
-            if result is None:
-                self._misses += 1
-            else:
-                self._hits += 1
+            with self._stats_lock:
+                if result is None:
+                    self._misses += 1
+                else:
+                    self._hits += 1
             return result
         except Exception:
-            self._misses += 1
+            with self._stats_lock:
+                self._misses += 1
             return None
 
     def set(self, user_text: str, extracted: dict[str, Any]) -> None:
         """Store extraction result for user_text.
 
-        Never raises. Cache failure is silently ignored.
+        Never raises. Cache failure is logged at DEBUG and ignored — a cache
+        write failure does not affect the correctness of the extraction result.
         """
         if not self._enabled or not self._backend:
             return
         try:
             key = _normalize_key(user_text)
             self._backend.set(key, dict(extracted))  # Store copy
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug(
+                "pramanix.cache: set() failed for key hash %s — "
+                "extraction result will not be cached: %s",
+                hash(user_text) & 0xFFFF,
+                exc,
+            )
 
     def invalidate(self, user_text: str) -> None:
         """Explicitly invalidate a cache entry."""
@@ -299,12 +327,21 @@ class IntentCache:
         try:
             key = _normalize_key(user_text)
             self._backend.invalidate(key)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug(
+                "pramanix.cache: invalidate() failed — stale entry may persist: %s",
+                exc,
+            )
 
     def clear(self) -> None:
         """Clear all cache entries."""
         if not self._enabled or not self._backend:
             return
-        with contextlib.suppress(Exception):
+        try:
             self._backend.clear()
+        except Exception as exc:
+            _log.warning(
+                "pramanix.cache: TranslationCacheManager.clear() failed — "
+                "cache may contain stale entries: %s",
+                exc,
+            )

@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Tests for enterprise audit sinks: Kafka, S3, Splunk, Datadog (E-4)."""
 from __future__ import annotations
 
@@ -114,16 +117,31 @@ def test_s3_sink_raises_config_error_without_boto3(
 
 def test_s3_sink_records_puts_object() -> None:
     import concurrent.futures
+    import queue
+    import threading
 
     s3 = _S3Client()
     sink = S3AuditSink.__new__(S3AuditSink)
     sink._bucket = "test-bucket"
     sink._prefix = "audit/"
     sink._s3 = s3
-    sink._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    sink._max_queue = 1_000
+    sink._queue: queue.Queue = queue.Queue(maxsize=1_000)
+    sink._queue_lock = threading.Lock()
+    sink._overflow_count = 0
+    sink._stop_event = threading.Event()
+    sink._pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=4, thread_name_prefix="pramanix-s3-test"
+    )
+    # Start the real worker thread so the queue is drained properly.
+    sink._worker_thread = threading.Thread(
+        target=sink._worker, daemon=True, name="pramanix-s3-test-worker"
+    )
+    sink._worker_thread.start()
 
     sink.emit(_make_decision())
-    sink._pool.shutdown(wait=True)  # wait for upload thread
+    sink.close()  # drains queue, joins worker, shuts down pool
+
     assert len(s3.put_object_calls) == 1
     call_kwargs = s3.put_object_calls[0]
     assert call_kwargs["Bucket"] == "test-bucket"
@@ -152,6 +170,9 @@ def test_splunk_sink_records_sends_http() -> None:
         )
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "my-token")
         sink.emit(_make_decision())
+        # Drain background worker INSIDE mock context so the HTTP call is
+        # intercepted before respx deactivates the transport mock.
+        sink.close()
 
         assert mock_splunk.calls.call_count == 1
         req = mock_splunk.calls[0].request
@@ -169,6 +190,7 @@ def test_splunk_sink_accepts_bare_token() -> None:
         )
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "bare-token")
         sink.emit(_make_decision())
+        sink.close()  # drain before respx context exits
 
         req = mock_splunk.calls[0].request
         assert "Splunk bare-token" in req.headers["Authorization"]
@@ -193,6 +215,9 @@ def test_datadog_sink_raises_config_error_without_package(
 
 def test_datadog_sink_records_sends_log() -> None:
     """emit() calls logs_api.submit_log with a real HTTPLog payload."""
+    import queue
+    import threading
+
     # Inject real Datadog model types as module-like namespace objects so that
     # `from datadog_api_client.v2.model.http_log import HTTPLog` resolves to our
     # duck-type class — no MagicMock involved.
@@ -208,9 +233,22 @@ def test_datadog_sink_records_sends_log() -> None:
         sink._service = "pramanix"
         sink._source = "pramanix-audit"
         sink._tags = ""
+        sink._max_queue = 500
+        sink._queue_lock = threading.Lock()
+        sink._overflow_count = 0
         sink._logs_api = logs_api
+        # Start a real background worker so emit() can be processed.
+        sink._queue: queue.Queue = queue.Queue(maxsize=500)
+        sink._stop_event = threading.Event()
+        sink._worker = threading.Thread(
+            target=sink._send_loop, daemon=True, name="pramanix-dd-test"
+        )
+        sink._worker.start()
 
         sink.emit(_make_decision())
+        # Drain queue INSIDE patch.dict context so _send_loop can import the
+        # patched Datadog model modules before sys.modules is restored.
+        sink.close()
 
     assert len(logs_api.submit_log_calls) == 1
     payload = logs_api.submit_log_calls[0]

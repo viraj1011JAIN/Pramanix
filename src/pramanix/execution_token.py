@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Sealed Execution Token — HMAC-SHA256 single-use intent binding.
 
 Problem
@@ -66,7 +69,6 @@ Usage::
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import hmac
 import json
@@ -74,6 +76,7 @@ import logging
 import secrets
 import threading
 import time
+import types
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -81,6 +84,9 @@ from typing import TYPE_CHECKING, Any
 _log = logging.getLogger(__name__)
 
 # asyncpg is optional — only required for PostgresExecutionTokenVerifier.
+# §6.1 fix: `types` must be a regular runtime import because
+# `_asyncpg: types.ModuleType | None` is a module-level annotation.
+# Placing it under TYPE_CHECKING breaks get_type_hints() and Pydantic v2.
 _asyncpg: types.ModuleType | None
 try:
     import asyncpg as _asyncpg  # type: ignore[import-untyped]
@@ -93,8 +99,6 @@ _ASYNCPG_UNIQUE_VIOLATION: type | tuple[type, ...] = (
 )
 
 if TYPE_CHECKING:
-    import types
-
     from pramanix.decision import Decision
 
 __all__ = [
@@ -465,6 +469,16 @@ class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
                 "tokens consumed on one worker are NOT tracked by other workers, "
                 "enabling replay attacks. Switch to RedisExecutionTokenVerifier "
                 "or SQLiteExecutionTokenVerifier for distributed enforcement.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        elif os.environ.get("PRAMANIX_ENV", "").lower() == "production":
+            warnings.warn(
+                "InMemoryExecutionTokenVerifier is in use in a production "
+                "environment (PRAMANIX_ENV=production). Replay protection will "
+                "break if this process restarts or multiple workers are started. "
+                "Switch to RedisExecutionTokenVerifier or SQLiteExecutionTokenVerifier "
+                "for durable, multi-worker-safe token storage.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -980,7 +994,11 @@ class PostgresExecutionTokenVerifier:
 
     async def _init_pool(self) -> Any:
         """Create the asyncpg connection pool and ensure the schema exists."""
-        assert _asyncpg is not None, "asyncpg not installed — install pramanix[postgres]"
+        if _asyncpg is None:
+            raise RuntimeError(
+                "asyncpg not installed — required for PostgresExecutionTokenVerifier. "
+                "Install with: pip install 'pramanix[postgres]'"
+            )
         pool = await _asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
         async with pool.acquire() as conn:
             await self._ensure_table(conn)
@@ -1000,8 +1018,14 @@ class PostgresExecutionTokenVerifier:
         """Close the connection pool and stop the background event loop."""
         import asyncio
 
-        with contextlib.suppress(Exception):
+        try:
             asyncio.run_coroutine_threadsafe(self._pool.close(), self._loop).result(timeout=10.0)
+        except Exception as exc:
+            _log.warning(
+                "AsyncpgReplayStore.close(): pool.close() failed — "
+                "asyncpg connection pool may not have been released cleanly: %s",
+                exc,
+            )
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._loop_thread.join(timeout=10.0)
 

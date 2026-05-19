@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Coverage boost tests — fills every gap identified in the 94.31% report.
 
 Targets (all files that were below 96%):
@@ -564,12 +567,14 @@ class TestMistralHttpxImportError:
 
 
 class TestInjectionFilterException:
-    def test_exception_in_filter_returns_false_fail_open(self) -> None:
+    def test_exception_in_filter_blocks_fail_closed(self) -> None:
         from pramanix.translator.injection_filter import InjectionFilter
 
         f = InjectionFilter()
 
-        # Patch the combined regex to raise an unexpected exception
+        # InjectionFilter.is_injection() is fail-closed: any unexpected
+        # exception returns (True, ...) — blocking the input as a precaution
+        # rather than allowing potentially adversarial input through.
         with patch(
             "pramanix.translator.injection_filter._COMBINED_RE",
             new_callable=lambda: type(
@@ -583,8 +588,8 @@ class TestInjectionFilterException:
             ),
         ):
             detected, reason = f.is_injection("some text")
-            assert detected is False
-            assert "filter_error" in reason
+            assert detected is True  # fail-closed: block on unexpected error
+            assert reason  # reason string is populated
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -900,9 +905,18 @@ class TestAuditSinkCoverage:
             SplunkHecAuditSink("http://splunk:8088/services/collector", "token")
 
     def test_splunk_sink_close(self) -> None:
+        import queue
+        import threading
+
         from pramanix.audit_sink import SplunkHecAuditSink
 
         sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
+        # Set up the minimal internal state that close() requires.
+        sink._stop_event = threading.Event()
+        sink._queue = queue.Queue(maxsize=128)
+        _t = threading.Thread(target=lambda: None, daemon=True)
+        _t.start(); _t.join()  # already-finished thread; join() returns immediately
+        sink._worker = _t
         # Real sync-close client — tracks close() via close_called flag.
         client = _SyncCloseClient()
         sink._client = client
@@ -910,9 +924,17 @@ class TestAuditSinkCoverage:
         assert client.close_called, "SplunkHecAuditSink.close() must call client.close()"
 
     def test_splunk_sink_close_exception_swallowed(self) -> None:
+        import queue
+        import threading
+
         from pramanix.audit_sink import SplunkHecAuditSink
 
         sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
+        sink._stop_event = threading.Event()
+        sink._queue = queue.Queue(maxsize=128)
+        _t = threading.Thread(target=lambda: None, daemon=True)
+        _t.start(); _t.join()
+        sink._worker = _t
         # Real client whose close() raises — exception must be swallowed.
         sink._client = _ErrorCloseClient()
         sink.close()  # must not raise
@@ -941,21 +963,40 @@ class TestAuditSinkCoverage:
                 explanation="",
             )
             sink.emit(d)
+            # close() drains the queue and joins the worker thread, so the HTTP
+            # request is guaranteed to complete before we assert.
+            sink.close()
             assert mock_splunk.calls.call_count == 1
 
     def test_datadog_sink_close(self) -> None:
+        import queue
+        import threading
+
         from pramanix.audit_sink import DatadogAuditSink
 
         sink = DatadogAuditSink.__new__(DatadogAuditSink)
+        sink._stop_event = threading.Event()
+        sink._queue = queue.Queue(maxsize=128)
+        _t = threading.Thread(target=lambda: None, daemon=True)
+        _t.start(); _t.join()
+        sink._worker = _t
         client = _SyncCloseClient()
         sink._api_client = client
         sink.close()
         assert client.close_called, "DatadogAuditSink.close() must call _api_client.close()"
 
     def test_datadog_sink_close_exception_swallowed(self) -> None:
+        import queue
+        import threading
+
         from pramanix.audit_sink import DatadogAuditSink
 
         sink = DatadogAuditSink.__new__(DatadogAuditSink)
+        sink._stop_event = threading.Event()
+        sink._queue = queue.Queue(maxsize=128)
+        _t = threading.Thread(target=lambda: None, daemon=True)
+        _t.start(); _t.join()
+        sink._worker = _t
         sink._api_client = _ErrorCloseClient()
         sink.close()  # must not raise
 
@@ -1033,24 +1074,82 @@ class TestKeyProviderCoverage:
         assert p._cache_expires == 0.0
 
     def test_azure_key_vault_rotate_raises(self) -> None:
+        """AzureKeyVaultKeyProvider.rotate_key() raises RuntimeError on vault failure
+        and restores _secret_version to its pinned value."""
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
+        class _FailingAzureClient:
+            def get_secret(self, name: str, version: str | None = None) -> None:
+                raise ConnectionError("Azure Key Vault unreachable in unit tests")
+
         p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        with pytest.raises(NotImplementedError, match="rotation"):
+        p._cache_lock = threading.Lock()
+        p._cached_pem = b"old-pem"
+        p._cached_version = "v1"
+        p._cache_expires = 9999.0
+        p._secret_name = "pramanix-key"
+        p._secret_version = "v1"
+        p._client = _FailingAzureClient()
+
+        assert p.supports_rotation is True
+        with pytest.raises(RuntimeError, match="Azure Key Vault"):
             p.rotate_key()
+        # secret_version must be restored to its pinned value on failure.
+        assert p._secret_version == "v1"
 
     def test_gcp_kms_rotate_raises(self) -> None:
+        """GcpKmsKeyProvider.rotate_key() raises RuntimeError on Secret Manager failure
+        and restores _version_id to its pinned value."""
         from pramanix.key_provider import GcpKmsKeyProvider
 
+        class _FailingGcpClient:
+            def access_secret_version(self, *, name: str) -> None:
+                raise ConnectionError("GCP Secret Manager unavailable in unit tests")
+
         p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        with pytest.raises(NotImplementedError, match="rotation"):
+        p._cache_lock = threading.Lock()
+        p._cached_pem = b"old-pem"
+        p._cache_expires = 9999.0
+        p._version_id = "5"
+        p._project_id = "my-project"
+        p._secret_id = "pramanix-key"
+        p._client = _FailingGcpClient()
+
+        assert p.supports_rotation is True
+        with pytest.raises(RuntimeError, match="GCP Secret Manager"):
             p.rotate_key()
+        # version_id must be restored to its pinned value on failure.
+        assert p._version_id == "5"
 
     def test_hashicorp_vault_rotate_raises(self) -> None:
+        """HashiCorpVaultKeyProvider.rotate_key() raises RuntimeError on Vault failure."""
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
+        class _Kv2:
+            def read_secret_version(self, *, path: str, mount_point: str) -> None:
+                raise ConnectionError("HashiCorp Vault sealed in unit tests")
+
+        class _Kv:
+            v2 = _Kv2()
+
+        class _Secrets:
+            kv = _Kv()
+
+        class _FailingVaultClient:
+            secrets = _Secrets()
+
         p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        with pytest.raises(NotImplementedError, match="rotation"):
+        p._cache_lock = threading.Lock()
+        p._cached_pem = b"old-pem"
+        p._cached_version = "7"
+        p._cache_expires = 9999.0
+        p._secret_path = "pramanix/signing-key"
+        p._mount_point = "secret"
+        p._field = "private_key_pem"
+        p._client = _FailingVaultClient()
+
+        assert p.supports_rotation is True
+        with pytest.raises(RuntimeError, match="HashiCorp Vault"):
             p.rotate_key()
 
     def test_hashicorp_vault_key_version_cached(self) -> None:

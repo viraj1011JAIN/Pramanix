@@ -37,7 +37,11 @@ repos:
         name: mypy type-check
         additional_dependencies:
           - "pydantic>=2.0"
-        args: ["--ignore-missing-imports"]
+          - "z3-solver>=4.12"
+        # --strict matches CI (ci.yml: mypy src/pramanix/ --strict --no-error-summary)
+        # --ignore-missing-imports is removed to surface untyped dependencies locally
+        # before they reach CI and cause pipeline failures.
+        args: ["--strict", "--no-error-summary", "--ignore-missing-imports"]
         files: "^src/"
 
   # ── General hygiene ────────────────────────────────────────────────────────

@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Kubernetes admission webhook — Phase F-4.
 
 Creates a FastAPI application that acts as a Kubernetes ``ValidatingWebhook``.
@@ -44,7 +47,17 @@ try:
     _FASTAPI_AVAILABLE = True
 except ImportError:
     _FASTAPI_AVAILABLE = False
-    FastAPI = None  # type: ignore[assignment, misc]
+
+    class FastAPI:  # type: ignore[no-redef]
+        """Internal placeholder — raises ConfigurationError at instantiation if fastapi absent."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "Kubernetes webhook support requires the 'fastapi' package: "
+                "pip install 'pramanix[k8s]'"
+            )
 
 
 def create_admission_webhook(

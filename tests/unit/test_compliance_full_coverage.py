@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Full coverage for helpers/compliance.py.
 
 Uses a proper fake fpdf2 module (NOT a mock) that implements the real FPDF
@@ -184,7 +187,7 @@ class TestClassifySeverity:
 
     def test_invalid_amount_falls_through_to_rule_check(self) -> None:
         sev = _classify_severity(("sufficient_balance",), {"amount": "not_a_number"})
-        assert sev == "HIGH"
+        assert sev == "CRITICAL_PREVENTION"
 
     def test_missing_amount_defaults_to_zero(self) -> None:
         sev = _classify_severity(("sufficient_balance",), {})

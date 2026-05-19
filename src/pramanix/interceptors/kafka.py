@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Kafka consumer interceptor — Phase F-3.
 
 Wraps a ``confluent_kafka.Consumer`` so every polled message is gated by a
@@ -27,7 +30,6 @@ Usage::
 """
 from __future__ import annotations
 
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -193,5 +195,11 @@ class PramanixKafkaConsumer:
                 "PramanixKafkaConsumer GC'd without explicit close() — "
                 "call close() explicitly to release the Kafka consumer cleanly."
             )
-            with contextlib.suppress(Exception):
+            try:
                 self.close()
+            except Exception as exc:
+                _log.warning(
+                    "PramanixKafkaConsumer.__del__: close() raised during GC — "
+                    "Kafka consumer may not have been released cleanly: %s",
+                    exc,
+                )

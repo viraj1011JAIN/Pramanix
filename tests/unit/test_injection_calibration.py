@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Tests for InjectionScorer, BuiltinScorer, CalibratedScorer (D-4)."""
 
 from __future__ import annotations

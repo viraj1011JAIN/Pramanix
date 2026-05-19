@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Tests for SQLiteExecutionTokenVerifier.consume_within (TOCTOU gap closure)."""
 from __future__ import annotations
 

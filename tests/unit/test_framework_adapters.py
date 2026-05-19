@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Tests for framework adapters: Haystack, SemanticKernel, PydanticAI (F-1).
 
 All tests use real Guard instances from tests.helpers.real_protocols.

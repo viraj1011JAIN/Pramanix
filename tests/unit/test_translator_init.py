@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Unit tests for translator/__init__.py lazy imports and create_translator factory.
 
 Coverage targets
@@ -146,11 +149,13 @@ class TestCreateTranslator:
         with pytest.raises(ExtractionFailureError, match="Cannot infer translator"):
             create_translator("llama3.2")  # no recognized prefix
 
-    def test_unknown_model_gemini_raises(self) -> None:
+    def test_gemini_prefix_routes_to_gemini_translator(self) -> None:
+        """'gemini-*' models must route to GeminiTranslator, not raise."""
+        from pramanix.translator.gemini import GeminiTranslator
         from pramanix.translator.redundant import create_translator
 
-        with pytest.raises(ExtractionFailureError, match="Supported prefixes"):
-            create_translator("gemini-1.5-pro")
+        t = create_translator("gemini-1.5-pro", api_key="test-key")
+        assert isinstance(t, GeminiTranslator)
 
     def test_text_prefix_routes_to_openai_compat(self) -> None:
         """'text-*' models (legacy OpenAI) must route to OpenAICompatTranslator."""

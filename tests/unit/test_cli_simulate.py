@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase G-2: Tests for the `pramanix simulate` CLI subcommand
 """Unit tests for the 'pramanix simulate' CLI subcommand."""
 from __future__ import annotations

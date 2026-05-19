@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Secure scoped memory storage for the Pramanix agentic runtime.
 
 Provides a trust-label-aware, tenant-isolated, append-controlled in-process
@@ -27,7 +30,9 @@ Design constraints
 """
 from __future__ import annotations
 
+import collections
 import logging
+import secrets
 import threading
 import time
 import uuid
@@ -68,7 +73,11 @@ class MemoryEntry:
         metadata:       Arbitrary key-value pairs for routing / display.
     """
 
-    entry_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    entry_id: str = field(
+        default_factory=lambda: str(
+            uuid.UUID(bytes=secrets.token_bytes(16), version=4)
+        )
+    )
     key: str = ""
     value: Any = None
     label: TrustLabel = TrustLabel.INTERNAL
@@ -291,11 +300,17 @@ class SecureMemoryStore:
         *,
         default_min_label: TrustLabel = TrustLabel.PUBLIC,
         max_partition_entries: int = 1_000,
+        max_partitions: int = 10_000,
     ) -> None:
         self._default_min_label = default_min_label
         self._max_partition_entries = max_partition_entries
+        self._max_partitions = max_partitions
         self._lock = threading.Lock()
-        self._partitions: dict[tuple[str, str], ScopedMemoryPartition] = {}
+        # OrderedDict gives O(1) LRU ordering: move-to-end on access,
+        # popitem(last=False) to evict the LRU entry when at capacity.
+        self._partitions: collections.OrderedDict[
+            tuple[str, str], ScopedMemoryPartition
+        ] = collections.OrderedDict()
 
     # ── Partition management ──────────────────────────────────────────────
 
@@ -320,16 +335,28 @@ class SecureMemoryStore:
         """
         key = (tenant_id, workflow_id)
         with self._lock:
-            if key not in self._partitions:
-                if not create:
-                    return None
-                self._partitions[key] = ScopedMemoryPartition(
-                    tenant_id,
-                    workflow_id,
-                    min_label=self._default_min_label,
-                    max_entries=self._max_partition_entries,
+            if key in self._partitions:
+                # Move-to-end: mark as most-recently used.
+                self._partitions.move_to_end(key)
+                return self._partitions[key]
+            if not create:
+                return None
+            # Evict the LRU partition when at capacity.
+            if len(self._partitions) >= self._max_partitions:
+                evicted_key, _ = self._partitions.popitem(last=False)
+                _log.warning(
+                    "memory.store: partition capacity (%d) reached — evicted LRU partition %r",
+                    self._max_partitions,
+                    evicted_key,
                 )
-            return self._partitions[key]
+            new_partition = ScopedMemoryPartition(
+                tenant_id,
+                workflow_id,
+                min_label=self._default_min_label,
+                max_entries=self._max_partition_entries,
+            )
+            self._partitions[key] = new_partition
+            return new_partition
 
     def drop_partition(self, tenant_id: str, workflow_id: str) -> bool:
         """Remove and discard a partition.  Returns ``True`` if it existed."""

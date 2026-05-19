@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """CrewAI integration for Pramanix — Phase F-1.
 
 Wraps any CrewAI ``BaseTool`` (or plain callable) so that every execution is
@@ -177,7 +180,10 @@ class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type:
         if st.underlying_fn is not None:
             return str(st.underlying_fn(tool_input))
 
-        raise NotImplementedError(
-            f"PramanixCrewAITool '{self.name}' has no underlying_fn configured. "
-            "Pass underlying_fn= at construction time."
+        from pramanix.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            f"PramanixCrewAITool '{self.name}': decision is ALLOW but no "
+            "underlying_fn was supplied at construction time. "
+            "Pass underlying_fn=<callable> when creating the tool."
         )

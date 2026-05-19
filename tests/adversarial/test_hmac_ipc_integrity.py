@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Adversarial tests — T6: HMAC IPC integrity seal.
 
 Security threat: T6 — Process boundary memory injection (IPC tampering).
@@ -105,9 +108,9 @@ class TestHMACRoundTrip:
         assert inner["status"] == "unsafe"
 
     def test_envelope_structure(self) -> None:
-        """Envelope must have exactly the ``_p`` and ``_t`` keys."""
+        """Envelope must have exactly the ``_p``, ``_t``, and ``_n`` keys."""
         sealed = _make_sealed(_SAFE_VALUES)
-        assert set(sealed.keys()) == {"_p", "_t"}
+        assert set(sealed.keys()) == {"_p", "_t", "_n"}
         assert isinstance(sealed["_p"], str)
         assert isinstance(sealed["_t"], str)
         assert len(sealed["_t"]) == 64  # SHA-256 hex digest is 64 chars

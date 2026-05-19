@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase A-4: Tests for DatetimeField, within_seconds, is_before, is_business_hours
 """Gate: TradeWindowPolicy must ALLOW within-window datetimes and BLOCK outside."""
 from __future__ import annotations

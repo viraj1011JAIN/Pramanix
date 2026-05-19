@@ -1,6 +1,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """benchmarks/100m_orchestrator_fast.py
+
+.. note::
+    **Benchmark version note (Issue #6)**
+    The 500 M-decision results in ``benchmarks/results/`` were captured on
+    Pramanix **v0.8.0**.  The current release is **v1.0.0**.  Public throughput
+    and latency claims in ``docs/LAUNCH_CLAIMS.md`` are based on those v0.8.0
+    results.  Re-run this orchestrator with ``audit_pre_run_prep.py`` to
+    regenerate hardware-stamped results for v1.0.0 before quoting figures
+    publicly.
 
 Spawns 18 OS processes (multiprocessing.Process) to run 100 M Z3 decisions
 for one domain.  Run once per domain for the full 500 M sovereign audit.

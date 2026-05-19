@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Targeted coverage tests — round 2.
 
 Covers the remaining gaps in:
@@ -247,55 +250,65 @@ class TestTranslatorCircuitBreaker:
 class TestCircuitBreakerPrometheusRegistryPaths:
     def test_adaptive_cb_register_metrics_value_error_none_in_registry(self) -> None:
         """_register_metrics ValueError path: REGISTRY returns None → metrics_available=False."""
+        import pramanix.circuit_breaker as _cb_mod
         from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
         guard = _make_guard()
         config = CircuitBreakerConfig(namespace="test-prom-1")
 
-        with patch("prometheus_client.Gauge", side_effect=ValueError("already registered")):
-            with patch("prometheus_client.Counter", side_effect=ValueError("already registered")):
-                with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
-                    cb = AdaptiveCircuitBreaker(guard, config)
+        # Clear the module-level metric cache so the ValueError path is reachable
+        # (a previous test may have already populated it for these metric names).
+        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
+            with patch("prometheus_client.Gauge", side_effect=ValueError("already registered")):
+                with patch("prometheus_client.Counter", side_effect=ValueError("already registered")):
+                    with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
+                        cb = AdaptiveCircuitBreaker(guard, config)
 
         assert cb._metrics_available is False
 
     def test_adaptive_cb_register_metrics_inner_exception(self) -> None:
         """_register_metrics ValueError path: inner REGISTRY access raises → metrics_available=False."""
+        import pramanix.circuit_breaker as _cb_mod
         from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
         guard = _make_guard()
         config = CircuitBreakerConfig(namespace="test-prom-2")
 
-        with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
-            with patch("prometheus_client.REGISTRY", _BoomRegistry()):
-                cb = AdaptiveCircuitBreaker(guard, config)
+        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
+            with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
+                with patch("prometheus_client.REGISTRY", _BoomRegistry()):
+                    cb = AdaptiveCircuitBreaker(guard, config)
 
         assert cb._metrics_available is False
 
     def test_distributed_cb_register_metrics_value_error_none_in_registry(self) -> None:
         """DistributedCircuitBreaker: ValueError path with None registry entries."""
+        import pramanix.circuit_breaker as _cb_mod
         from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
 
         guard = _make_guard()
         config = CircuitBreakerConfig(namespace="test-dist-prom")
 
-        with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
-            with patch("prometheus_client.Counter", side_effect=ValueError("already")):
-                with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
-                    cb = DistributedCircuitBreaker(guard, config)
+        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
+            with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
+                with patch("prometheus_client.Counter", side_effect=ValueError("already")):
+                    with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
+                        cb = DistributedCircuitBreaker(guard, config)
 
         assert cb._metrics_available is False
 
     def test_distributed_cb_register_metrics_inner_exception(self) -> None:
         """DistributedCircuitBreaker: inner REGISTRY exception → metrics_available=False."""
+        import pramanix.circuit_breaker as _cb_mod
         from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
 
         guard = _make_guard()
         config = CircuitBreakerConfig(namespace="test-dist-prom-2")
 
-        with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
-            with patch("prometheus_client.REGISTRY", _BoomRegistry()):
-                cb = DistributedCircuitBreaker(guard, config)
+        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
+            with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
+                with patch("prometheus_client.REGISTRY", _BoomRegistry()):
+                    cb = DistributedCircuitBreaker(guard, config)
 
         assert cb._metrics_available is False
 
@@ -473,25 +486,45 @@ class TestCircuitBreakerPrometheusRegistryPaths:
 
 class TestCryptoSigningFailureCounter:
     def test_increment_when_counter_already_registered(self) -> None:
-        """_increment_signing_failure_counter handles ValueError (counter already exists)."""
+        """_increment_signing_failure_counter handles ValueError gracefully.
+
+        §5.1 fix: we no longer use prometheus_client's private
+        _names_to_collectors dict to recover the existing counter.  Instead
+        we set an internal sentinel and emit a one-time warning.  The counter
+        is not incremented for the collision invocation — the warning IS the
+        signal that the caller should fix their metric namespace.
+        """
+        import pramanix.crypto as _crypto_mod
         from pramanix.crypto import _increment_signing_failure_counter
+
+        # Reset module-level state so this test is isolated.
+        _crypto_mod._signing_failure_counter = None
 
         counter = _CounterRecorder()
         registry = _RegistryWithCounter("pramanix_signing_failure_total", counter)
 
         with patch("prometheus_client.Counter", side_effect=ValueError("already registered")):
             with patch("prometheus_client.REGISTRY", registry):
+                # Must not raise — logs a one-time warning instead.
+                _increment_signing_failure_counter()
+                # Second call must also not raise (sentinel prevents re-attempt).
                 _increment_signing_failure_counter()
 
-        assert counter.inc_count == 1
+        # No increment: the new behavior does not use _names_to_collectors.
+        assert counter.inc_count == 0
+
+        # Reset so subsequent tests get a fresh counter.
+        _crypto_mod._signing_failure_counter = None
 
     def test_increment_when_registry_lookup_returns_none(self) -> None:
-        """REGISTRY lookup returns None → early return without error."""
+        """ValueError on Counter registration → no crash, sentinel set."""
+        import pramanix.crypto as _crypto_mod
         from pramanix.crypto import _increment_signing_failure_counter
 
+        _crypto_mod._signing_failure_counter = None
         with patch("prometheus_client.Counter", side_effect=ValueError("already")):
-            with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
-                _increment_signing_failure_counter()  # must not raise
+            _increment_signing_failure_counter()  # must not raise
+        _crypto_mod._signing_failure_counter = None
 
     def test_sign_exception_increments_failure_counter(self) -> None:
         """PramanixSigner.sign() swallows exceptions and returns empty string."""
@@ -592,6 +625,9 @@ class TestDatadogAuditSinkInit:
         sink._logs_api = capturing_api
 
         sink.emit(_make_safe_decision())
+        # Drain the background worker queue before asserting — the worker
+        # thread processes emit() calls asynchronously.
+        sink.close()
 
         assert len(capturing_api.submit_log_calls) == 1
 
@@ -1208,7 +1244,7 @@ class TestKeyProviderSupportsRotation:
 
         assert FileKeyProvider(tmp_path / "key.pem").supports_rotation is False
 
-    def test_azure_provider_no_rotation(self) -> None:
+    def test_azure_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
         p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
@@ -1219,9 +1255,9 @@ class TestKeyProviderSupportsRotation:
         p._cached_pem = None
         p._cached_version = None
         p._cache_expires = 0.0
-        assert p.supports_rotation is False
+        assert p.supports_rotation is True
 
-    def test_gcp_provider_no_rotation(self) -> None:
+    def test_gcp_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import GcpKmsKeyProvider
 
         p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
@@ -1232,9 +1268,9 @@ class TestKeyProviderSupportsRotation:
         p._cache_lock = threading.Lock()
         p._cached_pem = None
         p._cache_expires = 0.0
-        assert p.supports_rotation is False
+        assert p.supports_rotation is True
 
-    def test_vault_provider_no_rotation(self) -> None:
+    def test_vault_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
@@ -1246,7 +1282,7 @@ class TestKeyProviderSupportsRotation:
         p._cached_pem = None
         p._cached_version = None
         p._cache_expires = 0.0
-        assert p.supports_rotation is False
+        assert p.supports_rotation is True
 
     def test_aws_private_key_pem_cache_miss_triggers_refresh(self) -> None:
         """Lines 317-319: cache_valid() False forces _refresh_cache() in private_key_pem."""

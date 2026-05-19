@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase D-1: Tests for ConsensusStrictness semantic comparison
 """Unit tests for semantic consensus comparison in RedundantTranslator."""
 from __future__ import annotations

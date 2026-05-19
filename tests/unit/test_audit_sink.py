@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase E-4: Tests for AuditSink implementations and GuardConfig integration
 """Verifies audit sinks emit decisions and failures never affect callers."""
 from __future__ import annotations

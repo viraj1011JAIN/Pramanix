@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 # Phase B-1: Tests for nested Pydantic models and NestedField descriptor chaining
 """Gate: Account->Position->Instrument nested model must compile and verify."""
 from __future__ import annotations

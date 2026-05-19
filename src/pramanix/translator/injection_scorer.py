@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Injection scorer protocol + calibrated implementation — Phase D-4.
 
 Provides a formal :class:`InjectionScorer` Protocol plus two implementations:
@@ -91,18 +94,35 @@ class BuiltinScorer:
 
         self._threshold = Decimal(str(sub_penny_threshold))
 
-    def score(self, text: str) -> float:
+    def score(
+        self,
+        text: str,
+        intent_dict: dict[str, Any] | None = None,
+        sanitise_warnings: list[str] | None = None,
+    ) -> float:
         """Score *text* using the built-in heuristic.
 
         Args:
-            text: Raw user input to score.
+            text:               Raw user input to score.
+            intent_dict:        Optional extracted intent fields.  When provided,
+                                they are forwarded to the underlying scorer so
+                                that per-field signals (e.g. sub-penny amounts)
+                                are incorporated into the confidence estimate.
+            sanitise_warnings:  Optional warnings from the sanitisation step.
+                                Forwarded to the underlying scorer for aggregate
+                                signal weighting.
 
         Returns:
             Injection-confidence score in ``[0.0, 1.0]``.
         """
         from pramanix.translator._sanitise import injection_confidence_score
 
-        return injection_confidence_score(text, {}, [], sub_penny_threshold=self._threshold)
+        return injection_confidence_score(
+            text,
+            intent_dict or {},
+            sanitise_warnings or [],
+            sub_penny_threshold=self._threshold,
+        )
 
 
 class CalibratedScorer:
@@ -217,8 +237,8 @@ class CalibratedScorer:
         """
         if not self._is_fitted:
             raise RuntimeError(
-                "CalibratedScorer must be fitted before calling score(). "
-                "Call fit() first, or use CalibratedScorer.load() to restore a saved scorer."
+                "CalibratedScorer.score() called before fit() — "
+                "call fit() with labelled training examples first."
             )
         proba = self._pipeline.predict_proba([text])[0]
         # predict_proba returns [P(benign), P(injection)] for classes [0, 1].
@@ -263,9 +283,11 @@ class CalibratedScorer:
 
         # Encode vocabulary as JSON bytes embedded in the archive.
         # json.dumps produces only text — no code execution on load.
-        vocab_bytes = json.dumps(tfidf.vocabulary_, sort_keys=True, ensure_ascii=True).encode(
-            "utf-8"
-        )
+        vocab_bytes = json.dumps(
+            {k: int(v) for k, v in tfidf.vocabulary_.items()},
+            sort_keys=True,
+            ensure_ascii=True,
+        ).encode("utf-8")
 
         buf = io.BytesIO()
         np.savez_compressed(
@@ -334,6 +356,16 @@ class CalibratedScorer:
                 path=str(path),
             )
 
+        # Check sklearn availability before attempting to reconstruct the model.
+        try:
+            import sklearn  # noqa: F401
+        except ImportError:
+            from pramanix.exceptions import ConfigurationError as _CE
+            raise _CE(
+                "scikit-learn is required to load a CalibratedScorer. "
+                "Install it with: pip install 'pramanix[injection]'"
+            ) from None
+
         # SAFE: allow_pickle=False prevents any code execution.
         # The archive contains only numpy numeric arrays + JSON-encoded text.
         data = np.load(io.BytesIO(raw), allow_pickle=False)
@@ -345,8 +377,7 @@ class CalibratedScorer:
         idf = data["idf"]
 
         # Reconstruct the scorer scaffold (hyperparams only — no fitted state yet).
-        instance = cls.__new__(cls)
-        instance.__init__()  # type: ignore[misc]
+        instance = cls()
 
         tfidf = instance._pipeline.named_steps["tfidf"]
         lr = instance._pipeline.named_steps["lr"]

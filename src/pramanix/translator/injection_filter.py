@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """System 1 fast-path injection filter.
 
 A sub-millisecond regex scanner that kills obviously malicious prompts
@@ -13,9 +16,9 @@ Design goals
 * **Speed** — single pre-compiled alternation regex; target < 1 ms on
   prompts up to 1 000 characters.
 * **No external dependencies** — stdlib ``re`` only.
-* **Fail-open** — any internal error returns ``(False, "filter_error:...")``.
-  The LLM + consensus + post-scoring layers still apply; the filter is an
-  optimisation, not a single point of failure.
+* **Fail-closed** — any internal error (e.g. catastrophic regex backtracking
+  on a crafted payload) blocks the request and logs ``ERROR``.  An input that
+  crashes the regex engine is anomalous by definition and must not proceed.
 * **Auditable** — :meth:`InjectionFilter.scan_all` returns every matched
   pattern with its label and matched text, suitable for structured logging.
 
@@ -33,15 +36,32 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import re
 
+_log = logging.getLogger(__name__)
+
 __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
+
+# ── RE2 engine (linear-time, ReDoS-immune) ────────────────────────────────────
+# google-re2 is a drop-in replacement for stdlib re but uses Google's RE2 engine
+# which guarantees O(n) matching time regardless of input.  This eliminates the
+# ReDoS attack surface entirely.  Install via: pip install 'pramanix[security]'
+#
+# If unavailable, stdlib re is used with a WARNING.  The injection patterns in
+# this file use only basic regex features compatible with both engines.
+try:
+    import re2 as _re_engine  # type: ignore[import-not-found]
+    _RE2_AVAILABLE = True
+except ImportError:
+    _re_engine = re  # type: ignore[assignment]
+    _RE2_AVAILABLE = False
 
 
 # ── Injection pattern registry ─────────────────────────────────────────
 #
 # Each entry is (regex_pattern, label).  Labels appear in block-reason
-# strings and structured audit logs.  Compiled with re.IGNORECASE.
+# strings and structured audit logs.  Compiled with IGNORECASE.
 #
 # Coverage:
 #   - Classic override / jailbreak phrases (GPT-4, Claude, Gemini)
@@ -53,15 +73,22 @@ __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 #
 from pramanix.translator._injection_patterns import INJECTION_PATTERNS
 
+if not _RE2_AVAILABLE:
+    _log.warning(
+        "pramanix.injection_filter: google-re2 not installed — "
+        "stdlib re is in use; ReDoS via crafted input is possible under sustained load. "
+        "pip install 'pramanix[security]' to eliminate this risk."
+    )
+
 # Combined alternation compiled once at import time.
-_COMBINED_RE: re.Pattern[str] = re.compile(
+_COMBINED_RE: re.Pattern[str] = _re_engine.compile(
     "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS),
-    re.IGNORECASE,
+    _re_engine.IGNORECASE,
 )
 
 # Individual patterns compiled for reason attribution (on a hit only).
 _INDIVIDUAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(pat, re.IGNORECASE), label) for pat, label in INJECTION_PATTERNS
+    (_re_engine.compile(pat, _re_engine.IGNORECASE), label) for pat, label in INJECTION_PATTERNS
 ]
 
 
@@ -129,8 +156,15 @@ class InjectionFilter:
             return True, "injection_pattern_detected label='unknown'"
 
         except Exception as exc:
-            # Fail-open: never block legitimate requests on a filter bug.
-            return False, f"filter_error:{exc}"
+            # Fail-CLOSED: an anomalous input that crashes the regex engine is
+            # by definition suspicious.  Blocking is the only safe response.
+            # Log at ERROR so operators can investigate and fix the pattern.
+            _log.error(
+                "pramanix.injection_filter: is_injection() raised unexpectedly — "
+                "input blocked as a precaution (fail-closed): %s",
+                exc,
+            )
+            return True, f"filter_internal_error:{type(exc).__name__}"
 
     def scan_all(self, text: str) -> list[tuple[str, str]]:
         """Return *all* injection patterns matched in *text*.

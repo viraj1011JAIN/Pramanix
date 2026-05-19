@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Real integration tests for PramanixCrewAITool.
 
 Core logic tests run WITHOUT crewai installed (graceful-degradation mode),
@@ -166,9 +169,10 @@ class TestBlockPath:
 
 
 class TestEdgeCases:
-    def test_no_underlying_fn_raises_not_implemented_error_on_allow(self):
-        """No underlying_fn + allowed → NotImplementedError (not silent pass)."""
-        with pytest.raises(NotImplementedError, match="underlying_fn"):
+    def test_no_underlying_fn_raises_config_error_on_allow(self):
+        """No underlying_fn + allowed → ConfigurationError (not silent pass)."""
+        from pramanix.exceptions import ConfigurationError
+        with pytest.raises(ConfigurationError, match="underlying_fn"):
             _make_tool(_ALLOW_GUARD)({"amount": 100})
 
     def test_intent_builder_exception_returns_safe_failure(self):

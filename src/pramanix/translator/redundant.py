@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Dual-model consensus extraction and the RedundantTranslator.
 
 The key public entry-point is :func:`extract_with_consensus` which calls two
@@ -220,6 +223,7 @@ async def extract_with_consensus(
     strictness: ConsensusStrictness = ConsensusStrictness.SEMANTIC,
     max_input_chars: int = 512,
     injection_scorer_path: str | None = None,
+    sensitive_fields: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Call two translators concurrently and require them to agree.
 
@@ -263,6 +267,11 @@ async def extract_with_consensus(
                          Raise for stricter deployments (e.g. ``0.3``); lower
                          for domains with legitimate high-entropy inputs such
                          as crypto addresses (e.g. ``0.7``).  Default: ``0.5``.
+        sensitive_fields: Set of extracted-intent field names whose string
+                         values are appended to *text* before the post-consensus
+                         injection scorer runs.  Free-text fields (``"notes"``,
+                         ``"reason"``, ``"message"``) listed here receive extra
+                         injection scrutiny.  Default: ``frozenset()``.
 
     Returns:
         A validated ``dict`` from *intent_schema* when consensus is reached.
@@ -419,7 +428,20 @@ async def extract_with_consensus(
     # Computed *after* both models agree so the actual extracted intent is
     # available as a signal.  This catches adversarial inputs that slip past
     # the injection-pattern regex (e.g. encoded payloads normalised by the LLM).
-    score = _scorer_fn(text, dump_a, sanitise_warnings)
+    #
+    # sensitive_fields augmentation: append string values from flagged fields so
+    # injection content embedded in free-text extracted fields is caught even
+    # when the raw input text appears benign.
+    _score_text = text
+    if sensitive_fields:
+        _extra_parts = [
+            str(dump_a[f])
+            for f in sensitive_fields
+            if f in dump_a and isinstance(dump_a[f], str) and dump_a[f]
+        ]
+        if _extra_parts:
+            _score_text = text + " " + " ".join(_extra_parts)
+    score = _scorer_fn(_score_text, dump_a, sanitise_warnings)
     if score >= injection_threshold:
         raise InjectionBlockedError(
             f"Input blocked by injection scorer "
@@ -561,6 +583,7 @@ def create_translator(
 
     * ``"gpt-*"``, ``"o1-*"``, ``"o3-*"``, ``"chatgpt-*"``  → :class:`OpenAICompatTranslator`
     * ``"claude-*"``                                          → :class:`AnthropicTranslator`
+    * ``"gemini-*"`` or ``"gemini:<model>"``                  → :class:`GeminiTranslator`
     * ``"ollama:<model>"``                                    → :class:`OllamaTranslator`
 
     Args:
@@ -596,7 +619,7 @@ def create_translator(
             timeout=timeout,
         )
 
-    if model.startswith("gemini:"):
+    if model.startswith("gemini:") or model.startswith("gemini-"):
         from pramanix.translator.gemini import GeminiTranslator
 
         bare_model = model.removeprefix("gemini:")
@@ -623,8 +646,8 @@ def create_translator(
 
     raise ExtractionFailureError(
         f"Cannot infer translator for model '{model}'. "
-        "Supported prefixes: 'gpt-', 'o1-', 'o3-', 'chatgpt-', 'claude-', 'ollama:', "
-        "'gemini:', 'cohere:', 'mistral:', 'llama:'. "
+        "Supported prefixes: 'gpt-', 'o1-', 'o3-', 'chatgpt-', 'claude-', "
+        "'gemini-', 'gemini:', 'ollama:', 'cohere:', 'mistral:', 'llama:'. "
         "Pass an explicit Translator instance to bypass auto-routing."
     )
 
@@ -666,6 +689,7 @@ class RedundantTranslator:
         critical_fields: frozenset[str] | None = None,
         injection_threshold: float = 0.5,
         strictness: ConsensusStrictness = ConsensusStrictness.SEMANTIC,
+        sensitive_fields: frozenset[str] = frozenset(),
     ) -> None:
         self._a = translator_a
         self._b = translator_b
@@ -673,6 +697,7 @@ class RedundantTranslator:
         self._critical_fields = critical_fields
         self._injection_threshold = injection_threshold
         self._strictness = strictness
+        self._sensitive_fields = sensitive_fields
         # Expose a composite model name for logging / error messages
         name_a = getattr(translator_a, "model", "a")
         name_b = getattr(translator_b, "model", "b")
@@ -694,4 +719,5 @@ class RedundantTranslator:
             critical_fields=self._critical_fields,
             injection_threshold=self._injection_threshold,
             strictness=self._strictness,
+            sensitive_fields=self._sensitive_fields,
         )

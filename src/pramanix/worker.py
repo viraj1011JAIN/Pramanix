@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
+# For architectural decisions and proof of correctness, please refer to:
+# - docs/THESIS.tex
+# - docs/PROOF_DOSSIER.md
 """Worker pool for async Guard execution modes.
 
 Architecture
@@ -35,6 +38,7 @@ Critical design invariants
 from __future__ import annotations
 
 import collections
+import contextvars
 import hashlib
 import hmac as _hmac_mod
 import json as _json_mod
@@ -74,24 +78,30 @@ _FAILED_DISPATCH_PENALTY_MS: float = 9999.0
 # ValueError("Duplicated timeseries") on the second call, silently swallowing
 # all subsequent increments.  Module-level registration avoids the race.
 _WORKER_WARMUP_FAILURE_COUNTER: Any = None
+_WORKER_WATCHDOG_ERROR_COUNTER: Any = None
+_WORKER_METRICS_LOCK = threading.Lock()
+_WORKER_REGISTERED_METRICS: dict[str, Any] = {}
+
 try:
     from prometheus_client import Counter as _WarmupCounter
 
-    try:
-        _WORKER_WARMUP_FAILURE_COUNTER = _WarmupCounter(
-            "pramanix_worker_warmup_failures_total",
-            "Number of Z3 worker warmup failures",
-        )
-    except ValueError:
-        from prometheus_client import REGISTRY as _PROM_REGISTRY
+    def _worker_prom_register(name: str, description: str) -> Any:
+        with _WORKER_METRICS_LOCK:
+            if name in _WORKER_REGISTERED_METRICS:
+                return _WORKER_REGISTERED_METRICS[name]
+            metric = _WarmupCounter(name, description)
+            _WORKER_REGISTERED_METRICS[name] = metric
+            return metric
 
-        _prom_cols = getattr(_PROM_REGISTRY, "_names_to_collectors", None)
-        _WORKER_WARMUP_FAILURE_COUNTER = (
-            _prom_cols.get("pramanix_worker_warmup_failures_total")
-            if _prom_cols is not None
-            else None
-        )
-except Exception:
+    _WORKER_WARMUP_FAILURE_COUNTER = _worker_prom_register(
+        "pramanix_worker_warmup_failures_total",
+        "Number of Z3 worker warmup failures",
+    )
+    _WORKER_WATCHDOG_ERROR_COUNTER = _worker_prom_register(
+        "pramanix_worker_watchdog_errors_total",
+        "Number of PPID watchdog errors (zombie worker risk)",
+    )
+except (ImportError, ValueError):
     pass
 
 
@@ -121,6 +131,7 @@ class AdaptiveConcurrencyLimiter:
         max_workers: int,
         latency_threshold_ms: float | None = None,
         worker_pct: float | None = None,
+        max_outstanding: int | None = None,
     ) -> None:
         import os as _os
 
@@ -135,6 +146,18 @@ class AdaptiveConcurrencyLimiter:
             if worker_pct is not None
             else float(_os.environ.get("PRAMANIX_SHED_WORKER_PCT", "90"))
         )
+        # Hard cap: maximum number of tasks queued + executing simultaneously.
+        # Prevents the executor's internal SimpleQueue from growing without bound
+        # under burst traffic (OOM denial-of-service).  Tasks beyond this limit
+        # receive an immediate Decision.rate_limited() without queuing.
+        # Default: 8× workers — allows reasonable burst headroom while bounding
+        # memory growth.  Override via PRAMANIX_MAX_OUTSTANDING env var.
+        if max_outstanding is not None:
+            self._max_outstanding = max_outstanding
+        else:
+            self._max_outstanding = int(
+                _os.environ.get("PRAMANIX_MAX_OUTSTANDING", str(max_workers * 8))
+            )
         self._active = 0
         self._lock = threading.Lock()
         self._latency_window: collections.deque[tuple[float, float]] = collections.deque()
@@ -154,10 +177,18 @@ class AdaptiveConcurrencyLimiter:
         """Try to acquire a worker slot.
 
         Returns True if the request should proceed.
-        Returns False if the request should be shed.
+        Returns False if the request should be shed (hard-cap exceeded or
+        latency-based shedding triggered).
         Never raises.
         """
         with self._lock:
+            # Hard cap: reject immediately when the total outstanding count
+            # (queued + executing) would exceed max_outstanding.  This prevents
+            # the executor's internal queue from growing without bound under
+            # burst traffic and causing an OOM crash.
+            if self._active >= self._max_outstanding:
+                self._shed_count += 1
+                return False
             self._active += 1
             should_shed = self._check_shed_conditions()
             if should_shed:
@@ -268,8 +299,20 @@ def _ppid_watchdog() -> None:
                 sys.exit(0)
         except SystemExit:
             raise
-        except Exception:
-            pass  # don't let watchdog errors kill the worker
+        except Exception as _wdog_exc:
+            # Watchdog errors must be visible — a zombie worker that never gets
+            # reaped is worse than the watchdog crashing.  Emit structured log
+            # and increment Prometheus counter so operators can alert on this.
+            import logging as _wdog_log
+            _wdog_log.getLogger(__name__).error(
+                "pramanix.ppid_watchdog: unexpected error (zombie worker risk): %s",
+                _wdog_exc,
+            )
+            if _WORKER_WATCHDOG_ERROR_COUNTER is not None:
+                try:
+                    _WORKER_WATCHDOG_ERROR_COUNTER.inc()
+                except Exception:
+                    pass
 
 
 def _warmup_worker() -> None:
@@ -436,16 +479,28 @@ def _worker_solve_sealed(
     timeout_ms: int,
     seal_key: bytes,
     rlimit: int = 0,
+    nonce: str = "",
 ) -> dict[str, Any]:
     """Run :func:`_worker_solve` and return an HMAC-SHA256-signed envelope.
 
     The envelope layout is::
 
-        {"_p": <json-payload-string>, "_t": <hmac-sha256-hex-digest>}
+        {"_p": <json-payload-string>, "_t": <hmac-sha256-hex-digest>, "_n": <nonce>}
 
     where ``_p`` is the canonical ``sort_keys`` JSON serialisation of the inner
-    decision dict produced by :func:`_worker_solve`, and ``_t`` is its
-    HMAC-SHA256 tag using *seal_key*.
+    decision dict produced by :func:`_worker_solve`, ``_t`` is its
+    HMAC-SHA256 tag using *seal_key*, and ``_n`` echoes the per-request *nonce*
+    supplied by the host.  The nonce is **included in the HMAC-covered payload**
+    so a replay of a previous envelope — which would carry a different nonce —
+    is rejected at :func:`_unseal_decision` time.
+
+    Replay prevention
+    -----------------
+    The host generates a fresh ``secrets.token_hex(16)`` nonce per request and
+    passes it both to this function (via *nonce*) and to :func:`_unseal_decision`
+    (as *expected_nonce*).  Two calls with identical inputs produce *different*
+    envelopes because the nonce differs.  A compromised worker that returns a
+    cached old envelope will have a nonce mismatch and will be rejected.
 
     This function must be a module-level free function so that
     :class:`~concurrent.futures.ProcessPoolExecutor` can pickle it by
@@ -457,33 +512,63 @@ def _worker_solve_sealed(
         timeout_ms: Z3 per-solver timeout in milliseconds.
         seal_key:   HMAC key generated in the host process; forwarded here
                     as a plain ``bytes`` argument (picklable).
+        rlimit:     Optional resource limit (bytes) for the worker process.
+        nonce:      Per-request replay-prevention token generated by the host
+                    (``secrets.token_hex(16)``).  Included verbatim in the
+                    HMAC-covered payload so it cannot be stripped.
 
     Returns:
         A sealed envelope dict.  The caller must use :func:`_unseal_decision`
         to verify and unwrap before constructing a :class:`Decision`.
     """
     result = _worker_solve(policy_cls, values, timeout_ms, rlimit)
+    # Embed the nonce inside the signed payload so it cannot be stripped
+    # without invalidating the HMAC tag.
+    result["_nonce"] = nonce
     payload = _json_mod.dumps(result, sort_keys=True, separators=(",", ":")).encode()
     tag = _hmac_mod.new(seal_key, payload, hashlib.sha256).hexdigest()
-    return {"_p": payload.decode(), "_t": tag}
+    return {"_p": payload.decode(), "_t": tag, "_n": nonce}
 
 
-def _unseal_decision(sealed: dict[str, Any]) -> dict[str, Any]:
+def _unseal_decision(
+    sealed: dict[str, Any],
+    *,
+    expected_nonce: str = "",
+) -> dict[str, Any]:
     """Verify the HMAC tag in *sealed* and return the inner decision dict.
 
     Uses :func:`hmac.compare_digest` (constant-time comparison) to prevent
     timing-side-channel attacks when comparing the expected and received tags.
 
+    Replay prevention
+    -----------------
+    Pass the same nonce that was handed to :func:`_worker_solve_sealed` as
+    *expected_nonce*.  If the echoed nonce in the envelope (``sealed["_n"]``)
+    does not match, the envelope is rejected as a potential replay.
+
     Args:
-        sealed: The envelope dict produced by :func:`_worker_solve_sealed`.
+        sealed:         The envelope dict produced by :func:`_worker_solve_sealed`.
+        expected_nonce: Per-request nonce generated by the host.  Must match
+                        the ``_n`` field in *sealed*.
 
     Returns:
         The inner plain decision dict (ready for :meth:`WorkerPool._dict_to_decision`).
 
     Raises:
-        ValueError:  HMAC tag does not match — result was tampered or corrupted.
-        KeyError:    Envelope is malformed (missing ``_p`` or ``_t`` keys).
+        ValueError:  HMAC tag does not match OR nonce mismatch — result was
+                     tampered with or is a replay of a previous envelope.
+        KeyError:    Envelope is malformed (missing ``_p``, ``_t``, or ``_n`` keys).
     """
+    # ── 1. Nonce replay check (fast, before HMAC computation) ─────────────────
+    if expected_nonce and not _hmac_mod.compare_digest(
+        sealed.get("_n", ""), expected_nonce
+    ):
+        raise ValueError(
+            "Decision replay detected: nonce mismatch. "
+            "Envelope nonce does not match the per-request nonce issued by the host."
+        )
+
+    # ── 2. HMAC integrity verification ────────────────────────────────────────
     payload = sealed["_p"].encode()
     expected = _hmac_mod.new(_RESULT_SEAL_KEY.bytes, payload, hashlib.sha256).hexdigest()
     if not _hmac_mod.compare_digest(sealed["_t"], expected):
@@ -492,6 +577,8 @@ def _unseal_decision(sealed: dict[str, Any]) -> dict[str, Any]:
             "Worker result may have been tampered with."
         )
     result: dict[str, Any] = _json_mod.loads(payload)
+    # Strip internal nonce field before returning the decision dict.
+    result.pop("_nonce", None)
     return result
 
 
@@ -577,7 +664,7 @@ class WorkerPool:
     worker_pct: float | None = None
 
     # Internals — not in constructor parameters.
-    _executor: Executor = field(init=False, repr=False)
+    _executor: Executor | None = field(init=False, repr=False, default=None)
     _counter: int = field(init=False, default=0, repr=False)
     _alive: bool = field(init=False, default=False, repr=False)
 
@@ -623,8 +710,11 @@ class WorkerPool:
         if not self._alive:
             return
         self._alive = False
+        executor = getattr(self, "_executor", None)
+        if executor is None:
+            return
         try:
-            self._executor.shutdown(wait=wait)
+            executor.shutdown(wait=wait)
         except Exception as exc:
             _log.error("WorkerPool.shutdown error: %s", exc)
 
@@ -701,6 +791,8 @@ class WorkerPool:
             if self.mode == "async-process":
                 # Process mode: sign the result with an HMAC seal so the host
                 # can detect any IPC tampering before trusting the decision.
+                # Per-request nonce prevents replay of a previous envelope.
+                _ipc_nonce = _secrets_mod.token_hex(16)
                 future: Future[dict[str, Any]] = self._executor.submit(
                     _worker_solve_sealed,
                     policy_cls,
@@ -708,6 +800,7 @@ class WorkerPool:
                     timeout_ms,
                     _RESULT_SEAL_KEY.bytes,
                     rlimit,
+                    _ipc_nonce,
                 )
                 try:
                     sealed = future.result(timeout=_host_timeout_s)
@@ -721,18 +814,22 @@ class WorkerPool:
                         reason="Worker process timeout — host-side deadline exceeded."
                     )
                 try:
-                    result_dict = _unseal_decision(sealed)
+                    result_dict = _unseal_decision(sealed, expected_nonce=_ipc_nonce)
                 except (ValueError, KeyError) as exc:
                     _log.error("WorkerPool: HMAC seal violation — %s", exc)
                     decision = Decision.error(
-                        reason=("Worker result integrity check failed" " — HMAC mismatch.")
+                        reason=("Worker result integrity check failed" " — HMAC mismatch or replay detected.")
                     )
                 else:
                     decision = self._dict_to_decision(result_dict)
             else:
                 # Thread mode: shared memory — no IPC, no seal needed.
+                # §27.2: copy current contextvars (OTel SpanContext, structlog
+                # bindings) into the worker thread so trace correlation survives
+                # the thread boundary.
+                _ctx = contextvars.copy_context()
                 future = self._executor.submit(
-                    _worker_solve, policy_cls, values, timeout_ms, rlimit
+                    _ctx.run, _worker_solve, policy_cls, values, timeout_ms, rlimit
                 )
                 try:
                     result_dict = future.result(timeout=_host_timeout_s)
@@ -805,15 +902,20 @@ class WorkerPool:
                 return  # another thread already recycled
             old_executor = self._executor
             try:
-                self._executor = self._make_executor()
-                if self.warmup:
-                    self._run_warmup()
-                self._counter = 0
+                new_executor = self._make_executor()
             except Exception as exc:
                 _log.error("WorkerPool.recycle: failed to create new executor: %s", exc)
-                # Restore the old executor so callers keep working.
-                self._executor = old_executor
                 return
+            self._executor = new_executor
+            self._counter = 0
+
+        # Warmup runs OUTSIDE the lock so concurrent submit_solve() calls are
+        # not blocked for up to 30 seconds during pool recycle (§4.2).
+        if self.warmup:
+            try:
+                self._run_warmup()
+            except Exception as exc:
+                _log.warning("WorkerPool.recycle: warmup failed (pool is live): %s", exc)
 
         # Fire-and-forget drain of the old executor.
         threading.Thread(
