@@ -37,6 +37,7 @@ import functools
 import logging
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -412,7 +413,7 @@ class AdaptiveCircuitBreaker:
                     state=s.value,
                 ).set(1 if self._state == s else 0)
         except Exception as exc:
-            log.warning("pramanix.circuit_breaker: Prometheus update failed: %s", exc)
+            log.warning("pramanix.circuit_breaker: Prometheus update failed: %s", exc, exc_info=True)
 
     def _increment_pressure_metric(self) -> None:
         if not self._metrics_available:
@@ -420,7 +421,7 @@ class AdaptiveCircuitBreaker:
         try:
             self._pressure_counter.labels(namespace=self._config.namespace).inc()
         except Exception as exc:
-            log.warning("pramanix.circuit_breaker: Prometheus increment failed: %s", exc)
+            log.warning("pramanix.circuit_breaker: Prometheus increment failed: %s", exc, exc_info=True)
 
 
 # ── Phase C-5: Distributed Circuit Breaker ───────────────────────────────────
@@ -759,6 +760,11 @@ class RedisDistributedBackend:
         self._ttl = ttl_seconds
         self._client: Any = redis_client
         self._clear_tasks: set[asyncio.Future] = set()
+        # Mutable cell shared with the finalizer so close() can null it out.
+        self._client_cell: list[Any] = [redis_client]
+        self._finalizer = weakref.finalize(
+            self, RedisDistributedBackend._warn_unclosed, self._client_cell
+        )
 
     async def _get_client(self) -> Any:
         """Lazily create and cache the async Redis client."""
@@ -768,9 +774,21 @@ class RedisDistributedBackend:
             self._client = aioredis.from_url(self._redis_url, decode_responses=True)
         return self._client
 
+    @staticmethod
+    def _warn_unclosed(client_cell: list[Any]) -> None:
+        if client_cell[0] is not None:
+            log.warning(
+                "RedisDistributedBackend GC'd with an open Redis connection — "
+                "call close() explicitly to release the connection cleanly."
+            )
+
     async def close(self) -> None:
         """Close the underlying Redis connection."""
         if self._client is not None:
+            # Cancel the finalizer — we are closing explicitly.
+            finalizer = getattr(self, "_finalizer", None)
+            if finalizer is not None and finalizer.alive:
+                finalizer.detach()
             try:
                 await self._client.aclose()
             except Exception as exc:
@@ -778,15 +796,10 @@ class RedisDistributedBackend:
                     "RedisDistributedBackend.close(): aclose() raised — "
                     "Redis connection may not have been released cleanly: %s",
                     exc,
+                    exc_info=True,
                 )
             self._client = None
-
-    def __del__(self) -> None:
-        if getattr(self, "_client", None) is not None:
-            log.warning(
-                "RedisDistributedBackend GC'd with an open Redis connection — "
-                "call close() explicitly to release the connection cleanly."
-            )
+            self._client_cell[0] = None
 
     def _key(self, namespace: str) -> str:
         return f"{self._prefix}{namespace}"
@@ -1092,7 +1105,7 @@ class TranslatorCircuitBreaker:
                     1 if self._state == s else 0
                 )
         except Exception as exc:
-            log.warning("pramanix.translator_cb: Prometheus update failed: %s", exc)
+            log.warning("pramanix.translator_cb: Prometheus update failed: %s", exc, exc_info=True)
 
     @property
     def state(self) -> CircuitState:

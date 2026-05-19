@@ -29,7 +29,7 @@ Usage (persistent checkpointing)::
 
     def save_root(root: str, count: int) -> None:
         db.execute("INSERT INTO merkle_checkpoints VALUES (?, ?, ?)",
-                   (root, count, datetime.utcnow().isoformat()))
+                   (root, count, datetime.now(datetime.UTC).isoformat()))
 
     anchor = PersistentMerkleAnchor(
         checkpoint_every=500,

@@ -29,6 +29,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import weakref
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -130,6 +131,17 @@ class PramanixFunctionTool:
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="pramanix-llamaindex"
         )
+        # Leak-detection finalizer replaces __del__ anti-pattern.
+        self._finalizer = weakref.finalize(
+            self, PramanixFunctionTool._shutdown_executor, self._executor
+        )
+
+    @staticmethod
+    def _shutdown_executor(executor: concurrent.futures.ThreadPoolExecutor) -> None:
+        try:
+            executor.shutdown(wait=False)
+        except Exception:
+            pass
 
     # ── metadata property ────────────────────────────────────────────────────
 
@@ -244,17 +256,9 @@ class PramanixFunctionTool:
 
     def close(self) -> None:
         """Shut down the shared thread pool executor."""
+        if self._finalizer.alive:
+            self._finalizer.detach()
         self._executor.shutdown(wait=False)
-
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception as exc:
-            _log.warning(
-                "PramanixLlamaIndexTool.__del__: close() raised during GC — "
-                "executor may not have been shut down cleanly: %s",
-                exc,
-            )
 
     # ── State retrieval ───────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -53,11 +54,12 @@ except ImportError:
 __all__ = ["PramanixGuardedTool", "wrap_tools"]
 
 
-class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type: ignore[misc]
+class PramanixGuardedTool(BaseTool):
     """LangChain BaseTool with Z3 formal verification gate.
 
-    When langchain-core is installed, this IS a proper BaseTool subclass
-    verified at import time by test_pramanix_guarded_tool_is_real_basetool_subclass.
+    When langchain-core is installed, this IS a proper BaseTool subclass.
+    When it is absent, the stub BaseTool raises ConfigurationError at
+    __init__ time — never at import time, so the module stays importable.
 
     Private guard state is stored via object.__setattr__ with underscore
     prefix names to avoid Pydantic schema exposure. This is safe because
@@ -81,36 +83,41 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         execute_fn: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         if not _LANGCHAIN_AVAILABLE:
-            self.name = name
-            self.description = description
-        else:
-            try:
-                super().__init__(name=name, description=description)
-            except Exception:
-                # Pydantic v1/v2 edge case — set directly
-                object.__setattr__(self, "name", name)
-                object.__setattr__(self, "description", description)
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "LangChain integration requires 'langchain-core': "
+                "pip install 'pramanix[langchain]'"
+            )
+        try:
+            super().__init__(name=name, description=description)
+        except Exception:
+            # Pydantic v1/v2 edge case — set directly
+            object.__setattr__(self, "name", name)
+            object.__setattr__(self, "description", description)
 
         if execute_fn is None:
-            import logging as _lc_log
-            _lc_log.getLogger(__name__).warning(
+            _log.warning(
                 "PramanixGuardedTool '%s': execute_fn is None — "
-                "ALLOW decisions raise NotImplementedError. "
+                "ALLOW decisions raise ConfigurationError. "
                 "Pass execute_fn= to configure the guarded action.",
                 name,
             )
         # Store private behavioral state bypassing Pydantic schema
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="pramanix-langchain"
+        )
         object.__setattr__(self, "_pramanix_guard", guard)
         object.__setattr__(self, "_pramanix_schema", intent_schema)
         object.__setattr__(self, "_pramanix_state", state_provider)
         object.__setattr__(self, "_pramanix_execute", execute_fn)
         # H-13: one shared executor — created once, never per-call.
+        object.__setattr__(self, "_pramanix_executor", executor)
+        # Register leak-detection finalizer to replace __del__ anti-pattern.
         object.__setattr__(
             self,
-            "_pramanix_executor",
-            concurrent.futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="pramanix-langchain"
-            ),
+            "_pramanix_finalizer",
+            weakref.finalize(self, PramanixGuardedTool._shutdown_executor, executor),
         )
 
     def _run(self, tool_input: str, **kwargs: Any) -> str:
@@ -123,20 +130,20 @@ class PramanixGuardedTool(BaseTool if _LANGCHAIN_AVAILABLE else object):  # type
         except RuntimeError:
             return asyncio.run(self._arun(tool_input, **kwargs))
 
+    @staticmethod
+    def _shutdown_executor(executor: concurrent.futures.ThreadPoolExecutor) -> None:
+        try:
+            executor.shutdown(wait=False)
+        except Exception:
+            pass
+
     def close(self) -> None:
         """Shut down the shared thread pool executor."""
+        finalizer = object.__getattribute__(self, "_pramanix_finalizer")
+        if finalizer.alive:
+            finalizer.detach()
         executor = object.__getattribute__(self, "_pramanix_executor")
         executor.shutdown(wait=False)
-
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception as exc:
-            _log.warning(
-                "PramanixGuardedTool.__del__: close() raised during GC — "
-                "executor may not have been shut down cleanly: %s",
-                exc,
-            )
 
     async def _arun(self, tool_input: str, **kwargs: Any) -> str:
         guard = object.__getattribute__(self, "_pramanix_guard")

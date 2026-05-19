@@ -31,6 +31,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -99,6 +100,24 @@ class PramanixKafkaConsumer:
         if _KAFKA_AVAILABLE:
             self._consumer = _KafkaConsumer(kafka_config)
             self._consumer.subscribe(topics)
+        # Leak detection via weakref.finalize — avoids __del__ anti-patterns
+        # (unpredictable GC timing, silenced exceptions, reference cycles).
+        self._finalizer = weakref.finalize(
+            self, PramanixKafkaConsumer._warn_unclosed, self._consumer
+        )
+
+    @staticmethod
+    def _warn_unclosed(consumer: Any) -> None:
+        if consumer is None:
+            return
+        try:
+            _log.warning(
+                "PramanixKafkaConsumer GC'd without explicit close() — "
+                "call close() explicitly to release the Kafka consumer cleanly."
+            )
+            consumer.close()
+        except Exception:
+            pass
 
     def safe_poll(
         self,
@@ -175,31 +194,20 @@ class PramanixKafkaConsumer:
         try:
             self._consumer.commit(message=msg, asynchronous=False)
         except Exception as exc:
-            _log.warning("pramanix.kafka.commit_error: %s", exc)
+            _log.warning("pramanix.kafka.commit_error: %s", exc, exc_info=True)
 
     def close(self) -> None:
         """Close the underlying Kafka consumer and flush any pending DLQ messages."""
+        # Cancel the leak-detection finalizer — we are closing explicitly.
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer is not None and finalizer.alive:
+            finalizer.detach()
         dlq = getattr(self, "_dlq_producer", None)
         if dlq is not None and getattr(self, "_dlq_pending", 0) > 0:
             try:
                 dlq.flush()
                 self._dlq_pending = 0
             except Exception as exc:
-                _log.warning("pramanix.kafka.dlq_flush_on_close_error: %s", exc)
+                _log.warning("pramanix.kafka.dlq_flush_on_close_error: %s", exc, exc_info=True)
         if getattr(self, "_consumer", None) is not None:
             self._consumer.close()
-
-    def __del__(self) -> None:
-        if getattr(self, "_consumer", None) is not None:
-            _log.warning(
-                "PramanixKafkaConsumer GC'd without explicit close() — "
-                "call close() explicitly to release the Kafka consumer cleanly."
-            )
-            try:
-                self.close()
-            except Exception as exc:
-                _log.warning(
-                    "PramanixKafkaConsumer.__del__: close() raised during GC — "
-                    "Kafka consumer may not have been released cleanly: %s",
-                    exc,
-                )

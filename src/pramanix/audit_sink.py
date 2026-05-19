@@ -94,7 +94,7 @@ class StdoutAuditSink:
             line = json.dumps(decision.to_dict(), default=str)
             print(line, file=self._stream, flush=True)
         except Exception as exc:
-            log.error("StdoutAuditSink: failed to emit decision: %s", exc)
+            log.error("StdoutAuditSink: failed to emit decision: %s", exc, exc_info=True)
 
 
 class InMemoryAuditSink:
@@ -182,7 +182,7 @@ def _increment_overflow_metric() -> None:
         if _OVERFLOW_COUNTER is not None:
             _OVERFLOW_COUNTER.inc()
     except Exception as exc:
-        log.warning("pramanix.audit_sink: failed to increment overflow metric: %s", exc)
+        log.warning("pramanix.audit_sink: failed to increment overflow metric: %s", exc, exc_info=True)
 
 
 class KafkaAuditSink:
@@ -247,7 +247,7 @@ class KafkaAuditSink:
             try:
                 self._producer.poll(timeout=0.1)
             except Exception as exc:
-                log.warning("KafkaAuditSink: poll error: %s", exc)
+                log.warning("KafkaAuditSink: poll error: %s", exc, exc_info=True)
 
     def emit(self, decision: Decision) -> None:
         """Emit decision to the Kafka topic."""
@@ -276,7 +276,7 @@ class KafkaAuditSink:
         except Exception as exc:
             with self._queue_lock:
                 self._queue_depth = max(0, self._queue_depth - 1)
-            log.error("KafkaAuditSink: failed to produce decision: %s", exc)
+            log.error("KafkaAuditSink: failed to produce decision: %s", exc, exc_info=True)
 
     def flush(self, timeout: float = 10.0) -> None:
         """Flush all pending messages to Kafka.  Call at shutdown."""
@@ -284,7 +284,7 @@ class KafkaAuditSink:
             self._poll_stop.set()
             self._producer.flush(timeout)
         except Exception as exc:
-            log.error("KafkaAuditSink: flush error: %s", exc)
+            log.error("KafkaAuditSink: flush error: %s", exc, exc_info=True)
 
     @property
     def overflow_count(self) -> int:
@@ -369,7 +369,7 @@ class S3AuditSink:
             except queue.Empty:
                 continue
             except Exception as exc:
-                log.error("S3AuditSink: worker error: %s", exc)
+                log.error("S3AuditSink: worker error: %s", exc, exc_info=True)
 
     def emit(self, decision: Decision) -> None:
         """Enqueue S3 upload — never blocks the event loop."""
@@ -389,7 +389,7 @@ class S3AuditSink:
                     decision_id,
                 )
         except Exception as exc:
-            log.error("S3AuditSink: failed to enqueue upload: %s", exc)
+            log.error("S3AuditSink: failed to enqueue upload: %s", exc, exc_info=True)
 
     def _upload(self, key: str, body: bytes) -> None:
         try:
@@ -400,7 +400,7 @@ class S3AuditSink:
                 ContentType="application/json",
             )
         except Exception as exc:
-            log.error("S3AuditSink: failed to upload decision: %s", exc)
+            log.error("S3AuditSink: failed to upload decision: %s", exc, exc_info=True)
 
     @property
     def overflow_count(self) -> int:
@@ -502,7 +502,7 @@ class SplunkHecAuditSink:
                     },
                 )
             except Exception as exc:
-                log.error("SplunkHecAuditSink: send error: %s", exc)
+                log.error("SplunkHecAuditSink: send error: %s", exc, exc_info=True)
 
     def emit(self, decision: Decision) -> None:
         """Enqueue decision for async delivery to Splunk — never blocks caller."""
@@ -524,7 +524,7 @@ class SplunkHecAuditSink:
                     getattr(decision, "decision_id", "?"),
                 )
         except Exception as exc:
-            log.error("SplunkHecAuditSink: failed to enqueue decision: %s", exc)
+            log.error("SplunkHecAuditSink: failed to enqueue decision: %s", exc, exc_info=True)
 
     def close(self) -> None:
         """Flush pending events and close the HTTP client.  Call at shutdown."""
@@ -539,7 +539,7 @@ class SplunkHecAuditSink:
         try:
             self._client.close()
         except Exception as exc:
-            log.warning("SplunkHecAuditSink: error closing HTTP client: %s", exc)
+            log.warning("SplunkHecAuditSink: error closing HTTP client: %s", exc, exc_info=True)
 
 
 class DatadogAuditSink:
@@ -656,7 +656,7 @@ class DatadogAuditSink:
                     getattr(decision, "decision_id", "?"),
                 )
         except Exception as exc:
-            log.error("DatadogAuditSink: failed to enqueue decision: %s", exc)
+            log.error("DatadogAuditSink: failed to enqueue decision: %s", exc, exc_info=True)
 
     def close(self) -> None:
         """Flush pending events and close the Datadog client.  Call at shutdown."""
@@ -669,4 +669,4 @@ class DatadogAuditSink:
         try:
             self._api_client.close()
         except Exception as exc:
-            log.warning("DatadogAuditSink: error closing API client: %s", exc)
+            log.warning("DatadogAuditSink: error closing API client: %s", exc, exc_info=True)

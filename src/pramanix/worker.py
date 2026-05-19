@@ -47,6 +47,7 @@ import secrets as _secrets_mod
 import sys as _sys
 import threading
 import time as _time_module
+import weakref
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
@@ -101,8 +102,16 @@ try:
         "pramanix_worker_watchdog_errors_total",
         "Number of PPID watchdog errors (zombie worker risk)",
     )
-except (ImportError, ValueError):
-    pass
+except ImportError:
+    pass  # prometheus_client not installed — metrics silently disabled
+except ValueError as _worker_prom_val_err:
+    import logging as _wk_log
+
+    _wk_log.getLogger(__name__).warning(
+        "pramanix.worker: Prometheus metric registration error "
+        "(name collision with different labelset — this is a programming error): %s",
+        _worker_prom_val_err,
+    )
 
 
 # ── Phase 10.4: Adaptive Concurrency Limiter ──────────────────────────────────
@@ -160,7 +169,9 @@ class AdaptiveConcurrencyLimiter:
             )
         self._active = 0
         self._lock = threading.Lock()
-        self._latency_window: collections.deque[tuple[float, float]] = collections.deque()
+        self._latency_window: collections.deque[tuple[float, float]] = (
+            collections.deque(maxlen=1024)
+        )
         self._shed_count = 0
 
     @property
@@ -266,7 +277,8 @@ class _EphemeralKey:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError(
-            "_EphemeralKey must not be serialised to disk. " "Pass .bytes explicitly for IPC."
+            "_EphemeralKey must not be serialised to disk. "
+            "Pass .bytes explicitly for IPC."
         )
 
 
@@ -288,7 +300,6 @@ def _ppid_watchdog() -> None:
     (Python ≥ 3.11 on Linux, macOS, and Windows).
     """
     import os
-    import sys
     import time as _t
 
     initial_ppid = os.getppid()
@@ -296,7 +307,10 @@ def _ppid_watchdog() -> None:
         _t.sleep(2.0)
         try:
             if os.getppid() != initial_ppid:
-                sys.exit(0)
+                # os._exit() is required here — sys.exit() only raises SystemExit
+                # in the current *thread*, leaving the main child process alive as
+                # an immortal zombie.  os._exit() terminates the OS process.
+                os._exit(0)
         except SystemExit:
             raise
         except Exception as _wdog_exc:
@@ -304,9 +318,11 @@ def _ppid_watchdog() -> None:
             # reaped is worse than the watchdog crashing.  Emit structured log
             # and increment Prometheus counter so operators can alert on this.
             import logging as _wdog_log
+
             _wdog_log.getLogger(__name__).error(
                 "pramanix.ppid_watchdog: unexpected error (zombie worker risk): %s",
                 _wdog_exc,
+                exc_info=True,
             )
             if _WORKER_WATCHDOG_ERROR_COUNTER is not None:
                 try:
@@ -334,7 +350,9 @@ def _warmup_worker() -> None:
     # watchdog runs inside the parent process where os.getppid() never changes,
     # so it serves no purpose but consumes a thread handle per warm-up call.
     if multiprocessing.current_process().name != "MainProcess":
-        _wdog = threading.Thread(target=_ppid_watchdog, daemon=True, name="ppid-watchdog")
+        _wdog = threading.Thread(
+            target=_ppid_watchdog, daemon=True, name="ppid-watchdog"
+        )
         _wdog.start()
 
     ctx = z3.Context()
@@ -570,7 +588,9 @@ def _unseal_decision(
 
     # ── 2. HMAC integrity verification ────────────────────────────────────────
     payload = sealed["_p"].encode()
-    expected = _hmac_mod.new(_RESULT_SEAL_KEY.bytes, payload, hashlib.sha256).hexdigest()
+    expected = _hmac_mod.new(
+        _RESULT_SEAL_KEY.bytes, payload, hashlib.sha256
+    ).hexdigest()
     if not _hmac_mod.compare_digest(sealed["_t"], expected):
         raise ValueError(
             "Decision integrity seal violated: HMAC mismatch. "
@@ -630,9 +650,9 @@ def _force_kill_processes(executor: ProcessPoolExecutor) -> None:
                     proc.kill()
                     _log.warning("worker.drain: killed hung process pid=%s", proc.pid)
                 except Exception as exc:
-                    _log.error("worker.drain: failed to kill pid=%s: %s", proc.pid, exc)
+                    _log.error("worker.drain: failed to kill pid=%s: %s", proc.pid, exc, exc_info=True)
     except Exception as exc:
-        _log.error("worker.drain: unexpected error during force-kill: %s", exc)
+        _log.error("worker.drain: unexpected error during force-kill: %s", exc, exc_info=True)
 
 
 # ── WorkerPool ────────────────────────────────────────────────────────────────
@@ -680,6 +700,30 @@ class WorkerPool:
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _emergency_shutdown(active_executor_cell: list[Any]) -> None:
+        """Finalizer callback: shut down whichever executor is live when GC fires.
+
+        Called by weakref.finalize when a WorkerPool is GC'd without an explicit
+        shutdown() call.  Receives a single-element list so _recycle() can swap
+        in a fresh executor without invalidating the registered finalizer.
+        """
+        executor = active_executor_cell[0]
+        if executor is None:
+            return
+        try:
+            _log.warning(
+                "WorkerPool GC'd without explicit shutdown() — "
+                "calling shutdown(wait=False). "
+                "Call WorkerPool.shutdown() explicitly to avoid this warning."
+            )
+        except Exception:
+            pass
+        try:
+            executor.shutdown(wait=False)
+        except Exception:
+            pass
+
     def spawn(self) -> None:
         """Create the executor and, optionally, warm each worker slot.
 
@@ -696,8 +740,18 @@ class WorkerPool:
                 self._run_warmup()
             self._counter = 0
             self._alive = True
+            # Single-element list so _recycle() can update the reference without
+            # the finalizer holding a stale executor pointer.
+            self._active_executor_cell: list[Any] = [self._executor]
+            self._finalizer = weakref.finalize(
+                self,
+                WorkerPool._emergency_shutdown,
+                self._active_executor_cell,
+            )
         except Exception as exc:
-            raise WorkerError(f"WorkerPool.spawn failed ({type(exc).__name__}): {exc}") from exc
+            raise WorkerError(
+                f"WorkerPool.spawn failed ({type(exc).__name__}): {exc}"
+            ) from exc
 
     def shutdown(self, wait: bool = True) -> None:
         """Gracefully shut down the pool.
@@ -710,43 +764,17 @@ class WorkerPool:
         if not self._alive:
             return
         self._alive = False
+        # Cancel the GC finalizer — we are shutting down explicitly.
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer is not None and finalizer.alive:
+            finalizer.detach()
         executor = getattr(self, "_executor", None)
         if executor is None:
             return
         try:
             executor.shutdown(wait=wait)
         except Exception as exc:
-            _log.error("WorkerPool.shutdown error: %s", exc)
-
-    def __del__(
-        self,
-        # Default arg captures sys.is_finalizing at class-definition time.
-        # During interpreter shutdown all globals (including `_sys`) may be
-        # cleared; a default arg holds a direct reference to the C function
-        # and survives even when sys.meta_path is None (which makes `import`
-        # fail for every module, including `sys` itself).
-        _is_finalizing: Any = _sys.is_finalizing,
-    ) -> None:
-        if not getattr(self, "_alive", False):
-            return
-        if _is_finalizing():
-            try:
-                self.shutdown(wait=False)
-            except Exception:
-                pass
-            return
-        try:
-            _log.warning(
-                "WorkerPool GC'd without explicit shutdown() — "
-                "calling shutdown(wait=False).  "
-                "Call WorkerPool.shutdown() explicitly to avoid this warning."
-            )
-        except Exception:
-            pass
-        try:
-            self.shutdown(wait=False)
-        except Exception:
-            pass
+            _log.error("WorkerPool.shutdown error: %s", exc, exc_info=True)
 
     # ── Public solve interface ─────────────────────────────────────────────────
 
@@ -777,7 +805,8 @@ class WorkerPool:
         # Adaptive load shedding
         if not self._shed_limiter.acquire():
             return Decision.rate_limited(
-                "Request shed: Z3 worker pool saturated with high latency. " "Retry after backoff."
+                "Request shed: Z3 worker pool saturated with high latency. "
+                "Retry after backoff."
             )
 
         _t0_shed = _time_module.monotonic()
@@ -816,9 +845,12 @@ class WorkerPool:
                 try:
                     result_dict = _unseal_decision(sealed, expected_nonce=_ipc_nonce)
                 except (ValueError, KeyError) as exc:
-                    _log.error("WorkerPool: HMAC seal violation — %s", exc)
+                    _log.error("WorkerPool: HMAC seal violation — %s", exc, exc_info=True)
                     decision = Decision.error(
-                        reason=("Worker result integrity check failed" " — HMAC mismatch or replay detected.")
+                        reason=(
+                            "Worker result integrity check failed"
+                            " — HMAC mismatch or replay detected."
+                        )
                     )
                 else:
                     decision = self._dict_to_decision(result_dict)
@@ -847,7 +879,7 @@ class WorkerPool:
             self._shed_limiter.release(_FAILED_DISPATCH_PENALTY_MS)
             raise
         except Exception as exc:
-            _log.error("WorkerPool.submit_solve error: %s", exc)
+            _log.error("WorkerPool.submit_solve error: %s", exc, exc_info=True)
             decision = Decision.error(
                 reason=(f"Worker dispatch failed ({type(exc).__name__}): {exc}")
             )
@@ -879,12 +911,14 @@ class WorkerPool:
 
     def _run_warmup(self) -> None:
         """Submit ``_warmup_worker`` to every slot.  Best-effort."""
-        futures = [self._executor.submit(_warmup_worker) for _ in range(self.max_workers)]
+        futures = [
+            self._executor.submit(_warmup_worker) for _ in range(self.max_workers)
+        ]
         for fut in futures:
             try:
                 fut.result(timeout=30.0)
             except Exception as exc:
-                _log.warning("WorkerPool warmup slot failed: %s", exc)
+                _log.warning("WorkerPool warmup slot failed: %s", exc, exc_info=True)
 
     def _recycle(self) -> None:
         """Non-blocking recycle: swap in a fresh executor, drain the old one.
@@ -904,10 +938,14 @@ class WorkerPool:
             try:
                 new_executor = self._make_executor()
             except Exception as exc:
-                _log.error("WorkerPool.recycle: failed to create new executor: %s", exc)
+                _log.error("WorkerPool.recycle: failed to create new executor: %s", exc, exc_info=True)
                 return
             self._executor = new_executor
             self._counter = 0
+            # Update the cell so the registered weakref.finalize callback
+            # shuts down the new executor, not the stale recycled one.
+            if hasattr(self, "_active_executor_cell"):
+                self._active_executor_cell[0] = new_executor
 
         # Warmup runs OUTSIDE the lock so concurrent submit_solve() calls are
         # not blocked for up to 30 seconds during pool recycle (§4.2).
@@ -915,7 +953,9 @@ class WorkerPool:
             try:
                 self._run_warmup()
             except Exception as exc:
-                _log.warning("WorkerPool.recycle: warmup failed (pool is live): %s", exc)
+                _log.warning(
+                    "WorkerPool.recycle: warmup failed (pool is live): %s", exc
+                )
 
         # Fire-and-forget drain of the old executor.
         threading.Thread(

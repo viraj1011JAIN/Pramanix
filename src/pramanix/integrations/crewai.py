@@ -79,11 +79,13 @@ class _PramanixState:
         self.block_message = block_message
 
 
-class PramanixCrewAITool(_CrewAIBase if _CREWAI_AVAILABLE else object):  # type: ignore[misc]
+class PramanixCrewAITool(_CrewAIBase):  # type: ignore[misc]
     """CrewAI ``BaseTool`` subclass with Z3 formal verification gate.
 
-    If CrewAI is **not** installed the class still functions as a plain
-    callable wrapper usable in tests and non-CrewAI contexts.
+    When crewai is installed, ``_CrewAIBase`` is ``crewai.tools.BaseTool``
+    and this class is a proper subclass registered in CrewAI's tool registry.
+    When crewai is absent, ``_CrewAIBase`` falls back to ``object``, so the
+    class still functions as a plain callable wrapper for non-CrewAI contexts.
 
     Args:
         name:            Tool name shown to the agent.

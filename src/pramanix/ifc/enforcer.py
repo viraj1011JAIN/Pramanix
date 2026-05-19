@@ -218,4 +218,4 @@ class FlowEnforcer:
             try:
                 self._audit_sink(data, sink_component, permitted)
             except Exception as exc:
-                _log.error("ifc.audit_sink_error: %s", exc)
+                _log.error("ifc.audit_sink_error: %s", exc, exc_info=True)

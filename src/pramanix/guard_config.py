@@ -584,41 +584,42 @@ class GuardConfig:
                 f"got {self.shed_latency_threshold_ms}.  A value of 0 would "
                 f"cause every request to exceed the P99 threshold immediately."
             )
+        # §11.1 fix: all advisories are dual-emitted via both warnings.warn()
+        # (for development tools / -W filters) AND logging (for production
+        # containers where PYTHONWARNINGS=ignore silences warnings entirely).
+        import logging as _prod_log
+        _prod_logger = _prod_log.getLogger(__name__)
         if self.metrics_enabled and not _PROM_AVAILABLE:
-            warnings.warn(
+            _msg = (
                 "GuardConfig(metrics_enabled=True) has no effect: "
                 "prometheus_client is not installed. "
-                "Install it: pip install 'pramanix[metrics]'",
-                UserWarning,
-                stacklevel=2,
+                "Install it: pip install 'pramanix[metrics]'"
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.warning("pramanix.guard_config.advisory: %s", _msg)
         if self.otel_enabled and not _OTEL_AVAILABLE:
-            warnings.warn(
+            _msg = (
                 "GuardConfig(otel_enabled=True) has no effect: "
                 "opentelemetry-sdk is not installed. "
-                "Install it: pip install 'pramanix[otel]'",
-                UserWarning,
-                stacklevel=2,
+                "Install it: pip install 'pramanix[otel]'"
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.warning("pramanix.guard_config.advisory: %s", _msg)
         if (
             self.execution_mode in ("sync", "async-thread")
             and os.environ.get("PRAMANIX_ENV", "").lower() == "production"
         ):
-            warnings.warn(
+            _msg = (
                 f"GuardConfig(execution_mode={self.execution_mode!r}) is not "
                 "recommended for production (PRAMANIX_ENV=production). "
                 "A Z3 C++ crash (SIGABRT/SIGSEGV) will terminate the entire "
                 "process and all in-flight requests. "
                 "Use execution_mode='async-process' so that worker crashes "
-                "surface as fail-safe BLOCKs without affecting the host process.",
-                UserWarning,
-                stacklevel=2,
+                "surface as fail-safe BLOCKs without affecting the host process."
             )
+            warnings.warn(_msg, UserWarning, stacklevel=2)
+            _prod_logger.warning("pramanix.guard_config.advisory: %s", _msg)
         # ── Production safety: unsigned audit trail ────────────────────────────
-        # §11.1 fix: all production advisories also emit structlog ERROR so they
-        # are visible even when PYTHONWARNINGS=ignore (common in Docker/K8s images).
-        import logging as _prod_log
-        _prod_logger = _prod_log.getLogger(__name__)
         _is_prod = os.environ.get("PRAMANIX_ENV", "").lower() == "production"
         if _is_prod and self.signer is None:
             _msg = (
