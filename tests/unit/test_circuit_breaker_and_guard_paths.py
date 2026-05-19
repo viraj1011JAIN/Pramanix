@@ -1420,10 +1420,11 @@ class TestWorkerEdgePaths:
                 _warmup_worker()  # must not raise
 
     def test_worker_pool_del_shutdown_exception_swallowed(self) -> None:
-        """Lines 652-653: WorkerPool.__del__ swallows errors from shutdown()."""
+        """_emergency_shutdown swallows errors from executor.shutdown()."""
         from pramanix.worker import WorkerPool
 
-        obj = WorkerPool.__new__(WorkerPool)
-        obj._alive = True
-        with patch.object(WorkerPool, "shutdown", side_effect=RuntimeError("boom")):
-            WorkerPool.__del__(obj)  # must not raise
+        class _BoomExecutor:
+            def shutdown(self, *, wait: bool = True) -> None:
+                raise RuntimeError("boom")
+
+        WorkerPool._emergency_shutdown([_BoomExecutor()])  # must not raise

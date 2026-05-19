@@ -781,12 +781,10 @@ class TestKafkaConsumerCoverage:
     def test_del_with_consumer_logs_warning(self) -> None:
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-        c = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
         consumer = _KafkaConsumer()
         consumer.close_raises = Exception("close failed")
-        c._consumer = consumer
-        # __del__ must not raise even when close() raises
-        c.__del__()
+        # _warn_unclosed is the finalizer callback — must not raise even when close() raises
+        PramanixKafkaConsumer._warn_unclosed(consumer)
 
     def test_dead_letter_none_dlq_is_noop(self) -> None:
         c = self._make_consumer()
@@ -1380,14 +1378,15 @@ class TestWorkerCoverage:
             _warmup_worker()  # must not raise
 
     def test_worker_pool_del_with_alive_calls_shutdown(self) -> None:
-        """WorkerPool.__del__ calls shutdown(wait=False) when _alive=True."""
+        """_emergency_shutdown calls executor.shutdown(wait=False) when executor is live."""
         from pramanix.worker import WorkerPool
 
-        pool = WorkerPool(mode="thread", max_workers=1, max_decisions_per_worker=10, warmup=False)
-        pool._alive = True
-        pool.__del__()
-        # Pool is already closed by __del__; second shutdown is a no-op
-        pool.shutdown()
+        pool = WorkerPool(mode="async-thread", max_workers=1, max_decisions_per_worker=10, warmup=False)
+        pool.spawn()
+        executor = pool._executor
+        # Call the finalizer callback directly with the live executor.
+        WorkerPool._emergency_shutdown([executor])
+        pool._alive = False  # prevent double-shutdown in teardown
 
     def test_hmac_violation_via_unseal(self) -> None:
         """_unseal_decision raises on tampered HMAC."""

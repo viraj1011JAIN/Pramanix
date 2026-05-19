@@ -89,13 +89,17 @@ identity = ["redis"]
 audit = ["fpdf2"]
 metrics = ["prometheus-client"]
 performance = ["orjson"]
-circuit-breaker = []
+# redis: standalone extra for any feature that uses Redis directly
+# (intent cache, circuit-breaker distributed backend, identity/session state).
+redis = ["redis"]
+circuit-breaker = ["redis"]
 crypto = ["cryptography"]
 aws = ["boto3"]
 azure = ["azure-keyvault-secrets", "azure-identity"]
 gcp = ["google-cloud-secret-manager"]
 vault = ["hvac"]
 kafka = ["confluent-kafka"]
+# s3: convenience alias for AWS S3-specific deployments (same dep as aws).
 s3 = ["boto3"]
 datadog = ["datadog-api-client"]
 splunk = ["httpx"]

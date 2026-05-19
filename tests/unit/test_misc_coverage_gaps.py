@@ -539,37 +539,33 @@ class TestGcpKmsKeyProviderInit:
 
 
 class TestWorkerPoolDelEdgePaths:
-    """worker.py lines 624-625, 633-634: __del__ exception swallow paths."""
+    """WorkerPool._emergency_shutdown exception-swallow paths."""
 
     def test_del_finalizing_shutdown_raises_swallowed(self) -> None:
-        """Lines 624-625: _is_finalizing()=True and shutdown() raises → swallowed."""
+        """executor.shutdown() raises → _emergency_shutdown swallows it."""
         from pramanix.worker import WorkerPool
 
-        pool = WorkerPool.__new__(WorkerPool)
-        pool._alive = True
+        class _BoomExecutor:
+            def shutdown(self, *, wait: bool = True) -> None:
+                raise RuntimeError("shutdown failed during finalization")
 
-        def _shutdown_raises(*, wait: bool = True) -> None:
-            raise RuntimeError("shutdown failed during finalization")
-
-        pool.shutdown = _shutdown_raises  # type: ignore[method-assign]
-        pool.__del__(lambda: True)  # must not raise
+        WorkerPool._emergency_shutdown([_BoomExecutor()])  # must not raise
 
     def test_del_not_finalizing_log_warning_raises_swallowed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Lines 633-634: _log.warning() raises → except Exception: pass swallows it."""
+        """_log.warning() raises → inner try/except swallows it."""
         import pramanix.worker as _worker_mod
-        from pramanix.worker import WorkerPool
 
-        pool = WorkerPool.__new__(WorkerPool)
-        pool._alive = True
-        pool.shutdown = lambda *, wait: None  # type: ignore[method-assign]
+        class _SilentExecutor:
+            def shutdown(self, *, wait: bool = True) -> None:
+                pass
 
         def _warning_raises(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("structlog failure")
 
         monkeypatch.setattr(_worker_mod._log, "warning", _warning_raises)
-        pool.__del__(lambda: False)  # must not raise
+        _worker_mod.WorkerPool._emergency_shutdown([_SilentExecutor()])  # must not raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

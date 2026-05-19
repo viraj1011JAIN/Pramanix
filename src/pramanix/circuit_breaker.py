@@ -799,7 +799,8 @@ class RedisDistributedBackend:
                     exc_info=True,
                 )
             self._client = None
-            self._client_cell[0] = None
+            if hasattr(self, "_client_cell"):
+                self._client_cell[0] = None
 
     def _key(self, namespace: str) -> str:
         return f"{self._prefix}{namespace}"

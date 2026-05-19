@@ -126,17 +126,11 @@ class TestProcessModeHostTimeout:
 
 
 class TestWorkerPoolDelPaths:
-    """worker.py lines 622-634: __del__ with and without finalizing flag."""
+    """WorkerPool._emergency_shutdown finalizer callback paths."""
 
     def test_del_when_not_alive_is_noop(self) -> None:
-        pool = WorkerPool(
-            mode="async-thread",
-            max_workers=1,
-            max_decisions_per_worker=10,
-            warmup=False,
-        )
-        # Never spawned — _alive is False
-        pool.__del__()  # Must not raise
+        # Cell containing None — _emergency_shutdown must return immediately.
+        WorkerPool._emergency_shutdown([None])  # Must not raise
 
     def test_del_when_alive_logs_warning_and_shuts_down(self, caplog) -> None:
         import logging
@@ -150,10 +144,9 @@ class TestWorkerPoolDelPaths:
         pool.spawn()
         assert pool._alive
 
-        # __del__ with _is_finalizing() returning False (normal GC).
-        # Pass the callable as a positional arg (it's a default-arg parameter).
+        executor = pool._executor
         with caplog.at_level(logging.WARNING, logger="pramanix.worker"):
-            WorkerPool.__del__(pool, lambda: False)
+            WorkerPool._emergency_shutdown([executor])
 
         assert "GC'd without explicit shutdown" in caplog.text
 
@@ -167,6 +160,9 @@ class TestWorkerPoolDelPaths:
         pool.spawn()
         assert pool._alive
 
-        # __del__ with _is_finalizing() returning True — no warning, just shutdown
-        WorkerPool.__del__(pool, lambda: True)
-        assert not pool._alive
+        # _emergency_shutdown with a live executor — must shut it down without raising.
+        executor = pool._executor
+        WorkerPool._emergency_shutdown([executor])
+        # After emergency shutdown the underlying executor is terminated.
+        pool._alive = False  # mark pool as no longer alive so shutdown() no-ops
+        pool.shutdown(wait=False)
