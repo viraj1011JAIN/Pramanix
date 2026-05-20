@@ -219,6 +219,67 @@ class TestSemanticFieldEqual:
         # Falls through to string comparison after InvalidOperation
         assert isinstance(result, bool)
 
+    # ── §35: boundary numeric strings ─────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        "val",
+        [
+            "NaN",
+            "+inf",
+            "-inf",
+            "Inf",
+            "1e999",
+            "١٢٣",   # Arabic-Indic numerals — Decimal raises InvalidOperation
+            "½",     # vulgar fraction — Decimal raises InvalidOperation
+            "1_000_000",  # Python underscore syntax — Decimal rejects it
+            str(None),    # "None" — Decimal raises InvalidOperation
+        ],
+    )
+    def test_boundary_string_never_raises(self, val: str) -> None:
+        """§35: every boundary string must return bool, never raise."""
+        result = _semantic_field_equal(val, val)
+        assert isinstance(result, bool)
+
+    def test_nan_string_self_equality_is_false(self) -> None:
+        """§35: Decimal("NaN") == Decimal("NaN") is False (IEEE 754 NaN semantics).
+
+        _semantic_field_equal takes the Decimal comparison path for two strings
+        that both parse as Decimal NaN — the result is False, not True.
+        Explicit test so the counter-intuitive behaviour is pinned by CI.
+        """
+        assert _semantic_field_equal("NaN", "NaN") is False
+
+    def test_nan_string_vs_numeric_is_false(self) -> None:
+        """§35: "NaN" must not compare equal to any real number."""
+        assert _semantic_field_equal("NaN", "1.0") is False
+        assert _semantic_field_equal("NaN", "0") is False
+
+    def test_inf_strings_compare_correctly(self) -> None:
+        """§35: Decimal accepts +inf/-inf; ordering and equality must be stable."""
+        assert _semantic_field_equal("+inf", "+inf") is True
+        assert _semantic_field_equal("+inf", "-inf") is False
+        assert _semantic_field_equal("-inf", "1e999") is False
+
+    def test_arabic_indic_numerals_accepted_by_decimal(self) -> None:
+        """§35: Python's Decimal accepts Unicode digit characters (U+0661–U+0669).
+
+        Decimal("١٢٣") parses to 123, so Arabic-Indic numerals compare equal to
+        their ASCII equivalents via the Decimal path — not via casefold fallback.
+        """
+        assert _semantic_field_equal("١٢٣", "١٢٣") is True
+        # Decimal("١٢٣") == Decimal("123") → True (numerically equal)
+        assert _semantic_field_equal("١٢٣", "123") is True
+
+    def test_underscore_numeric_string_falls_to_casefold(self) -> None:
+        """§35: Python underscore syntax not recognised by Decimal."""
+        # "1_000_000" != "1000000" under casefold; not treated as equal numeric
+        assert isinstance(_semantic_field_equal("1_000_000", "1000000"), bool)
+
+    def test_none_cast_to_string_is_not_numeric(self) -> None:
+        """§35: str(None) == "None" falls through to casefold comparison."""
+        assert _semantic_field_equal("None", "None") is True
+        assert _semantic_field_equal("None", "null") is False
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # _enforce_consensus — lenient mode paths (lines 508->exit, 524, 527)
