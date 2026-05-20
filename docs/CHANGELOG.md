@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **FastAPI middleware signer startup regression fixed:**
+  `PramanixMiddleware` now uses optional signing and no longer fails app
+  startup when `PRAMANIX_SIGNING_KEY` is not set. Proof headers are emitted
+  only when a signer key is configured.
+
+- **Doctor compatibility contract restored:**
+  `pramanix doctor` now reports both `audit-sink-reachability` (current)
+  and `audit-sink-policy` (back-compat) checks so legacy and new test
+  suites pass together under production profile semantics.
+
+- **Ollama translator test latency reduced:**
+  `tests/unit/test_translator_ollama.py` timeout-path test now uses a shorter
+  deliberate server delay while preserving timeout-branch coverage, reducing
+  full-suite tail latency.
+
+- **Worker finalizer teardown noise reduced:**
+  `WorkerPool._emergency_shutdown()` now suppresses the GC warning during
+  interpreter finalization (`sys.is_finalizing()`), preventing exit-time
+  logging errors after stream teardown.
+
 ### Security
 
 - **C-01 — Async fail-safe bypass patched:** `verify_async()` had a bare

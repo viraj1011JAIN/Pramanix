@@ -243,6 +243,56 @@ The CLI JSON output key was also updated from `"policy"` to `"policy_hash"`.
 
 ---
 
+### MW-01 — `PramanixMiddleware` no longer raises at startup without a signing key
+
+**Severity: Behavior Change** (patch release, 2026-05-20)
+
+**What changed:**
+
+`PramanixMiddleware` previously raised a `RuntimeError` at ASGI startup
+when no signing key was supplied. This was changed so that the middleware
+starts cleanly regardless of signing configuration; proof headers
+(`X-Pramanix-Decision`) are only emitted when a signer is active.
+
+**Before (v1.0.0 initial — startup failure):**
+
+```python
+# Starting the app without PRAMANIX_SIGNING_KEY set raised:
+# RuntimeError: PramanixMiddleware requires a signer; set PRAMANIX_SIGNING_KEY.
+app = FastAPI()
+app.add_middleware(PramanixMiddleware, policy=MyPolicy)
+uvicorn.run(app)  # ← raised RuntimeError before first request
+```
+
+**After (v1.0.x patch — graceful start):**
+
+```python
+# App starts cleanly; decisions are enforced but proof headers are omitted.
+app = FastAPI()
+app.add_middleware(PramanixMiddleware, policy=MyPolicy)
+uvicorn.run(app)  # ← starts without error; signer is optional
+```
+
+**Impact:** If you depended on the startup error as a deployment-time
+configuration check, that guard is now gone. Add an explicit startup
+assertion if signing is required in your deployment:
+
+```python
+import os
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    if not os.getenv("PRAMANIX_SIGNING_KEY"):
+        raise RuntimeError("PRAMANIX_SIGNING_KEY must be set in production")
+    yield
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(PramanixMiddleware, policy=MyPolicy)
+```
+
+---
+
 ## Upgrading to 0.9.x from 0.8.x
 
 No breaking API changes in v0.9.0. All changes are additive.
@@ -545,6 +595,56 @@ except NotImplementedError as exc:
 3. If a tool is intentionally read-only (no action required), pass
    `underlying_fn=lambda intent: "no-op"` explicitly so the intent is
    clear at the call site.
+
+---
+
+### MW-01 — `PramanixMiddleware` no longer raises at startup without a signing key
+
+**Severity: Behavior Change** (patch release, 2026-05-20)
+
+**What changed:**
+
+`PramanixMiddleware` previously raised a `RuntimeError` at ASGI startup
+when no signing key was supplied. This was changed so that the middleware
+starts cleanly regardless of signing configuration; proof headers
+(`X-Pramanix-Decision`) are only emitted when a signer is active.
+
+**Before (v1.0.0 initial — startup failure):**
+
+```python
+# Starting the app without PRAMANIX_SIGNING_KEY set raised:
+# RuntimeError: PramanixMiddleware requires a signer; set PRAMANIX_SIGNING_KEY.
+app = FastAPI()
+app.add_middleware(PramanixMiddleware, policy=MyPolicy)
+uvicorn.run(app)  # ← raised RuntimeError before first request
+```
+
+**After (v1.0.x patch — graceful start):**
+
+```python
+# App starts cleanly; decisions are enforced but proof headers are omitted.
+app = FastAPI()
+app.add_middleware(PramanixMiddleware, policy=MyPolicy)
+uvicorn.run(app)  # ← starts without error; signer is optional
+```
+
+**Impact:** If you depended on the startup error as a deployment-time
+configuration check, that guard is now gone. Add an explicit startup
+assertion if signing is required in your deployment:
+
+```python
+import os
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    if not os.getenv("PRAMANIX_SIGNING_KEY"):
+        raise RuntimeError("PRAMANIX_SIGNING_KEY must be set in production")
+    yield
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(PramanixMiddleware, policy=MyPolicy)
+```
 
 ---
 

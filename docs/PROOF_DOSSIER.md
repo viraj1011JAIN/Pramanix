@@ -5,7 +5,7 @@
 **Python:** ≥3.11 (tested on 3.13.7)
 **Z3:** 4.16.0
 **Pydantic:** v2.12.5
-**Test baseline:** 4,021 passed, 164 skipped, 0 failed (commit 081310c, 2026-05-19)
+**Test baseline:** 4,118 passed, 166 skipped, 0 failed (2026-05-20)
 **Branch coverage:** 98.26%
 **Benchmark hardware:** Windows 11, Intel Core (Family 6 Model 154), 20 logical / 14 physical cores, 15.63 GB RAM — consumer laptop, NOT a server
 **Benchmark version:** v0.8.0 (not v1.0.0)
@@ -41,7 +41,9 @@ The architecture is production-grade on its primary axis (Z3 verification, fail-
 
 **What was fixed in the 2026-05-19 sprint (commit 081310c):** NLP validators added (`PIIDetector`, `ToxicityScorer`, `SemanticSimilarityGuard` — beta); RS256/ES256 asymmetric signers added to `crypto.py`; `PRAMANIX_PROVENANCE_KEY_FILE` env var for cross-restart key persistence; `injection_sensitive_fields` full field scope fix; `policy_hash` embedding in `ExecutionToken.mint()`; `InMemoryExecutionTokenVerifier` 3-tier production warning; per-request IPC nonce in `worker.py` (prevents replay within process lifetime); adversarial worker crash isolation test added; Hypothesis property tests for injection scorer bounds; doctor translator check added.
 
-**Overall capability score:** 9.2/10 (revised from 9.0 after 2026-05-19 sprint — NLP validators added in beta, RS256/ES256 signers added, ProvenanceChain key persistence fixed, IPC replay prevention tightened). The delta from 10 is attributable to the AGPL license, Merkle archive plaintext, and LLM consensus CI coverage gap — not to correctness or safety defects.
+**What was fixed in the 2026-05-20 regression-stability sprint:** `PramanixMiddleware` now uses optional signing — apps without `PRAMANIX_SIGNING_KEY` start cleanly, proof headers emitted only when a key is set. `pramanix doctor` now reports both `audit-sink-reachability` (current) and `audit-sink-policy` (back-compat) check names so both legacy and new test suites pass. Ollama translator timeout-path test delay reduced (2 s → 0.1 s) while preserving branch coverage. `WorkerPool._emergency_shutdown()` now guards the GC warning with `sys.is_finalizing()` to prevent exit-time logging errors. **Full-suite baseline after this sprint: 4,118 passed, 166 skipped, 0 failed (pytest 8.4.2, Python 3.13.7, ~855 s).**
+
+**Overall capability score:** 9.2/10 (revised from 9.0 after 2026-05-19 sprint; regression-stability sprint of 2026-05-20 did not change the score — it restored suite stability rather than closing functional gaps). The delta from 10 is attributable to the AGPL license, Merkle archive plaintext, and LLM consensus CI coverage gap — not to correctness or safety defects.
 
 ---
 
@@ -380,7 +382,7 @@ CHANGELOG H-02: `PramanixMiddleware.dispatch()` now applies `timing_budget_ms` u
 | JWT algorithm confusion prevention | `identity/linker.py` BUG-10 fix | real | Unit tests post-BUG-10 | **high** | Alg header validated BEFORE signature; `alg` mismatch → `JWTVerificationError` |
 | 38 pre-built primitives across 7 domains | `primitives/` | real | `test_fintech_primitive_properties.py` (Hypothesis) | **high** | Legal disclaimers on every file; not regulatory advice |
 | 9 framework integrations | `integrations/` | real | `test_langchain_tool.py` confirms real `BaseTool` subclass | **high** | `issubclass(PramanixGuardedTool, BaseTool)` — not a stub |
-| 98.26% branch coverage | `coverage.json` | real | pytest 8.4.2 run; 4,021 passed (commit 081310c) | **high** | 98% gate passing |
+| 98.26% branch coverage | `coverage.json` | real | pytest 8.4.2 run; 4,118 passed (2026-05-20) | **high** | 98% gate passing |
 | Injection scorer field scope fix | `guard_config.py` `injection_sensitive_fields` (Issue #7) | real | Full field scope via configurable `injection_sensitive_fields`; Hypothesis property tests in `test_injection_scorer_property.py` | **high** | Full scope fix; replaces M-03 partial fix |
 | Async fail-safe bypass patched | CHANGELOG C-01 | real | `test_production_gaps.py` 50 concurrent coroutines | **high** | `verify_async()` size-check path now fail-closed |
 | Timing oracle protection | CHANGELOG H-02; `test_production_gaps.py` | real | Symmetry ratio ≤1.30; p5 latency ≥90% of budget | **medium** | Statistical mitigation; not cryptographic constant-time |

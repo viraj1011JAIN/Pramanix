@@ -213,9 +213,9 @@ the LLM's output can cause.
         sign-off.  No LLM call is made by the compiler itself.
 \end{itemize}
 
-\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): \textbf{4,021 passed},
-164 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
-passing).  Baseline: commit~\code{081310c}, 2026-05-19 (18-issue sprint).
+\textbf{Test suite state} (Python~3.13.7, pytest~8.4.2): \textbf{4,118 passed},
+166 skipped, 0 failed.  Branch coverage: \textbf{98.26\,\%} (98\,\% gate:
+passing).  Baseline: 2026-05-20 (regression-stability sprint).
 
 \textbf{Self-audit findings} (\fname{reality.md}, 2026-05-12): The codebase
 audit was conducted by the author against the author's own source code.  It
@@ -1467,6 +1467,14 @@ After 18-issue sprint (2026-05-19, commit~\code{081310c}):
 (7 tests), \fname{test\_worker\_crash\_isolation.py} (5 tests, 1 skip on
 Windows), \fname{test\_llm\_consensus.py} (4 tests, all skip without
 \code{OPENAI\_API\_KEY}).
+
+After 2026-05-20 regression-stability sprint:
+\textbf{4,118 passed}, \textbf{166 skipped}, \textbf{0 failed}.  Coverage:
+\textbf{98.26\,\%} (gate: \textbf{passing}).  Wall time: $\approx$\,855\,s.
+Fixes: FastAPI optional signer (no startup failure without signing key),
+doctor audit-sink compatibility contract (both check-name contracts pass),
+Ollama timeout-test deliberate delay reduced, worker finalizer teardown
+logging guard on \code{sys.is\_finalizing()}.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection*{Phase~2 (Natural Policy Engine) --- v1.1: Natural Language Policy Compiler}
@@ -3638,7 +3646,7 @@ P50/P95/P99 latency         & \fname{benchmarks/results/latency\_results.json} &
 AGPL blocker                & \fname{reality.md}            & \cfrsec{4.2} \\
 Redis TOCTOU race           & \fname{reality.md}            & \cfrsec{4.1} \\
 Logging split-brain         & \fname{reality.md}            & \cfrsec{4.2} \\
-4,021 tests (sprint baseline) & \fname{reality.md}            & \cfrsec{3.1} \\
+4,118 tests (latest baseline)  & \fname{reality.md}            & \cfrsec{3.1} \\
 3,916 passing (Phase~10)    & \fname{tests/unit/test\_archiver\_coverage\_gaps.py} & full file \\
 3,916 passing (Phase~11)    & \fname{tests/unit/test\_interceptors\_real.py} & \code{TestKafkaConsumerRealPaths} \\
 EncryptedArchiveWriter      & \fname{src/pramanix/audit/archiver.py} & class EncryptedArchiveWriter \\
