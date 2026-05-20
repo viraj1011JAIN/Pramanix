@@ -181,6 +181,26 @@ class TestIncSigningFailure:
         finally:
             _mod._signing_failure_counter = saved
 
+    def test_unexpected_exception_from_inc_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Fix #10: when counter.inc() raises, a WARNING is logged (not silently swallowed)."""
+        import logging
+
+        import pramanix.audit.signer as _mod
+
+        saved = _mod._signing_failure_counter
+        try:
+            _mod._signing_failure_counter = _BoomCounter()
+            with caplog.at_level(logging.WARNING, logger="pramanix.audit.signer"):
+                _mod._inc_signing_failure()
+        finally:
+            _mod._signing_failure_counter = saved
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, "Expected a WARNING log record from _inc_signing_failure()"
+        combined = " ".join(r.getMessage() for r in warning_records)
+        assert "pramanix_signing_failures_total" in combined
+        assert "metric may be stale" in combined
+
 
 # ── TestDecisionVerifier ──────────────────────────────────────────────────────
 

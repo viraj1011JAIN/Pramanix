@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from pydantic import BaseModel
 
 from pramanix.exceptions import ExtractionMismatchError
@@ -190,3 +192,181 @@ class TestEnforceConsensus:
             critical_fields=None,
             strictness=ConsensusStrictness.STRICT,
         )
+
+
+# ── _semantic_field_equal boundary-string tests (§5 fix #35) ─────────────────
+
+
+class TestSemanticFieldEqualBoundaryStrings:
+    """IEEE 754 special values, non-ASCII numerals, and edge-case string inputs.
+
+    Every case must return a consistent bool — never raise — regardless of
+    whether the Decimal conversion branch, the JSON-equivalence branch, or
+    the casefold fallback is taken.
+    """
+
+    # ── NaN semantics (IEEE 754: NaN ≠ NaN) ──────────────────────────────────
+
+    def test_nan_vs_nan_is_false(self) -> None:
+        """Decimal('NaN') == Decimal('NaN') is False per IEEE 754."""
+        assert _semantic_field_equal("NaN", "NaN") is False
+
+    def test_nan_vs_numeric_is_false(self) -> None:
+        assert _semantic_field_equal("NaN", "1.0") is False
+
+    def test_numeric_vs_nan_is_false(self) -> None:
+        assert _semantic_field_equal("1.0", "NaN") is False
+
+    # ── Infinity strings ──────────────────────────────────────────────────────
+
+    def test_pos_inf_vs_pos_inf_is_true(self) -> None:
+        """+inf parses to Decimal('Infinity'); same vs same → True."""
+        assert _semantic_field_equal("+inf", "+inf") is True
+
+    def test_neg_inf_vs_neg_inf_is_true(self) -> None:
+        assert _semantic_field_equal("-inf", "-inf") is True
+
+    def test_pos_inf_vs_neg_inf_is_false(self) -> None:
+        assert _semantic_field_equal("+inf", "-inf") is False
+
+    # ── Very-large exponent (overflow to Decimal, not float) ─────────────────
+
+    def test_1e999_vs_1e999_is_true(self) -> None:
+        """1e999 stays exact in Decimal (no float overflow); same vs same → True."""
+        assert _semantic_field_equal("1e999", "1e999") is True
+
+    def test_1e999_vs_1e998_is_false(self) -> None:
+        assert _semantic_field_equal("1e999", "1e998") is False
+
+    # ── Non-ASCII numeral scripts (Arabic-Indic) ──────────────────────────────
+
+    def test_arabic_indic_same_vs_same_is_true(self) -> None:
+        """Arabic-Indic '١٢٣' fails Decimal conversion; casefold fallback → True."""
+        assert _semantic_field_equal("١٢٣", "١٢٣") is True
+
+    def test_arabic_indic_vs_ascii_is_true(self) -> None:
+        """Decimal converts Arabic-Indic digits to ASCII; '١٢٣' == '123' → True."""
+        assert _semantic_field_equal("١٢٣", "123") is True
+
+    # ── Vulgar-fraction character ─────────────────────────────────────────────
+
+    def test_half_fraction_same_vs_same_is_true(self) -> None:
+        """'½' fails Decimal conversion; casefold fallback → True."""
+        assert _semantic_field_equal("½", "½") is True
+
+    def test_half_fraction_vs_decimal_is_false(self) -> None:
+        """'½' and '0.5' are in different branches → False (casefold != Decimal)."""
+        assert _semantic_field_equal("½", "0.5") is False
+
+    # ── Python underscore numeric syntax ──────────────────────────────────────
+
+    def test_underscore_same_vs_same_is_true(self) -> None:
+        """'1_000_000' fails Decimal; casefold fallback → True."""
+        assert _semantic_field_equal("1_000_000", "1_000_000") is True
+
+    def test_underscore_vs_plain_is_true(self) -> None:
+        """Decimal strips underscores; '1_000_000' == '1000000' → True."""
+        assert _semantic_field_equal("1_000_000", "1000000") is True
+
+    # ── None cast to string ───────────────────────────────────────────────────
+
+    def test_str_none_vs_str_none_is_true(self) -> None:
+        """str(None) == 'None'; casefold fallback → True. Does not raise."""
+        assert _semantic_field_equal(str(None), str(None)) is True
+
+    def test_actual_none_vs_str_none_is_false(self) -> None:
+        """Actual None vs the string 'None' must disagree (None-guard fires first)."""
+        assert _semantic_field_equal(None, "None") is False
+
+    def test_str_none_vs_actual_none_is_false(self) -> None:
+        assert _semantic_field_equal("None", None) is False
+
+    # ── No exception contract ─────────────────────────────────────────────────
+
+    def test_boundary_inputs_never_raise(self) -> None:
+        """All boundary-string inputs must return bool without raising."""
+        pairs = [
+            ("NaN", "NaN"),
+            ("NaN", "1.0"),
+            ("+inf", "+inf"),
+            ("-inf", "-inf"),
+            ("+inf", "-inf"),
+            ("1e999", "1e999"),
+            ("1e999", "1e998"),
+            ("١٢٣", "١٢٣"),
+            ("١٢٣", "123"),
+            ("½", "½"),
+            ("½", "0.5"),
+            ("1_000_000", "1_000_000"),
+            ("1_000_000", "1000000"),
+            (str(None), str(None)),
+        ]
+        for a, b in pairs:
+            result = _semantic_field_equal(a, b)
+            assert isinstance(result, bool), f"Expected bool for ({a!r}, {b!r}), got {type(result)}"
+
+    # ── Symmetry contract ─────────────────────────────────────────────────────
+
+    def test_boundary_inputs_are_symmetric(self) -> None:
+        """_semantic_field_equal(a, b) == _semantic_field_equal(b, a) for all pairs."""
+        pairs = [
+            ("NaN", "NaN"),
+            ("NaN", "1.0"),
+            ("+inf", "+inf"),
+            ("-inf", "-inf"),
+            ("+inf", "-inf"),
+            ("1e999", "1e999"),
+            ("1e999", "1e998"),
+            ("١٢٣", "١٢٣"),
+            ("١٢٣", "123"),
+            ("½", "½"),
+            ("½", "0.5"),
+            ("1_000_000", "1_000_000"),
+            ("1_000_000", "1000000"),
+            (str(None), str(None)),
+        ]
+        for a, b in pairs:
+            assert _semantic_field_equal(a, b) == _semantic_field_equal(b, a), (
+                f"Asymmetry: ({a!r}, {b!r})"
+            )
+
+
+# ── Hypothesis property tests ─────────────────────────────────────────────────
+
+
+class TestSemanticFieldEqualProperties:
+    """Hypothesis-driven properties that must hold for all string inputs."""
+
+    @given(st.text(), st.text())
+    @settings(max_examples=500)
+    def test_never_raises_for_arbitrary_strings(self, a: str, b: str) -> None:
+        """_semantic_field_equal must never raise for any pair of string inputs."""
+        result = _semantic_field_equal(a, b)
+        assert isinstance(result, bool)
+
+    @given(st.text())
+    @settings(max_examples=300)
+    def test_reflexive_for_same_string(self, s: str) -> None:
+        """_semantic_field_equal(s, s) must be True for any non-NaN string.
+
+        NaN is the only standard exception: Decimal('NaN') != Decimal('NaN').
+        For all other strings, the function must agree with itself.
+        """
+        from decimal import Decimal, InvalidOperation
+
+        try:
+            d = Decimal(s.strip())
+            is_nan = d.is_nan()
+        except InvalidOperation:
+            is_nan = False
+
+        result = _semantic_field_equal(s, s)
+        assert isinstance(result, bool)
+        if not is_nan:
+            assert result is True, f"Expected True for ({s!r}, {s!r}), got False"
+
+    @given(st.text(), st.text())
+    @settings(max_examples=500)
+    def test_symmetric_for_arbitrary_strings(self, a: str, b: str) -> None:
+        """_semantic_field_equal(a, b) == _semantic_field_equal(b, a) always."""
+        assert _semantic_field_equal(a, b) == _semantic_field_equal(b, a)

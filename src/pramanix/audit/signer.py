@@ -52,8 +52,14 @@ def _inc_signing_failure() -> None:
         _signing_failure_counter.inc()
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as _exc:
+        _log.warning(
+            "pramanix.audit.signer: unexpected error incrementing "
+            "pramanix_signing_failures_total counter — metric may be stale. "
+            "Error: %s",
+            _exc,
+            exc_info=True,
+        )
 
 
 @dataclass(frozen=True)
