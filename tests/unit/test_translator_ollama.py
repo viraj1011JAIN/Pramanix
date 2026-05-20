@@ -158,9 +158,7 @@ def _make_server(
 
 def _ollama_json(content: str) -> bytes:
     """Build bytes that look like a real Ollama /api/chat 200 response."""
-    return json.dumps(
-        {"message": {"role": "assistant", "content": content}}
-    ).encode()
+    return json.dumps({"message": {"role": "assistant", "content": content}}).encode()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -187,9 +185,7 @@ class TestOllamaTranslatorConstruction:
         t = OllamaTranslator()
         assert "env-server" in t._base_url
 
-    def test_explicit_base_url_overrides_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_explicit_base_url_overrides_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://env-server:11434")
         t = OllamaTranslator(base_url="http://explicit:11434")
         assert "explicit" in t._base_url
@@ -212,9 +208,7 @@ class TestOllamaTranslatorLive:
     async def test_extract_transfer_intent(self) -> None:
         """Real LLM extracts structured transfer intent from text."""
         t = OllamaTranslator()
-        result = await t.extract(
-            "Transfer 250 dollars to account acc_789", _TransferIntent
-        )
+        result = await t.extract("Transfer 250 dollars to account acc_789", _TransferIntent)
         assert isinstance(result, dict)
         assert "amount" in result
         assert "recipient" in result
@@ -228,9 +222,7 @@ class TestOllamaTranslatorLive:
 
         ctx = TranslatorContext(request_id="req-live-1", user_id="user-1")
         t = OllamaTranslator()
-        result = await t.extract(
-            "Send 50 to acc_live", _TransferIntent, context=ctx
-        )
+        result = await t.extract("Send 50 to acc_live", _TransferIntent, context=ctx)
         assert isinstance(result, dict)
         assert "amount" in result
 
@@ -308,7 +300,7 @@ class TestOllamaTranslatorNetworkErrors:
 
                 length = int(self.headers.get("Content-Length", 0))
                 self.rfile.read(length)
-                time.sleep(2)  # 2 s delay >> 1 ms timeout
+                time.sleep(0.1)  # 100 ms delay is still >> 1 ms timeout
                 self.send_response(200)
                 self.end_headers()
 
@@ -320,9 +312,7 @@ class TestOllamaTranslatorNetworkErrors:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            t = OllamaTranslator(
-                base_url=f"http://127.0.0.1:{port}", timeout=0.001
-            )
+            t = OllamaTranslator(base_url=f"http://127.0.0.1:{port}", timeout=0.001)
             with pytest.raises(LLMTimeoutError):
                 await t.extract("transfer 100", _TransferIntent)
         finally:
@@ -379,9 +369,7 @@ class TestOllamaTranslatorMalformedResponse:
     @pytest.mark.asyncio
     async def test_invalid_inner_json_raises_extraction_failure(self) -> None:
         """LLM content string that cannot be parsed as JSON."""
-        server, base_url = _make_server(
-            200, _ollama_json("this is not json at all")
-        )
+        server, base_url = _make_server(200, _ollama_json("this is not json at all"))
         try:
             t = OllamaTranslator(base_url=base_url)
             with pytest.raises(ExtractionFailureError, match="unparseable"):
@@ -424,9 +412,7 @@ class TestOllamaTranslatorMalformedResponse:
 
 
 class TestOllamaTranslatorMissingDependency:
-    def test_missing_httpx_raises_import_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_httpx_raises_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If httpx is not installed, OllamaTranslator() raises ImportError."""
         monkeypatch.setitem(  # type: ignore[arg-type]
             sys.modules, "httpx", None

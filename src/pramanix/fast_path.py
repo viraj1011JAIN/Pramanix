@@ -32,12 +32,40 @@ Usage (via GuardConfig):
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+_PARSE_FAILURE_COUNTER: Any = None
+_PARSE_FAILURE_COUNTER_LOCK = threading.Lock()
+
+
+def _inc_parse_failure(rule_name: str) -> None:
+    """Increment pramanix_fast_path_parse_failure_total for the given rule."""
+    global _PARSE_FAILURE_COUNTER
+    if _PARSE_FAILURE_COUNTER is None:
+        with _PARSE_FAILURE_COUNTER_LOCK:
+            if _PARSE_FAILURE_COUNTER is None:
+                try:
+                    from prometheus_client import Counter as _Counter
+
+                    _PARSE_FAILURE_COUNTER = _Counter(
+                        "pramanix_fast_path_parse_failure_total",
+                        "Fast-path Decimal parse failures by rule; non-zero means "
+                        "malformed numeric inputs were passed through to Z3",
+                        ["rule"],
+                    )
+                except Exception:
+                    _PARSE_FAILURE_COUNTER = False
+    try:
+        if _PARSE_FAILURE_COUNTER:
+            _PARSE_FAILURE_COUNTER.labels(rule=rule_name).inc()
+    except Exception:
+        pass
 
 
 # A fast-path rule takes (intent_dict, state_dict) and returns:
@@ -77,6 +105,7 @@ class SemanticFastPath:
     @staticmethod
     def negative_amount(field_name: str = "amount") -> FastPathRule:
         """Block if amount is negative."""
+        _rule_name = f"negative_amount({field_name})"
 
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
             val = intent.get(field_name) or state.get(field_name)
@@ -86,6 +115,7 @@ class SemanticFastPath:
                 if Decimal(str(val)) < Decimal("0"):
                     return f"Amount must be non-negative (got {val})"
             except Exception as _exc:
+                _inc_parse_failure(_rule_name)
                 log.warning(
                     "fast_path.negative_amount: could not parse %r as Decimal "
                     "— passing through to Z3/semantic check (%s: %s)",
@@ -96,12 +126,13 @@ class SemanticFastPath:
                 return None
             return None
 
-        _rule.__name__ = f"negative_amount({field_name})"
+        _rule.__name__ = _rule_name
         return _rule
 
     @staticmethod
     def zero_or_negative_balance(field_name: str = "balance") -> FastPathRule:
         """Block if account balance is zero or negative."""
+        _rule_name = f"zero_or_negative_balance({field_name})"
 
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
             val = state.get(field_name)
@@ -111,6 +142,7 @@ class SemanticFastPath:
                 if Decimal(str(val)) <= Decimal("0"):
                     return "Account balance is zero or negative"
             except Exception as _exc:
+                _inc_parse_failure(_rule_name)
                 log.warning(
                     "fast_path.zero_or_negative_balance: could not parse %r as Decimal "
                     "— passing through to Z3/semantic check (%s: %s)",
@@ -121,7 +153,7 @@ class SemanticFastPath:
                 return None
             return None
 
-        _rule.__name__ = f"zero_or_negative_balance({field_name})"
+        _rule.__name__ = _rule_name
         return _rule
 
     @staticmethod
@@ -144,6 +176,7 @@ class SemanticFastPath:
     ) -> FastPathRule:
         """Block if amount exceeds an absolute hard cap."""
         cap_decimal = Decimal(str(cap))
+        _rule_name = f"exceeds_hard_cap({amount_field},{cap})"
 
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
             val = intent.get(amount_field) or state.get(amount_field)
@@ -153,6 +186,7 @@ class SemanticFastPath:
                 if Decimal(str(val)) > cap_decimal:
                     return f"Amount exceeds hard cap of {cap}"
             except Exception as _exc:
+                _inc_parse_failure(_rule_name)
                 log.warning(
                     "fast_path.exceeds_hard_cap: could not parse %r as Decimal "
                     "— passing through to Z3/semantic check (%s: %s)",
@@ -163,7 +197,7 @@ class SemanticFastPath:
                 return None
             return None
 
-        _rule.__name__ = f"exceeds_hard_cap({amount_field},{cap})"
+        _rule.__name__ = _rule_name
         return _rule
 
     @staticmethod
@@ -176,6 +210,8 @@ class SemanticFastPath:
         The fast-path never allows — if this check passes, Z3 still verifies.
         """
 
+        _rule_name = f"amount_exceeds_balance({amount_field},{balance_field})"
+
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
             amount_val = intent.get(amount_field)
             balance_val = state.get(balance_field)
@@ -187,6 +223,7 @@ class SemanticFastPath:
                 if amount > balance:
                     return "Insufficient balance for transfer"
             except Exception as _exc:
+                _inc_parse_failure(_rule_name)
                 log.warning(
                     "fast_path.amount_exceeds_balance: could not parse "
                     "amount=%r or balance=%r as Decimal "
@@ -199,7 +236,7 @@ class SemanticFastPath:
                 return None
             return None
 
-        _rule.__name__ = f"amount_exceeds_balance({amount_field},{balance_field})"
+        _rule.__name__ = _rule_name
         return _rule
 
 

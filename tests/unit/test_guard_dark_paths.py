@@ -661,6 +661,65 @@ class TestPrometheusMetrics:
 
 
 # ===============================================================
+# pramanix_policy_field_seen_total — field coverage metric
+# ===============================================================
+
+
+class TestFieldCoverageMetric:
+    """Verifies pramanix_policy_field_seen_total increments on each verify() call.
+
+    Uses the live prometheus_client registry — no patching.  Reads sample
+    values before and after verify() and asserts deltas.
+    """
+
+    _METRIC = "pramanix_policy_field_seen_total"
+
+    def _sample(self, policy: str, field: str) -> float:
+        from prometheus_client import REGISTRY
+
+        return REGISTRY.get_sample_value(self._METRIC, {"policy": policy, "field": field}) or 0.0
+
+    def test_intent_fields_are_counted(self) -> None:
+        policy_name = _MinimalPolicy.__name__
+        before = self._sample(policy_name, "amount")
+        g = Guard(policy=_MinimalPolicy, config=GuardConfig(metrics_enabled=True))
+        g.verify(intent={"amount": Decimal("50")}, state={"state_version": "1.0"})
+        assert self._sample(policy_name, "amount") == before + 1.0
+
+    def test_state_fields_are_counted(self) -> None:
+        policy_name = _MinimalPolicy.__name__
+        before = self._sample(policy_name, "state_version")
+        g = Guard(policy=_MinimalPolicy, config=GuardConfig(metrics_enabled=True))
+        g.verify(intent={"amount": Decimal("50")}, state={"state_version": "1.0"})
+        assert self._sample(policy_name, "state_version") == before + 1.0
+
+    def test_counter_uses_policy_class_name(self) -> None:
+        policy_name = _MinimalPolicy.__name__
+        before_amount = self._sample(policy_name, "amount")
+        g = Guard(policy=_MinimalPolicy, config=GuardConfig(metrics_enabled=True))
+        g.verify(intent={"amount": Decimal("10")}, state={"state_version": "1.0"})
+        assert self._sample(policy_name, "amount") == before_amount + 1.0
+
+    def test_counter_accumulates_across_multiple_calls(self) -> None:
+        policy_name = _MinimalPolicy.__name__
+        before = self._sample(policy_name, "amount")
+        g = Guard(policy=_MinimalPolicy, config=GuardConfig(metrics_enabled=True))
+        for _ in range(3):
+            g.verify(intent={"amount": Decimal("1")}, state={"state_version": "1.0"})
+        assert self._sample(policy_name, "amount") == before + 3.0
+
+    def test_blocked_request_still_increments_counter(self) -> None:
+        """Field coverage is emitted even when the request is blocked by Z3."""
+        policy_name = _MinimalPolicy.__name__
+        before = self._sample(policy_name, "amount")
+        g = Guard(policy=_MinimalPolicy, config=GuardConfig(metrics_enabled=True))
+        # amount=-1 violates amount>=0 invariant → BLOCK, but field still counted
+        d = g.verify(intent={"amount": Decimal("-1")}, state={"state_version": "1.0"})
+        assert d.allowed is False
+        assert self._sample(policy_name, "amount") == before + 1.0
+
+
+# ===============================================================
 # Guard.parse_and_verify -- generic Exception branch
 # ===============================================================
 

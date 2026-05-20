@@ -126,3 +126,58 @@ class TestIntegrationsLazyImports:
 
         with pytest.raises(AttributeError, match="no attribute"):
             _ = integrations_mod.NonExistentThing  # type: ignore[attr-defined]
+
+
+class TestIntegrationStatus:
+    """INTEGRATION_STATUS dict must cover every __all__ entry and have valid labels."""
+
+    def _get_status(self):
+        import importlib
+
+        mod = importlib.import_module("pramanix.integrations")
+        return mod.INTEGRATION_STATUS
+
+    def test_integration_status_is_dict(self) -> None:
+        status = self._get_status()
+        assert isinstance(status, dict)
+
+    def test_all_exported_names_have_status(self) -> None:
+        import pramanix.integrations as _int
+
+        status = _int.INTEGRATION_STATUS
+        non_status = [
+            name
+            for name in _int.__all__
+            if name != "INTEGRATION_STATUS" and name not in status
+        ]
+        assert non_status == [], (
+            f"These exported integrations have no maturity label in INTEGRATION_STATUS: "
+            f"{non_status}"
+        )
+
+    def test_status_values_are_known_labels(self) -> None:
+        valid = {"stable", "beta", "alpha", "deprecated"}
+        status = self._get_status()
+        bad = {k: v for k, v in status.items() if v not in valid}
+        assert not bad, f"Unknown maturity labels: {bad}"
+
+    def test_phase_f1_stubs_are_labeled_beta(self) -> None:
+        status = self._get_status()
+        stubs = ["HaystackGuardedComponent", "PramanixCrewAITool",
+                 "PramanixGuardedModule", "PramanixPydanticAIValidator",
+                 "PramanixSemanticKernelPlugin"]
+        for name in stubs:
+            assert status.get(name) == "beta", (
+                f"Phase F-1 stub {name!r} should be labeled 'beta', "
+                f"got {status.get(name)!r}"
+            )
+
+    def test_core_integrations_are_labeled_stable(self) -> None:
+        status = self._get_status()
+        core = ["PramanixGuardNode", "pramanix_node", "PramanixGuardedTool",
+                "PramanixMiddleware", "PramanixFunctionTool"]
+        for name in core:
+            assert status.get(name) == "stable", (
+                f"Core integration {name!r} should be labeled 'stable', "
+                f"got {status.get(name)!r}"
+            )

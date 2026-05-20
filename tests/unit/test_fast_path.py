@@ -321,3 +321,64 @@ class TestGuardFastPathIntegration:
         from pramanix.decision import SolverStatus
 
         assert d.status == SolverStatus.UNSAFE
+
+
+# ── Tests: pramanix_fast_path_parse_failure_total counter ─────────────────────
+
+
+class TestParseFailureCounter:
+    """Verifies pramanix_fast_path_parse_failure_total increments on Decimal parse errors."""
+
+    _METRIC = "pramanix_fast_path_parse_failure_total"
+
+    def _sample(self, rule_label: str) -> float:
+        from prometheus_client import REGISTRY
+
+        return REGISTRY.get_sample_value(self._METRIC, {"rule": rule_label}) or 0.0
+
+    def test_negative_amount_parse_failure_increments_counter(self):
+        rule = SemanticFastPath.negative_amount("amount")
+        rule_label = "negative_amount(amount)"
+        before = self._sample(rule_label)
+        result = rule({"amount": "not-a-number"}, {})
+        assert result is None  # passes through to Z3
+        assert self._sample(rule_label) == before + 1.0
+
+    def test_zero_or_negative_balance_parse_failure_increments_counter(self):
+        rule = SemanticFastPath.zero_or_negative_balance("balance")
+        rule_label = "zero_or_negative_balance(balance)"
+        before = self._sample(rule_label)
+        result = rule({}, {"balance": "not-a-number"})
+        assert result is None
+        assert self._sample(rule_label) == before + 1.0
+
+    def test_exceeds_hard_cap_parse_failure_increments_counter(self):
+        rule = SemanticFastPath.exceeds_hard_cap("amount", cap=1_000_000)
+        rule_label = "exceeds_hard_cap(amount,1000000)"
+        before = self._sample(rule_label)
+        result = rule({"amount": "not-a-number"}, {})
+        assert result is None
+        assert self._sample(rule_label) == before + 1.0
+
+    def test_amount_exceeds_balance_parse_failure_increments_counter(self):
+        rule = SemanticFastPath.amount_exceeds_balance("amount", "balance")
+        rule_label = "amount_exceeds_balance(amount,balance)"
+        before = self._sample(rule_label)
+        result = rule({"amount": "not-a-number"}, {"balance": Decimal("500")})
+        assert result is None
+        assert self._sample(rule_label) == before + 1.0
+
+    def test_valid_input_does_not_increment_counter(self):
+        rule = SemanticFastPath.negative_amount("amount")
+        rule_label = "negative_amount(amount)"
+        before = self._sample(rule_label)
+        rule({"amount": Decimal("100")}, {})
+        assert self._sample(rule_label) == before  # unchanged
+
+    def test_counter_accumulates_across_multiple_failures(self):
+        rule = SemanticFastPath.negative_amount("amount")
+        rule_label = "negative_amount(amount)"
+        before = self._sample(rule_label)
+        for _ in range(3):
+            rule({"amount": "bad"}, {})
+        assert self._sample(rule_label) == before + 3.0

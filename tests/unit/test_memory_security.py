@@ -266,3 +266,97 @@ class TestSecureMemoryStore:
         with pytest.raises(MemoryViolationError):
             store.write("t", "w", "k",
                         value="tainted", label=TrustLabel.UNTRUSTED, source="user")
+
+
+# ── LlamaIndex migration pattern tests ───────────────────────────────────────
+# These tests lock in the migration contract: they verify that SecureMemoryStore
+# can satisfy the key retrieval patterns that LlamaIndex VectorStoreIndex
+# callers depend on.  No llama_index package is required.
+
+
+class TestSecureMemoryStoreLlamaIndexMigrationPattern:
+    """Verify that SecureMemoryStore satisfies the patterns used in LlamaIndex migration.
+
+    A LlamaIndex agent typically:
+    1. Stores key-value facts in a ``SimpleKVStore`` / ``VectorStoreIndex``
+    2. Retrieves the latest value for a key (``query(key)``)
+    3. Scopes data to a session / workflow (``index_id``)
+    4. Allows read-only lower-trust callers to see only PUBLIC data
+
+    SecureMemoryStore must satisfy all four patterns.
+    """
+
+    def test_upsert_pattern_latest_value_wins(self) -> None:
+        """Repeated writes to the same key: SecureMemoryStore.latest() returns newest."""
+        store = SecureMemoryStore()
+        store.write("acme", "run-1", "user_goal",
+                    value="book flight", label=TrustLabel.INTERNAL, source="planner")
+        store.write("acme", "run-1", "user_goal",
+                    value="book hotel", label=TrustLabel.INTERNAL, source="planner")
+        latest = store.latest("acme", "run-1", "user_goal")
+        assert latest is not None
+        assert latest.value == "book hotel"
+
+    def test_vector_store_query_pattern_retrieve_all(self) -> None:
+        """LlamaIndex retrieve() → SecureMemoryStore.retrieve() with no key filter."""
+        store = SecureMemoryStore()
+        store.write("acme", "run-1", "step_1",
+                    value="action A", label=TrustLabel.INTERNAL, source="agent")
+        store.write("acme", "run-1", "step_2",
+                    value="action B", label=TrustLabel.INTERNAL, source="agent")
+        entries = store.retrieve("acme", "run-1")
+        assert len(entries) == 2
+        values = {e.value for e in entries}
+        assert values == {"action A", "action B"}
+
+    def test_session_isolation_maps_to_workflow_scope(self) -> None:
+        """LlamaIndex index_id scoping → SecureMemoryStore (tenant, workflow) isolation."""
+        store = SecureMemoryStore()
+        store.write("tenant-a", "session-1", "secret",
+                    value="A1", label=TrustLabel.CONFIDENTIAL, source="agent")
+        store.write("tenant-b", "session-2", "secret",
+                    value="B2", label=TrustLabel.CONFIDENTIAL, source="agent")
+        a_entries = store.retrieve("tenant-a", "session-1")
+        b_entries = store.retrieve("tenant-b", "session-2")
+        assert {e.value for e in a_entries} == {"A1"}
+        assert {e.value for e in b_entries} == {"B2"}
+        # Cross-tenant read returns nothing
+        assert store.retrieve("tenant-a", "session-2") == []
+
+    def test_read_only_access_pattern_max_label_filter(self) -> None:
+        """LlamaIndex metadata filter → SecureMemoryStore max_label ceiling."""
+        store = SecureMemoryStore()
+        store.write("acme", "run-1", "public_plan",
+                    value="step 1", label=TrustLabel.PUBLIC, source="agent")
+        store.write("acme", "run-1", "secret_plan",
+                    value="step 2 confidential", label=TrustLabel.CONFIDENTIAL, source="agent")
+        # A read-only caller capped at INTERNAL should not see CONFIDENTIAL entries
+        visible = store.retrieve("acme", "run-1", max_label=TrustLabel.INTERNAL)
+        assert all(e.label <= TrustLabel.INTERNAL for e in visible)
+        assert any(e.key == "public_plan" for e in visible)
+        assert not any(e.key == "secret_plan" for e in visible)
+
+    def test_lineage_chain_survives_multi_agent_writes(self) -> None:
+        """LlamaIndex provenance metadata → SecureMemoryStore lineage tuple."""
+        store = SecureMemoryStore()
+        entry = store.write(
+            "acme", "run-1", "enriched_data",
+            value={"amount": 500},
+            label=TrustLabel.INTERNAL,
+            source="enricher_agent",
+            lineage=("extractor_agent", "validator_agent"),
+        )
+        assert entry.lineage == ("extractor_agent", "validator_agent")
+        retrieved = store.latest("acme", "run-1", "enriched_data")
+        assert retrieved is not None
+        assert retrieved.lineage == entry.lineage
+
+    def test_index_clear_maps_to_drop_partition(self) -> None:
+        """LlamaIndex index.clear() / delete_index → SecureMemoryStore.drop_partition()."""
+        store = SecureMemoryStore()
+        store.write("acme", "run-1", "k", value="v", label=TrustLabel.PUBLIC, source="s")
+        assert store.partition_count() == 1
+        dropped = store.drop_partition("acme", "run-1")
+        assert dropped is True
+        assert store.partition_count() == 0
+        assert store.retrieve("acme", "run-1") == []

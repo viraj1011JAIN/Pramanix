@@ -17,6 +17,8 @@ from pydantic import BaseModel
 from pramanix import E, Field, Policy
 from pramanix.decision import Decision
 from pramanix.integrations.langgraph import (
+    GuardNodeAdapterProtocol,
+    PramanixGuardNode,
     PramanixNodeBlockedError,
     pramanix_node,
 )
@@ -127,3 +129,39 @@ def test_timeout_bypass_with_warn_and_sidecar() -> None:
     result = process({"amount": 1})
     assert result["status"] == "continued"
     assert result["_pramanix_policy_verdict"]["production_verdict"] == "TIMEOUT"
+
+
+# ── GuardNodeAdapterProtocol structural conformance ───────────────────────────
+
+
+class TestGuardNodeAdapterProtocol:
+    """PramanixGuardNode must satisfy GuardNodeAdapterProtocol at runtime."""
+
+    def test_pramanix_guard_node_is_instance_of_protocol(self) -> None:
+        node = PramanixGuardNode(policy=_MoneyPolicy)
+        assert isinstance(node, GuardNodeAdapterProtocol)
+
+    def test_protocol_is_runtime_checkable(self) -> None:
+        # isinstance() must not raise — the @runtime_checkable decorator is required
+        result = isinstance(object(), GuardNodeAdapterProtocol)
+        assert result is False  # plain object does not have .decorate
+
+    def test_custom_adapter_satisfying_protocol_passes_isinstance(self) -> None:
+        class _CustomAdapter:
+            def decorate(self, fn: Any) -> Any:
+                return fn
+
+        adapter = _CustomAdapter()
+        assert isinstance(adapter, GuardNodeAdapterProtocol)
+
+    def test_object_missing_decorate_fails_isinstance(self) -> None:
+        class _BadAdapter:
+            def gate(self, fn: Any) -> Any:  # wrong method name
+                return fn
+
+        assert not isinstance(_BadAdapter(), GuardNodeAdapterProtocol)
+
+    def test_protocol_exported_in_all(self) -> None:
+        import pramanix.integrations.langgraph as _lg
+
+        assert "GuardNodeAdapterProtocol" in _lg.__all__

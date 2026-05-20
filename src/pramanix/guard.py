@@ -76,6 +76,7 @@ import contextlib
 import contextvars
 import dataclasses
 import secrets
+import threading
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, cast
@@ -208,6 +209,46 @@ def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[st
             type(_metric_exc).__name__,
             _metric_exc,
         )
+
+
+# ── Field coverage metric helper ──────────────────────────────────────────────
+
+# Lazy singleton — created once per process to avoid duplicate-metric errors.
+_FIELD_SEEN_COUNTER: Any = None
+_FIELD_SEEN_COUNTER_LOCK = threading.Lock()
+
+
+def _emit_field_seen(policy_name: str, field_names: Any) -> None:
+    """Emit pramanix_policy_field_seen_total for each field key seen in traffic.
+
+    Counter dimensions: {policy, field}.  Gives operators visibility into
+    which fields appear in real requests versus which are declared in policy
+    but never exercised.
+
+    Silently no-ops when prometheus_client is not installed or the counter
+    cannot be registered.
+    """
+    global _FIELD_SEEN_COUNTER
+    if _FIELD_SEEN_COUNTER is None:
+        with _FIELD_SEEN_COUNTER_LOCK:
+            if _FIELD_SEEN_COUNTER is None:
+                try:
+                    from prometheus_client import Counter as _Counter
+
+                    _FIELD_SEEN_COUNTER = _Counter(
+                        "pramanix_policy_field_seen_total",
+                        "Fields seen in real traffic by policy; compare against "
+                        "declared policy fields to audit coverage",
+                        ["policy", "field"],
+                    )
+                except Exception:
+                    _FIELD_SEEN_COUNTER = False
+    try:
+        if _FIELD_SEEN_COUNTER:
+            for _f in field_names:
+                _FIELD_SEEN_COUNTER.labels(policy=policy_name, field=_f).inc()
+    except Exception:
+        pass
 
 
 # ── _CBWrappedTranslator ──────────────────────────────────────────────────────
@@ -889,6 +930,10 @@ class Guard:
                             "Each key must appear in exactly one of intent or state."
                         )
                     values: dict[str, Any] = {**intent_values, **state_values}
+
+                    # Emit field coverage metric — lets operators see which fields
+                    # appear in real traffic vs. which are only declared in policy.
+                    _emit_field_seen(self._policy.__name__, values.keys())
 
                     # ── Phase 10.1: Field presence pre-check ──────────────────────────────
                     # Fast O(n_fields) check using compiled metadata — short-circuits Z3

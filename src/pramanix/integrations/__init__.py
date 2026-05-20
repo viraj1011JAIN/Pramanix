@@ -34,32 +34,54 @@ Quick-start::
 from __future__ import annotations
 
 __all__ = [
-    # Haystack (Phase F-1)
-    "HaystackGuardedComponent",
-    # CrewAI (Phase F-1)
-    "PramanixCrewAITool",
-    # LlamaIndex
-    "PramanixFunctionTool",
-    # DSPy (Phase F-1)
-    "PramanixGuardedModule",
-    # LangChain
-    "PramanixGuardedTool",
-    # LangGraph
-    "PramanixGuardNode",
-    "PramanixNodeBlockedError",
+    "INTEGRATION_STATUS",
     # FastAPI
     "PramanixMiddleware",
-    # PydanticAI (Phase F-1)
-    "PramanixPydanticAIValidator",
-    "PramanixQueryEngineTool",
+    "pramanix_route",
+    # LangChain
+    "PramanixGuardedTool",
+    "wrap_tools",
+    # LangGraph
+    "GuardNodeAdapterProtocol",
+    "PramanixGuardNode",
+    "PramanixNodeBlockedError",
     "pramanix_node",
-    # Semantic Kernel (Phase F-1)
-    "PramanixSemanticKernelPlugin",
+    # LlamaIndex
+    "PramanixFunctionTool",
+    "PramanixQueryEngineTool",
     # AutoGen
     "PramanixToolCallback",
-    "pramanix_route",
-    "wrap_tools",
+    # Phase F-1 — present, minimal framework test coverage (install optional extra first)
+    "HaystackGuardedComponent",
+    "PramanixCrewAITool",
+    "PramanixGuardedModule",
+    "PramanixPydanticAIValidator",
+    "PramanixSemanticKernelPlugin",
 ]
+
+# Runtime-inspectable maturity labels.  Operators can call
+# ``pramanix.integrations.INTEGRATION_STATUS`` from health checks or
+# support scripts to determine which integrations are production-ready.
+INTEGRATION_STATUS: dict[str, str] = {
+    # ── Production-ready integrations ─────────────────────────────────────────
+    "GuardNodeAdapterProtocol": "stable",
+    "PramanixMiddleware": "stable",
+    "pramanix_route": "stable",
+    "PramanixGuardedTool": "stable",
+    "wrap_tools": "stable",
+    "PramanixGuardNode": "stable",
+    "PramanixNodeBlockedError": "stable",
+    "pramanix_node": "stable",
+    "PramanixFunctionTool": "stable",
+    "PramanixQueryEngineTool": "stable",
+    "PramanixToolCallback": "stable",
+    # ── Phase F-1 — beta (framework package required; minimal live test coverage)
+    "HaystackGuardedComponent": "beta",
+    "PramanixCrewAITool": "beta",
+    "PramanixGuardedModule": "beta",
+    "PramanixPydanticAIValidator": "beta",
+    "PramanixSemanticKernelPlugin": "beta",
+}
 
 # Dispatch table: public name → submodule path.
 # Using importlib.import_module avoids the repeated `_m` local-variable
@@ -72,6 +94,7 @@ _NAME_TO_MODULE: dict[str, str] = {
     "PramanixGuardedTool": "pramanix.integrations.langchain",
     "wrap_tools": "pramanix.integrations.langchain",
     # LangGraph
+    "GuardNodeAdapterProtocol": "pramanix.integrations.langgraph",
     "PramanixGuardNode": "pramanix.integrations.langgraph",
     "PramanixNodeBlockedError": "pramanix.integrations.langgraph",
     "pramanix_node": "pramanix.integrations.langgraph",

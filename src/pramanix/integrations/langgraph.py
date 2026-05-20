@@ -28,7 +28,7 @@ import time
 import uuid
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -56,10 +56,32 @@ except Exception:
     _NODE_VERDICT_TOTAL = None
 
 __all__ = [
+    "GuardNodeAdapterProtocol",
     "PramanixGuardNode",
     "PramanixNodeBlockedError",
     "pramanix_node",
 ]
+
+
+@runtime_checkable
+class GuardNodeAdapterProtocol(Protocol):
+    """Structural interface every Pramanix guard-node adapter must satisfy.
+
+    Conforming types can wrap a callable node function with a Pramanix
+    policy gate regardless of the underlying agent orchestration framework
+    (LangGraph, SemanticKernel, Haystack, …).
+
+    ``isinstance(obj, GuardNodeAdapterProtocol)`` returns True for any object
+    that exposes a ``decorate`` method with the correct signature.
+    """
+
+    def decorate(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap *fn* with a policy gate; return the gated callable.
+
+        The returned callable must accept the same positional arguments
+        as *fn* and must preserve its return type annotation.
+        """
+        ...
 
 
 class PramanixNodeBlockedError(RuntimeError):
