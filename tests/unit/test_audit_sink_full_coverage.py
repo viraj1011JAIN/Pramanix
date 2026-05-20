@@ -150,14 +150,17 @@ def test_kafka_sink_raises_config_error_without_package() -> None:
 
     from pramanix.exceptions import ConfigurationError
 
-    with patch.dict(sys.modules, {"confluent_kafka": None}):
-        import pramanix.audit_sink as _sink_mod
-        importlib.reload(_sink_mod)
-        from pramanix.audit_sink import KafkaAuditSink
-        with pytest.raises(ConfigurationError, match="confluent-kafka"):
-            KafkaAuditSink(topic="t", producer_conf={})
-    # Restore the module to its real state after patch.dict exits.
-    importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    import pramanix.audit_sink as _sink_mod
+    # try/finally guarantees the cleanup reload runs even if the assertion
+    # fails mid-test — without it, a patched module stays in sys.modules.
+    try:
+        with patch.dict(sys.modules, {"confluent_kafka": None}):
+            importlib.reload(_sink_mod)
+            from pramanix.audit_sink import KafkaAuditSink
+            with pytest.raises(ConfigurationError, match="confluent-kafka"):
+                KafkaAuditSink(topic="t", producer_conf={})
+    finally:
+        importlib.reload(importlib.import_module("pramanix.audit_sink"))
 
 
 def test_kafka_sink_queue_overflow_drops_decision() -> None:
@@ -190,13 +193,15 @@ def test_s3_sink_raises_config_error_without_boto3() -> None:
 
     from pramanix.exceptions import ConfigurationError
 
-    with patch.dict(sys.modules, {"boto3": None}):
-        import pramanix.audit_sink as _sink_mod
-        importlib.reload(_sink_mod)
-        from pramanix.audit_sink import S3AuditSink
-        with pytest.raises(ConfigurationError, match="boto3"):
-            S3AuditSink(bucket="b", prefix="")
-    importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    import pramanix.audit_sink as _sink_mod
+    try:
+        with patch.dict(sys.modules, {"boto3": None}):
+            importlib.reload(_sink_mod)
+            from pramanix.audit_sink import S3AuditSink
+            with pytest.raises(ConfigurationError, match="boto3"):
+                S3AuditSink(bucket="b", prefix="")
+    finally:
+        importlib.reload(importlib.import_module("pramanix.audit_sink"))
 
 
 def test_s3_sink_upload_failure_is_swallowed() -> None:
@@ -265,13 +270,15 @@ def test_datadog_sink_raises_config_error_without_package() -> None:
 
     from pramanix.exceptions import ConfigurationError
 
-    with patch.dict(sys.modules, {"datadog_api_client": None}):
-        import pramanix.audit_sink as _sink_mod
-        importlib.reload(_sink_mod)
-        from pramanix.audit_sink import DatadogAuditSink
-        with pytest.raises(ConfigurationError, match="datadog-api-client"):
-            DatadogAuditSink(api_key="key")
-    importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    import pramanix.audit_sink as _sink_mod
+    try:
+        with patch.dict(sys.modules, {"datadog_api_client": None}):
+            importlib.reload(_sink_mod)
+            from pramanix.audit_sink import DatadogAuditSink
+            with pytest.raises(ConfigurationError, match="datadog-api-client"):
+                DatadogAuditSink(api_key="key")
+    finally:
+        importlib.reload(importlib.import_module("pramanix.audit_sink"))
 
 
 def test_datadog_sink_emit_does_not_raise() -> None:

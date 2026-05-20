@@ -1415,9 +1415,11 @@ class TestWorkerEdgePaths:
         """Lines 392-393: inner except swallows prometheus counter errors during warmup."""
         from pramanix.worker import _warmup_worker
 
-        with patch("z3.Solver", side_effect=RuntimeError("z3 down")):
-            with patch("prometheus_client.Counter", side_effect=RuntimeError("prom down")):
-                _warmup_worker()  # must not raise
+        def _failing_solver(**kwargs: Any) -> None:
+            raise RuntimeError("z3 down")
+
+        with patch("prometheus_client.Counter", side_effect=RuntimeError("prom down")):
+            _warmup_worker(_solver_factory=_failing_solver)  # must not raise
 
     def test_worker_pool_del_shutdown_exception_swallowed(self) -> None:
         """_emergency_shutdown swallows errors from executor.shutdown()."""

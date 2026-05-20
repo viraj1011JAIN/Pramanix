@@ -32,7 +32,7 @@ import contextlib
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import z3
 
@@ -55,7 +55,25 @@ from pramanix.transpiler import analyze_string_promotions, collect_fields, trans
 if TYPE_CHECKING:
     from pramanix.expressions import Field
 
-__all__: list[str] = []  # internal module
+__all__: list[str] = ["SolverProtocol"]
+
+
+# ── Narrow solver protocol ────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class SolverProtocol(Protocol):
+    """Structural interface for the z3.Solver methods Pramanix actually calls.
+
+    Any object implementing these four methods is a valid drop-in for z3.Solver
+    in tests — no MagicMock, no z3 C-extension patching required.
+    """
+
+    def set(self, key: str, value: Any) -> None: ...  # noqa: E704
+    def add(self, *formulas: Any) -> None: ...  # noqa: E704
+    def assert_and_track(self, formula: Any, label: str) -> None: ...  # noqa: E704
+    def check(self) -> Any: ...  # z3.CheckSatResult or equivalent
+    def unsat_core(self) -> list[Any]: ...  # noqa: E704
 
 
 # ── Thread-local Z3 context ───────────────────────────────────────────────────

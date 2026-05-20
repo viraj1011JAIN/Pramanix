@@ -347,10 +347,10 @@ class TestColdStartWarmup:
         from pramanix.worker import _warmup_worker
 
         src = inspect.getsource(_warmup_worker)
-        # Each pattern is a call to z3.Solver(); count them
-        pattern_count = src.count("z3.Solver(")
+        # Each pattern is a call to _Solver(ctx=ctx) — injectable alias for z3.Solver
+        pattern_count = src.count("_Solver(")
         assert pattern_count >= 8, (
-            f"Expected ≥8 z3.Solver() calls in _warmup_worker, found {pattern_count}. "
+            f"Expected ≥8 _Solver() calls in _warmup_worker, found {pattern_count}. "
             "Cold-start JIT protection requires all Z3 theory caches to be primed."
         )
 

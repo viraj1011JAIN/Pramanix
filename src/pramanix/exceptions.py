@@ -29,7 +29,8 @@ Hierarchy::
     │   ├── LLMTimeoutError             # LLM API timed out after retries (M3)
     │   ├── SemanticPolicyViolation     # post-consensus business-rule check (M3)
     │   ├── InjectionBlockedError       # pre-LLM injection scorer blocked input (M3)
-    │   └── MeshAuthenticationError     # Pillar 2 Zero-Trust Mesh JWT-SVID failure
+    │   ├── MeshAuthenticationError     # Pillar 2 Zero-Trust Mesh JWT-SVID failure
+    │   └── VerificationError           # cryptographic infrastructure failure
     ├── ConfigurationError              # Guard / Policy misconfiguration
     └── IntegrityError                  # HMAC / cryptographic artifact verification failure
 """
@@ -67,6 +68,7 @@ __all__ = [
     "StateValidationError",
     "TranspileError",
     "ValidationError",
+    "VerificationError",
     "WorkerError",
 ]
 
@@ -255,6 +257,21 @@ class MeshAuthenticationError(GuardError):
         self.reason = reason
         self.token_preview = token_preview
         super().__init__(message)
+
+
+class VerificationError(GuardError):
+    """The cryptographic verification infrastructure itself failed.
+
+    Distinct from a normal signature mismatch (which returns ``False``) —
+    this exception signals an unexpected error in the cryptographic library,
+    key format, or verification code path. Callers should treat it as a
+    harder failure than ``verify() -> False``.
+
+    Raised by :meth:`~pramanix.crypto.Ed25519Verifier.verify`,
+    :meth:`~pramanix.crypto.RS256Verifier.verify`, and
+    :meth:`~pramanix.crypto.ES256Verifier.verify` when a
+    non-``InvalidSignature`` exception is encountered during verification.
+    """
 
 
 class GuardViolationError(GuardError):

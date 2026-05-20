@@ -100,7 +100,9 @@ class GeminiTranslator:
                     del _gp, _g
                 except ImportError:
                     pass
-                import google.generativeai  # noqa: F401
+                # google.generativeai must be in sys.modules before the
+                # genai client is created; this import is the side-effect.
+                import google.generativeai  # noqa: F401 — side-effect only
             except ImportError as exc:
                 raise ConfigurationError(
                     "google-generativeai is required for GeminiTranslator. "

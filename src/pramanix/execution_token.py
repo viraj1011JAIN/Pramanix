@@ -79,6 +79,7 @@ import time
 import types
 import warnings
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 _log = logging.getLogger(__name__)
@@ -145,9 +146,11 @@ class ExecutionToken:
 
     # ── Convenience predicates ────────────────────────────────────────────────
 
-    def is_expired(self) -> bool:
+    def is_expired(
+        self, *, clock: Callable[[], float] = time.time
+    ) -> bool:
         """Return ``True`` if the token TTL has elapsed."""
-        return time.time() > self.expires_at
+        return clock() > self.expires_at
 
     def is_allowed(self) -> bool:
         """Return ``True`` iff the token carries an ALLOW decision."""
@@ -196,11 +199,18 @@ class ExecutionTokenSigner:
         token = signer.mint(decision)
     """
 
-    def __init__(self, secret_key: bytes, ttl_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        secret_key: bytes,
+        ttl_seconds: float = 30.0,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         if len(secret_key) < 16:
             raise ValueError("secret_key must be at least 16 bytes.")
         self._key = secret_key
         self._ttl = ttl_seconds
+        self._clock = clock
 
     def mint(
         self,
@@ -242,7 +252,7 @@ class ExecutionTokenSigner:
                 "GuardConfig.expected_policy_hash to enable binding."
             )
         token_id = secrets.token_hex(16)
-        expires_at = time.time() + self._ttl
+        expires_at = self._clock() + self._ttl
 
         # Build unsigned token first so _token_body() can serialise it.
         unsigned = ExecutionToken(
@@ -305,10 +315,16 @@ class ExecutionTokenVerifier:
             abort("Token invalid, expired, or already used.")
     """
 
-    def __init__(self, secret_key: bytes) -> None:
+    def __init__(
+        self,
+        secret_key: bytes,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         if len(secret_key) < 16:
             raise ValueError("secret_key must be at least 16 bytes.")
         self._key = secret_key
+        self._clock = clock
         # {token_id: expires_at} — stores expiry alongside the ID so that
         # entries can be evicted once the TTL elapses, bounding memory usage.
         self._consumed: dict[str, float] = {}
@@ -322,7 +338,7 @@ class ExecutionTokenVerifier:
 
     def _evict_expired(self) -> None:
         """Prune consumed entries whose TTL has elapsed.  Called under lock."""
-        now = time.time()
+        now = self._clock()
         expired = [tid for tid, exp in self._consumed.items() if exp < now]
         for tid in expired:
             del self._consumed[tid]
@@ -448,8 +464,13 @@ class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
         process serves the same application.
     """
 
-    def __init__(self, secret_key: bytes) -> None:
-        super().__init__(secret_key)
+    def __init__(
+        self,
+        secret_key: bytes,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        super().__init__(secret_key, clock=clock)
         import os
 
         _multi_worker_signals = [
@@ -527,13 +548,20 @@ class SQLiteExecutionTokenVerifier:
             abort("Token invalid, expired, or already used.")
     """
 
-    def __init__(self, secret_key: bytes, db_path: str = ":memory:") -> None:
+    def __init__(
+        self,
+        secret_key: bytes,
+        db_path: str = ":memory:",
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
         import sqlite3
 
         if len(secret_key) < 16:
             raise ValueError("secret_key must be at least 16 bytes.")
         self._key = secret_key
         self._db_path = db_path
+        self._clock = clock
         # check_same_thread=False: we serialise access with a threading.Lock below.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._lock = threading.Lock()
@@ -556,7 +584,9 @@ class SQLiteExecutionTokenVerifier:
     def _evict_expired(self) -> None:
         """Delete expired rows.  Must be called under self._lock."""
         cur = self._conn.cursor()
-        cur.execute("DELETE FROM consumed_tokens WHERE expires_at < ?", (time.time(),))
+        cur.execute(
+            "DELETE FROM consumed_tokens WHERE expires_at < ?", (self._clock(),)
+        )
         self._conn.commit()
 
     def consume(

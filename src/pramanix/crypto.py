@@ -95,8 +95,12 @@ def _increment_signing_failure_counter() -> None:
         counter.inc()
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as _e:
+        log.error(
+            "pramanix.crypto: failed to increment "
+            "pramanix_signing_failure_total: %s",
+            _e,
+        )
 
 
 def _b64url(data: bytes) -> str:
@@ -387,9 +391,13 @@ class PramanixVerifier:
     def verify(self, decision_hash: str, signature: str) -> bool:
         """Verify that decision_hash was signed with the corresponding private key.
 
-        Returns True if signature is valid. Returns False for any failure.
-        Never raises.
+        Returns True if the signature is valid, False if it is invalid.
+        Raises VerificationError on unexpected cryptographic library errors.
         """
+        from cryptography.exceptions import InvalidSignature
+
+        from pramanix.exceptions import VerificationError
+
         try:
             sig_bytes = _b64url_decode(signature)
             self._public_key.verify(
@@ -397,8 +405,12 @@ class PramanixVerifier:
                 decision_hash.encode("utf-8"),
             )
             return True
-        except Exception:
+        except (InvalidSignature, ValueError):
             return False
+        except Exception as exc:
+            raise VerificationError(
+                f"Ed25519 verify: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def verify_decision(self, decision: Decision) -> bool:
         """Verify a Decision object's signature against its hash.
@@ -426,8 +438,14 @@ class PramanixVerifier:
                 decision_hash=decision.decision_hash,
                 signature=decision.signature,
             )
-        except Exception:
-            return False
+        except Exception as exc:
+            from pramanix.exceptions import VerificationError
+
+            if isinstance(exc, VerificationError):
+                raise
+            raise VerificationError(
+                f"Ed25519 verify_decision: {type(exc).__name__}: {exc}"
+            ) from exc
 
 
 # ── RS256 / ES256 asymmetric JWT-compatible signers ────────────────────────────
@@ -593,7 +611,10 @@ class RS256Verifier:
         self._public_key: RSAPublicKey = loaded
 
     def verify(self, decision_hash: str, signature: str) -> bool:
-        """Return ``True`` if *signature* is a valid RS256 signature over *decision_hash*."""
+        """Return True if *signature* is a valid RS256 signature over *decision_hash*.
+
+        Raises VerificationError on unexpected cryptographic library errors.
+        """
         try:
             from cryptography.exceptions import InvalidSignature
             from cryptography.hazmat.primitives import hashes
@@ -607,10 +628,14 @@ class RS256Verifier:
                 hashes.SHA256(),
             )
             return True
-        except InvalidSignature:
+        except (InvalidSignature, ValueError):
             return False
-        except Exception:
-            return False
+        except Exception as exc:
+            from pramanix.exceptions import VerificationError
+
+            raise VerificationError(
+                f"RS256 verify: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def verify_decision(self, decision: "Decision") -> bool:
         """Verify a Decision object's RS256 signature."""
@@ -624,8 +649,14 @@ class RS256Verifier:
                 decision_hash=decision.decision_hash,
                 signature=decision.signature,
             )
-        except Exception:
-            return False
+        except Exception as exc:
+            from pramanix.exceptions import VerificationError
+
+            if isinstance(exc, VerificationError):
+                raise
+            raise VerificationError(
+                f"RS256 verify_decision: {type(exc).__name__}: {exc}"
+            ) from exc
 
 
 class ES256Signer:
@@ -799,7 +830,10 @@ class ES256Verifier:
         self._public_key: EllipticCurvePublicKey = loaded
 
     def verify(self, decision_hash: str, signature: str) -> bool:
-        """Return ``True`` if *signature* is a valid ES256 signature over *decision_hash*."""
+        """Return True if *signature* is a valid ES256 signature over *decision_hash*.
+
+        Raises VerificationError on unexpected cryptographic library errors.
+        """
         try:
             from cryptography.exceptions import InvalidSignature
             from cryptography.hazmat.primitives import hashes
@@ -812,10 +846,14 @@ class ES256Verifier:
                 ECDSA(hashes.SHA256()),
             )
             return True
-        except InvalidSignature:
+        except (InvalidSignature, ValueError):
             return False
-        except Exception:
-            return False
+        except Exception as exc:
+            from pramanix.exceptions import VerificationError
+
+            raise VerificationError(
+                f"ES256 verify: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def verify_decision(self, decision: "Decision") -> bool:
         """Verify a Decision object's ES256 signature."""
@@ -829,5 +867,11 @@ class ES256Verifier:
                 decision_hash=decision.decision_hash,
                 signature=decision.signature,
             )
-        except Exception:
-            return False
+        except Exception as exc:
+            from pramanix.exceptions import VerificationError
+
+            if isinstance(exc, VerificationError):
+                raise
+            raise VerificationError(
+                f"ES256 verify_decision: {type(exc).__name__}: {exc}"
+            ) from exc

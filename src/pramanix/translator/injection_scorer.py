@@ -357,8 +357,10 @@ class CalibratedScorer:
             )
 
         # Check sklearn availability before attempting to reconstruct the model.
+        # Availability probe: triggers ImportError when sklearn absent.
+        # The name 'sklearn' is unused after this point by design.
         try:
-            import sklearn  # noqa: F401
+            import sklearn  # noqa: F401 — unused; availability probe only
         except ImportError:
             from pramanix.exceptions import ConfigurationError as _CE
             raise _CE(

@@ -507,7 +507,7 @@ class Condition(BaseModel):
                     f"{type(rhs_val).__name__!r}. "
                     "Wrap a non-empty list of scalar literals in LiteralValue."
                 )
-            if not rhs_val:  # type: ignore[truthy-bool]
+            if len(rhs_val) == 0:
                 raise ValueError(
                     f"Operator {self.op.value!r} requires a non-empty list RHS. "
                     "An empty membership set makes the condition unsatisfiable for "
@@ -1397,6 +1397,8 @@ class PolicyCompiler:
                         f"Int-sorted field '{field.name}'."
                     )
                 return int(scalar)
+            # scalar is bool | int | str here (float case returned above);
+            # _check_scalar_sort_compat ensures any str is integer-parseable.
             return int(scalar)  # type: ignore[arg-type]
 
         if z3_type == "Bool":
@@ -1440,6 +1442,8 @@ class PolicyCompiler:
                 return lhs_node == rhs
             case Operator.NE:
                 return lhs_node != rhs
+            # ExpressionNode overloads >, <, >=, <= to return ConstraintExpr
+            # (DSL design intent); mypy expects bool but the DSL returns a node.
             case Operator.GT:
                 return lhs_node > rhs  # type: ignore[operator]
             case Operator.LT:
@@ -1672,7 +1676,7 @@ class Decompiler:
         # (e.g. _ForAllOp, _ExistsOp, _RegexMatchOp, _StartsWithOp, etc.).
         return f"<{type(node).__name__}>"
 
-    def _render_bool_op(self, node: _BoolOp) -> str:  # type: ignore[name-defined]
+    def _render_bool_op(self, node: _BoolOp) -> str:
         """Render a ``_BoolOp`` node to its logical English form.
 
         Handles three variants:

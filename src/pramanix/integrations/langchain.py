@@ -31,15 +31,34 @@ except ImportError:
     _LANGCHAIN_AVAILABLE = False
 
     class BaseTool:  # type: ignore[no-redef]
-        """Internal placeholder — raises ConfigurationError at instantiation if langchain absent."""
+        """Typed placeholder — raises ConfigurationError when langchain absent.
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        Mirrors the minimal langchain_core.tools.BaseTool interface so mypy
+        can type-check PramanixGuardedTool without langchain-core installed.
+        """
+
+        name: str = ""
+        description: str = ""
+
+        def __init__(
+            self, *, name: str = "", description: str = "", **kwargs: Any
+        ) -> None:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
                 "LangChain integration requires 'langchain-core': "
                 "pip install 'pramanix[langchain]'"
             )
+
+        def _run(  # pragma: no cover
+            self, tool_input: str, **kwargs: Any
+        ) -> str:
+            raise NotImplementedError
+
+        async def _arun(  # pragma: no cover
+            self, tool_input: str, **kwargs: Any
+        ) -> str:
+            raise NotImplementedError
 
 # Build model_config at module level to avoid polluting the class namespace
 # (Pydantic would treat an in-class `from pydantic import ConfigDict` as a field)

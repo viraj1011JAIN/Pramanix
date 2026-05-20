@@ -49,25 +49,51 @@ try:
     from llama_index.core.tools.types import ToolMetadata, ToolOutput
 
     _LLAMA_AVAILABLE = True
-except ImportError as _llama_import_exc:
+except ImportError as _exc:
     _LLAMA_AVAILABLE = False
+    # Python deletes `except ... as` bindings at block end, so capture it
+    # explicitly as a module-level variable that survives after the block.
+    _llama_import_exc: BaseException = _exc
 
     # Provide internal-only placeholder types so the rest of this module can
     # reference ToolMetadata/ToolOutput without llama_index installed.
     # These are NOT exported and WILL raise at instantiation time.
     class ToolMetadata:  # type: ignore[no-redef]
-        """Internal placeholder — raises ImportError at instantiation if llama_index absent."""
+        """Typed placeholder — raises ImportError when llama_index absent.
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        Mirrors llama_index.core.tools.types.ToolMetadata so mypy can
+        type-check integrations without llama-index-core installed.
+        """
+
+        def __init__(
+            self,
+            *,
+            name: str = "",
+            description: str = "",
+            **kwargs: Any,
+        ) -> None:
             raise ImportError(
                 "LlamaIndex integration requires 'llama-index-core': "
                 "pip install 'pramanix[llamaindex]'"
             ) from _llama_import_exc
 
     class ToolOutput:  # type: ignore[no-redef]
-        """Internal placeholder — raises ImportError at instantiation if llama_index absent."""
+        """Typed placeholder — raises ImportError when llama_index absent.
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        Mirrors llama_index.core.tools.types.ToolOutput so mypy can
+        type-check integrations without llama-index-core installed.
+        """
+
+        def __init__(
+            self,
+            *,
+            content: str = "",
+            tool_name: str = "",
+            raw_input: dict[str, Any] | None = None,
+            raw_output: dict[str, Any] | None = None,
+            is_error: bool = False,
+            **kwargs: Any,
+        ) -> None:
             raise ImportError(
                 "LlamaIndex integration requires 'llama-index-core': "
                 "pip install 'pramanix[llamaindex]'"

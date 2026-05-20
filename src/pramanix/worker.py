@@ -331,7 +331,7 @@ def _ppid_watchdog() -> None:
                     pass
 
 
-def _warmup_worker() -> None:
+def _warmup_worker(_solver_factory: Any = None) -> None:
     """Pattern-exhaustive Z3 warmup suite.
 
     Runs eight diverse Z3 patterns to fully prime the internal expression
@@ -340,11 +340,18 @@ def _warmup_worker() -> None:
     mixed-sort problems each have their own caches that benefit from priming.
 
     Also starts the PPID watchdog daemon thread (process mode only).
+
+    Args:
+        _solver_factory: Callable with signature ``(ctx=z3.Context) -> SolverProtocol``.
+            Defaults to ``z3.Solver``.  Override in tests to avoid patching
+            z3 C-bindings; pass a factory that raises to test error handling.
     """
     import multiprocessing
     import threading
 
     import z3  # — intentional local import inside worker
+
+    _Solver = _solver_factory if _solver_factory is not None else z3.Solver
 
     # Start PPID watchdog only in subprocess workers.  In thread-mode pools the
     # watchdog runs inside the parent process where os.getppid() never changes,
@@ -358,14 +365,14 @@ def _warmup_worker() -> None:
     ctx = z3.Context()
     try:
         # ── Pattern 1: Real ≥ 0  (most common financial constraint) ──────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         s.add(z3.Real("__wp_x", ctx) >= z3.RealVal(0, ctx))
         s.check()
         del s
 
         # ── Pattern 2: Real < 0  (negative-value boundary) ───────────────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         x = z3.Real("__wp_neg", ctx)
         s.add(x < z3.RealVal(0, ctx))
@@ -373,7 +380,7 @@ def _warmup_worker() -> None:
         del s
 
         # ── Pattern 3: Integer arithmetic (non-Real sort) ─────────────────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         n = z3.Int("__wp_n", ctx)
         s.add(n + z3.IntVal(1, ctx) > z3.IntVal(0, ctx))
@@ -381,7 +388,7 @@ def _warmup_worker() -> None:
         del s
 
         # ── Pattern 4: Two-variable inequality (most common invariant form) ───
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         a = z3.Real("__wp_a", ctx)
         b = z3.Real("__wp_b", ctx)
@@ -390,7 +397,7 @@ def _warmup_worker() -> None:
         del s
 
         # ── Pattern 5: Boolean conjunction ────────────────────────────────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         p = z3.Bool("__wp_p", ctx)
         q = z3.Bool("__wp_q", ctx)
@@ -399,7 +406,7 @@ def _warmup_worker() -> None:
         del s
 
         # ── Pattern 6: String sort (Seq) ──────────────────────────────────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         sv = z3.String("__wp_s", ctx)
         s.add(sv == z3.StringVal("ok", ctx))
@@ -407,7 +414,7 @@ def _warmup_worker() -> None:
         del s
 
         # ── Pattern 7: Large rational (Decimal-scale) ─────────────────────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         r = z3.Real("__wp_r", ctx)
         s.add(r <= z3.RealVal("999999999999999999999.999999", ctx))
@@ -415,7 +422,7 @@ def _warmup_worker() -> None:
         del s
 
         # ── Pattern 8: Unsat path (primes the attribution solver too) ─────────
-        s = z3.Solver(ctx=ctx)
+        s = _Solver(ctx=ctx)
         s.set("timeout", 2_000)
         u = z3.Real("__wp_u", ctx)
         s.add(u > z3.RealVal(10, ctx))
