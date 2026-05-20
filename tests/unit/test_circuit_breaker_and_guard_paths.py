@@ -38,12 +38,9 @@ from tests.helpers.real_protocols import (
     _AsyncErrorCloseClient,
     _AwsSecretsClient,
     _AzureSecretClient,
-    _BoomRegistry,
     _BrokenPrivateKey,
     _CapturingLogsApi,
     _CapturingProducer,
-    _CounterRecorder,
-    _EmptyRegistry,
     _ErrorGauge,
     _ErrorRedisClient,
     _GcpSecretClient,
@@ -51,7 +48,6 @@ from tests.helpers.real_protocols import (
     _KafkaDeliveryError,
     _PgConn,
     _PgPool,
-    _RegistryWithCounter,
     _RpcContext,
     _SyncScanRedis,
 )
@@ -271,67 +267,44 @@ class TestTranslatorCircuitBreaker:
 
 
 class TestCircuitBreakerPrometheusRegistryPaths:
-    def test_adaptive_cb_register_metrics_value_error_none_in_registry(self) -> None:
-        """_register_metrics ValueError path: REGISTRY returns None → metrics_available=False."""
+    def test_adaptive_cb_register_metrics_already_registered(self) -> None:
+        """Real prometheus raises ValueError on metric re-registration → metrics_available=False.
+
+        Strategy: create a warmup CB to populate both prometheus and _REGISTERED_METRICS,
+        then clear only _REGISTERED_METRICS.  The next creation hits real prometheus
+        (metric names are already in the registry) → ValueError → _prom_register returns
+        None → _metrics_available is False.  No mocking of prometheus internals.
+        """
         import pramanix.circuit_breaker as _cb_mod
         from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
 
         guard = _make_guard()
-        config = CircuitBreakerConfig(namespace="test-prom-1")
+        config = CircuitBreakerConfig(namespace="prom-real-adaptive")
 
-        # Clear the module-level metric cache so the ValueError path is reachable
-        # (a previous test may have already populated it for these metric names).
+        # Warmup: registers pramanix_circuit_state + pramanix_circuit_pressure_events_total
+        # in real prometheus AND in _REGISTERED_METRICS.  Idempotent if already done.
+        AdaptiveCircuitBreaker(guard, config)
+
+        # Clear only our module-level cache.  Real prometheus still has the metrics.
+        # Next creation tries Counter/Gauge → real ValueError → returns None → False.
         with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
-            with patch("prometheus_client.Gauge", side_effect=ValueError("already registered")):
-                with patch("prometheus_client.Counter", side_effect=ValueError("already registered")):
-                    with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
-                        cb = AdaptiveCircuitBreaker(guard, config)
+            cb = AdaptiveCircuitBreaker(guard, config)
 
         assert cb._metrics_available is False
 
-    def test_adaptive_cb_register_metrics_inner_exception(self) -> None:
-        """_register_metrics ValueError path: inner REGISTRY access raises → metrics_available=False."""
-        import pramanix.circuit_breaker as _cb_mod
-        from pramanix.circuit_breaker import AdaptiveCircuitBreaker, CircuitBreakerConfig
-
-        guard = _make_guard()
-        config = CircuitBreakerConfig(namespace="test-prom-2")
-
-        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
-            with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
-                with patch("prometheus_client.REGISTRY", _BoomRegistry()):
-                    cb = AdaptiveCircuitBreaker(guard, config)
-
-        assert cb._metrics_available is False
-
-    def test_distributed_cb_register_metrics_value_error_none_in_registry(self) -> None:
-        """DistributedCircuitBreaker: ValueError path with None registry entries."""
+    def test_distributed_cb_register_metrics_already_registered(self) -> None:
+        """Same real-prometheus re-registration test for DistributedCircuitBreaker."""
         import pramanix.circuit_breaker as _cb_mod
         from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
 
         guard = _make_guard()
-        config = CircuitBreakerConfig(namespace="test-dist-prom")
+        config = CircuitBreakerConfig(namespace="prom-real-distributed")
+
+        # Warmup: registers pramanix_distributed_circuit_state + …_pressure_events_total
+        DistributedCircuitBreaker(guard, config)
 
         with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
-            with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
-                with patch("prometheus_client.Counter", side_effect=ValueError("already")):
-                    with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
-                        cb = DistributedCircuitBreaker(guard, config)
-
-        assert cb._metrics_available is False
-
-    def test_distributed_cb_register_metrics_inner_exception(self) -> None:
-        """DistributedCircuitBreaker: inner REGISTRY exception → metrics_available=False."""
-        import pramanix.circuit_breaker as _cb_mod
-        from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
-
-        guard = _make_guard()
-        config = CircuitBreakerConfig(namespace="test-dist-prom-2")
-
-        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
-            with patch("prometheus_client.Gauge", side_effect=ValueError("already")):
-                with patch("prometheus_client.REGISTRY", _BoomRegistry()):
-                    cb = DistributedCircuitBreaker(guard, config)
+            cb = DistributedCircuitBreaker(guard, config)
 
         assert cb._metrics_available is False
 
@@ -482,44 +455,54 @@ class TestCircuitBreakerPrometheusRegistryPaths:
 
 class TestCryptoSigningFailureCounter:
     def test_increment_when_counter_already_registered(self) -> None:
-        """_increment_signing_failure_counter handles ValueError gracefully.
+        """Real prometheus ValueError → DISABLED sentinel set, no raise.
 
-        §5.1 fix: we no longer use prometheus_client's private
-        _names_to_collectors dict to recover the existing counter.  Instead
-        we set an internal sentinel and emit a one-time warning.  The counter
-        is not incremented for the collision invocation — the warning IS the
-        signal that the caller should fix their metric namespace.
+        Strategy: pre-register pramanix_signing_failure_total in the real
+        prometheus registry (idempotent — first call creates, repeat calls
+        catch ValueError), reset our lazy singleton, then call
+        _increment_signing_failure_counter().  The real prometheus raises
+        ValueError on the duplicate registration → _COUNTER_DISABLED is set.
+        No mocking of prometheus internals required.
         """
         import pramanix.crypto as _crypto_mod
-        from pramanix.crypto import _increment_signing_failure_counter
+        from pramanix.crypto import _COUNTER_DISABLED, _increment_signing_failure_counter
+        from prometheus_client import Counter as _PCounter
 
-        # Reset module-level state so this test is isolated.
+        # Ensure the metric name is in real prometheus (first call creates it;
+        # subsequent calls raise ValueError which we swallow — either way the
+        # name is registered).
+        try:
+            _PCounter("pramanix_signing_failure_total", "Total decision signing failures")
+        except ValueError:
+            pass  # Already registered from a previous test — that's the state we need.
+
+        # Reset lazy singleton so the lazy-init branch runs again.
         _crypto_mod._signing_failure_counter = None
 
-        counter = _CounterRecorder()
-        registry = _RegistryWithCounter("pramanix_signing_failure_total", counter)
+        # Call → real Counter() raises ValueError → DISABLED sentinel → no raise
+        _increment_signing_failure_counter()
+        # Second call → sentinel path → also must not raise
+        _increment_signing_failure_counter()
 
-        with patch("prometheus_client.Counter", side_effect=ValueError("already registered")):
-            with patch("prometheus_client.REGISTRY", registry):
-                # Must not raise — logs a one-time warning instead.
-                _increment_signing_failure_counter()
-                # Second call must also not raise (sentinel prevents re-attempt).
-                _increment_signing_failure_counter()
-
-        # No increment: the new behavior does not use _names_to_collectors.
-        assert counter.inc_count == 0
+        assert _crypto_mod._signing_failure_counter is _COUNTER_DISABLED
 
         # Reset so subsequent tests get a fresh counter.
         _crypto_mod._signing_failure_counter = None
 
     def test_increment_when_registry_lookup_returns_none(self) -> None:
-        """ValueError on Counter registration → no crash, sentinel set."""
+        """ValueError on Counter registration → DISABLED sentinel set, no crash."""
         import pramanix.crypto as _crypto_mod
-        from pramanix.crypto import _increment_signing_failure_counter
+        from pramanix.crypto import _COUNTER_DISABLED, _increment_signing_failure_counter
+        from prometheus_client import Counter as _PCounter
+
+        try:
+            _PCounter("pramanix_signing_failure_total", "Total decision signing failures")
+        except ValueError:
+            pass
 
         _crypto_mod._signing_failure_counter = None
-        with patch("prometheus_client.Counter", side_effect=ValueError("already")):
-            _increment_signing_failure_counter()  # must not raise
+        _increment_signing_failure_counter()  # must not raise
+        assert _crypto_mod._signing_failure_counter is _COUNTER_DISABLED
         _crypto_mod._signing_failure_counter = None
 
     def test_sign_exception_increments_failure_counter(self) -> None:
@@ -1115,19 +1098,51 @@ class TestGuardVerifyAsyncPaths:
 
 class TestEmitTranslatorMetric:
     def test_emit_metric_none_counter_in_registry(self) -> None:
-        """_emit_translator_metric: REGISTRY returns None for counter → returns early."""
-        from pramanix.guard import _emit_translator_metric
+        """_emit_translator_metric: real prometheus ValueError on re-registration → early return, no raise.
 
-        with patch("prometheus_client.Counter", side_effect=ValueError("already")):
-            with patch("prometheus_client.REGISTRY", _EmptyRegistry()):
-                _emit_translator_metric("extraction_failure", ["model-a", "model-b"])
+        Strategy: pre-register pramanix_extraction_failure_total in real prometheus,
+        then evict it from _translator_counters so _emit_translator_metric tries to
+        register it again → real ValueError → early return.  No mocking required.
+        """
+        import pramanix.guard as _guard_mod
+        from pramanix.guard import _emit_translator_metric
+        from prometheus_client import Counter as _PCounter
+
+        counter_name = "pramanix_extraction_failure_total"
+
+        # Ensure the metric is in real prometheus.
+        try:
+            _PCounter(counter_name, "Total LLM extraction failures by model", ["model"])
+        except ValueError:
+            pass  # Already registered — exactly the collision we need.
+
+        # Evict from module cache so _emit_translator_metric tries to re-register.
+        _guard_mod._translator_counters.pop(counter_name, None)
+
+        # Real prometheus raises ValueError → early return → no raise.
+        _emit_translator_metric("extraction_failure", ["model-a", "model-b"])
 
     def test_emit_metric_general_exception_swallowed(self) -> None:
-        """_emit_translator_metric swallows all exceptions."""
+        """_emit_translator_metric: non-ValueError from counter.labels() → outer except swallows it."""
+        import pramanix.guard as _guard_mod
         from pramanix.guard import _emit_translator_metric
 
-        with patch("prometheus_client.Counter", side_effect=RuntimeError("prom down")):
+        counter_name = "pramanix_consensus_failure_total"
+
+        class _ErrorCounter:
+            """Real duck-type counter that raises RuntimeError on labels() — no Mock."""
+            def labels(self, **kw: Any) -> None:
+                raise RuntimeError("prom down")
+
+        saved = _guard_mod._translator_counters.get(counter_name)
+        _guard_mod._translator_counters[counter_name] = _ErrorCounter()
+        try:
             _emit_translator_metric("consensus_failure", ["m"])  # must not raise
+        finally:
+            if saved is None:
+                _guard_mod._translator_counters.pop(counter_name, None)
+            else:
+                _guard_mod._translator_counters[counter_name] = saved
 
 
 # ── audit/archiver.py ─────────────────────────────────────────────────────────
@@ -1411,15 +1426,19 @@ class TestKeyProviderSupportsRotation:
 
 
 class TestWorkerEdgePaths:
-    def test_warmup_worker_prometheus_exception_swallowed(self) -> None:
-        """Lines 392-393: inner except swallows prometheus counter errors during warmup."""
+    def test_warmup_worker_solver_failure_swallowed(self) -> None:
+        """_warmup_worker: solver factory raises → error logged, no re-raise.
+
+        _WORKER_WARMUP_FAILURE_COUNTER is set at module import time; by the time
+        this test runs the counter already exists and prometheus is not re-invoked.
+        The real test is that a failing solver does not propagate out of _warmup_worker.
+        """
         from pramanix.worker import _warmup_worker
 
         def _failing_solver(**kwargs: Any) -> None:
             raise RuntimeError("z3 down")
 
-        with patch("prometheus_client.Counter", side_effect=RuntimeError("prom down")):
-            _warmup_worker(_solver_factory=_failing_solver)  # must not raise
+        _warmup_worker(_solver_factory=_failing_solver)  # must not raise
 
     def test_worker_pool_del_shutdown_exception_swallowed(self) -> None:
         """_emergency_shutdown swallows errors from executor.shutdown()."""

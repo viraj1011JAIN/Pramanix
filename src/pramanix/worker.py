@@ -169,8 +169,8 @@ class AdaptiveConcurrencyLimiter:
             )
         self._active = 0
         self._lock = threading.Lock()
-        self._latency_window: collections.deque[tuple[float, float]] = (
-            collections.deque(maxlen=1024)
+        self._latency_window: collections.deque[tuple[float, float]] = collections.deque(
+            maxlen=1024
         )
         self._shed_count = 0
 
@@ -277,8 +277,7 @@ class _EphemeralKey:
 
     def __reduce__(self) -> NoReturn:
         raise TypeError(
-            "_EphemeralKey must not be serialised to disk. "
-            "Pass .bytes explicitly for IPC."
+            "_EphemeralKey must not be serialised to disk. " "Pass .bytes explicitly for IPC."
         )
 
 
@@ -357,9 +356,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
     # watchdog runs inside the parent process where os.getppid() never changes,
     # so it serves no purpose but consumes a thread handle per warm-up call.
     if multiprocessing.current_process().name != "MainProcess":
-        _wdog = threading.Thread(
-            target=_ppid_watchdog, daemon=True, name="ppid-watchdog"
-        )
+        _wdog = threading.Thread(target=_ppid_watchdog, daemon=True, name="ppid-watchdog")
         _wdog.start()
 
     ctx = z3.Context()
@@ -585,9 +582,7 @@ def _unseal_decision(
         KeyError:    Envelope is malformed (missing ``_p``, ``_t``, or ``_n`` keys).
     """
     # ── 1. Nonce replay check (fast, before HMAC computation) ─────────────────
-    if expected_nonce and not _hmac_mod.compare_digest(
-        sealed.get("_n", ""), expected_nonce
-    ):
+    if expected_nonce and not _hmac_mod.compare_digest(sealed.get("_n", ""), expected_nonce):
         raise ValueError(
             "Decision replay detected: nonce mismatch. "
             "Envelope nonce does not match the per-request nonce issued by the host."
@@ -595,9 +590,7 @@ def _unseal_decision(
 
     # ── 2. HMAC integrity verification ────────────────────────────────────────
     payload = sealed["_p"].encode()
-    expected = _hmac_mod.new(
-        _RESULT_SEAL_KEY.bytes, payload, hashlib.sha256
-    ).hexdigest()
+    expected = _hmac_mod.new(_RESULT_SEAL_KEY.bytes, payload, hashlib.sha256).hexdigest()
     if not _hmac_mod.compare_digest(sealed["_t"], expected):
         raise ValueError(
             "Decision integrity seal violated: HMAC mismatch. "
@@ -657,7 +650,9 @@ def _force_kill_processes(executor: ProcessPoolExecutor) -> None:
                     proc.kill()
                     _log.warning("worker.drain: killed hung process pid=%s", proc.pid)
                 except Exception as exc:
-                    _log.error("worker.drain: failed to kill pid=%s: %s", proc.pid, exc, exc_info=True)
+                    _log.error(
+                        "worker.drain: failed to kill pid=%s: %s", proc.pid, exc, exc_info=True
+                    )
     except Exception as exc:
         _log.error("worker.drain: unexpected error during force-kill: %s", exc, exc_info=True)
 
@@ -719,11 +714,12 @@ class WorkerPool:
         if executor is None:
             return
         try:
-            _log.warning(
-                "WorkerPool GC'd without explicit shutdown() — "
-                "calling shutdown(wait=False). "
-                "Call WorkerPool.shutdown() explicitly to avoid this warning."
-            )
+            if not _sys.is_finalizing():
+                _log.warning(
+                    "WorkerPool GC'd without explicit shutdown() — "
+                    "calling shutdown(wait=False). "
+                    "Call WorkerPool.shutdown() explicitly to avoid this warning."
+                )
         except Exception:
             pass
         try:
@@ -756,9 +752,7 @@ class WorkerPool:
                 self._active_executor_cell,
             )
         except Exception as exc:
-            raise WorkerError(
-                f"WorkerPool.spawn failed ({type(exc).__name__}): {exc}"
-            ) from exc
+            raise WorkerError(f"WorkerPool.spawn failed ({type(exc).__name__}): {exc}") from exc
 
     def shutdown(self, wait: bool = True) -> None:
         """Gracefully shut down the pool.
@@ -812,8 +806,7 @@ class WorkerPool:
         # Adaptive load shedding
         if not self._shed_limiter.acquire():
             return Decision.rate_limited(
-                "Request shed: Z3 worker pool saturated with high latency. "
-                "Retry after backoff."
+                "Request shed: Z3 worker pool saturated with high latency. " "Retry after backoff."
             )
 
         _t0_shed = _time_module.monotonic()
@@ -918,9 +911,7 @@ class WorkerPool:
 
     def _run_warmup(self) -> None:
         """Submit ``_warmup_worker`` to every slot.  Best-effort."""
-        futures = [
-            self._executor.submit(_warmup_worker) for _ in range(self.max_workers)
-        ]
+        futures = [self._executor.submit(_warmup_worker) for _ in range(self.max_workers)]
         for fut in futures:
             try:
                 fut.result(timeout=30.0)
@@ -945,7 +936,9 @@ class WorkerPool:
             try:
                 new_executor = self._make_executor()
             except Exception as exc:
-                _log.error("WorkerPool.recycle: failed to create new executor: %s", exc, exc_info=True)
+                _log.error(
+                    "WorkerPool.recycle: failed to create new executor: %s", exc, exc_info=True
+                )
                 return
             self._executor = new_executor
             self._counter = 0
@@ -960,9 +953,7 @@ class WorkerPool:
             try:
                 self._run_warmup()
             except Exception as exc:
-                _log.warning(
-                    "WorkerPool.recycle: warmup failed (pool is live): %s", exc
-                )
+                _log.warning("WorkerPool.recycle: warmup failed (pool is live): %s", exc)
 
         # Fire-and-forget drain of the old executor.
         threading.Thread(
