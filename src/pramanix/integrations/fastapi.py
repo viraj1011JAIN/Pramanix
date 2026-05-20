@@ -26,6 +26,7 @@ Security properties
 * Content-type enforcement (``application/json``) rejects non-JSON bodies
   before any parsing occurs.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -125,7 +126,9 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
         # Default to async-thread since we are in an async ASGI context.
         effective_config = config or GuardConfig(execution_mode="async-thread")
         self._guard: Guard = Guard(policy, effective_config)
-        self._signer = DecisionSigner()
+        # Signing is optional in middleware: when no key is configured,
+        # skip proof headers instead of failing app startup.
+        self._signer = DecisionSigner.optional()
         self._redact_violations: bool = effective_config.redact_violations
 
     async def dispatch(self, request: Any, call_next: Any) -> Any:
@@ -204,7 +207,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
                     "explanation": decision.explanation,
                 }
             response = JSONResponse(status_code=403, content=block_content)
-            signed = self._signer.sign(decision)
+            signed = self._signer.sign(decision) if self._signer is not None else None
             if signed:
                 response.headers["X-Pramanix-Proof"] = signed.token
                 response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
@@ -212,7 +215,7 @@ class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
 
         # ── 9. ALLOW path — forward to route handler ──────────────────────────
         response = await call_next(request)
-        signed = self._signer.sign(decision)
+        signed = self._signer.sign(decision) if self._signer is not None else None
         if signed:
             response.headers["X-Pramanix-Proof"] = signed.token
             response.headers["X-Pramanix-Decision-Id"] = decision.decision_id

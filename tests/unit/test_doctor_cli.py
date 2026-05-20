@@ -4,10 +4,13 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for `pramanix doctor` CLI subcommand."""
+
 from __future__ import annotations
 
+import importlib
 import json
 import sys
+import types
 from unittest.mock import patch
 
 import pytest
@@ -40,6 +43,18 @@ class TestDoctorBasicInvocation:
         assert exit_code in (0, 1), f"Expected 0 or 1, got {exit_code}"
         # Must print check results.
         assert "OK" in stdout or "ERR" in stdout or "WARN" in stdout
+
+    def test_check_alias_maps_to_doctor(self, capsys: pytest.CaptureFixture) -> None:
+        """The friendlier `check` alias should behave like `doctor`."""
+        exit_code, stdout, _ = _run_cli(["check"], capsys)
+        assert exit_code in (0, 1)
+        assert "Next step:" in stdout
+
+    def test_lint_alias_maps_to_doctor(self, capsys: pytest.CaptureFixture) -> None:
+        """The plain-English `lint` alias should behave like `doctor`."""
+        exit_code, stdout, _ = _run_cli(["lint"], capsys)
+        assert exit_code in (0, 1)
+        assert "Next step:" in stdout
 
     def test_doctor_json_output_is_valid_json(self, capsys: pytest.CaptureFixture) -> None:
         exit_code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
@@ -200,6 +215,7 @@ class TestDoctorPythonVersionCheck:
         """Simulate Python 3.12 — should report ERROR on python-version check."""
         import sys as _sys
         import types
+
         # sys.version_info is a C struct and cannot be re-instantiated directly.
         # The doctor check reads .major / .minor / .micro, so SimpleNamespace works.
         fake_vi = types.SimpleNamespace(major=3, minor=12, micro=0)
@@ -222,6 +238,7 @@ class TestDoctorZ3Check:
     ) -> None:
         """Block z3 import to simulate missing z3-solver."""
         import builtins
+
         real_import = builtins.__import__
 
         def patched_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -236,9 +253,7 @@ class TestDoctorZ3Check:
         assert checks["z3-solver"]["level"] == "ERROR"
         assert data["passed"] is False
 
-    def test_z3_functional_failure_reports_error(
-        self, capsys: pytest.CaptureFixture
-    ) -> None:
+    def test_z3_functional_failure_reports_error(self, capsys: pytest.CaptureFixture) -> None:
         """Simulate z3 Solver returning 'unknown' (not 'sat')."""
         import z3 as _z3
 
@@ -311,9 +326,10 @@ class TestDoctorOptionalExtras:
         data = json.loads(stdout)
         for check in data["checks"]:
             if check["name"].startswith("extra:"):
-                assert check["level"] in ("OK", "SKIP"), (
-                    f"Extra check {check['name']} has unexpected level {check['level']}"
-                )
+                assert check["level"] in (
+                    "OK",
+                    "SKIP",
+                ), f"Extra check {check['name']} has unexpected level {check['level']}"
 
     def test_hints_present_on_skip(self, capsys: pytest.CaptureFixture) -> None:
         """Every SKIP check for an extra must include an install hint."""
@@ -321,6 +337,127 @@ class TestDoctorOptionalExtras:
         data = json.loads(stdout)
         for check in data["checks"]:
             if check["name"].startswith("extra:") and check["level"] == "SKIP":
-                assert check.get("hint"), (
-                    f"SKIP check {check['name']} has no install hint"
-                )
+                assert check.get("hint"), f"SKIP check {check['name']} has no install hint"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Production profile gatekeeping
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDoctorProductionProfile:
+    def test_production_profile_in_json_summary(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PRAMANIX_SIGNING_KEY", "a" * 64)
+        monkeypatch.setenv("PRAMANIX_AUDIT_SINK", "kafka")
+        monkeypatch.setenv("PRAMANIX_EXECUTION_TOKEN_BACKEND", "redis")
+        monkeypatch.setenv("PRAMANIX_EXPECTED_POLICY_HASH", "f" * 64)
+        monkeypatch.setenv("PRAMANIX_ASYNC_ENGINE", "uvloop")
+        monkeypatch.setitem(
+            sys.modules,
+            "yaml",
+            types.SimpleNamespace(safe_load=lambda _text: {}),
+        )
+
+        real_find_spec = importlib.util.find_spec
+
+        def _patched_find_spec(name: str, *args, **kwargs):
+            if name == "re2":
+                return object()
+            if name in {
+                "openai",
+                "anthropic",
+                "cohere",
+                "mistral",
+                "google.generativeai",
+                "together",
+                "groq",
+            }:
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        with patch.object(importlib.util, "find_spec", side_effect=_patched_find_spec):
+            _exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+
+        data = json.loads(stdout)
+        assert data["profile"] == "production"
+
+    def test_production_re2_missing_blocks_deploy(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PRAMANIX_SIGNING_KEY", "a" * 64)
+        monkeypatch.setenv("PRAMANIX_AUDIT_SINK", "kafka")
+        monkeypatch.setenv("PRAMANIX_EXECUTION_TOKEN_BACKEND", "redis")
+        monkeypatch.setenv("PRAMANIX_EXPECTED_POLICY_HASH", "f" * 64)
+        monkeypatch.setenv("PRAMANIX_ASYNC_ENGINE", "uvloop")
+        monkeypatch.setitem(
+            sys.modules,
+            "yaml",
+            types.SimpleNamespace(safe_load=lambda _text: {}),
+        )
+
+        real_find_spec = importlib.util.find_spec
+
+        def _patched_find_spec(name: str, *args, **kwargs):
+            if name == "re2":
+                return None
+            if name in {
+                "openai",
+                "anthropic",
+                "cohere",
+                "mistral",
+                "google.generativeai",
+                "together",
+                "groq",
+            }:
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        with patch.object(importlib.util, "find_spec", side_effect=_patched_find_spec):
+            exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["security-re2"]["level"] == "ERROR"
+        assert exit_code == 1
+
+    def test_production_warns_fail_exit_contract(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PRAMANIX_SIGNING_KEY", "a" * 64)
+        monkeypatch.delenv("PRAMANIX_AUDIT_SINK", raising=False)
+        monkeypatch.setenv("PRAMANIX_EXECUTION_TOKEN_BACKEND", "redis")
+        monkeypatch.setenv("PRAMANIX_EXPECTED_POLICY_HASH", "f" * 64)
+        monkeypatch.setenv("PRAMANIX_ASYNC_ENGINE", "uvloop")
+        monkeypatch.setitem(
+            sys.modules,
+            "yaml",
+            types.SimpleNamespace(safe_load=lambda _text: {}),
+        )
+
+        real_find_spec = importlib.util.find_spec
+
+        def _patched_find_spec(name: str, *args, **kwargs):
+            if name == "re2":
+                return object()
+            if name in {
+                "openai",
+                "anthropic",
+                "cohere",
+                "mistral",
+                "google.generativeai",
+                "together",
+                "groq",
+            }:
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        with patch.object(importlib.util, "find_spec", side_effect=_patched_find_spec):
+            exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["audit-sink-policy"]["level"] == "WARN"
+        # In production profile, warnings are deployment blockers.
+        assert exit_code == 1

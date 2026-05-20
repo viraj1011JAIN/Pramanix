@@ -4,7 +4,8 @@
 # For architectural decisions and proof of correctness, please refer to:
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
-"""pramanix CLI — verify cryptographic decision proofs and simulate policy checks.
+"""pramanix CLI — verify cryptographic decision proofs, lint readiness,
+and simulate policy checks.
 
 Usage:
     pramanix verify-proof <token> [--key KEY] [--json]
@@ -32,14 +33,28 @@ import argparse
 import json as _json
 import os
 import sys
-from typing import Any
+from decimal import Decimal
+from typing import Any, get_args, get_origin
 
 
 def main() -> int:
     """Entry point for the pramanix CLI; dispatches subcommands and returns an exit code."""
     parser = argparse.ArgumentParser(
         prog="pramanix",
-        description="Pramanix cryptographic proof verification",
+        description="Pramanix cryptographic proof verification and setup checks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Plain-English first steps:\n"
+            "  pramanix check            Run the readiness check\n"
+            "  pramanix lint             Alias of check (easy discovery)\n"
+            "  pramanix explain          Human-readable policy verdicts\n"
+            "  pramanix init --template finance  Bootstrap a policy blueprint\n"
+            "  pramanix verify-proof     Verify a signed decision proof\n"
+            "  pramanix compile-policy   Compile a policy schema\n"
+            "\n"
+            "If you are new to the project, start with `pramanix check` and fix\n"
+            "the first ERROR it reports before moving on."
+        ),
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -68,6 +83,7 @@ def main() -> int:
 
     sim = sub.add_parser(
         "simulate",
+        aliases=["explain"],
         help="Simulate a policy decision against an intent dict (no LLM, no side-effects).",
     )
     sim.add_argument(
@@ -90,10 +106,16 @@ def main() -> int:
         metavar="FILE",
         help="Path to a JSON file containing the intent dict.",
     )
-    sim.add_argument(
+    _state_grp = sim.add_mutually_exclusive_group(required=False)
+    _state_grp.add_argument(
         "--state",
         metavar="JSON",
         help="Optional state dict as a JSON string passed to guard.verify().",
+    )
+    _state_grp.add_argument(
+        "--state-file",
+        metavar="FILE",
+        help="Optional path to a JSON file containing the state dict.",
     )
     sim.add_argument(
         "--policy-var",
@@ -101,7 +123,34 @@ def main() -> int:
         metavar="VAR",
         help="Name of the Policy variable in the Python file (default: 'policy').",
     )
+    sim.add_argument(
+        "--suggest-fix",
+        action="store_true",
+        help=("Suggest safe, review-required policy edits from the failed decision."),
+    )
     sim.add_argument("--json", dest="as_json", action="store_true", help="Output decision as JSON")
+
+    init_cmd = sub.add_parser(
+        "init",
+        help="Scaffold a production-ready policy blueprint from a template.",
+    )
+    init_cmd.add_argument(
+        "--template",
+        required=True,
+        choices=["finance", "pii", "infra"],
+        help="Blueprint template to write.",
+    )
+    init_cmd.add_argument(
+        "--output",
+        default="policy_template.yaml",
+        metavar="FILE",
+        help="Output file path (default: policy_template.yaml).",
+    )
+    init_cmd.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite output file if it exists.",
+    )
 
     # B-4: policy migrate subcommand
     pm = sub.add_parser(
@@ -226,7 +275,8 @@ def main() -> int:
     # doctor subcommand
     doctor_cmd = sub.add_parser(
         "doctor",
-        help="Validate environment, dependencies, key config, and platform compatibility.",
+        aliases=["check", "lint"],
+        help="Run the readiness check for environment, dependencies, and config.",
     )
     doctor_cmd.add_argument(
         "--json",
@@ -238,6 +288,11 @@ def main() -> int:
         "--strict",
         action="store_true",
         help="Exit 1 if any WARNING is found (not just errors).",
+    )
+    doctor_cmd.add_argument(
+        "--production",
+        action="store_true",
+        help=("Run deployment-gate profile (hard-fail on critical security " "misconfigurations)."),
     )
 
     # compile-policy subcommand (Phase 2 — Natural Policy Compiler)
@@ -284,8 +339,11 @@ def main() -> int:
     if args.command == "audit":
         return _cmd_audit(args)
 
-    if args.command == "simulate":
+    if args.command in ("simulate", "explain"):
         return _cmd_simulate(args)
+
+    if args.command == "init":
+        return _cmd_init(args)
 
     if args.command == "policy":
         return _cmd_policy(args)
@@ -296,7 +354,7 @@ def main() -> int:
     if args.command == "calibrate-injection":
         return _cmd_calibrate_injection(args)
 
-    if args.command == "doctor":
+    if args.command in ("doctor", "check", "lint"):
         return _cmd_doctor(args)
 
     if args.command == "compile-policy":
@@ -619,6 +677,121 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     """
     import importlib.util
     import json
+    import numbers
+
+    def _humanize_rule_name(rule_name: str) -> str:
+        return rule_name.replace("_", " ").replace("-", " ").strip()
+
+    def _plain_reason(decision: Any) -> str:
+        explanation = str(getattr(decision, "explanation", "") or "").strip()
+        if explanation and not explanation.startswith("Invariant(s) violated:"):
+            return explanation
+
+        violated = [str(rule) for rule in getattr(decision, "violated_invariants", ()) if str(rule)]
+        if violated:
+            if len(violated) == 1:
+                return f"Safety rule violated: {_humanize_rule_name(violated[0])}."
+            rule_list = ", ".join(_humanize_rule_name(rule) for rule in violated)
+            return f"Safety rules violated: {rule_list}."
+
+        return "Action blocked by safety policy."
+
+    def _next_step(decision: Any) -> str:
+        if getattr(decision, "allowed", False):
+            return "No action needed."
+        return "Revise the request or update the policy rule."
+
+    def _annotation_contains_decimal(annotation: Any) -> bool:
+        if annotation is Decimal:
+            return True
+        origin = get_origin(annotation)
+        if origin is None:
+            return False
+        return any(_annotation_contains_decimal(arg) for arg in get_args(annotation))
+
+    def _coerce_numeric_to_decimal_by_model(
+        payload: dict[str, Any], model_cls: Any
+    ) -> dict[str, Any]:
+        model_fields = getattr(model_cls, "model_fields", {})
+        if not isinstance(model_fields, dict):
+            return payload
+
+        coerced = dict(payload)
+        for field_name, field_info in model_fields.items():
+            if field_name not in coerced:
+                continue
+            annotation = getattr(field_info, "annotation", None)
+            value = coerced[field_name]
+            if _annotation_contains_decimal(annotation):
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, numbers.Real):
+                    coerced[field_name] = Decimal(str(value))
+        return coerced
+
+    def _numeric(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, numbers.Real):
+            return float(value)
+        return None
+
+    def _suggest_fixes(
+        decision: Any, intent_data: dict[str, Any], state_data: dict[str, Any]
+    ) -> list[str]:
+        if getattr(decision, "allowed", False):
+            return []
+
+        suggestions: list[str] = []
+        violated = [str(v).lower() for v in getattr(decision, "violated_invariants", ())]
+        numeric_intent = {key: val for key, val in intent_data.items() if _numeric(val) is not None}
+        numeric_state = {key: val for key, val in state_data.items() if _numeric(val) is not None}
+
+        for rule in violated:
+            if "max" in rule or "limit" in rule or "cap" in rule or "budget" in rule:
+                state_key = next(
+                    (
+                        key
+                        for key in numeric_state
+                        if any(token in key.lower() for token in ("max", "limit", "cap", "budget"))
+                    ),
+                    None,
+                )
+                intent_key = next((key for key in numeric_intent), None)
+                if state_key and intent_key:
+                    current_limit = _numeric(state_data[state_key])
+                    requested = _numeric(intent_data[intent_key])
+                    if (
+                        current_limit is not None
+                        and requested is not None
+                        and requested > current_limit
+                    ):
+                        suggestions.append(
+                            "Suggested fix (review required): "
+                            f"raise {state_key} from {state_data[state_key]!r} "
+                            f"to at least {intent_data[intent_key]!r} "
+                            f"to satisfy current request key '{intent_key}'."
+                        )
+                        continue
+
+            if "min" in rule:
+                intent_key = next((key for key in numeric_intent), None)
+                if intent_key:
+                    suggestions.append(
+                        "Suggested fix (review required): "
+                        f"lower minimum constraint tied to '{intent_key}' or "
+                        "adjust request to meet existing minimum."
+                    )
+
+        if not suggestions and violated:
+            for rule in violated:
+                suggestions.append(
+                    "Suggested fix (review required): "
+                    f"revisit invariant '{rule}' and decide whether request or policy should change."
+                )
+
+        # Keep output concise and deterministic.
+        return list(dict.fromkeys(suggestions))[:3]
 
     # ── Load intent ───────────────────────────────────────────────────────────
     if args.intent:
@@ -626,6 +799,10 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             intent: dict[str, Any] = json.loads(args.intent)
         except json.JSONDecodeError as exc:
             print(f"ERROR: --intent is not valid JSON: {exc}", file=sys.stderr)
+            print(
+                "Hint: On PowerShell, prefer --intent-file for complex JSON.",
+                file=sys.stderr,
+            )
             return 2
     else:
         try:
@@ -649,9 +826,26 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             state = json.loads(args.state)
         except json.JSONDecodeError as exc:
             print(f"ERROR: --state is not valid JSON: {exc}", file=sys.stderr)
+            print(
+                "Hint: On PowerShell, prefer --state-file for complex JSON.",
+                file=sys.stderr,
+            )
             return 2
         if not isinstance(state, dict):
             print("ERROR: --state must be a JSON object.", file=sys.stderr)
+            return 2
+    elif getattr(args, "state_file", None):
+        try:
+            with open(args.state_file, encoding="utf-8") as f:
+                state = json.load(f)
+        except FileNotFoundError:
+            print(f"ERROR: State file not found: {args.state_file}", file=sys.stderr)
+            return 2
+        except json.JSONDecodeError as exc:
+            print(f"ERROR: --state-file is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(state, dict):
+            print("ERROR: --state-file must be a JSON object.", file=sys.stderr)
             return 2
 
     # ── Load policy from Python file ──────────────────────────────────────────
@@ -681,6 +875,14 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
         )
         return 2
 
+    meta = getattr(policy, "Meta", None)
+    intent_model = getattr(meta, "intent_model", None)
+    state_model = getattr(meta, "state_model", None)
+    if intent_model is not None:
+        intent = _coerce_numeric_to_decimal_by_model(intent, intent_model)
+    if state_model is not None:
+        state = _coerce_numeric_to_decimal_by_model(state, state_model)
+
     # ── Build guard and verify ────────────────────────────────────────────────
     try:
         from pramanix.guard import Guard
@@ -695,24 +897,133 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
 
     # ── Output ────────────────────────────────────────────────────────────────
     if getattr(args, "as_json", False):
+        suggested_fixes = _suggest_fixes(decision, intent, state) if args.suggest_fix else []
         output: dict[str, Any] = {
             "allowed": decision.allowed,
             "status": decision.status,
             "explanation": decision.explanation,
+            "plain_reason": _plain_reason(decision),
+            "next_step": _next_step(decision),
+            "suggested_fixes": suggested_fixes,
             "violated_invariants": decision.violated_invariants,
             "decision_id": decision.decision_id,
         }
         print(_json.dumps(output))
     else:
         verdict = "ALLOW" if decision.allowed else "BLOCK"
-        print(f"{verdict}  status={decision.status}")
-        if decision.explanation:
-            print(f"  explanation: {decision.explanation}")
-        if decision.violated_invariants:
-            print(f"  violated:    {decision.violated_invariants}")
-        print(f"  decision_id: {decision.decision_id}")
+        print(f"Safety verdict: {verdict}")
+        if decision.allowed:
+            print("Reason: all safety rules passed.")
+            print("Next step: no action needed.")
+        else:
+            print(f"Reason: {_plain_reason(decision)}")
+            if decision.violated_invariants:
+                human_rules = ", ".join(
+                    _humanize_rule_name(rule) for rule in decision.violated_invariants
+                )
+                print(f"Safety rule(s): {human_rules}")
+            if args.suggest_fix:
+                for fix in _suggest_fixes(decision, intent, state):
+                    print(fix)
+            print(f"Next step: {_next_step(decision)}")
+        print(f"Decision ID: {decision.decision_id}")
 
     return 0 if decision.allowed else 1
+
+
+_INIT_TEMPLATES: dict[str, str] = {
+    "finance": """# Pramanix policy blueprint: finance
+# Review every threshold before production use.
+policy_name: finance_trade_guard
+description: Enforce per-trade and daily risk guardrails.
+version: 1.0
+fields:
+    - name: amount
+        type: Real
+    - name: daily_limit
+        type: Real
+    - name: notional_cap
+        type: Real
+rules:
+    - name: within_daily_limit
+        expression: amount <= daily_limit
+        explain: Trade blocked: amount exceeds daily limit.
+    - name: within_notional_cap
+        expression: amount <= notional_cap
+        explain: Trade blocked: amount exceeds notional cap.
+""",
+    "pii": """# Pramanix policy blueprint: pii
+# Review every field name and exception path before production use.
+policy_name: pii_redaction_guard
+description: Block payloads that contain sensitive identifiers.
+version: 1.0
+fields:
+    - name: has_ssn
+        type: Bool
+    - name: has_card_number
+        type: Bool
+    - name: break_glass_approved
+        type: Bool
+rules:
+    - name: no_ssn_without_approval
+        expression: (!has_ssn) or break_glass_approved
+        explain: Output blocked: SSN detected without approval.
+    - name: no_card_data
+        expression: !has_card_number
+        explain: Output blocked: card number detected.
+""",
+    "infra": """# Pramanix policy blueprint: infra
+# Review every capacity limit before production use.
+policy_name: infra_scale_guard
+description: Constrain replica and resource changes.
+version: 1.0
+fields:
+    - name: replicas
+        type: Int
+    - name: min_replicas
+        type: Int
+    - name: max_replicas
+        type: Int
+rules:
+    - name: min_replicas
+        expression: replicas >= min_replicas
+        explain: Scale-down blocked: replicas below minimum.
+    - name: max_replicas
+        expression: replicas <= max_replicas
+        explain: Scale-up blocked: replicas above maximum.
+""",
+}
+
+
+def _cmd_init(args: argparse.Namespace) -> int:
+    """Write a policy blueprint template for day-1 onboarding."""
+    import pathlib
+
+    template_name = str(args.template)
+    output_path = pathlib.Path(args.output)
+    content = _INIT_TEMPLATES.get(template_name)
+    if content is None:
+        print(f"ERROR: Unknown template '{template_name}'.", file=sys.stderr)
+        return 2
+
+    if output_path.exists() and not args.force:
+        print(
+            f"ERROR: Output file already exists: {output_path}. " "Use --force to overwrite.",
+            file=sys.stderr,
+        )
+        return 2
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content.rstrip("\n") + "\n", encoding="utf-8")
+
+    print(f"Template written: {output_path}")
+    print("Next step: edit thresholds and rule names for your domain.")
+    print(
+        "Then run: pramanix explain --policy examples/cloud_infra.py "
+        '--policy-var ScalingPolicy --intent \'{"replicas": 5, "cpu_request": 1000, "mem_request": 2048}\' '
+        '--state \'{"state_version": "1.0", "min_r": 2, "max_r": 20, "cpu_budget": 4000, "mem_budget": 8192}\''
+    )
+    return 0
 
 
 def _cmd_policy(args: argparse.Namespace) -> int:
@@ -798,10 +1109,6 @@ def _cmd_policy_migrate(args: argparse.Namespace) -> int:
         print(output_json)
 
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
 
 
 def _cmd_schema(args: argparse.Namespace) -> int:
@@ -1034,12 +1341,17 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     """
     import importlib
     import importlib.util
+    import pathlib
     import platform
     import struct
     import sys as _sys
     from typing import Literal
 
     checks: list[dict[str, object]] = []
+    _pramanix_env = os.environ.get("PRAMANIX_ENV", "").lower()
+    is_production_profile = bool(
+        getattr(args, "production", False) or _pramanix_env == "production"
+    )
 
     def _check(
         name: str,
@@ -1054,6 +1366,10 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             return importlib.util.find_spec(modname) is not None
         except (ModuleNotFoundError, ValueError):
             return False
+
+    def _is_probably_hex(value: str) -> bool:
+        lowered = value.lower()
+        return all(ch in "0123456789abcdef" for ch in lowered)
 
     # ── 1. Python version ─────────────────────────────────────────────────────
     vi = _sys.version_info
@@ -1175,20 +1491,56 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     except ImportError:
         _check("pydantic", "ERROR", "pydantic not installed", hint="pip install 'pydantic>=2.5'")
 
-    # ── 7. Signing key configuration ─────────────────────────────────────────
+    # ── 7. re2 linear-time regex engine ─────────────────────────────────────
+    if _has("re2"):
+        _check("security-re2", "OK", "google-re2 installed (ReDoS-resistant regex engine)")
+    elif is_production_profile:
+        _check(
+            "security-re2",
+            "ERROR",
+            "google-re2 missing — stdlib re is vulnerable to crafted ReDoS payloads",
+            hint="pip install 'pramanix[security]'",
+        )
+    else:
+        _check(
+            "security-re2",
+            "WARN",
+            "google-re2 missing — stdlib re fallback active",
+            hint="pip install 'pramanix[security]'",
+        )
+
+    # ── 8. Signing key configuration ─────────────────────────────────────────
     signing_key = os.environ.get("PRAMANIX_SIGNING_KEY", "")
     if signing_key:
-        _check("signing-key", "OK", "PRAMANIX_SIGNING_KEY is set")
+        if _is_probably_hex(signing_key):
+            if len(signing_key) >= 64:
+                _check("signing-key", "OK", "PRAMANIX_SIGNING_KEY is set (hex, >=32 bytes)")
+            else:
+                _check(
+                    "signing-key",
+                    "ERROR" if is_production_profile else "WARN",
+                    "PRAMANIX_SIGNING_KEY is set but too short for production use",
+                    hint=("Set a >=32-byte secret (64+ hex chars), e.g. " "openssl rand -hex 32"),
+                )
+        elif len(signing_key) >= 32:
+            _check("signing-key", "OK", "PRAMANIX_SIGNING_KEY is set")
+        else:
+            _check(
+                "signing-key",
+                "ERROR" if is_production_profile else "WARN",
+                "PRAMANIX_SIGNING_KEY is set but shorter than 32 chars",
+                hint="Set a stronger key, e.g. openssl rand -hex 32",
+            )
     else:
         _check(
             "signing-key",
-            "WARN",
+            "ERROR" if is_production_profile else "WARN",
             "PRAMANIX_SIGNING_KEY not set — decision proofs will be unsigned",
             hint="Set PRAMANIX_SIGNING_KEY to a 32-byte hex secret, or use "
             "GuardConfig(signing_key=...) at runtime.",
         )
 
-    # ── 8. Cryptography package (required for PramanixSigner / Ed25519) ───────
+    # ── 9. Cryptography package (required for PramanixSigner / Ed25519) ───────
     if _has("cryptography"):
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -1211,7 +1563,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             hint="pip install 'pramanix[crypto]'",
         )
 
-    # ── 9. Optional extras ────────────────────────────────────────────────────
+    # ── 10. Optional extras ───────────────────────────────────────────────────
     _optional_checks: list[tuple[str, str, str]] = [
         ("otel", "opentelemetry.sdk", "pip install 'pramanix[otel]'"),
         ("translator-httpx", "httpx", "pip install 'pramanix[translator]'"),
@@ -1236,7 +1588,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 f"extra:{label}", "SKIP", f"{modname} not installed (optional)", hint=install_hint
             )
 
-    # ── 10. Logging handler configuration ────────────────────────────────────
+    # ── 11. Logging handler configuration ────────────────────────────────────
     from pramanix.logging_helpers import check_logging_configuration as _chk_log
 
     _log_status = _chk_log("pramanix")
@@ -1247,10 +1599,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         hint=_log_status["hint"],
     )
 
-    # ── 11. Policy-hash binding in production ─────────────────────────────────
+    # ── 12. Policy-hash binding in production ─────────────────────────────────
     _policy_hash_env = os.environ.get("PRAMANIX_EXPECTED_POLICY_HASH", "")
-    _pramanix_env = os.environ.get("PRAMANIX_ENV", "").lower()
-    if _pramanix_env == "production":
+    if is_production_profile:
         if _policy_hash_env:
             _check(
                 "policy-hash-binding",
@@ -1274,11 +1625,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         _check(
             "policy-hash-binding",
             "SKIP",
-            "PRAMANIX_ENV != 'production' — policy-hash check skipped",
+            "Production profile not enabled — policy-hash check skipped",
             hint=("Set PRAMANIX_ENV=production to enable production checks."),
         )
 
-    # ── 12. Redis reachability (only if PRAMANIX_REDIS_URL is configured) ────
+    # ── 13. Redis reachability (only if PRAMANIX_REDIS_URL is configured) ────
     redis_url = os.environ.get("PRAMANIX_REDIS_URL", "")
     if redis_url:
         if _has("redis"):
@@ -1304,9 +1655,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 hint="pip install 'pramanix[identity]'",
             )
 
-    # ── 13. Execution token backend durability ────────────────────────────
+    # ── 14. Execution token backend durability ─────────────────────────────
     _token_backend = os.environ.get("PRAMANIX_EXECUTION_TOKEN_BACKEND", "").lower()
-    if _pramanix_env == "production":
+    if is_production_profile:
         if _token_backend in ("", "memory", "inmemory", "in-memory"):
             _check(
                 "execution-token-backend",
@@ -1331,33 +1682,116 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         _check(
             "execution-token-backend",
             "SKIP",
-            "PRAMANIX_ENV != 'production' — token backend durability check skipped",
+            "Production profile not enabled — token backend check skipped",
         )
 
-    # ── 14. Audit sink reachability ───────────────────────────────────────
-    if _pramanix_env == "production":
-        _check(
-            "audit-sink-reachability",
-            "ERROR",
-            "No audit sinks can be verified by 'doctor' — sinks are configured "
-            "programmatically on GuardConfig. In production, GuardConfig raises "
-            "ConfigurationError when audit_sinks=() unless "
-            "PRAMANIX_ALLOW_NO_AUDIT_SINKS=1 is set. "
-            "Ensure at least one AuditSink is passed to GuardConfig.",
-            hint=(
-                "Add a startup probe: instantiate your Guard and call "
-                "guard.config.audit_sinks[n].emit(Decision.error('health-check')) "
-                "to verify each sink is reachable at boot time."
-            ),
-        )
+    # ── 15. Audit sink reachability (deployment gate) ───────────────────────
+    _audit_sink = os.environ.get("PRAMANIX_AUDIT_SINK", "").strip().lower()
+    if is_production_profile:
+        if not _audit_sink:
+            _check(
+                "audit-sink-reachability",
+                "ERROR",
+                "No AuditSink configured for production (PRAMANIX_AUDIT_SINK is unset)",
+                hint=(
+                    "Set PRAMANIX_AUDIT_SINK to a reachable durable sink "
+                    "(e.g. kafka, datadog, http, file) before deploy."
+                ),
+            )
+            # Back-compat contract used by older doctor tests.
+            _check(
+                "audit-sink-policy",
+                "WARN",
+                "PRAMANIX_AUDIT_SINK not set — sink durability cannot be asserted",
+                hint=("Set PRAMANIX_AUDIT_SINK to a durable sink " "(e.g. kafka, datadog, http)."),
+            )
+        elif _audit_sink in ("console", "stdout", "stderr", "print"):
+            _check(
+                "audit-sink-reachability",
+                "ERROR",
+                "Console AuditSink configured in production; not durable/reachable",
+                hint="Switch to a durable AuditSink (kafka/http/datadog/file) before deploy.",
+            )
+            _check(
+                "audit-sink-policy",
+                "WARN",
+                "Console audit sink detected in production profile",
+                hint="Switch to a durable sink (kafka/http/datadog/file) before deploy.",
+            )
+        else:
+            _check("audit-sink-reachability", "OK", f"Audit sink configured: {_audit_sink}")
+            _check("audit-sink-policy", "OK", f"Audit sink configured: {_audit_sink}")
     else:
         _check(
             "audit-sink-reachability",
             "SKIP",
-            "PRAMANIX_ENV != 'production' — audit sink check skipped",
+            "Production profile not enabled — audit sink reachability check skipped",
+        )
+        _check(
+            "audit-sink-policy",
+            "SKIP",
+            "Production profile not enabled — audit sink policy check skipped",
         )
 
-    # ── 15. Translator API key configuration ──────────────────────────────────
+    # ── 16. Async engine advisory (non-blocking) ─────────────────────────────
+    _async_engine = os.environ.get("PRAMANIX_ASYNC_ENGINE", "default").strip().lower()
+    if is_production_profile and _async_engine == "default":
+        _check(
+            "async-engine",
+            "WARN",
+            "Async engine is default; evaluate high-performance event loop for throughput",
+            hint="Set PRAMANIX_ASYNC_ENGINE=uvloop on supported Linux workloads.",
+        )
+    elif is_production_profile:
+        _check("async-engine", "OK", f"Async engine configured: {_async_engine}")
+    else:
+        _check("async-engine", "SKIP", "Production profile not enabled — async check skipped")
+
+    # ── 17. Policy YAML quick lint (deployment gate) ─────────────────────────
+    _yaml_globs = ("**/*policy*.yaml", "**/*policy*.yml", "**/mesh_policy_ir.yaml")
+    policy_files: set[pathlib.Path] = set()
+    for pattern in _yaml_globs:
+        policy_files.update(pathlib.Path.cwd().glob(pattern))
+
+    if not policy_files:
+        _check(
+            "policy-yaml-lint",
+            "WARN" if is_production_profile else "SKIP",
+            "No policy YAML files found for lint",
+            hint="Add policy YAML files or run doctor from repo root.",
+        )
+    else:
+        try:
+            import yaml as _yaml  # type: ignore[import-not-found]
+
+            bad_file: pathlib.Path | None = None
+            bad_error = ""
+            for file_path in sorted(policy_files):
+                try:
+                    _yaml.safe_load(file_path.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    bad_file = file_path
+                    bad_error = str(exc)
+                    break
+
+            if bad_file is None:
+                _check("policy-yaml-lint", "OK", f"Linted {len(policy_files)} policy YAML file(s)")
+            else:
+                _check(
+                    "policy-yaml-lint",
+                    "ERROR" if is_production_profile else "WARN",
+                    f"Invalid policy YAML: {bad_file} ({bad_error})",
+                    hint="Fix YAML syntax before deploy.",
+                )
+        except ImportError:
+            _check(
+                "policy-yaml-lint",
+                "ERROR" if is_production_profile else "WARN",
+                "PyYAML is not installed; cannot lint policy YAML files",
+                hint="pip install pyyaml",
+            )
+
+    # ── 18. Translator API key configuration ──────────────────────────────────
     # Warn when a translator backend looks configured but its API key env var
     # is absent, so that LLM calls don't fail silently at request time.
     _TRANSLATOR_KEY_MAP: list[tuple[str, str, str]] = [
@@ -1373,9 +1807,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # Collect which translator packages are actually installed.
     _installed_translators: list[tuple[str, str, str]] = [
-        (mod, envvar, name)
-        for mod, envvar, name in _TRANSLATOR_KEY_MAP
-        if _has(mod)
+        (mod, envvar, name) for mod, envvar, name in _TRANSLATOR_KEY_MAP if _has(mod)
     ]
 
     if not _installed_translators:
@@ -1425,6 +1857,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         import json as _json_mod
 
         summary = {
+            "profile": "production" if is_production_profile else "default",
             "passed": not has_error,
             "errors": sum(1 for c in checks if c["level"] == "ERROR"),
             "warnings": sum(1 for c in checks if c["level"] == "WARN"),
@@ -1446,10 +1879,23 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         err_count = sum(1 for c in checks if c["level"] == "ERROR")
         print(f"  {ok_count} OK  {warn_count} WARN  {err_count} ERROR  {skip_count} SKIP")
         print()
+        _first_actionable = next((c for c in checks if c["level"] in ("ERROR", "WARN")), None)
+        if _first_actionable is None:
+            print("  Next step: you are ready to use Pramanix.")
+        else:
+            _label = str(_first_actionable["name"]).replace("-", " ")
+            _detail = str(_first_actionable["detail"])
+            print(f"  Next step: fix {_label} first — {_detail}")
+            if _first_actionable.get("hint"):
+                print(f"             {_first_actionable['hint']}")
+        print()
         if has_error:
             print("pramanix doctor: FAIL — fix ERROR items before deploying.")
-        elif has_warn and getattr(args, "strict", False):
-            print("pramanix doctor: FAIL — warnings present (--strict mode).")
+        elif has_warn and (getattr(args, "strict", False) or is_production_profile):
+            if is_production_profile:
+                print("pramanix doctor: FAIL — warnings present (production profile).")
+            else:
+                print("pramanix doctor: FAIL — warnings present (--strict mode).")
         elif has_warn:
             print("pramanix doctor: PASS with warnings.")
         else:
@@ -1457,7 +1903,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     if has_error:
         return 1
-    if has_warn and getattr(args, "strict", False):
+    if has_warn and (getattr(args, "strict", False) or is_production_profile):
         return 1
     return 0
 
@@ -1590,3 +2036,7 @@ def _cmd_compile_policy(args: argparse.Namespace) -> int:
             print(f"    Mismatch: {m}")
 
     return 0 if compiled.verification.verified else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -18,6 +18,7 @@ Run directly::
 
     python examples/banking_transfer.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -70,6 +71,10 @@ class AccountState(BaseModel):
     """Whether the account has been administratively frozen."""
 
 
+TransferIntent.model_rebuild()
+AccountState.model_rebuild()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. Policy definition
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -107,10 +112,9 @@ class BankingPolicy(Policy):
             .explain("Overdraft prevented: balance={balance} < amount={amount}"),
             (E(cls.amount) <= E(cls.daily_limit))
             .named("within_daily_limit")
-            .explain(
-                "Daily limit exceeded: amount={amount} > daily_limit={daily_limit}"
-            ),
-            (E(cls.is_frozen) == False)  # noqa: E712
+            .explain("Daily limit exceeded: amount={amount} > daily_limit={daily_limit}"),
+            (E(cls.is_frozen) == False)
+              # noqa: E712
             .named("account_not_frozen")
             .explain("Account is frozen — all transfers blocked"),
         ]
@@ -133,10 +137,7 @@ guard = Guard(
 
 def _print(d: Decision) -> None:
     indicator = "✓ SAFE   " if d.allowed else "✗ BLOCKED"
-    print(
-        f"  [{indicator}] status={d.status.value:<20} "
-        f"violated={list(d.violated_invariants)}"
-    )
+    print(f"  [{indicator}] status={d.status.value:<20} " f"violated={list(d.violated_invariants)}")
     if not d.allowed:
         print(f"             explanation: {d.explanation}")
     print(f"             decision_id: {d.decision_id}")
@@ -257,7 +258,10 @@ def main() -> None:
         ("D — Exact boundary: balance == amount (SAFE)", scenario_d_boundary_exact),
         ("E — One cent over boundary (UNSAFE)", scenario_e_one_over_boundary),
         ("F — Stale state version (STALE_STATE)", scenario_f_stale_state),
-        ("G — Validation failure: bad intent type (VALIDATION_FAILURE)", scenario_g_validation_failure),
+        (
+            "G — Validation failure: bad intent type (VALIDATION_FAILURE)",
+            scenario_g_validation_failure,
+        ),
     ]
 
     failures: list[str] = []

@@ -30,6 +30,7 @@ Quick-start::
     # AutoGen
     from pramanix.integrations.autogen import PramanixToolCallback
 """
+
 from __future__ import annotations
 
 __all__ = [
@@ -43,11 +44,15 @@ __all__ = [
     "PramanixGuardedModule",
     # LangChain
     "PramanixGuardedTool",
+    # LangGraph
+    "PramanixGuardNode",
+    "PramanixNodeBlockedError",
     # FastAPI
     "PramanixMiddleware",
     # PydanticAI (Phase F-1)
     "PramanixPydanticAIValidator",
     "PramanixQueryEngineTool",
+    "pramanix_node",
     # Semantic Kernel (Phase F-1)
     "PramanixSemanticKernelPlugin",
     # AutoGen
@@ -66,6 +71,10 @@ _NAME_TO_MODULE: dict[str, str] = {
     # LangChain
     "PramanixGuardedTool": "pramanix.integrations.langchain",
     "wrap_tools": "pramanix.integrations.langchain",
+    # LangGraph
+    "PramanixGuardNode": "pramanix.integrations.langgraph",
+    "PramanixNodeBlockedError": "pramanix.integrations.langgraph",
+    "pramanix_node": "pramanix.integrations.langgraph",
     # LlamaIndex
     "PramanixFunctionTool": "pramanix.integrations.llamaindex",
     "PramanixQueryEngineTool": "pramanix.integrations.llamaindex",

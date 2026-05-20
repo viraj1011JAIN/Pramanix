@@ -126,6 +126,8 @@ pip install 'pramanix[all]'              # Everything
 
 **Alpine Linux is not supported.** Z3 ships glibc-compiled wheels. On musl libc, Z3 segfaults or runs 3–10× slower. `import pramanix.guard` raises `ConfigurationError` on Alpine unless `PRAMANIX_SKIP_MUSL_CHECK=1` is set — if you do that, Z3 stability is your problem.
 
+If you are new to the CLI, start with `pramanix check`. It prints a plain-English readiness report and tells you which issue to fix first.
+
 ---
 
 ## Architecture
@@ -517,11 +519,13 @@ Secrets redaction runs before any renderer. Keys matching `secret`, `api_key`, `
 ```bash
 # Check environment and configuration
 pramanix doctor
+pramanix lint                    # same check, friendlier name for newcomers
 pramanix doctor --strict          # exit 1 on warnings
 pramanix doctor --json            # machine-readable
 
 # Policy tools
 pramanix simulate --intent intent.json --policy myapp.policies:TransferPolicy
+pramanix explain  --intent intent.json --policy myapp.policies:TransferPolicy
 pramanix schema export --policy myapp.policies:TransferPolicy
 pramanix policy migrate --migration myapp.migrations:v1_to_v2 --state state.json
 
@@ -533,7 +537,9 @@ pramanix audit verify audit.jsonl --fail-fast
 pramanix calibrate-injection --dataset labelled.jsonl --output scorer.pkl
 ```
 
-`pramanix doctor` checks: Z3 installation, Pydantic version, policy hash binding, logging handlers, `PRAMANIX_ENV` warnings, Redis connectivity (if `PRAMANIX_REDIS_URL` set), and 4 others. Exit 0 = clean. Exit 1 = any failure. Exit 2 = usage error.
+`pramanix doctor` and `pramanix lint` check: Z3 installation, Pydantic version, policy hash binding, logging handlers, `PRAMANIX_ENV` warnings, Redis connectivity (if `PRAMANIX_REDIS_URL` set), and 4 others. Exit 0 = clean. Exit 1 = any failure. Exit 2 = usage error.
+
+`pramanix simulate` and `pramanix explain` print a safety verdict plus a plain-English reason. For the best results, attach `.explain("...")` to policy rules so the simulator can say why a request was blocked without exposing solver math.
 
 ---
 
