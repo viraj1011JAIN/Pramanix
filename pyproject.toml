@@ -276,6 +276,7 @@ select = [
 ]
 ignore = [
     "E501",    # line length — handled by formatter
+    "E712",    # comparison to True/False — Z3 DSL overloads == as a constraint builder; `E(f) == False` is not a Python bool comparison
     "S101",    # assert used — acceptable in tests and warmup
     "S110",    # try-except-pass — used deliberately in fail-safe paths
     "S603",    # subprocess without shell — intentional in drain/kill paths
@@ -285,10 +286,18 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Primitive factory functions are intentionally PascalCase (styled as constructors).
 "src/pramanix/primitives/*.py" = ["N802"]
+# Public API functions E, ForAll, Exists, DatetimeField are PascalCase by design.
+"src/pramanix/expressions.py" = ["N802"]
 # Integration tests use print() for latency measurement output; T20 not applicable here.
 # Tests also use ConstraintExpr at runtime (not just type-checking) via invariants() return type.
-"tests/integration/*.py" = ["T20", "TCH", "E402"]
-"tests/unit/*.py" = ["TCH", "E402", "N802", "S106"]
+# S105/S108 in integration tests are false positives on test fixture values and path strings.
+"tests/integration/*.py" = ["T20", "TCH", "E402", "S106", "S105", "S108", "S301"]
+# S105: false positives on attribute names like _secret_name/_secret_id/_secret_path in fixtures.
+# S108: test path strings like "/tmp/..." are test inputs/fixture values, not real temp files.
+# S301: serialization tests deliberately test pickle roundtrips.
+# S311: seeded random used for deterministic test data generation.
+# B017: broad pytest.raises used intentionally where exception type is legitimately variable.
+"tests/unit/*.py" = ["TCH", "E402", "N802", "S106", "S105", "S108", "S301", "S311", "B017"]
 # Adversarial test vectors use OWASP-style uppercase labels (A-X) to match the
 # checklist specification. N802 suppressed — renaming would break traceability.
 "tests/adversarial/test_field_overflow.py" = ["N802"]
@@ -297,6 +306,9 @@ ignore = [
 # (５, ０) in test_F_unicode_fullwidth_digits_in_string are intentional test
 # vectors verifying that sanitise_user_input() normalises them correctly.
 "tests/adversarial/test_prompt_injection.py" = ["N802", "RUF001", "RUF003"]
+# test_nlp_validators_main.py: fullwidth chars (Ａ, Ｂ, Ｃ) are intentional
+# test vectors for Unicode normalisation — RUF001 suppressed project-wide here.
+"tests/unit/test_nlp_validators_main.py" = ["RUF001"]
 # exceptions.py: SemanticPolicyViolation is an API-stable public name exported
 # in __all__ since v0.1. Renaming to SemanticPolicyViolationError would be a
 # breaking API change. N818 suppressed with justification.
@@ -321,7 +333,8 @@ ignore = [
 "tests/unit/test_crypto.py" = ["E402", "I001"]
 # Benchmark and spike scripts use print() for output and have sys.path setup
 # before imports — both T20 and E402 are intentional patterns here.
-"benchmarks/*.py" = ["T20", "E402", "N806", "TCH003", "RUF001", "RUF002", "RUF003"]
+# S311: seeded random used for deterministic benchmark payload generation, not cryptographic purposes.
+"benchmarks/*.py" = ["T20", "E402", "N806", "TCH003", "RUF001", "RUF002", "RUF003", "S311"]
 "spikes/*.py" = ["T20", "E402"]
 "_fix_solve.py" = ["T20", "E402"]
 

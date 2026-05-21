@@ -15,6 +15,7 @@ Usage:
     python benchmarks/latency_benchmark.py
     python benchmarks/latency_benchmark.py --n 1000
 """
+
 from __future__ import annotations
 
 import argparse
@@ -29,11 +30,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from pramanix import E, Field, Guard, GuardConfig, Policy
 
-_amount  = Field("amount",    Decimal, "Real")
-_balance = Field("balance",   Decimal, "Real")
-_frozen  = Field("is_frozen", bool,    "Bool")
-_limit   = Field("daily_limit", Decimal, "Real")
-_risk    = Field("risk_score",  float,  "Real")
+_amount = Field("amount", Decimal, "Real")
+_balance = Field("balance", Decimal, "Real")
+_frozen = Field("is_frozen", bool, "Bool")
+_limit = Field("daily_limit", Decimal, "Real")
+_risk = Field("risk_score", float, "Real")
 
 
 class BenchmarkPolicy(Policy):
@@ -43,23 +44,23 @@ class BenchmarkPolicy(Policy):
     @classmethod
     def fields(cls):
         return {
-            "amount": _amount, "balance": _balance, "is_frozen": _frozen,
-            "daily_limit": _limit, "risk_score": _risk,
+            "amount": _amount,
+            "balance": _balance,
+            "is_frozen": _frozen,
+            "daily_limit": _limit,
+            "risk_score": _risk,
         }
 
     @classmethod
     def invariants(cls):
         return [
             ((E(_balance) - E(_amount)) >= Decimal("0"))
-                .named("sufficient_balance").explain("Insufficient balance"),
-            (E(_frozen) == False)  # noqa: E712
-                .named("account_not_frozen").explain("Account frozen"),
-            (E(_amount) <= E(_limit))
-                .named("within_daily_limit").explain("Exceeds daily limit"),
-            (E(_risk) <= 0.8)
-                .named("acceptable_risk").explain("Risk too high"),
-            (E(_amount) > Decimal("0"))
-                .named("positive_amount").explain("Must be positive"),
+            .named("sufficient_balance")
+            .explain("Insufficient balance"),
+            (E(_frozen) == False).named("account_not_frozen").explain("Account frozen"),
+            (E(_amount) <= E(_limit)).named("within_daily_limit").explain("Exceeds daily limit"),
+            (E(_risk) <= 0.8).named("acceptable_risk").explain("Risk too high"),
+            (E(_amount) > Decimal("0")).named("positive_amount").explain("Must be positive"),
         ]
 
 
@@ -68,8 +69,10 @@ def run_benchmark(n: int = 1000) -> dict:
 
     intent = {"amount": Decimal("100")}
     state = {
-        "balance": Decimal("5000"), "is_frozen": False,
-        "daily_limit": Decimal("10000"), "risk_score": 0.3,
+        "balance": Decimal("5000"),
+        "is_frozen": False,
+        "daily_limit": Decimal("10000"),
+        "risk_score": 0.3,
         "state_version": "1.0",
     }
 
@@ -86,9 +89,9 @@ def run_benchmark(n: int = 1000) -> dict:
         latencies_ms.append(elapsed_ms)
 
     latencies_ms.sort()
-    p50  = latencies_ms[int(n * 0.50)]
-    p95  = latencies_ms[int(n * 0.95)]
-    p99  = latencies_ms[int(n * 0.99)]
+    p50 = latencies_ms[int(n * 0.50)]
+    p95 = latencies_ms[int(n * 0.95)]
+    p99 = latencies_ms[int(n * 0.99)]
     mean = statistics.mean(latencies_ms)
 
     results = {

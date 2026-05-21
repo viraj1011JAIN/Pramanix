@@ -8,6 +8,7 @@ its own solver + assert_and_track so each core contains exactly one label.
 
 Zero dependencies beyond z3-solver.  Standalone -- not part of the package.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,17 +29,26 @@ class Field:
 class _FieldRef(NamedTuple):
     field: Field
 
+
 class _Literal(NamedTuple):
     value: Any
 
+
 class _BinOp(NamedTuple):
-    op: str; left: Any; right: Any  # noqa: E702
+    op: str
+    left: Any
+    right: Any
+
 
 class _CmpOp(NamedTuple):
-    op: str; left: Any; right: Any  # noqa: E702
+    op: str
+    left: Any
+    right: Any
+
 
 class _BoolOp(NamedTuple):
-    op: str; operands: tuple[Any, ...]  # noqa: E702
+    op: str
+    operands: tuple[Any, ...]
 
 
 class ExpressionNode:
@@ -55,26 +65,37 @@ class ExpressionNode:
 
     def __add__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("add", self.node, self._w(o)))
+
     def __radd__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("add", _Literal(o), self.node))
+
     def __sub__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("sub", self.node, self._w(o)))
+
     def __rsub__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("sub", _Literal(o), self.node))
+
     def __mul__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("mul", self.node, self._w(o)))
+
     def __rmul__(self, o: Any) -> ExpressionNode:
         return ExpressionNode(_BinOp("mul", _Literal(o), self.node))
+
     def __ge__(self, o: Any) -> ConstraintExpr:
         return ConstraintExpr(_CmpOp("ge", self.node, self._w(o)))
+
     def __le__(self, o: Any) -> ConstraintExpr:
         return ConstraintExpr(_CmpOp("le", self.node, self._w(o)))
+
     def __gt__(self, o: Any) -> ConstraintExpr:
         return ConstraintExpr(_CmpOp("gt", self.node, self._w(o)))
+
     def __lt__(self, o: Any) -> ConstraintExpr:
         return ConstraintExpr(_CmpOp("lt", self.node, self._w(o)))
+
     def __eq__(self, o: Any) -> ConstraintExpr:  # type: ignore[override]
         return ConstraintExpr(_CmpOp("eq", self.node, self._w(o)))
+
     def __ne__(self, o: Any) -> ConstraintExpr:  # type: ignore[override]
         return ConstraintExpr(_CmpOp("ne", self.node, self._w(o)))
 
@@ -84,9 +105,7 @@ class ConstraintExpr:
 
     __slots__ = ("node", "label", "explanation")
 
-    def __init__(
-        self, node: Any, label: str | None = None, explanation: str | None = None
-    ) -> None:
+    def __init__(self, node: Any, label: str | None = None, explanation: str | None = None) -> None:
         self.node = node
         self.label = label
         self.explanation = explanation
@@ -99,8 +118,10 @@ class ConstraintExpr:
 
     def __and__(self, o: ConstraintExpr) -> ConstraintExpr:
         return ConstraintExpr(_BoolOp("and", (self.node, o.node)))
+
     def __or__(self, o: ConstraintExpr) -> ConstraintExpr:
         return ConstraintExpr(_BoolOp("or", (self.node, o.node)))
+
     def __invert__(self) -> ConstraintExpr:
         return ConstraintExpr(_BoolOp("not", (self.node,)))
 
@@ -111,6 +132,7 @@ def E(field: Field) -> ExpressionNode:  # noqa: N802
 
 
 # Transpiler helpers
+
 
 def _z3_var(f: Field) -> z3.ExprRef:
     if f.z3_type == "Real":
@@ -256,18 +278,14 @@ def verify(
         s.assert_and_track(_transpile(inv.node), z3.Bool(inv.label))
         result = s.check()
         if result == z3.unknown:
-            raise RuntimeError(
-                f"Z3 timeout on '{inv.label}' (timeout={timeout_ms} ms)."
-            )
+            raise RuntimeError(f"Z3 timeout on '{inv.label}' (timeout={timeout_ms} ms).")
         if result == z3.unsat:
             violated.append(inv)
 
     if not violated:
         return VerifyResult(sat=True, unsat_core_labels=[], violated_explanations=[])
     labels = sorted(lbl for inv in violated if (lbl := inv.label) is not None)
-    explanations: list[str] = [
-        inv.explanation or inv.label or "" for inv in violated
-    ]
+    explanations: list[str] = [inv.explanation or inv.label or "" for inv in violated]
     return VerifyResult(sat=False, unsat_core_labels=labels, violated_explanations=explanations)
 
 
@@ -284,21 +302,22 @@ REFERENCE_INVARIANTS: list[ConstraintExpr] = [
     (E(_amount) <= E(_daily_limit))
     .named("within_daily_limit")
     .explain("Exceeds daily limit: amount={amount}, limit={daily_limit}"),
-    (E(_is_frozen) == False)  # noqa: E712
+    (E(_is_frozen) == False)
     .named("account_not_frozen")
     .explain("Account is frozen; no transactions permitted"),
 ]
 
 if __name__ == "__main__":
-    _B: dict[str, Any] = {
-        "balance": 1000, "amount": 100, "daily_limit": 5000, "is_frozen": False
-    }
+    _B: dict[str, Any] = {"balance": 1000, "amount": 100, "daily_limit": 5000, "is_frozen": False}
     cases: list[tuple[str, dict[str, Any]]] = [
-        ("SAT  normal tx",                {**_B}),
-        ("UNSAT single  overdraft",        {**_B, "balance": 50, "amount": 1000}),
-        ("UNSAT multi   overdraft+frozen", {**_B, "balance": 50, "amount": 1000, "is_frozen": True}),
-        ("SAT  boundary exact (0>=0)",     {**_B, "balance": 100, "amount": 100}),
-        ("UNSAT boundary breach",          {**_B, "balance": 100, "amount": Decimal("100.01")}),
+        ("SAT  normal tx", {**_B}),
+        ("UNSAT single  overdraft", {**_B, "balance": 50, "amount": 1000}),
+        (
+            "UNSAT multi   overdraft+frozen",
+            {**_B, "balance": 50, "amount": 1000, "is_frozen": True},
+        ),
+        ("SAT  boundary exact (0>=0)", {**_B, "balance": 100, "amount": 100}),
+        ("UNSAT boundary breach", {**_B, "balance": 100, "amount": Decimal("100.01")}),
     ]
     for desc, vals in cases:
         r = verify(REFERENCE_INVARIANTS, vals)

@@ -1450,7 +1450,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         import z3
 
         s = z3.Solver()
-        s.add(z3.Bool("x") == True)  # noqa: E712
+        s.add(z3.Bool("x") == True)
         res = str(s.check())
         if res == "sat":
             _check("z3-solver", "OK", f"z3 {z3.get_version_string()} — solver functional")
@@ -1794,7 +1794,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     # ── 18. Translator API key configuration ──────────────────────────────────
     # Warn when a translator backend looks configured but its API key env var
     # is absent, so that LLM calls don't fail silently at request time.
-    _TRANSLATOR_KEY_MAP: list[tuple[str, str, str]] = [
+    _translator_key_map: list[tuple[str, str, str]] = [
         # (module_name_hint, env_var, display_name)
         ("openai", "OPENAI_API_KEY", "OpenAI"),
         ("anthropic", "ANTHROPIC_API_KEY", "Anthropic"),
@@ -1807,7 +1807,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # Collect which translator packages are actually installed.
     _installed_translators: list[tuple[str, str, str]] = [
-        (mod, envvar, name) for mod, envvar, name in _TRANSLATOR_KEY_MAP if _has(mod)
+        (mod, envvar, name) for mod, envvar, name in _translator_key_map if _has(mod)
     ]
 
     if not _installed_translators:

@@ -33,6 +33,7 @@ Coverage targets
 * Duplicate label (mixin vs mixin) raises InvariantLabelError via validate()
 * invariant_mixin is importable from pramanix top-level package
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -171,7 +172,7 @@ class TestPolicyMixinComposition:
 
         @invariant_mixin
         def MixinB(fields: dict[str, Field]) -> ConstraintExpr:
-            return (E(fields["is_frozen"]) == False).named("not_frozen")  # noqa: E712
+            return (E(fields["is_frozen"]) == False).named("not_frozen")
 
         class _P(Policy, mixins=[MixinA, MixinB]):
             balance = Field("balance", Decimal, "Real")
@@ -397,7 +398,7 @@ class TestMixinGuardRoundTrip:
         guard = self._make_guard_with_funds_mixin()
         d = guard.verify(
             intent={"amount": Decimal("20000")},  # exceeds max_tx
-            state={"balance": Decimal("100")},    # and balance < amount
+            state={"balance": Decimal("100")},  # and balance < amount
         )
         assert d.allowed is False
         violated = set(d.violated_invariants)

@@ -13,6 +13,7 @@ These tests prove:
   5. Solver timeout is respected.
   6. Error paths raise appropriate exceptions.
 """
+
 from __future__ import annotations
 
 import sys
@@ -465,7 +466,7 @@ class TestVerify:
 
     def test_bool_field_equality(self) -> None:
         f = Field("active", bool, "Bool")
-        inv = (E(f) == True).named("must_be_active")  # noqa: E712
+        inv = (E(f) == True).named("must_be_active")
         assert verify([inv], {"active": True}).sat is True
         assert verify([inv], {"active": False}).sat is False
 

@@ -73,6 +73,7 @@ from tests.helpers.real_protocols import (
     _VaultKvClientMissingField,
     make_allow_guard,
 )
+
 # ── Shared policy fixture ─────────────────────────────────────────────────────
 
 _amount = Field("amount", Decimal, "Real")
@@ -96,7 +97,7 @@ class SimplePolicy(Policy):
             (E(cls.balance) - E(cls.amount) >= Decimal("0"))
             .named("sufficient_balance")
             .explain("Insufficient"),
-            (E(cls.is_frozen) == False).named("not_frozen").explain("Frozen"),  # noqa: E712
+            (E(cls.is_frozen) == False).named("not_frozen").explain("Frozen"),
             (E(cls.amount) <= E(cls.daily_limit)).named("within_limit").explain("Limit"),
         ]
 
@@ -997,36 +998,44 @@ class TestKeyProviderImportErrors:
     def test_aws_kms_requires_boto3(self) -> None:
         from pramanix.key_provider import AwsKmsKeyProvider
 
-        with patch.dict(sys.modules, {"boto3": None}):
-            with pytest.raises(ImportError, match="AwsKmsKeyProvider requires 'boto3'"):
-                AwsKmsKeyProvider(secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k")
+        with (
+            patch.dict(sys.modules, {"boto3": None}),
+            pytest.raises(ImportError, match="AwsKmsKeyProvider requires 'boto3'"),
+        ):
+            AwsKmsKeyProvider(secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k")
 
     def test_azure_kv_requires_azure_libs(self) -> None:
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        with patch.dict(sys.modules, {"azure.identity": None}):
-            with pytest.raises(ImportError, match="AzureKeyVaultKeyProvider requires"):
-                AzureKeyVaultKeyProvider(
-                    vault_url="https://test.vault.azure.net",
-                    secret_name="my-key",
-                )
+        with (
+            patch.dict(sys.modules, {"azure.identity": None}),
+            pytest.raises(ImportError, match="AzureKeyVaultKeyProvider requires"),
+        ):
+            AzureKeyVaultKeyProvider(
+                vault_url="https://test.vault.azure.net",
+                secret_name="my-key",
+            )
 
     def test_vault_requires_hvac(self) -> None:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        with patch.dict(sys.modules, {"hvac": None}):
-            with pytest.raises(ImportError, match="HashiCorpVaultKeyProvider requires 'hvac'"):
-                HashiCorpVaultKeyProvider(
-                    url="https://vault.example.com:8200",
-                    secret_path="pramanix/key",
-                )
+        with (
+            patch.dict(sys.modules, {"hvac": None}),
+            pytest.raises(ImportError, match="HashiCorpVaultKeyProvider requires 'hvac'"),
+        ):
+            HashiCorpVaultKeyProvider(
+                url="https://vault.example.com:8200",
+                secret_path="pramanix/key",
+            )
 
     def test_derive_public_pem_requires_cryptography(self) -> None:
         from pramanix.key_provider import _derive_public_pem
 
-        with patch.dict(sys.modules, {"cryptography.hazmat.primitives.serialization": None}):
-            with pytest.raises(ImportError, match="'cryptography' package is required"):
-                _derive_public_pem(b"dummy-pem")
+        with (
+            patch.dict(sys.modules, {"cryptography.hazmat.primitives.serialization": None}),
+            pytest.raises(ImportError, match="'cryptography' package is required"),
+        ):
+            _derive_public_pem(b"dummy-pem")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1367,9 +1376,11 @@ class TestAnthropicTranslatorImportErrors:
         """Lines 50-51: anthropic package absent → ImportError at construction."""
         from pramanix.translator.anthropic import AnthropicTranslator
 
-        with patch.dict(sys.modules, {"anthropic": None}):
-            with pytest.raises(ImportError, match="anthropic package"):
-                AnthropicTranslator("claude-opus-4-6", api_key="test")
+        with (
+            patch.dict(sys.modules, {"anthropic": None}),
+            pytest.raises(ImportError, match="anthropic package"),
+        ):
+            AnthropicTranslator("claude-opus-4-6", api_key="test")
 
     @pytest.mark.asyncio
     async def test_missing_tenacity_raises_import_error(self) -> None:
@@ -1377,10 +1388,11 @@ class TestAnthropicTranslatorImportErrors:
         from pramanix.translator.anthropic import AnthropicTranslator
 
         t = AnthropicTranslator("claude-opus-4-6", api_key="test")
-        with patch.dict(sys.modules, {"tenacity": None}):
-            with pytest.raises(ImportError, match="tenacity"):
-                await t.extract("hello", {"type": "object", "properties": {}})
-
+        with (
+            patch.dict(sys.modules, {"tenacity": None}),
+            pytest.raises(ImportError, match="tenacity"),
+        ):
+            await t.extract("hello", {"type": "object", "properties": {}})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1456,9 +1468,9 @@ def test_gemini_no_api_key_client_is_none(monkeypatch: pytest.MonkeyPatch) -> No
         import pramanix.translator.gemini as _gem_mod
 
         importlib.reload(_gem_mod)
-        from pramanix.translator.gemini import GeminiTranslator as _GT
+        from pramanix.translator.gemini import GeminiTranslator
 
-        t = _GT("gemini-pro")
+        t = GeminiTranslator("gemini-pro")
     assert t._client is None
 
 
@@ -1543,7 +1555,9 @@ def test_solver_span_noop_when_otel_absent(monkeypatch: pytest.MonkeyPatch) -> N
     import contextlib as _contextlib
 
     # Evict ALL opentelemetry-* entries so the fresh solver import finds none.
-    for k in [k for k in list(sys.modules) if k == "opentelemetry" or k.startswith("opentelemetry.")]:
+    for k in [
+        k for k in list(sys.modules) if k == "opentelemetry" or k.startswith("opentelemetry.")
+    ]:
         monkeypatch.delitem(sys.modules, k)
 
     # Evict the solver so its module-level code re-runs on the next import.

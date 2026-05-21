@@ -315,8 +315,8 @@ def test_is_in_exactly_matches_python_membership(value: int, allowed: frozenset[
 @settings(max_examples=100, deadline=timedelta(seconds=5))
 def test_bool_field_isolation(flag_val: bool) -> None:
     """Bool field == True/False is correctly encoded; no sort confusion with Real."""
-    inv_true = [(E(_flag) == True).named("is_true")]  # noqa: E712
-    inv_false = [(E(_flag) == False).named("is_false")]  # noqa: E712
+    inv_true = [(E(_flag) == True).named("is_true")]
+    inv_false = [(E(_flag) == False).named("is_false")]
 
     result_true = solve(inv_true, {"flag": flag_val}, timeout_ms=5_000)
     result_false = solve(inv_false, {"flag": flag_val}, timeout_ms=5_000)
@@ -336,7 +336,7 @@ def test_mixed_real_bool_invariants_no_contamination(xv: Decimal, flag_val: bool
     threshold = Decimal("0")
     inv = [
         (E(_x) >= threshold).named("real_constraint"),
-        (E(_flag) == True).named("bool_constraint"),  # noqa: E712
+        (E(_flag) == True).named("bool_constraint"),
     ]
     result = solve(inv, {"x": xv, "flag": flag_val}, timeout_ms=5_000)
     expected = (xv >= threshold) and flag_val

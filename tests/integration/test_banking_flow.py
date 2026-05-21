@@ -22,6 +22,7 @@ Additional integration scenarios:
   H — Daily limit exceeded (UNSAFE, within_daily_limit violated)
   I — All three invariants violated simultaneously (UNSAFE, three violations)
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -78,7 +79,7 @@ class BankingPolicy(Policy):
             (E(cls.amount) <= E(cls.daily_limit))
             .named("within_daily_limit")
             .explain("Daily limit exceeded: amount={amount} > daily_limit={daily_limit}"),
-            (E(cls.is_frozen) == False)  # noqa: E712
+            (E(cls.is_frozen) == False)
             .named("account_not_frozen")
             .explain("Account is frozen — all transfers blocked"),
         ]

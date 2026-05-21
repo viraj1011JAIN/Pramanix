@@ -8,6 +8,7 @@
 These tests verify that the Phase 10 optimizations achieve the promised
 performance improvements. Run with: pytest tests/perf/ -v
 """
+
 from __future__ import annotations
 
 import time
@@ -45,7 +46,7 @@ class PerfPolicy(Policy):
             ((E(_balance) - E(_amount)) >= Decimal("0"))
             .named("sufficient_balance")
             .explain("Insufficient balance"),
-            (E(_frozen) == False).named("account_not_frozen").explain("Frozen"),  # noqa: E712
+            (E(_frozen) == False).named("account_not_frozen").explain("Frozen"),
             (E(_amount) <= E(_limit)).named("within_daily_limit").explain("Limit"),
             (E(_risk) <= 0.8).named("acceptable_risk").explain("Risk"),
             (E(_amount) > Decimal("0")).named("positive_amount").explain("Positive"),

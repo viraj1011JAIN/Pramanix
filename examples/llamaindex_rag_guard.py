@@ -16,6 +16,7 @@ Install: pip install 'pramanix[llamaindex]' llama-index-core
 Run:
     python examples/llamaindex_rag_guard.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,9 +35,9 @@ from pramanix.integrations.llamaindex import PramanixFunctionTool, PramanixQuery
 #   3. access is for treatment, not research (purpose_code = 1)
 #
 
-_is_clinician   = Field("is_clinician",   bool,    "Bool")
-_consent_active = Field("consent_active", bool,    "Bool")
-_purpose_code   = Field("purpose_code",   int,     "Int")   # 1=treatment, 2=research
+_is_clinician = Field("is_clinician", bool, "Bool")
+_consent_active = Field("consent_active", bool, "Bool")
+_purpose_code = Field("purpose_code", int, "Int")  # 1=treatment, 2=research
 
 
 class PhiAccessPolicy(Policy):
@@ -48,41 +49,44 @@ class PhiAccessPolicy(Policy):
     @classmethod
     def fields(cls) -> dict:
         return {
-            "is_clinician":   _is_clinician,
+            "is_clinician": _is_clinician,
             "consent_active": _consent_active,
-            "purpose_code":   _purpose_code,
+            "purpose_code": _purpose_code,
         }
 
     @classmethod
     def invariants(cls) -> list:
         return [
-            (E(_is_clinician) == True).named("must_be_clinician").explain(  # noqa: E712
-                "PHI access requires clinical role — requester is_clinician={is_clinician}"
-            ),
-            (E(_consent_active) == True).named("consent_required").explain(  # noqa: E712
-                "PHI access requires patient consent — consent_active={consent_active}"
-            ),
-            (E(_purpose_code) == 1).named("treatment_purpose_only").explain(
-                "PHI access only for treatment (purpose_code=1) — got {purpose_code}"
-            ),
+            (E(_is_clinician) == True)
+            .named("must_be_clinician")
+            .explain("PHI access requires clinical role — requester is_clinician={is_clinician}"),
+            (E(_consent_active) == True)
+            .named("consent_required")
+            .explain("PHI access requires patient consent — consent_active={consent_active}"),
+            (E(_purpose_code) == 1)
+            .named("treatment_purpose_only")
+            .explain("PHI access only for treatment (purpose_code=1) — got {purpose_code}"),
         ]
 
 
 # ── Intent schema ─────────────────────────────────────────────────────────────
 
+
 class PhiAccessIntent(BaseModel):
-    is_clinician:   bool
+    is_clinician: bool
     consent_active: bool
-    purpose_code:   int
+    purpose_code: int
 
 
 # ── State (from auth context / patient record) ────────────────────────────────
+
 
 def get_state() -> dict:
     return {"state_version": "1.0"}  # Policy has no state_model, so any state passes version check
 
 
 # ── Mock query engine (replace with real VectorStoreIndex in production) ───────
+
 
 class _PatientRecordEngine:
     """Stub query engine simulating a LlamaIndex VectorStoreIndex."""
@@ -127,6 +131,7 @@ phi_rag_tool = PramanixQueryEngineTool(
 
 # ── Demo ──────────────────────────────────────────────────────────────────────
 
+
 async def demo() -> None:
     print("=== Pramanix LlamaIndex PHI Access Guard Demo ===\n")
 
@@ -150,7 +155,9 @@ async def demo() -> None:
     print(f"  is_error: {result.is_error}\n")
 
     # Scenario C: BLOCK — no consent
-    intent_no_consent = json.dumps({"is_clinician": True, "consent_active": False, "purpose_code": 1})
+    intent_no_consent = json.dumps(
+        {"is_clinician": True, "consent_active": False, "purpose_code": 1}
+    )
 
     print("Scenario C: No patient consent (BLOCK)")
     result = await phi_rag_tool.acall(intent_no_consent)

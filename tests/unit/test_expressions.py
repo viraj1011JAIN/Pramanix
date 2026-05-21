@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Unit tests for pramanix.expressions — DSL tree building."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -147,7 +148,7 @@ class TestComparisons:
         assert c.node.op == "lt"
 
     def test_eq_bool_field(self) -> None:
-        c = E(_flag) == False  # noqa: E712
+        c = E(_flag) == False
         assert c.node.op == "eq"
         assert isinstance(c.node.right, _Literal)
         assert c.node.right.value is False
@@ -208,11 +209,11 @@ class TestBooleanCombinators:
         assert len(c.node.operands) == 2
 
     def test_or_produces_bool_op(self) -> None:
-        c = (E(_balance) >= 0) | (E(_flag) == True)  # noqa: E712
+        c = (E(_balance) >= 0) | (E(_flag) == True)
         assert c.node.op == "or"
 
     def test_invert_produces_bool_op(self) -> None:
-        c = ~(E(_flag) == True)  # noqa: E712
+        c = ~(E(_flag) == True)
         assert isinstance(c, ConstraintExpr)
         assert c.node.op == "not"
         assert len(c.node.operands) == 1

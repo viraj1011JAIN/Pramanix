@@ -29,6 +29,7 @@ Payload generator signature:
 
 Returns a merged dict of all field values needed by the policy's invariants.
 """
+
 from __future__ import annotations
 
 import random
@@ -56,19 +57,15 @@ from pramanix.expressions import E
 class Finance100MPolicy(Policy):
     """Finance domain: post-trade balance and AML risk score enforcement."""
 
-    balance    = Field("balance",    Decimal, "Real")
-    amount     = Field("amount",     Decimal, "Real")
+    balance = Field("balance", Decimal, "Real")
+    amount = Field("amount", Decimal, "Real")
     risk_score = Field("risk_score", Decimal, "Real")
 
     @classmethod
     def invariants(cls):
         return [
-            (
-                E(cls.balance) - E(cls.amount) >= Decimal("0")
-            ).named("non_negative_balance"),
-            (
-                E(cls.risk_score) < Decimal("75")
-            ).named("risk_score_below_threshold"),
+            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance"),
+            (E(cls.risk_score) < Decimal("75")).named("risk_score_below_threshold"),
         ]
 
 
@@ -89,9 +86,9 @@ def _gen_finance(rng: random.Random) -> dict[str, Any]:
     # risk_score 0.0 – 100.0 (one decimal place).
     # 10 % high-risk (≥ 75) → BLOCK on risk_score_below_threshold.
     if rng.random() < 0.10:
-        risk_score = Decimal(rng.randint(750, 1000)) / 10   # 75.0 – 100.0
+        risk_score = Decimal(rng.randint(750, 1000)) / 10  # 75.0 – 100.0
     else:
-        risk_score = Decimal(rng.randint(0, 749)) / 10      # 0.0 – 74.9
+        risk_score = Decimal(rng.randint(0, 749)) / 10  # 0.0 – 74.9
 
     return {"balance": balance, "amount": amount, "risk_score": risk_score}
 
@@ -109,31 +106,25 @@ def _gen_finance(rng: random.Random) -> dict[str, Any]:
 class Banking100MPolicy(Policy):
     """Banking domain: balance, daily cap, and account-freeze enforcement."""
 
-    balance     = Field("balance",     Decimal, "Real")
-    amount      = Field("amount",      Decimal, "Real")
+    balance = Field("balance", Decimal, "Real")
+    amount = Field("amount", Decimal, "Real")
     daily_limit = Field("daily_limit", Decimal, "Real")
-    is_frozen   = Field("is_frozen",   bool,    "Bool")
+    is_frozen = Field("is_frozen", bool, "Bool")
 
     @classmethod
     def invariants(cls):
         return [
-            (
-                E(cls.balance) - E(cls.amount) >= Decimal("0")
-            ).named("non_negative_balance"),
-            (
-                E(cls.amount) <= E(cls.daily_limit)
-            ).named("within_daily_limit"),
-            (
-                E(cls.is_frozen) == False  # noqa: E712
-            ).named("account_not_frozen"),
+            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance"),
+            (E(cls.amount) <= E(cls.daily_limit)).named("within_daily_limit"),
+            (E(cls.is_frozen) == False).named("account_not_frozen"),
         ]
 
 
 def _gen_banking(rng: random.Random) -> dict[str, Any]:
-    balance_cents     = rng.randint(10_000, 1_000_000)   # $100 – $10 000
-    daily_limit_cents = rng.randint(50_000, 500_000)     # $500 – $5 000
-    balance           = Decimal(balance_cents) / 100
-    daily_limit       = Decimal(daily_limit_cents) / 100
+    balance_cents = rng.randint(10_000, 1_000_000)  # $100 – $10 000
+    daily_limit_cents = rng.randint(50_000, 500_000)  # $500 – $5 000
+    balance = Decimal(balance_cents) / 100
+    daily_limit = Decimal(daily_limit_cents) / 100
 
     r = rng.random()
     if r < 0.15:
@@ -151,10 +142,10 @@ def _gen_banking(rng: random.Random) -> dict[str, Any]:
     is_frozen = rng.random() < 0.15
 
     return {
-        "balance":     balance,
-        "amount":      amount,
+        "balance": balance,
+        "amount": amount,
         "daily_limit": daily_limit,
-        "is_frozen":   is_frozen,
+        "is_frozen": is_frozen,
     }
 
 
@@ -171,31 +162,25 @@ def _gen_banking(rng: random.Random) -> dict[str, Any]:
 class FinTech100MPolicy(Policy):
     """FinTech domain: wire-transfer balance, sanctions, and collateral check."""
 
-    balance            = Field("balance",            Decimal, "Real")
-    amount             = Field("amount",             Decimal, "Real")
-    collateral         = Field("collateral",         Decimal, "Real")
-    loan_value         = Field("loan_value",         Decimal, "Real")
-    counterparty_clear = Field("counterparty_clear", bool,    "Bool")
+    balance = Field("balance", Decimal, "Real")
+    amount = Field("amount", Decimal, "Real")
+    collateral = Field("collateral", Decimal, "Real")
+    loan_value = Field("loan_value", Decimal, "Real")
+    counterparty_clear = Field("counterparty_clear", bool, "Bool")
 
     @classmethod
     def invariants(cls):
         # Collateral haircut 15 % (Basel III CSA): effective coverage ≥ loan.
         return [
-            (
-                E(cls.balance) - E(cls.amount) >= Decimal("0")
-            ).named("sufficient_balance"),
-            (
-                E(cls.counterparty_clear) == True  # noqa: E712
-            ).named("sanctions_clear"),
-            (
-                E(cls.collateral) * Decimal("0.85") >= E(cls.loan_value)
-            ).named("collateral_haircut"),
+            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named("sufficient_balance"),
+            (E(cls.counterparty_clear) == True).named("sanctions_clear"),
+            (E(cls.collateral) * Decimal("0.85") >= E(cls.loan_value)).named("collateral_haircut"),
         ]
 
 
 def _gen_fintech(rng: random.Random) -> dict[str, Any]:
-    balance_cents = rng.randint(100_000, 10_000_000)   # $1 000 – $100 000
-    balance       = Decimal(balance_cents) / 100
+    balance_cents = rng.randint(100_000, 10_000_000)  # $1 000 – $100 000
+    balance = Decimal(balance_cents) / 100
 
     # 15 % overdraft.
     if rng.random() < 0.15:
@@ -207,7 +192,7 @@ def _gen_fintech(rng: random.Random) -> dict[str, Any]:
     counterparty_clear = rng.random() >= 0.12
 
     # Loan + collateral.  15 % under-collateralized → BLOCK on collateral_haircut.
-    loan_cents = rng.randint(50_000, 10_000_000)   # $500 – $100 000
+    loan_cents = rng.randint(50_000, 10_000_000)  # $500 – $100 000
     loan_value = Decimal(loan_cents) / 100
     if rng.random() < 0.15:
         # Under-collateralized: collateral × 0.85 < loan → BLOCK.
@@ -218,11 +203,11 @@ def _gen_fintech(rng: random.Random) -> dict[str, Any]:
         collateral = loan_value * Decimal("1.30")
 
     return {
-        "balance":            balance,
-        "amount":             amount,
+        "balance": balance,
+        "amount": amount,
         "counterparty_clear": counterparty_clear,
-        "collateral":         collateral,
-        "loan_value":         loan_value,
+        "collateral": collateral,
+        "loan_value": loan_value,
     }
 
 
@@ -243,24 +228,20 @@ def _gen_fintech(rng: random.Random) -> dict[str, Any]:
 class Healthcare100MPolicy(Policy):
     """Healthcare domain: consent, dosage gradient, and PHI role gate."""
 
-    consent_active = Field("consent_active", bool,    "Bool")
-    new_dose       = Field("new_dose",       Decimal, "Real")
-    current_dose   = Field("current_dose",   Decimal, "Real")
+    consent_active = Field("consent_active", bool, "Bool")
+    new_dose = Field("new_dose", Decimal, "Real")
+    current_dose = Field("current_dose", Decimal, "Real")
     requestor_role = Field("requestor_role", Decimal, "Real")
 
     @classmethod
     def invariants(cls):
         return [
+            (E(cls.consent_active) == True).named("consent_active"),
+            (E(cls.new_dose) - E(cls.current_dose) <= Decimal("0.25") * E(cls.current_dose)).named(
+                "dosage_gradient_check"
+            ),
             (
-                E(cls.consent_active) == True  # noqa: E712
-            ).named("consent_active"),
-            (
-                E(cls.new_dose) - E(cls.current_dose)
-                <= Decimal("0.25") * E(cls.current_dose)
-            ).named("dosage_gradient_check"),
-            (
-                (E(cls.requestor_role) == Decimal("1"))
-                | (E(cls.requestor_role) == Decimal("2"))
+                (E(cls.requestor_role) == Decimal("1")) | (E(cls.requestor_role) == Decimal("2"))
             ).named("phi_least_privilege"),
         ]
 
@@ -285,18 +266,18 @@ def _gen_healthcare(rng: random.Random) -> dict[str, Any]:
     # ADMIN + AUDITOR (20 %) → BLOCK on phi_least_privilege.
     rv = rng.random()
     if rv < 0.40:
-        role = Decimal("1")   # CLINICIAN — ALLOW
+        role = Decimal("1")  # CLINICIAN — ALLOW
     elif rv < 0.80:
-        role = Decimal("2")   # NURSE — ALLOW
+        role = Decimal("2")  # NURSE — ALLOW
     elif rv < 0.95:
-        role = Decimal("3")   # ADMIN — BLOCK
+        role = Decimal("3")  # ADMIN — BLOCK
     else:
-        role = Decimal("4")   # AUDITOR — BLOCK
+        role = Decimal("4")  # AUDITOR — BLOCK
 
     return {
         "consent_active": consent_active,
-        "new_dose":       new_dose,
-        "current_dose":   current_dose,
+        "new_dose": new_dose,
+        "current_dose": current_dose,
         "requestor_role": role,
     }
 
@@ -314,23 +295,18 @@ def _gen_healthcare(rng: random.Random) -> dict[str, Any]:
 class Infra100MPolicy(Policy):
     """Infra domain: blast radius, replica budget, and deployment approval."""
 
-    affected_pct        = Field("affected_pct",        Decimal, "Real")
-    replicas            = Field("replicas",             Decimal, "Real")
-    deployment_approved = Field("deployment_approved",  bool,    "Bool")
+    affected_pct = Field("affected_pct", Decimal, "Real")
+    replicas = Field("replicas", Decimal, "Real")
+    deployment_approved = Field("deployment_approved", bool, "Bool")
 
     @classmethod
     def invariants(cls):
         return [
-            (
-                E(cls.affected_pct) <= Decimal("0.20")
-            ).named("blast_radius_check"),
-            (
-                (E(cls.replicas) >= Decimal("2"))
-                & (E(cls.replicas) <= Decimal("50"))
-            ).named("replica_budget"),
-            (
-                E(cls.deployment_approved) == True  # noqa: E712
-            ).named("prod_deploy_approval"),
+            (E(cls.affected_pct) <= Decimal("0.20")).named("blast_radius_check"),
+            ((E(cls.replicas) >= Decimal("2")) & (E(cls.replicas) <= Decimal("50"))).named(
+                "replica_budget"
+            ),
+            (E(cls.deployment_approved) == True).named("prod_deploy_approval"),
         ]
 
 
@@ -338,26 +314,26 @@ def _gen_infra(rng: random.Random) -> dict[str, Any]:
     # affected_pct: 0.000 – 0.350 (three decimal places).
     # 20 % exceed 20 % blast radius → BLOCK on blast_radius_check.
     if rng.random() < 0.20:
-        affected_pct = Decimal(rng.randint(201, 350)) / 1000   # 0.201 – 0.350
+        affected_pct = Decimal(rng.randint(201, 350)) / 1000  # 0.201 – 0.350
     else:
-        affected_pct = Decimal(rng.randint(0, 199)) / 1000     # 0.000 – 0.199
+        affected_pct = Decimal(rng.randint(0, 199)) / 1000  # 0.000 – 0.199
 
     # replicas: 1 – 55.
     # 5 % over max (51-55), 5 % under min (1) → 10 % BLOCK on replica_budget.
     rv = rng.random()
     if rv < 0.05:
-        replicas = Decimal(rng.randint(51, 55))   # over max
+        replicas = Decimal(rng.randint(51, 55))  # over max
     elif rv < 0.10:
-        replicas = Decimal("1")                    # under min
+        replicas = Decimal("1")  # under min
     else:
-        replicas = Decimal(rng.randint(2, 50))     # valid range
+        replicas = Decimal(rng.randint(2, 50))  # valid range
 
     # 15 % unapproved → BLOCK on prod_deploy_approval.
     deployment_approved = rng.random() >= 0.15
 
     return {
-        "affected_pct":        affected_pct,
-        "replicas":            replicas,
+        "affected_pct": affected_pct,
+        "replicas": replicas,
         "deployment_approved": deployment_approved,
     }
 
@@ -365,11 +341,11 @@ def _gen_infra(rng: random.Random) -> dict[str, Any]:
 # ── DOMAINS registry ──────────────────────────────────────────────────────────
 
 DOMAINS: dict[str, tuple] = {
-    "finance":    (Finance100MPolicy,    _gen_finance),
-    "banking":    (Banking100MPolicy,    _gen_banking),
-    "fintech":    (FinTech100MPolicy,    _gen_fintech),
+    "finance": (Finance100MPolicy, _gen_finance),
+    "banking": (Banking100MPolicy, _gen_banking),
+    "fintech": (FinTech100MPolicy, _gen_fintech),
     "healthcare": (Healthcare100MPolicy, _gen_healthcare),
-    "infra":      (Infra100MPolicy,      _gen_infra),
+    "infra": (Infra100MPolicy, _gen_infra),
 }
 
 __all__ = ["DOMAINS"]

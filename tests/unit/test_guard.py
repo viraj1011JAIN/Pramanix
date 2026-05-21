@@ -16,6 +16,7 @@ Coverage targets:
 - Guard.verify — fail-safe: every exception class returns Decision(allowed=False)
 - Guard.verify — pydantic BaseModel instances accepted directly
 """
+
 from __future__ import annotations
 
 import uuid
@@ -74,9 +75,7 @@ class _TradePolicy(Policy):
             (E(cls.amount) <= E(cls.daily_limit))
             .named("within_daily_limit")
             .explain("Exceeds daily limit: amount={amount}, limit={daily_limit}"),
-            (E(cls.is_frozen) == False)  # noqa: E712
-            .named("account_not_frozen")
-            .explain("Account is frozen"),
+            (E(cls.is_frozen) == False).named("account_not_frozen").explain("Account is frozen"),
         ]
 
 
@@ -512,28 +511,24 @@ class TestGuardFailSafe:
         self.guard = Guard(_TradePolicy)
 
     def _patch_solve(self, monkeypatch: pytest.MonkeyPatch, side_effect: Exception) -> Decision:
-        def _raise(*a, **kw): raise side_effect
+        def _raise(*a, **kw):
+            raise side_effect
+
         monkeypatch.setattr(_guard_mod, "solve", _raise)
         return self.guard.verify(_GOOD_INTENT, _GOOD_STATE)
 
-    def test_solver_timeout_returns_timeout_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_solver_timeout_returns_timeout_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
         d = self._patch_solve(monkeypatch, SolverTimeoutError("non_negative_balance", 5_000))
         assert d.allowed is False
         assert d.status is SolverStatus.TIMEOUT
         assert "non_negative_balance" in d.violated_invariants
 
-    def test_transpile_error_returns_error_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_transpile_error_returns_error_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
         d = self._patch_solve(monkeypatch, TranspileError("bad node"))
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
 
-    def test_runtime_error_returns_error_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_runtime_error_returns_error_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
         d = self._patch_solve(monkeypatch, RuntimeError("z3 segfault simulation"))
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
@@ -544,9 +539,7 @@ class TestGuardFailSafe:
         d = self._patch_solve(monkeypatch, ValueError("surprise"))
         assert "ValueError" in d.explanation
 
-    def test_memory_error_returns_error_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_memory_error_returns_error_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
         d = self._patch_solve(monkeypatch, MemoryError("OOM"))
         assert d.allowed is False
 
@@ -578,7 +571,10 @@ class TestGuardFailSafe:
                 return [(E(cls.x) >= 0).named("pos")]
 
         g = Guard(_ExplodingPolicy)
-        def _boom(*a, **kw): raise RuntimeError("boom")
+
+        def _boom(*a, **kw):
+            raise RuntimeError("boom")
+
         monkeypatch.setattr(_ExplodingPolicy, "invariants", classmethod(_boom))
         d = g.verify({"x": Decimal("1")}, {})
         assert d.allowed is False

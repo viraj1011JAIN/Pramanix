@@ -3,6 +3,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for PolicyAuditor.boundary_examples (Z3-driven SAT/UNSAT witnesses)."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -16,6 +17,7 @@ from pramanix.policy import Policy
 
 class SimpleBudgetPolicy(Policy):
     """Policy with one numeric invariant: amount <= 1000."""
+
     amount = Field("amount", Decimal, "Real")
 
     @classmethod
@@ -27,17 +29,19 @@ class SimpleBudgetPolicy(Policy):
 
 class BoolPolicy(Policy):
     """Policy with a boolean invariant: approved must be True."""
+
     approved = Field("approved", bool, "Bool")
 
     @classmethod
     def invariants(cls):
         return [
-            (E(cls.approved) == True).named("must_be_approved"),  # noqa: E712
+            (E(cls.approved) == True).named("must_be_approved"),
         ]
 
 
 class MultiInvariantPolicy(Policy):
     """Policy with two independent invariants."""
+
     balance = Field("balance", Decimal, "Real")
     amount = Field("amount", Decimal, "Real")
 
@@ -51,6 +55,7 @@ class MultiInvariantPolicy(Policy):
 
 class AlwaysUnsatisfiablePolicy(Policy):
     """Invariant that can never be satisfied: x > x."""
+
     x = Field("x", int, "Int")
 
     @classmethod

@@ -10,6 +10,7 @@ Gate condition (from engineering plan):
     must produce a valid, verifiable policy.
     100 different tenant configs must compile without error in < 1s total.
 """
+
 from __future__ import annotations
 
 import time
@@ -87,7 +88,7 @@ class TestFromConfigBasic:
         }
 
         def inv(f: dict[str, Field]) -> ConstraintExpr:
-            return (E(f["active"]) == True).named("active_check")  # noqa: E712
+            return (E(f["active"]) == True).named("active_check")
 
         cls = Policy.from_config(fields, [inv])
         assert cls.fields()["price"].z3_type == "Real"
@@ -308,6 +309,7 @@ class TestFromConfigScale:
             def make_inv(name: str):
                 def inv(f: dict[str, Field]) -> ConstraintExpr:
                     return (E(f[name]) >= 0).named(f"pos_{name}")
+
                 return inv
 
             Policy.from_config(fields, [make_inv(field_name)])
@@ -320,6 +322,7 @@ class TestFromConfigScale:
 
     def test_hundred_cached_configs_under_100ms(self) -> None:
         """Cached lookups for identical configs must be near-instant."""
+
         # Warm the cache with one config
         def inv(f: dict[str, Field]) -> ConstraintExpr:
             return (E(f["balance"]) >= 0).named("pos")
@@ -332,6 +335,4 @@ class TestFromConfigScale:
             Policy.from_config({"balance": ("Real", Decimal)}, [inv])
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 0.1, (
-            f"100 cached lookups took {elapsed:.3f}s — must be < 0.1s."
-        )
+        assert elapsed < 0.1, f"100 cached lookups took {elapsed:.3f}s — must be < 0.1s."

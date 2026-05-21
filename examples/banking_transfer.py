@@ -114,7 +114,6 @@ class BankingPolicy(Policy):
             .named("within_daily_limit")
             .explain("Daily limit exceeded: amount={amount} > daily_limit={daily_limit}"),
             (E(cls.is_frozen) == False)
-              # noqa: E712
             .named("account_not_frozen")
             .explain("Account is frozen — all transfers blocked"),
         ]
