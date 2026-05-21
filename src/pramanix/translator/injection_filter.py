@@ -38,18 +38,13 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 import warnings
 from typing import Any
 
 _log = logging.getLogger(__name__)
 
-# SecurityWarning is a built-in in Python 3.12+.  On 3.11 we define a
-# compatible local class so warnings.warn(SecurityWarning) works on both.
-if sys.version_info < (3, 12):
-
-    class SecurityWarning(UserWarning):
-        """Security advisory (Python 3.11 compatibility shim)."""
+class SecurityWarning(UserWarning):
+    """Security advisory (not a Python built-in — defined here for all versions)."""
 
 
 __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
