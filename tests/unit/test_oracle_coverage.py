@@ -7,6 +7,7 @@ ComplianceOracle public API, _evaluate_impl full pipeline, _extract_invariant_se
 _evaluate_mapping all branches, _build_summary, _no_mappings_attestation,
 _error_attestation, and module-level helpers.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -89,9 +90,7 @@ class TestControlMappingPostInit:
         assert m.principal_pattern == "spiffe://*/svc"
 
     def test_both_provided_accepted(self) -> None:
-        m = _mapping(
-            invariant_label="inv_a", principal_pattern="spiffe://*/svc"
-        )
+        m = _mapping(invariant_label="inv_a", principal_pattern="spiffe://*/svc")
         assert m.invariant_label == "inv_a"
         assert m.principal_pattern == "spiffe://*/svc"
 
@@ -110,6 +109,7 @@ class TestFrameworkAttestationProperties:
 
     def test_total_controls_satisfied_only(self) -> None:
         from pramanix.compliance.oracle import ControlSatisfactionResult
+
         sr = ControlSatisfactionResult(
             control_id="CC6.1",
             control_title="Logical Access",
@@ -415,30 +415,20 @@ class TestCheckInvariantMatch:
     def test_none_label_returns_false(self) -> None:
         m = _mapping(invariant_label=None, principal_pattern="*")
         rec = _record(allowed=True)
-        result = _check_invariant_match(
-            m, rec, frozenset(["inv"]), frozenset()
-        )
+        result = _check_invariant_match(m, rec, frozenset(["inv"]), frozenset())
         assert result is False
 
     def test_allowed_checks_evaluated(self) -> None:
         m = _mapping(invariant_label="inv_a")
         rec = _record(allowed=True)
-        assert _check_invariant_match(
-            m, rec, frozenset(["inv_a"]), frozenset()
-        ) is True
-        assert _check_invariant_match(
-            m, rec, frozenset(["other"]), frozenset()
-        ) is False
+        assert _check_invariant_match(m, rec, frozenset(["inv_a"]), frozenset()) is True
+        assert _check_invariant_match(m, rec, frozenset(["other"]), frozenset()) is False
 
     def test_blocked_checks_violated(self) -> None:
         m = _mapping(invariant_label="inv_b")
         rec = _record(allowed=False)
-        assert _check_invariant_match(
-            m, rec, frozenset(), frozenset(["inv_b"])
-        ) is True
-        assert _check_invariant_match(
-            m, rec, frozenset(), frozenset()
-        ) is False
+        assert _check_invariant_match(m, rec, frozenset(), frozenset(["inv_b"])) is True
+        assert _check_invariant_match(m, rec, frozenset(), frozenset()) is False
 
 
 class TestCheckPrincipalMatch:

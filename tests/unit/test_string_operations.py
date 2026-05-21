@@ -10,6 +10,7 @@ Covers:
 - Transpiler produces correct Z3 constraints
 - End-to-end Guard.verify() with real string fields
 """
+
 from __future__ import annotations
 
 import pytest
@@ -38,9 +39,11 @@ IBAN_FIELD = Field("iban", str, "String")
 
 # ── Class 1: AST Construction — starts_with ───────────────────────────────────
 
+
 class TestStartsWithAST:
     def test_returns_constraint_expr(self):
         from pramanix.expressions import ConstraintExpr
+
         c = E(BIC_FIELD).starts_with("DEUT")
         assert isinstance(c, ConstraintExpr)
 
@@ -64,6 +67,7 @@ class TestStartsWithAST:
 
 # ── Class 2: AST Construction — ends_with ────────────────────────────────────
 
+
 class TestEndsWithAST:
     def test_inner_node_is_ends_with_op(self):
         c = E(BIC_FIELD).ends_with("XXX")
@@ -80,6 +84,7 @@ class TestEndsWithAST:
 
 # ── Class 3: AST Construction — contains ─────────────────────────────────────
 
+
 class TestContainsAST:
     def test_inner_node_is_contains_op(self):
         c = E(IBAN_FIELD).contains("DE")
@@ -95,6 +100,7 @@ class TestContainsAST:
 
 
 # ── Class 4: AST Construction — length_between ───────────────────────────────
+
 
 class TestLengthBetweenAST:
     def test_inner_node_is_length_between_op(self):
@@ -134,6 +140,7 @@ class TestLengthBetweenAST:
 
 # ── Class 5: AST Construction — matches_re ───────────────────────────────────
 
+
 class TestMatchesReAST:
     def test_inner_node_is_regex_match_op(self):
         c = E(BIC_FIELD).matches_re(r"[A-Z]{4}DE[A-Z0-9]{2,5}")
@@ -153,6 +160,7 @@ class TestMatchesReAST:
 
 
 # ── Class 6: collect_fields traversal ────────────────────────────────────────
+
 
 class TestCollectFieldsStringOps:
     def test_starts_with_finds_field(self):
@@ -183,9 +191,11 @@ class TestCollectFieldsStringOps:
 
 # ── Class 7: Z3 Transpilation ────────────────────────────────────────────────
 
+
 class TestStringTranspilation:
     def test_starts_with_transpiles(self):
         import z3
+
         c = E(BIC_FIELD).starts_with("DEUT")
         result = transpile(c.node)
         assert result is not None
@@ -193,30 +203,35 @@ class TestStringTranspilation:
 
     def test_ends_with_transpiles(self):
         import z3
+
         c = E(BIC_FIELD).ends_with("XXX")
         result = transpile(c.node)
         assert z3.is_bool(result)
 
     def test_contains_transpiles(self):
         import z3
+
         c = E(IBAN_FIELD).contains("DE")
         result = transpile(c.node)
         assert z3.is_bool(result)
 
     def test_length_between_transpiles(self):
         import z3
+
         c = E(IBAN_FIELD).length_between(15, 34)
         result = transpile(c.node)
         assert z3.is_bool(result)
 
     def test_matches_re_transpiles(self):
         import z3
+
         c = E(BIC_FIELD).matches_re(r"[A-Z]+")
         result = transpile(c.node)
         assert z3.is_bool(result)
 
 
 # ── Class 8: End-to-End Guard.verify() ───────────────────────────────────────
+
 
 class TestStringOpsE2E:
     """Integration tests using Guard.verify() with real String fields."""
@@ -257,10 +272,14 @@ class TestStringOpsE2E:
 
     def test_iban_contains_allowed(self):
         guard = Guard(self.IbanPolicy, config=GuardConfig(execution_mode="sync"))
-        decision = guard.verify(intent={"action": "check"}, state={"iban": "DE89370400440532013000"})
+        decision = guard.verify(
+            intent={"action": "check"}, state={"iban": "DE89370400440532013000"}
+        )
         assert decision.allowed is True
 
     def test_iban_missing_de_blocked(self):
         guard = Guard(self.IbanPolicy, config=GuardConfig(execution_mode="sync"))
-        decision = guard.verify(intent={"action": "check"}, state={"iban": "GB29NWBK60161331926819"})
+        decision = guard.verify(
+            intent={"action": "check"}, state={"iban": "GB29NWBK60161331926819"}
+        )
         assert decision.allowed is False

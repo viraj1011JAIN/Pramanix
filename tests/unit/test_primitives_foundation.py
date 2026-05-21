@@ -26,6 +26,7 @@ Every primitive gets:
 We use ``_fmt`` from ``guard.py`` (not an internal test-only helper) to
 guarantee the clear-box explanation path used in production is covered.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

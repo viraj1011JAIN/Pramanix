@@ -11,6 +11,7 @@ Tests:
 * Worker warmup completes before first real request
 * Worker recycled after max_decisions_per_worker
 """
+
 from __future__ import annotations
 
 import pickle

@@ -5,13 +5,14 @@
 # - docs/PROOF_DOSSIER.md
 """Regression tests for gap fixes N1-N6.
 
-    N1  resolver_registry public singleton wired into Guard (same object)
-    N2  DecisionSigner._canonicalize() uses correct to_dict() key names
-    N3  MerkleAnchor.add() raises ValueError on duplicate decision_id
-    N4  ResolverRegistry.register() logs warning on overwrite
-    N5  GuardConfig(metrics_enabled=True) emits UserWarning when prometheus absent
-    N6  DecisionSigner produces identical tokens on repeated signing (deterministic)
+N1  resolver_registry public singleton wired into Guard (same object)
+N2  DecisionSigner._canonicalize() uses correct to_dict() key names
+N3  MerkleAnchor.add() raises ValueError on duplicate decision_id
+N4  ResolverRegistry.register() logs warning on overwrite
+N5  GuardConfig(metrics_enabled=True) emits UserWarning when prometheus absent
+N6  DecisionSigner produces identical tokens on repeated signing (deterministic)
 """
+
 from __future__ import annotations
 
 import logging
@@ -85,9 +86,9 @@ class TestN2CanonicalizerKeys:
         signer = DecisionSigner(signing_key=_KEY_64)
         decision = Decision.safe(solver_time_ms=5.0)
         canonical = signer._canonicalize(decision)
-        assert "policy_hash" in canonical, (
-            "_canonicalize must include 'policy_hash' key from to_dict()"
-        )
+        assert (
+            "policy_hash" in canonical
+        ), "_canonicalize must include 'policy_hash' key from to_dict()"
         assert "policy" not in canonical, (
             "_canonicalize must NOT include 'policy' — that key doesn't exist "
             "in to_dict() and would always be empty string"
@@ -207,13 +208,12 @@ class TestN4ResolverOverwriteWarning:
         reg = ResolverRegistry()
         with caplog.at_level(logging.WARNING, logger="pramanix.resolvers"):
             reg.register("_fresh_name", lambda: 1)
-        assert not caplog.records, (
-            "First-time registration must not log a warning"
-        )
+        assert not caplog.records, "First-time registration must not log a warning"
 
     def test_overwrite_emits_warning(self) -> None:
         """Re-registering without force=True raises ResolverConflictError."""
         from pramanix.exceptions import ResolverConflictError
+
         reg = ResolverRegistry()
         reg.register("balance", lambda: 100)
         with pytest.raises(ResolverConflictError, match="balance"):
@@ -245,6 +245,7 @@ class TestN5MetricsWarning:
             warnings.simplefilter("error", UserWarning)
             # Must not raise
             from pramanix.guard_config import GuardConfig
+
             GuardConfig(metrics_enabled=False)
 
     def test_warning_when_metrics_enabled_and_prometheus_absent(self) -> None:
@@ -252,7 +253,10 @@ class TestN5MetricsWarning:
         prometheus_client is not importable."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_PROM_AVAILABLE", False), pytest.warns(UserWarning, match="prometheus_client"):
+        with (
+            patch.object(_gc, "_PROM_AVAILABLE", False),
+            pytest.warns(UserWarning, match="prometheus_client"),
+        ):
             _gc.GuardConfig(metrics_enabled=True)
 
     def test_no_warning_when_prometheus_available(self) -> None:

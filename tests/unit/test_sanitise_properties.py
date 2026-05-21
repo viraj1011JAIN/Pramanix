@@ -32,6 +32,7 @@ E-8. Empty string scores 0.0 (no short-input signal for len == 0).
 E-9. Single ASCII char scores >= 0.2 (short-input signal fires for 1 <= len < 10).
 E-10. Whitespace-only string scores 0.0 (stripped = empty, no short-input signal).
 """
+
 from __future__ import annotations
 
 import re
@@ -54,7 +55,7 @@ from pramanix.translator._sanitise import (
 # Amount values: strings, numbers, and values that cause Decimal() to raise.
 _amount_values = st.one_of(
     st.decimals(allow_nan=True, allow_infinity=True),
-    st.integers(min_value=-(10 ** 18), max_value=10 ** 18),
+    st.integers(min_value=-(10**18), max_value=10**18),
     st.floats(allow_nan=True, allow_infinity=True),
     st.text(max_size=30),
     st.none(),
@@ -64,8 +65,14 @@ _amount_values = st.one_of(
 
 # ID-like field names that trigger the non-word-char signal.
 _ID_SUFFIXES = [
-    "_id", "_key", "_token", "_ref",
-    "_number", "_code", "_account", "_address",
+    "_id",
+    "_key",
+    "_token",
+    "_ref",
+    "_number",
+    "_code",
+    "_account",
+    "_address",
 ]
 
 
@@ -77,10 +84,13 @@ def _extracted_intent(draw: st.DrawFn) -> dict:
         d["amount"] = draw(_amount_values)
     if draw(st.booleans()):
         suffix = draw(st.sampled_from(_ID_SUFFIXES))
-        prefix = draw(st.text(
-            min_size=1, max_size=10,
-            alphabet=st.characters(whitelist_categories=("Ll", "Lu")),
-        ))
+        prefix = draw(
+            st.text(
+                min_size=1,
+                max_size=10,
+                alphabet=st.characters(whitelist_categories=("Ll", "Lu")),
+            )
+        )
         d[prefix + suffix] = draw(st.text(max_size=40))
     return d
 
@@ -194,16 +204,14 @@ def test_injection_pattern_warning_drives_score_to_at_least_0_6(
     sub_penny_threshold: Decimal,
 ) -> None:
     """P-4: Any warnings list containing 'injection_patterns_detected' → >= 0.6."""
-    warnings = extra_warnings + ["injection_patterns_detected: test"]
+    warnings = [*extra_warnings, "injection_patterns_detected: test"]
     score = injection_confidence_score(
         user_input,
         extracted_intent,
         warnings,
         sub_penny_threshold=sub_penny_threshold,
     )
-    assert score >= 0.6, (
-        f"expected >= 0.6 with injection warning, got {score}"
-    )
+    assert score >= 0.6, f"expected >= 0.6 with injection warning, got {score}"
 
 
 # ── P-5: Score for fully benign conditions is exactly 0.0 ────────────────────
@@ -227,7 +235,7 @@ def test_all_signals_simultaneously_capped_at_1_0() -> None:
     """All signals fire at once: result must be exactly 1.0 (not > 1.0)."""
     user_input = "AAAAAAAAAAAAAAAAAAAAAA"  # 22 chars → +0.2 high-entropy
     extracted_intent = {
-        "amount": {},       # dict → Decimal raises → +0.4
+        "amount": {},  # dict → Decimal raises → +0.4
         "user_id": "x!/y",  # non-word char → +0.3
     }
     warnings = ["injection_patterns_detected: ['jailbreak']"]  # +0.6
@@ -244,8 +252,8 @@ def test_sub_penny_and_injection_capped_at_1_0() -> None:
     """Sub-penny + injection warning + ID field + high-entropy → 1.4 → 1.0."""
     user_input = "AAAAAAAAAAAAAAAAAAAAAAAAAAA"  # > 20 chars → +0.2
     extracted_intent = {
-        "amount": "0.001",   # 0 < 0.001 < 0.10 → +0.3
-        "account_id": "x;y", # non-word char → +0.3
+        "amount": "0.001",  # 0 < 0.001 < 0.10 → +0.3
+        "account_id": "x;y",  # non-word char → +0.3
     }
     warnings = ["injection_patterns_detected: ['ignore all']"]  # +0.6
     score = injection_confidence_score(
@@ -283,9 +291,9 @@ def test_sanitise_short_input_never_raises(raw: str) -> None:
 def test_sanitise_output_has_no_stripped_control_chars(raw: str) -> None:
     """S-2: Output never contains C0 control codes in the stripped range."""
     cleaned, _ = sanitise_user_input(raw)
-    assert _CONTROL_RE.search(cleaned) is None, (
-        f"Control char found in sanitised output: {cleaned!r}"
-    )
+    assert (
+        _CONTROL_RE.search(cleaned) is None
+    ), f"Control char found in sanitised output: {cleaned!r}"
 
 
 @given(raw=st.text(min_size=2, max_size=50))
@@ -315,11 +323,10 @@ def test_sanitise_unicode_normalised_warning_iff_nfkc_changes_text(
     if len(normalised) > 511:
         return  # NFKC expansion pushed over limit; skip without assume()
     _cleaned, warnings = sanitise_user_input(raw)
-    nfkc_changed = (normalised != raw)
+    nfkc_changed = normalised != raw
     warning_present = any("unicode_normalised" in w for w in warnings)
     assert nfkc_changed == warning_present, (
-        f"NFKC changed={nfkc_changed} but "
-        f"unicode_normalised warning present={warning_present}"
+        f"NFKC changed={nfkc_changed} but " f"unicode_normalised warning present={warning_present}"
     )
 
 
@@ -380,30 +387,22 @@ class TestScoreEdgeCases:
 
     def test_empty_string_scores_zero(self) -> None:
         """E-8: empty string has no short-input signal (0 is not in 1..9)."""
-        score = injection_confidence_score(
-            "", {}, [], sub_penny_threshold=Decimal("0.10")
-        )
+        score = injection_confidence_score("", {}, [], sub_penny_threshold=Decimal("0.10"))
         assert score == 0.0
 
     def test_single_char_triggers_short_input_signal(self) -> None:
         """E-9: 1-char input (len == 1, in 1..9) → short-input signal (+0.2)."""
-        score = injection_confidence_score(
-            "A", {}, [], sub_penny_threshold=Decimal("0.10")
-        )
+        score = injection_confidence_score("A", {}, [], sub_penny_threshold=Decimal("0.10"))
         assert score >= 0.2
 
     def test_whitespace_only_scores_zero(self) -> None:
         """E-10: whitespace-only input strips to '' → no short-input signal."""
-        score = injection_confidence_score(
-            "     ", {}, [], sub_penny_threshold=Decimal("0.10")
-        )
+        score = injection_confidence_score("     ", {}, [], sub_penny_threshold=Decimal("0.10"))
         assert score == 0.0
 
     def test_nine_char_input_triggers_short_input_signal(self) -> None:
         """Boundary: 9 chars is still < 10, so short-input signal fires."""
-        score = injection_confidence_score(
-            "AAAAAAAAA", {}, [], sub_penny_threshold=Decimal("0.10")
-        )
+        score = injection_confidence_score("AAAAAAAAA", {}, [], sub_penny_threshold=Decimal("0.10"))
         assert score >= 0.2
 
     def test_ten_char_input_does_not_trigger_short_input_signal(self) -> None:

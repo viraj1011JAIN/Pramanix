@@ -13,6 +13,7 @@ Generate a production key:
 Token format: base64url(header).base64url(payload).base64url(sig)
 Algorithm: HMAC-SHA256
 """
+
 from __future__ import annotations
 
 import base64
@@ -119,7 +120,7 @@ class DecisionSigner:
                 f"Set the {self._ENV_KEY!r} environment variable to a "
                 f"hex string of at least {self._MIN_KEY_LENGTH} characters, "
                 "or pass signing_key= explicitly. "
-                "Generate a key: python -c \"import secrets; print(secrets.token_hex(64))\". "
+                'Generate a key: python -c "import secrets; print(secrets.token_hex(64))". '
                 "To operate without signing, do not instantiate DecisionSigner "
                 "(or use DecisionSigner.optional() which returns None when no key is set)."
             )
@@ -129,12 +130,12 @@ class DecisionSigner:
                 f"({len(raw)} chars, minimum {self._MIN_KEY_LENGTH}). "
                 "Short keys are cryptographically weak. "
                 "Generate a secure key: "
-                "python -c \"import secrets; print(secrets.token_hex(64))\""
+                'python -c "import secrets; print(secrets.token_hex(64))"'
             )
         self._key: bytes = raw.encode()
 
     @classmethod
-    def optional(cls, signing_key: str | None = None) -> "DecisionSigner | None":
+    def optional(cls, signing_key: str | None = None) -> DecisionSigner | None:
         """Return a ``DecisionSigner`` if a key is configured, or ``None``.
 
         Use this in application code that should function with or without

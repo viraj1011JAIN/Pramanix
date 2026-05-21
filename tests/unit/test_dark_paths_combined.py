@@ -13,24 +13,20 @@ Covers uncovered lines identified in the 95.31% coverage run:
 - provenance.py lines 303-308 (async provenance callback on timeout/error)
 - guard.py lines 1138-1175 (async state-version mismatch)
 """
+
 from __future__ import annotations
 
 import hashlib
 import hmac
-import importlib
 import pickle
 import sys
-import tempfile
-import types
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel
 
 from pramanix.decision import Decision, SolverStatus, _build_decision_canonical
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # decision.py dark paths
@@ -172,10 +168,14 @@ class TestInjectionScorerDarkPaths:
         # Must also null out already-cached submodules so that
         # `from sklearn.X.Y import Z` inside __init__ cannot resolve
         # them from sys.modules when sklearn is installed.
-        _sklearn_keys = {k: None for k in list(sys.modules) if k == "sklearn" or k.startswith("sklearn.")}
-        with patch.dict(sys.modules, _sklearn_keys):
-            with pytest.raises(ConfigurationError, match="scikit-learn"):
-                CalibratedScorer.load(pkl_path, hmac_key=key)
+        _sklearn_keys = {
+            k: None for k in list(sys.modules) if k == "sklearn" or k.startswith("sklearn.")
+        }
+        with (
+            patch.dict(sys.modules, _sklearn_keys),
+            pytest.raises(ConfigurationError, match="scikit-learn"),
+        ):
+            CalibratedScorer.load(pkl_path, hmac_key=key)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -187,9 +187,9 @@ class TestAsyncStateVersionMismatch:
     """guard.py lines 1138-1175: verify_async with wrong/missing state_version."""
 
     def _make_versioned_guard(self):
+        from pramanix.expressions import ConstraintExpr, E, Field
         from pramanix.guard import Guard
         from pramanix.guard_config import GuardConfig
-        from pramanix.expressions import E, Field, ConstraintExpr
         from pramanix.policy import Policy
 
         class _SemverPolicy(Policy):
@@ -283,7 +283,7 @@ class TestAsyncThreadAdditionalPaths:
     """guard.py async-thread paths not covered by the state-version tests."""
 
     def _make_simple_policy(self):
-        from pramanix.expressions import E, Field, ConstraintExpr
+        from pramanix.expressions import ConstraintExpr, E, Field
         from pramanix.policy import Policy
 
         class _SimplePolicy(Policy):
@@ -371,9 +371,10 @@ class TestAsyncProcessNonPicklable:
     async def test_async_process_non_picklable_intent_returns_error(self) -> None:
         """Values dict with a non-picklable object → error before ProcessPoolExecutor."""
         import threading
+
+        from pramanix.expressions import ConstraintExpr, E, Field
         from pramanix.guard import Guard
         from pramanix.guard_config import GuardConfig
-        from pramanix.expressions import E, Field, ConstraintExpr
         from pramanix.policy import Policy
 
         class _ProcessPolicy(Policy):

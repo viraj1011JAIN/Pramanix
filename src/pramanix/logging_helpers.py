@@ -56,12 +56,13 @@ Logger namespace reference
 ``pramanix.integrations.langchain`` — execute_fn warnings (H-03)
 ``pramanix.integrations.crewai`` — underlying_fn warnings (H-04)
 """
+
 from __future__ import annotations
 
 import logging
 import logging.handlers
 import sys
-from typing import Any, Literal, TextIO, TypedDict
+from typing import Literal, TextIO, TypedDict
 
 __all__ = [
     "PRAMANIX_LOGGER_NAMES",
@@ -81,6 +82,7 @@ class LoggingStatus(TypedDict):
     handlers: list[str]
     using_last_resort: bool
 
+
 # Canonical logger names emitted by Pramanix.  Operators can subscribe to
 # any of these individually or to the root ``pramanix`` namespace.
 PRAMANIX_LOGGER_NAMES: tuple[str, ...] = (
@@ -97,8 +99,7 @@ PRAMANIX_LOGGER_NAMES: tuple[str, ...] = (
 )
 
 _JSON_FORMAT = (
-    '{"ts":"%(asctime)s","level":"%(levelname)s",'
-    '"logger":"%(name)s","msg":%(message)r}'
+    '{"ts":"%(asctime)s","level":"%(levelname)s",' '"logger":"%(name)s","msg":%(message)r}'
 )
 _TEXT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s — %(message)s"
 
@@ -238,9 +239,7 @@ def check_logging_configuration(
     for h in real_handlers:
         cls_name = type(h).__name__
         if isinstance(h, logging.StreamHandler):
-            stream_name = getattr(
-                getattr(h, "stream", None), "name", str(type(h).__name__)
-            )
+            stream_name = getattr(getattr(h, "stream", None), "name", str(type(h).__name__))
             handler_descs.append(f"{cls_name}({stream_name})")
         else:
             handler_descs.append(cls_name)

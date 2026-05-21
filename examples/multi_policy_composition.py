@@ -16,6 +16,7 @@ Run::
 
     python examples/multi_policy_composition.py
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -103,29 +104,37 @@ def run() -> None:
 
     # Scenario A: Teller, sufficient funds → ALLOW both
     result = verify_transfer(
-        amount=Decimal("100"), balance=Decimal("500"),
-        daily_limit=Decimal("1000"), role=1,
+        amount=Decimal("100"),
+        balance=Decimal("500"),
+        daily_limit=Decimal("1000"),
+        role=1,
     )
     assert result
 
     # Scenario B: Manager, over daily limit → BLOCK (finance)
     result = verify_transfer(
-        amount=Decimal("2000"), balance=Decimal("5000"),
-        daily_limit=Decimal("1000"), role=2,
+        amount=Decimal("2000"),
+        balance=Decimal("5000"),
+        daily_limit=Decimal("1000"),
+        role=2,
     )
     assert not result
 
     # Scenario C: External role (99), sufficient funds → BLOCK (auth)
     result = verify_transfer(
-        amount=Decimal("50"), balance=Decimal("500"),
-        daily_limit=Decimal("1000"), role=99,
+        amount=Decimal("50"),
+        balance=Decimal("500"),
+        daily_limit=Decimal("1000"),
+        role=99,
     )
     assert not result
 
     # Scenario D: Teller, overdraft → BLOCK (finance)
     result = verify_transfer(
-        amount=Decimal("1000"), balance=Decimal("100"),
-        daily_limit=Decimal("2000"), role=1,
+        amount=Decimal("1000"),
+        balance=Decimal("100"),
+        daily_limit=Decimal("2000"),
+        role=1,
     )
     assert not result
 

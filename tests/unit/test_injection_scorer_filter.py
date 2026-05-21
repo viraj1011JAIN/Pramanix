@@ -257,9 +257,9 @@ class TestCalibratedScorer:
             path = Path(tf.name)
 
         try:
-            _TEST_HMAC_KEY = b"\x00" * 32  # 32-byte sentinel — test only
-            fitted_scorer.save(path, hmac_key=_TEST_HMAC_KEY)
-            loaded = CalibratedScorer.load(path, hmac_key=_TEST_HMAC_KEY)
+            _test_hmac_key = b"\x00" * 32  # 32-byte sentinel — test only
+            fitted_scorer.save(path, hmac_key=_test_hmac_key)
+            loaded = CalibratedScorer.load(path, hmac_key=_test_hmac_key)
             score1 = fitted_scorer.score("transfer $100")
             score2 = loaded.score("transfer $100")
             assert abs(score1 - score2) < 1e-6

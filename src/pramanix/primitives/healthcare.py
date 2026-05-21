@@ -67,6 +67,7 @@ Example::
                 ConsentActive(cls.consent_active, cls.consent_expiry, current_epoch=1_735_000_000),
             ]
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any

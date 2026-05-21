@@ -17,6 +17,7 @@ Contents
 * :func:`_fmt` — formats an invariant's explanation template with concrete
   field values.
 """
+
 from __future__ import annotations
 
 import logging
@@ -139,14 +140,14 @@ def _semantic_post_consensus_check(
         try:
             dosage = Decimal(str(raw_dosage))
             if dosage <= 0:
-                raise SemanticPolicyViolation(
-                    f"dosage must be positive, got {dosage}."
-                )
+                raise SemanticPolicyViolation(f"dosage must be positive, got {dosage}.")
             raw_max_daily_dose = state_values.get("max_daily_dose")
             raw_total_daily_dose = state_values.get("total_daily_dose")
             if raw_max_daily_dose is not None and raw_total_daily_dose is not None:
                 try:
-                    remaining_dose = Decimal(str(raw_max_daily_dose)) - Decimal(str(raw_total_daily_dose))
+                    remaining_dose = Decimal(str(raw_max_daily_dose)) - Decimal(
+                        str(raw_total_daily_dose)
+                    )
                     if dosage > remaining_dose:
                         raise SemanticPolicyViolation(
                             f"Dosage exceeds remaining daily dose allowance "
@@ -177,12 +178,13 @@ def _semantic_post_consensus_check(
                 exc_info=_exc,
             )
             raise SemanticPolicyViolation(
-                f"dosage value {raw_dosage!r} is not a valid number; "
-                "safe-default deny applied."
+                f"dosage value {raw_dosage!r} is not a valid number; " "safe-default deny applied."
             ) from _exc
 
     # ── Infra: resource request vs limit checks ──────────────────────────
-    raw_requested_replicas = intent_dict.get("requested_replicas") or intent_dict.get("replica_count")
+    raw_requested_replicas = intent_dict.get("requested_replicas") or intent_dict.get(
+        "replica_count"
+    )
     if raw_requested_replicas is not None:
         try:
             requested = int(raw_requested_replicas)
@@ -301,13 +303,17 @@ def _compute_policy_fingerprint(policy: type[Policy]) -> str:
         "name": policy.__name__,
         "version": version,
         "invariants": sorted(
-            ({"label": inv.label or "", "explanation": inv.explanation or ""}
-             for inv in invariants),
+            (
+                {"label": inv.label or "", "explanation": inv.explanation or ""}
+                for inv in invariants
+            ),
             key=lambda x: x["label"],
         ),
         "fields": sorted(
-            ({"name": n, "type": f.z3_type, "python_type": f.python_type.__qualname__}
-             for n, f in all_fields.items()),
+            (
+                {"name": n, "type": f.z3_type, "python_type": f.python_type.__qualname__}
+                for n, f in all_fields.items()
+            ),
             key=lambda x: x["name"],
         ),
     }
@@ -344,6 +350,7 @@ def _apply_enum_coercions(
         ValueError: If a string value is not a member of its StringEnumField.
                     The message is caller-friendly and names the field.
     """
+
     def _coerce(d: dict[str, Any]) -> dict[str, Any]:
         out = dict(d)
         for fname, sef in coercions.items():

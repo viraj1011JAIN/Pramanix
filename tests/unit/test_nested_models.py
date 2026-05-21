@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase B-1: Tests for nested Pydantic models and NestedField descriptor chaining
 """Gate: Account->Position->Instrument nested model must compile and verify."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -360,4 +361,3 @@ class TestNestedVsFlat:
         )
         assert flat_block.allowed is False
         assert nested_block.allowed is False
-

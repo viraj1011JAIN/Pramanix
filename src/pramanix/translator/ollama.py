@@ -79,9 +79,7 @@ class OllamaTranslator:
             ) from exc
 
         self.model = model
-        resolved_url = (
-            base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
-        )
+        resolved_url = base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
         self._base_url = resolved_url.rstrip("/")
         self._timeout = timeout
         self._temperature = temperature
@@ -130,8 +128,7 @@ class OllamaTranslator:
             response = await self._client.post(url, json=payload)
         except self._httpx.TimeoutException as exc:
             raise LLMTimeoutError(
-                f"Ollama model '{self.model}' timed out after "
-                f"{self._timeout}s: {exc}",
+                f"Ollama model '{self.model}' timed out after " f"{self._timeout}s: {exc}",
                 model=self.model,
                 attempts=1,
             ) from exc
@@ -152,8 +149,7 @@ class OllamaTranslator:
             data = response.json()
         except Exception as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] Ollama response was not valid JSON: "
-                f"{exc}"
+                f"[{self.model}] Ollama response was not valid JSON: " f"{exc}"
             ) from exc
 
         # Ollama /api/chat: {"message": {"role": "assistant", "content": "..."}}

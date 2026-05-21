@@ -7,6 +7,7 @@
 
 All tests use real objects — no mocks, no monkeypatching of Pramanix internals.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -20,7 +21,6 @@ from pramanix.ifc import (
     FlowRule,
     TrustLabel,
 )
-
 
 # ── TrustLabel tests ──────────────────────────────────────────────────────────
 
@@ -124,6 +124,7 @@ class TestClassifiedData:
 
     def test_created_at_set(self):
         import time
+
         t0 = time.time()
         cd = self._make()
         assert cd.created_at >= t0
@@ -135,23 +136,17 @@ class TestClassifiedData:
 class TestFlowPolicy:
     def test_permissive_allows_everything(self):
         policy = FlowPolicy.permissive()
-        decision = policy.evaluate(
-            TrustLabel.REGULATED, TrustLabel.PUBLIC, "src", "sink"
-        )
+        decision = policy.evaluate(TrustLabel.REGULATED, TrustLabel.PUBLIC, "src", "sink")
         assert decision.permitted
 
     def test_strict_allows_same_label(self):
         policy = FlowPolicy.strict()
-        decision = policy.evaluate(
-            TrustLabel.INTERNAL, TrustLabel.INTERNAL, "src", "sink"
-        )
+        decision = policy.evaluate(TrustLabel.INTERNAL, TrustLabel.INTERNAL, "src", "sink")
         assert decision.permitted
 
     def test_strict_blocks_lower_sink(self):
         policy = FlowPolicy.strict()
-        decision = policy.evaluate(
-            TrustLabel.CONFIDENTIAL, TrustLabel.PUBLIC, "src", "sink"
-        )
+        decision = policy.evaluate(TrustLabel.CONFIDENTIAL, TrustLabel.PUBLIC, "src", "sink")
         assert not decision.permitted
 
     def test_regulated_preset_exists(self):
@@ -169,17 +164,13 @@ class TestFlowPolicy:
             reason="Redacted confidential to internal",
         )
         policy = FlowPolicy(rules=[rule], default_deny=True)
-        decision = policy.evaluate(
-            TrustLabel.CONFIDENTIAL, TrustLabel.INTERNAL, None, None
-        )
+        decision = policy.evaluate(TrustLabel.CONFIDENTIAL, TrustLabel.INTERNAL, None, None)
         assert decision.permitted
         assert decision.requires_redaction
 
     def test_default_deny_blocks_unmatched(self):
         policy = FlowPolicy(rules=[], default_deny=True)
-        decision = policy.evaluate(
-            TrustLabel.PUBLIC, TrustLabel.INTERNAL, None, None
-        )
+        decision = policy.evaluate(TrustLabel.PUBLIC, TrustLabel.INTERNAL, None, None)
         assert not decision.permitted
 
     def test_component_match_narrows_rule(self):
@@ -227,9 +218,7 @@ class TestFlowEnforcer:
         enforcer = FlowEnforcer(FlowPolicy.strict())
         data = self._data(TrustLabel.CONFIDENTIAL)
         with pytest.raises(FlowViolationError):
-            enforcer.gate(
-                data, sink_label=TrustLabel.PUBLIC, sink_component="log"
-            )
+            enforcer.gate(data, sink_label=TrustLabel.PUBLIC, sink_component="log")
 
     def test_gate_applies_redaction(self):
         rule = FlowRule(
@@ -241,9 +230,7 @@ class TestFlowEnforcer:
         enforcer = FlowEnforcer(
             FlowPolicy(rules=[rule], default_deny=True),
         )
-        data = ClassifiedData(
-            data="secret-value", label=TrustLabel.CONFIDENTIAL, source="src"
-        )
+        data = ClassifiedData(data="secret-value", label=TrustLabel.CONFIDENTIAL, source="src")
         result = enforcer.gate(
             data,
             sink_label=TrustLabel.INTERNAL,
@@ -260,9 +247,7 @@ class TestFlowEnforcer:
             requires_redaction=True,
         )
         enforcer = FlowEnforcer(FlowPolicy(rules=[rule], default_deny=True))
-        data = ClassifiedData(
-            data="secret", label=TrustLabel.CONFIDENTIAL, source="src"
-        )
+        data = ClassifiedData(data="secret", label=TrustLabel.CONFIDENTIAL, source="src")
         with pytest.raises((FlowViolationError, ValueError)):
             enforcer.gate(
                 data,
@@ -305,9 +290,7 @@ class TestFlowEnforcer:
         enforcer = FlowEnforcer(FlowPolicy.strict())
         data = self._data(TrustLabel.REGULATED)
         with pytest.raises(FlowViolationError) as exc_info:
-            enforcer.gate(
-                data, sink_label=TrustLabel.PUBLIC, sink_component="public_api"
-            )
+            enforcer.gate(data, sink_label=TrustLabel.PUBLIC, sink_component="public_api")
         err = exc_info.value
         assert err.source_label == TrustLabel.REGULATED
         assert err.sink_label == TrustLabel.PUBLIC
@@ -317,9 +300,7 @@ class TestFlowEnforcer:
         enforcer = FlowEnforcer(FlowPolicy.strict())
         data = self._data(TrustLabel.CONFIDENTIAL)
         with pytest.raises(FlowViolationError):
-            enforcer.gate(
-                data, sink_label=TrustLabel.PUBLIC, sink_component="out"
-            )
+            enforcer.gate(data, sink_label=TrustLabel.PUBLIC, sink_component="out")
         log = enforcer.audit_log()
         assert any(not e["permitted"] for e in log)
 

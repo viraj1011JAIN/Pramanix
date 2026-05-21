@@ -9,15 +9,13 @@ The injection_scorer_path field is a *trusted-operator-only entry-point name*,
 not a file path.  Custom scorers must be registered via the
 'pramanix.injection_scorers' entry-point group and referenced by name.
 """
-from __future__ import annotations
 
-from pathlib import Path
+from __future__ import annotations
 
 import pytest
 
 from pramanix.exceptions import ConfigurationError
 from pramanix.guard_config import GuardConfig
-
 
 # ── GuardConfig field tests ───────────────────────────────────────────────────
 
@@ -48,25 +46,19 @@ class TestGuardConfigInjectionScorerPath:
         with pytest.raises(ConfigurationError, match="entry-point name"):
             GuardConfig(injection_scorer_path="C:\\Users\\scorer.py")
 
-    def test_env_var_sets_scorer_name(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_var_sets_scorer_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRAMANIX_INJECTION_SCORER_PATH env var sets the entry-point name."""
         monkeypatch.setenv("PRAMANIX_INJECTION_SCORER_PATH", "my_custom_scorer")
         cfg = GuardConfig()
         assert cfg.injection_scorer_path == "my_custom_scorer"
 
-    def test_empty_env_var_leaves_default_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_env_var_leaves_default_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRAMANIX_INJECTION_SCORER_PATH='' produces injection_scorer_path=None."""
         monkeypatch.setenv("PRAMANIX_INJECTION_SCORER_PATH", "")
         cfg = GuardConfig()
         assert cfg.injection_scorer_path is None
 
-    def test_unset_env_var_leaves_default_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unset_env_var_leaves_default_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Absent PRAMANIX_INJECTION_SCORER_PATH leaves injection_scorer_path=None."""
         monkeypatch.delenv("PRAMANIX_INJECTION_SCORER_PATH", raising=False)
         cfg = GuardConfig()
@@ -113,9 +105,8 @@ class TestExtractWithConsensusCustomScorer:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A scorer registered in the entry-point group is loaded and called."""
-        from unittest.mock import patch
-
         import importlib.metadata as _meta
+        from unittest.mock import patch
 
         from tests.helpers.real_protocols import _FakeEntryPoint
 

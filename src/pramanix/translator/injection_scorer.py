@@ -362,7 +362,8 @@ class CalibratedScorer:
         try:
             import sklearn  # noqa: F401 — unused; availability probe only
         except ImportError:
-            from pramanix.exceptions import ConfigurationError as _CE
+            from pramanix.exceptions import ConfigurationError as _CE  # noqa: N814
+
             raise _CE(
                 "scikit-learn is required to load a CalibratedScorer. "
                 "Install it with: pip install 'pramanix[injection]'"

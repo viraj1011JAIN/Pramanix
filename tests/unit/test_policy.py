@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Unit tests for pramanix.policy — Policy base class."""
+
 from __future__ import annotations
 
 from decimal import Decimal

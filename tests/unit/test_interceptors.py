@@ -13,9 +13,9 @@ Coverage:
 - create_admission_webhook: requires FastAPI; blocked → allowed=False
 - create_admission_webhook: allowed → allowed=True
 """
+
 from __future__ import annotations
 
-import sys
 from decimal import Decimal
 from typing import ClassVar
 from unittest.mock import patch
@@ -26,7 +26,6 @@ from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
 from tests.helpers.real_protocols import (
-    _ConfluentKafkaModule,
     _GrpcRpcHandler,
     _KafkaConsumer,
     _KafkaMessage,
@@ -194,6 +193,7 @@ class TestAdmissionWebhook:
             import importlib
 
             from pramanix.k8s import webhook as wh_mod
+
             importlib.reload(wh_mod)
 
             with pytest.raises((ConfigurationError, Exception)):
@@ -246,4 +246,3 @@ class TestAdmissionWebhook:
         assert body["response"]["allowed"] is False
         assert "status" in body["response"]
         assert body["response"]["uid"] == "test-uid-1234"
-

@@ -40,7 +40,7 @@ from enum import Enum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, field_validator, model_validator
-from pydantic import Field as PF
+from pydantic import Field as PydanticField
 
 __all__ = [
     "AndConstraintNode",
@@ -108,7 +108,9 @@ class FieldLHS(BaseModel):
     """
 
     kind: Literal["field"] = "field"
-    field_name: str = PF(..., min_length=1, description="Exact field name from the fields list.")
+    field_name: str = PydanticField(
+        ..., min_length=1, description="Exact field name from the fields list."
+    )
 
 
 class ArithmeticLHS(BaseModel):
@@ -123,12 +125,12 @@ class ArithmeticLHS(BaseModel):
     """
 
     kind: Literal["arith"] = "arith"
-    left: str = PF(..., min_length=1, description="Field name for the left operand.")
-    op: ArithOp = PF(..., description="Arithmetic operation to apply.")
-    right: str = PF(..., min_length=1, description="Field name for the right operand.")
+    left: str = PydanticField(..., min_length=1, description="Field name for the left operand.")
+    op: ArithOp = PydanticField(..., description="Arithmetic operation to apply.")
+    right: str = PydanticField(..., min_length=1, description="Field name for the right operand.")
 
 
-LHSNode = Annotated[FieldLHS | ArithmeticLHS, PF(discriminator="kind")]
+LHSNode = Annotated[FieldLHS | ArithmeticLHS, PydanticField(discriminator="kind")]
 """Discriminated union for constraint left-hand sides.
 
 Used as the ``lhs`` field type in :class:`ComparisonConstraintNode`.
@@ -168,14 +170,14 @@ class ComparisonConstraintNode(BaseModel):
     """
 
     kind: Literal["comparison"] = "comparison"
-    label: str = PF(..., min_length=1)
+    label: str = PydanticField(..., min_length=1)
     lhs: LHSNode
     operator: ComparisonOp
     # Union ordering: bool before int/float, str last — matches pydantic coercion priority
-    rhs_value: bool | int | float | str = PF(
+    rhs_value: bool | int | float | str = PydanticField(
         ..., description="Literal scalar value on the right-hand side."
     )
-    natural_language: str = PF(
+    natural_language: str = PydanticField(
         ...,
         min_length=1,
         description=(
@@ -227,11 +229,11 @@ class AndConstraintNode(BaseModel):
     """
 
     kind: Literal["and"] = "and"
-    label: str = PF(..., min_length=1)
-    operands: list[ComparisonConstraintNode] = PF(
+    label: str = PydanticField(..., min_length=1)
+    operands: list[ComparisonConstraintNode] = PydanticField(
         ..., min_length=2, description="Two or more comparison constraints to AND together."
     )
-    natural_language: str = PF(..., min_length=1)
+    natural_language: str = PydanticField(..., min_length=1)
 
     @field_validator("label")
     @classmethod
@@ -258,11 +260,11 @@ class OrConstraintNode(BaseModel):
     """
 
     kind: Literal["or"] = "or"
-    label: str = PF(..., min_length=1)
-    operands: list[ComparisonConstraintNode] = PF(
+    label: str = PydanticField(..., min_length=1)
+    operands: list[ComparisonConstraintNode] = PydanticField(
         ..., min_length=2, description="Two or more comparison constraints to OR together."
     )
-    natural_language: str = PF(..., min_length=1)
+    natural_language: str = PydanticField(..., min_length=1)
 
     @field_validator("label")
     @classmethod
@@ -284,9 +286,9 @@ class NotConstraintNode(BaseModel):
     """
 
     kind: Literal["not"] = "not"
-    label: str = PF(..., min_length=1)
+    label: str = PydanticField(..., min_length=1)
     operand: ComparisonConstraintNode
-    natural_language: str = PF(..., min_length=1)
+    natural_language: str = PydanticField(..., min_length=1)
 
     @field_validator("label")
     @classmethod
@@ -307,10 +309,10 @@ class CompositeConstraintNode(BaseModel):
     """
 
     kind: Literal["composite"] = "composite"
-    label: str = PF(..., min_length=1)
+    label: str = PydanticField(..., min_length=1)
     combinator: Literal["AND", "OR", "NOT"]
-    operands: list[ComparisonConstraintNode] = PF(..., min_length=1)
-    natural_language: str = PF(..., min_length=1)
+    operands: list[ComparisonConstraintNode] = PydanticField(..., min_length=1)
+    natural_language: str = PydanticField(..., min_length=1)
 
     @field_validator("label")
     @classmethod
@@ -328,7 +330,7 @@ class CompositeConstraintNode(BaseModel):
 
 ConstraintNode = Annotated[
     ComparisonConstraintNode | AndConstraintNode | OrConstraintNode | NotConstraintNode,
-    PF(discriminator="kind"),
+    PydanticField(discriminator="kind"),
 ]
 """Discriminated union of all top-level constraint node types.
 
@@ -353,7 +355,7 @@ class FieldDeclaration(BaseModel):
         {"name": "amount", "z3_type": "Real", "description": "Transaction amount in USD."}
     """
 
-    name: str = PF(
+    name: str = PydanticField(
         ...,
         min_length=1,
         description=(
@@ -362,7 +364,7 @@ class FieldDeclaration(BaseModel):
         ),
     )
     z3_type: Z3TypeEnum
-    description: str = PF(
+    description: str = PydanticField(
         ..., min_length=1, description="Human-readable description for documentation."
     )
 
@@ -435,14 +437,14 @@ class NaturalPolicySchema(BaseModel):
         }
     """
 
-    policy_name: str = PF(..., min_length=1)
-    original_english: str = PF(
+    policy_name: str = PydanticField(..., min_length=1)
+    original_english: str = PydanticField(
         ...,
         min_length=1,
         description="Verbatim CISO policy text — must not be paraphrased or truncated.",
     )
-    fields: list[FieldDeclaration] = PF(..., min_length=1)
-    constraints: list[ConstraintNode] = PF(..., min_length=1)
+    fields: list[FieldDeclaration] = PydanticField(..., min_length=1)
+    constraints: list[ConstraintNode] = PydanticField(..., min_length=1)
 
     @field_validator("fields")
     @classmethod
@@ -486,7 +488,7 @@ def _collect_field_refs(node: object, declared: set[str]) -> list[str]:
             for name in (lhs.left, lhs.right):
                 if name not in declared:
                     missing.append(name)
-    elif isinstance(node, (AndConstraintNode, OrConstraintNode)):
+    elif isinstance(node, AndConstraintNode | OrConstraintNode):
         for operand in node.operands:
             missing.extend(_collect_field_refs(operand, declared))
     elif isinstance(node, NotConstraintNode):

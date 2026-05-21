@@ -3,6 +3,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for PostgresExecutionTokenVerifier (E-1)."""
+
 from __future__ import annotations
 
 import sys
@@ -44,6 +45,7 @@ def test_postgres_verifier_raises_config_error_without_asyncpg(
         del sys.modules["pramanix.execution_token"]
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[postgres\\]'"):
         from pramanix.execution_token import PostgresExecutionTokenVerifier
+
         PostgresExecutionTokenVerifier(_SECRET, _DSN)
 
 

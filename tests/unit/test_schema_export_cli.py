@@ -3,6 +3,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for schema export CLI subcommand (G-3)."""
+
 from __future__ import annotations
 
 import json
@@ -95,9 +96,7 @@ def test_schema_export_to_file(tmp_path: Path, capsys: pytest.CaptureFixture) ->
     assert parsed["title"] == "AnotherPolicy"
 
 
-def test_schema_export_invalid_policy_path(
-    tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_schema_export_invalid_policy_path(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """schema export exits non-zero for missing file."""
     exit_code, _, _ = _run_cli(
         ["schema", "export", "--policy", "nonexistent_file.py:MyPolicy"],
@@ -106,9 +105,7 @@ def test_schema_export_invalid_policy_path(
     assert exit_code != 0
 
 
-def test_schema_export_missing_class(
-    tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_schema_export_missing_class(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """schema export exits non-zero for missing class in file."""
     policy_file = tmp_path / "empty.py"
     policy_file.write_text("", encoding="utf-8")

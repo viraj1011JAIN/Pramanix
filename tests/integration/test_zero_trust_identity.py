@@ -31,7 +31,7 @@ import pytest
 pytest.importorskip("redis", reason="redis not installed")
 pytest.importorskip("testcontainers", reason="testcontainers not installed")
 
-from .conftest import _DOCKER_AVAILABLE  # noqa: E402
+from .conftest import _DOCKER_AVAILABLE
 
 if not _DOCKER_AVAILABLE:
     pytest.skip(
@@ -63,9 +63,7 @@ def _make_jwt(
     """Create a real HMAC-SHA256 JWT for testing."""
     header = (
         base64.urlsafe_b64encode(
-            json.dumps(
-                {"alg": "HS256", "typ": "JWT"}, separators=(",", ":")
-            ).encode()
+            json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode()
         )
         .rstrip(b"=")
         .decode()
@@ -79,17 +77,13 @@ def _make_jwt(
         "exp": now + exp_offset,
     }
     payload = (
-        base64.urlsafe_b64encode(
-            json.dumps(payload_dict, separators=(",", ":")).encode()
-        )
+        base64.urlsafe_b64encode(json.dumps(payload_dict, separators=(",", ":")).encode())
         .rstrip(b"=")
         .decode()
     )
 
     signing_input = f"{header}.{payload}"
-    sig = hmac.new(
-        secret.encode(), signing_input.encode(), hashlib.sha256
-    ).digest()
+    sig = hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
     return f"{signing_input}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
 
 
@@ -212,9 +206,7 @@ class TestZeroTrustBoundary:
         assert decision.allowed
 
     @pytest.mark.asyncio
-    async def test_full_pipeline_block_insufficient_balance(
-        self, redis_client
-    ):
+    async def test_full_pipeline_block_insufficient_balance(self, redis_client):
         """End-to-end: JWT → Redis → Guard → BLOCK."""
         await redis_client.set(
             "pramanix:state:carol",
@@ -247,9 +239,7 @@ class TestZeroTrustBoundary:
         linker = JWTIdentityLinker(state_loader=loader, jwt_secret=SECRET)
 
         class _Req:
-            headers: ClassVar[dict] = {
-                "Authorization": f"Bearer {expired_token}"
-            }
+            headers: ClassVar[dict] = {"Authorization": f"Bearer {expired_token}"}
 
         with pytest.raises(JWTExpiredError):
             await linker.extract_and_load(_Req())

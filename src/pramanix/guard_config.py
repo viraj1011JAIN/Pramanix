@@ -123,10 +123,7 @@ _SHARED_LOG_PROCESSORS: list[Any] = [
 ]
 
 structlog.configure(
-    processors=_SHARED_LOG_PROCESSORS
-    + [
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-    ],
+    processors=[*_SHARED_LOG_PROCESSORS, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
     wrapper_class=structlog.stdlib.BoundLogger,
@@ -196,7 +193,7 @@ _solver_timeouts_total: Any = None
 _validation_failures_total: Any = None
 _PROM_AVAILABLE = False
 
-import threading as _gc_threading
+import threading as _gc_threading  # noqa: E402
 
 _GC_PROM_LOCK = _gc_threading.Lock()
 _GC_PROM_METRICS: dict[str, Any] = {}
@@ -246,6 +243,7 @@ except ImportError:
     pass
 except ValueError as _prom_val_err:
     import logging as _gc_log
+
     _gc_log.getLogger(__name__).warning(
         "pramanix.guard_config: Prometheus metric registration error "
         "(name collision with different labelset — this is a programming error): %s",
@@ -418,9 +416,7 @@ class GuardConfig:
 
     injection_sensitive_fields: frozenset[str] = field(
         default_factory=lambda: frozenset(
-            f.strip()
-            for f in _env_str("INJECTION_SENSITIVE_FIELDS", "").split(",")
-            if f.strip()
+            f.strip() for f in _env_str("INJECTION_SENSITIVE_FIELDS", "").split(",") if f.strip()
         )
     )
     """Set of extracted-intent field names whose string values are **additionally
@@ -588,6 +584,7 @@ class GuardConfig:
         # (for development tools / -W filters) AND logging (for production
         # containers where PYTHONWARNINGS=ignore silences warnings entirely).
         import logging as _prod_log
+
         _prod_logger = _prod_log.getLogger(__name__)
         if self.metrics_enabled and not _PROM_AVAILABLE:
             _msg = (

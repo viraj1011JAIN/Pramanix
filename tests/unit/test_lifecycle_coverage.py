@@ -10,11 +10,11 @@ Covers the missed statements and branches in:
 
 All assertions use real Guard instances — no mocks or stubs.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
 
-import pytest
 from pydantic import BaseModel
 
 from pramanix.decision import Decision
@@ -22,14 +22,10 @@ from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.guard import Guard
 from pramanix.guard_config import GuardConfig
 from pramanix.lifecycle.diff import (
-    FieldChange,
-    InvariantChange,
     PolicyDiff,
     ShadowEvaluator,
-    ShadowResult,
 )
 from pramanix.policy import Policy
-
 
 # ── Shared models and policies ────────────────────────────────────────────────
 
@@ -49,9 +45,7 @@ class _BalV1(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.amount) <= 500).named("max_500")
-        ]
+        return [(E(cls.amount) <= 500).named("max_500")]
 
 
 class _BalV2(Policy):
@@ -64,9 +58,7 @@ class _BalV2(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.amount) <= 1000).named("max_1000")
-        ]
+        return [(E(cls.amount) <= 1000).named("max_1000")]
 
 
 class _BalV3(Policy):
@@ -110,7 +102,6 @@ class _BrokenPolicy(Policy):
 
 
 class TestPolicyDiff:
-
     def test_same_policy_has_no_changes(self) -> None:
         diff = PolicyDiff.compute(_BalV1, _BalV1)
         assert not diff.has_changes
@@ -231,7 +222,6 @@ class _ShadowPolicy(Policy):
 
 
 class TestShadowEvaluator:
-
     def _make_evaluator(self) -> ShadowEvaluator:
         live_guard = Guard(_LivePolicy, GuardConfig())
         shadow_guard = Guard(_ShadowPolicy, GuardConfig())

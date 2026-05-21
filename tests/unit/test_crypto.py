@@ -13,6 +13,7 @@ Critical properties verified:
 5. 1000 sign-verify cycles all pass (reliability)
 6. Signing is deterministic (same hash = same signature for Ed25519)
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -26,6 +27,7 @@ from pramanix.decision import Decision
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
+
 
 def _make_decision(allowed: bool = True, amount: str = "100") -> Decision:
     if allowed:
@@ -144,9 +146,7 @@ class TestPramanixVerifier:
         d = _make_decision()
         sig = signer.sign(d)
         verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
-        tampered_hash = d.decision_hash[:-1] + (
-            "0" if d.decision_hash[-1] != "0" else "1"
-        )
+        tampered_hash = d.decision_hash[:-1] + ("0" if d.decision_hash[-1] != "0" else "1")
         assert not verifier.verify(decision_hash=tampered_hash, signature=sig)
 
     def test_verify_tampered_signature_returns_false(self):
@@ -270,9 +270,7 @@ class TestGuardSigningIntegration:
 
             @classmethod
             def invariants(cls):
-                return [
-                    (E(_amount) >= Decimal("0")).named("pos").explain("Positive")
-                ]
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("Positive")]
 
         signer = PramanixSigner.generate()
         guard = Guard(_P, GuardConfig(execution_mode="sync", signer=signer))
@@ -300,9 +298,7 @@ class TestGuardSigningIntegration:
 
             @classmethod
             def invariants(cls):
-                return [
-                    (E(_amount) >= Decimal("0")).named("pos").explain("Positive")
-                ]
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("Positive")]
 
         guard = Guard(_P, GuardConfig(execution_mode="sync"))
         d = guard.verify(
@@ -328,9 +324,7 @@ class TestGuardSigningIntegration:
             @classmethod
             def invariants(cls):
                 return [
-                    ((E(_balance) - E(_amount)) >= Decimal("0"))
-                    .named("sb")
-                    .explain("Insufficient")
+                    ((E(_balance) - E(_amount)) >= Decimal("0")).named("sb").explain("Insufficient")
                 ]
 
         signer = PramanixSigner.generate()

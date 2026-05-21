@@ -32,6 +32,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import enum
 import functools
 import logging
@@ -67,6 +68,7 @@ def _inc_sync_failure_counter() -> None:
             if _CB_SYNC_FAILURE_COUNTER is None:
                 try:
                     from prometheus_client import Counter as _Counter
+
                     _CB_SYNC_FAILURE_COUNTER = _prom_register(
                         _Counter,
                         "pramanix_circuit_breaker_state_sync_failure_total",
@@ -293,10 +295,9 @@ class AdaptiveCircuitBreaker:
                 else:
                     return self._make_open_decision()
 
-            if current_state == CircuitState.HALF_OPEN:
+            if current_state == CircuitState.HALF_OPEN and self._probing and not is_probe:
                 # Already probing — reject concurrent callers.
-                if self._probing and not is_probe:
-                    return self._make_open_decision()
+                return self._make_open_decision()
             # Lock released before the blocking verify_async call so other
             # coroutines can check/update state concurrently during the solve.
 
@@ -443,7 +444,9 @@ class AdaptiveCircuitBreaker:
                     state=s.value,
                 ).set(1 if self._state == s else 0)
         except Exception as exc:
-            log.warning("pramanix.circuit_breaker: Prometheus update failed: %s", exc, exc_info=True)
+            log.warning(
+                "pramanix.circuit_breaker: Prometheus update failed: %s", exc, exc_info=True
+            )
 
     def _increment_pressure_metric(self) -> None:
         if not self._metrics_available:
@@ -451,7 +454,9 @@ class AdaptiveCircuitBreaker:
         try:
             self._pressure_counter.labels(namespace=self._config.namespace).inc()
         except Exception as exc:
-            log.warning("pramanix.circuit_breaker: Prometheus increment failed: %s", exc, exc_info=True)
+            log.warning(
+                "pramanix.circuit_breaker: Prometheus increment failed: %s", exc, exc_info=True
+            )
 
 
 # ── Phase C-5: Distributed Circuit Breaker ───────────────────────────────────
@@ -907,7 +912,7 @@ class RedisDistributedBackend:
 
     # Severity ordering for conservative circuit-state merge.
     # Higher value = more severe.  Incoming state only escalates, never downgrades.
-    _STATE_SEVERITY: dict[str, int] = {
+    _STATE_SEVERITY: ClassVar[dict[str, int]] = {
         CircuitState.CLOSED.value: 0,
         CircuitState.HALF_OPEN.value: 1,
         CircuitState.OPEN.value: 2,
@@ -1062,9 +1067,7 @@ class RedisDistributedBackend:
             else:
                 await client.delete(self._key(namespace))
         except Exception as _exc:
-            log.warning(
-                "RedisDistributedBackend._async_clear error (non-fatal): %s", _exc
-            )
+            log.warning("RedisDistributedBackend._async_clear error (non-fatal): %s", _exc)
 
 
 # ── TranslatorCircuitBreaker ──────────────────────────────────────────────────
@@ -1204,12 +1207,10 @@ class TranslatorCircuitBreaker:
                 elapsed = time.monotonic() - (self._opened_at or 0.0)
                 if elapsed < self._recovery_seconds:
                     if self._metrics_available:
-                        try:
+                        with contextlib.suppress(Exception):
                             self._calls_counter.labels(
                                 model=self.model, outcome="rejected_open"
                             ).inc()
-                        except Exception:
-                            pass
                     raise ExtractionFailureError(
                         f"Translator circuit breaker OPEN for model {self.model!r}. "
                         f"Retry in {self._recovery_seconds - elapsed:.1f}s."
@@ -1232,12 +1233,8 @@ class TranslatorCircuitBreaker:
                     elapsed,
                 )
                 if self._metrics_available:
-                    try:
-                        self._probes_counter.labels(
-                            model=self.model, outcome="started"
-                        ).inc()
-                    except Exception:
-                        pass
+                    with contextlib.suppress(Exception):
+                        self._probes_counter.labels(model=self.model, outcome="started").inc()
 
         try:
             result = await coro_factory()
@@ -1263,9 +1260,7 @@ class TranslatorCircuitBreaker:
                                 self._probes_counter.labels(
                                     model=self.model, outcome="failed"
                                 ).inc()
-                            self._calls_counter.labels(
-                                model=self.model, outcome="failure"
-                            ).inc()
+                            self._calls_counter.labels(model=self.model, outcome="failure").inc()
                         except Exception:
                             pass
             raise
@@ -1273,12 +1268,8 @@ class TranslatorCircuitBreaker:
             async with self._lock:
                 self._probing = False
             if self._metrics_available:
-                try:
-                    self._calls_counter.labels(
-                        model=self.model, outcome="error"
-                    ).inc()
-                except Exception:
-                    pass
+                with contextlib.suppress(Exception):
+                    self._calls_counter.labels(model=self.model, outcome="error").inc()
             raise
         else:
             async with self._lock:
@@ -1296,12 +1287,8 @@ class TranslatorCircuitBreaker:
                 if self._metrics_available:
                     try:
                         if is_probe:
-                            self._probes_counter.labels(
-                                model=self.model, outcome="succeeded"
-                            ).inc()
-                        self._calls_counter.labels(
-                            model=self.model, outcome="success"
-                        ).inc()
+                            self._probes_counter.labels(model=self.model, outcome="succeeded").inc()
+                        self._calls_counter.labels(model=self.model, outcome="success").inc()
                     except Exception:
                         pass
             return result

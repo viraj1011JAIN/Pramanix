@@ -22,6 +22,7 @@ Pramanix uses the following semantics:
 * **UNTRUSTED** — raw prompt material, user input, or tool output that has not
   been validated.  Cannot directly authorize privileged actions.
 """
+
 from __future__ import annotations
 
 import time

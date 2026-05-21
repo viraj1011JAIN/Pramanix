@@ -45,6 +45,7 @@ Tests cover:
       (end-to-end test through Guard.verify()).
     • Guard-level rejection: string amount through Guard.verify().
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

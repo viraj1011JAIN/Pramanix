@@ -14,6 +14,7 @@ Run::
 
     python examples/cloud_infra.py
 """
+
 from __future__ import annotations
 
 from pramanix import Field, Guard, GuardConfig, Policy
@@ -29,14 +30,14 @@ class ScalingPolicy(Policy):
 
     # Intent fields (what the operator wants to set)
     replicas = Field("replicas", int, "Int")
-    cpu_request = Field("cpu_request", int, "Int")   # millicores
-    mem_request = Field("mem_request", int, "Int")   # MiB
+    cpu_request = Field("cpu_request", int, "Int")  # millicores
+    mem_request = Field("mem_request", int, "Int")  # MiB
 
     # State fields (cluster limits)
     min_r = Field("min_r", int, "Int")
     max_r = Field("max_r", int, "Int")
-    cpu_budget = Field("cpu_budget", int, "Int")     # millicores
-    mem_budget = Field("mem_budget", int, "Int")     # MiB
+    cpu_budget = Field("cpu_budget", int, "Int")  # millicores
+    mem_budget = Field("mem_budget", int, "Int")  # MiB
 
     @classmethod
     def invariants(cls) -> list:
@@ -53,8 +54,8 @@ guard = Guard(ScalingPolicy, GuardConfig(execution_mode="sync"))
 _CLUSTER_STATE = {
     "min_r": 2,
     "max_r": 20,
-    "cpu_budget": 4000,   # 4 cores
-    "mem_budget": 8192,   # 8 GiB
+    "cpu_budget": 4000,  # 4 cores
+    "mem_budget": 8192,  # 8 GiB
     "state_version": "1.0",
 }
 

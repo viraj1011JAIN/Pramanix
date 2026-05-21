@@ -25,6 +25,7 @@ Targets all uncovered lines:
   1697-1703 Decompiler._render_bool_op
   1726-1736 Decompiler._render_literal
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -47,7 +48,6 @@ from pramanix.compiler import (
 )
 from pramanix.exceptions import FieldTypeError, PolicyCompilationError
 from pramanix.expressions import ConstraintExpr
-
 
 # ── Shared test policies ──────────────────────────────────────────────────────
 
@@ -247,9 +247,7 @@ class TestPolicyCompilerNoFields:
                 Rule(
                     name="any_rule",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("amount"), op=Operator.EQ, rhs=_lit(100))
-                    ],
+                    conditions=[Condition(lhs=_lhs("amount"), op=Operator.EQ, rhs=_lit(100))],
                 )
             ],
         )
@@ -271,9 +269,7 @@ class TestPolicyCompilerScalarComparison:
                 Rule(
                     name=name,
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs(field), op=op, rhs=_lit(value))
-                    ],
+                    conditions=[Condition(lhs=_lhs(field), op=op, rhs=_lit(value))],
                 )
             ],
         )
@@ -332,9 +328,7 @@ class TestPolicyCompilerScalarComparison:
                     name="limit_rule",
                     logic=Logic.AND,
                     description="Amount must not exceed fifty thousand.",
-                    conditions=[
-                        Condition(lhs=_lhs("amount"), op=Operator.LTE, rhs=_lit(50000))
-                    ],
+                    conditions=[Condition(lhs=_lhs("amount"), op=Operator.LTE, rhs=_lit(50000))],
                 )
             ],
         )
@@ -540,9 +534,7 @@ class TestPolicyCompilerTypeErrors:
                 Rule(
                     name="bad_bool",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("approved"), op=Operator.GT, rhs=_lit(0))
-                    ],
+                    conditions=[Condition(lhs=_lhs("approved"), op=Operator.GT, rhs=_lit(0))],
                 )
             ],
         )
@@ -557,9 +549,7 @@ class TestPolicyCompilerTypeErrors:
                 Rule(
                     name="bad_str_op",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("currency"), op=Operator.LT, rhs=_lit("USD"))
-                    ],
+                    conditions=[Condition(lhs=_lhs("currency"), op=Operator.LT, rhs=_lit("USD"))],
                 )
             ],
         )
@@ -574,9 +564,7 @@ class TestPolicyCompilerTypeErrors:
                 Rule(
                     name="bad_type",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("amount"), op=Operator.EQ, rhs=_lit(True))
-                    ],
+                    conditions=[Condition(lhs=_lhs("amount"), op=Operator.EQ, rhs=_lit(True))],
                 )
             ],
         )
@@ -608,9 +596,7 @@ class TestPolicyCompilerTypeErrors:
                 Rule(
                     name="bad_float",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("count"), op=Operator.EQ, rhs=_lit(3.5))
-                    ],
+                    conditions=[Condition(lhs=_lhs("count"), op=Operator.EQ, rhs=_lit(3.5))],
                 )
             ],
         )
@@ -625,9 +611,7 @@ class TestPolicyCompilerTypeErrors:
                 Rule(
                     name="bad_int_str",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("currency"), op=Operator.EQ, rhs=_lit(42))
-                    ],
+                    conditions=[Condition(lhs=_lhs("currency"), op=Operator.EQ, rhs=_lit(42))],
                 )
             ],
         )
@@ -641,9 +625,7 @@ class TestPolicyCompilerTypeErrors:
                 Rule(
                     name="approved_check",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("approved"), op=Operator.EQ, rhs=_lit(False))
-                    ],
+                    conditions=[Condition(lhs=_lhs("approved"), op=Operator.EQ, rhs=_lit(False))],
                 )
             ],
         )
@@ -728,7 +710,7 @@ class TestPolicyCompilerInternalMethods:
 
     def test_fold_exprs_single_returns_same(self) -> None:
         """_fold_exprs([e]) returns e unchanged (line 937-938)."""
-        cexpr = (E(_RealPolicy.amount) <= 100)
+        cexpr = E(_RealPolicy.amount) <= 100
         result = PolicyCompiler._fold_exprs([cexpr], Logic.AND)
         assert result is cexpr
 
@@ -740,7 +722,9 @@ class TestPolicyCompilerInternalMethods:
 
     def test_apply_comparison_op_not_in_raises(self) -> None:
         with pytest.raises(PolicyCompilationError, match="_compile_membership"):
-            PolicyCompiler._apply_comparison_op(E(_RealPolicy.amount), Operator.NOT_IN, Decimal("0"))
+            PolicyCompiler._apply_comparison_op(
+                E(_RealPolicy.amount), Operator.NOT_IN, Decimal("0")
+            )
 
     def test_format_scalar_bool(self) -> None:
         assert PolicyCompiler._format_scalar(True) == "True"
@@ -796,7 +780,9 @@ class TestDecompiler:
     def _compiler(self) -> PolicyCompiler:
         return PolicyCompiler()
 
-    def _compile_single(self, rule_name: str, field: str, op: Operator, value: object) -> list[ConstraintExpr]:
+    def _compile_single(
+        self, rule_name: str, field: str, op: Operator, value: object
+    ) -> list[ConstraintExpr]:
         ir = PolicyIR(
             name="DecompPolicy",
             rules=[
@@ -959,16 +945,12 @@ class TestDecompiler:
                 Rule(
                     name="rule_a",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("amount"), op=Operator.GTE, rhs=_lit(0))
-                    ],
+                    conditions=[Condition(lhs=_lhs("amount"), op=Operator.GTE, rhs=_lit(0))],
                 ),
                 Rule(
                     name="rule_b",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("balance"), op=Operator.GT, rhs=_lit(0))
-                    ],
+                    conditions=[Condition(lhs=_lhs("balance"), op=Operator.GT, rhs=_lit(0))],
                 ),
             ],
         )
@@ -988,9 +970,7 @@ class TestPolicyCompilerNestedRule:
         inner = Rule(
             name="inner_check",
             logic=Logic.AND,
-            conditions=[
-                Condition(lhs=_lhs("balance"), op=Operator.GT, rhs=_lit(0))
-            ],
+            conditions=[Condition(lhs=_lhs("balance"), op=Operator.GT, rhs=_lit(0))],
         )
         outer = Rule(
             name="outer_check",
@@ -1013,9 +993,7 @@ class TestPolicyCompilerBoolFieldNonBoolScalar:
                 Rule(
                     name="bad_bool_int",
                     logic=Logic.AND,
-                    conditions=[
-                        Condition(lhs=_lhs("approved"), op=Operator.EQ, rhs=_lit(0))
-                    ],
+                    conditions=[Condition(lhs=_lhs("approved"), op=Operator.EQ, rhs=_lit(0))],
                 )
             ],
         )
@@ -1038,8 +1016,9 @@ class TestDecompilerBinOp:
         from pramanix import E
 
         inv = [
-            ((E(_RealPolicy.balance) - E(_RealPolicy.amount)) >= Decimal("0"))
-            .named("sufficient_balance")
+            ((E(_RealPolicy.balance) - E(_RealPolicy.amount)) >= Decimal("0")).named(
+                "sufficient_balance"
+            )
         ]
         dc = Decompiler()
         report = dc.decompile(inv, include_header=False)

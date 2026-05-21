@@ -15,6 +15,7 @@ Coverage targets:
 - safe_dump() returns plain dict, not BaseModel
 - Decimal and datetime primitives preserved as native types (not stringified)
 """
+
 from __future__ import annotations
 
 import pickle

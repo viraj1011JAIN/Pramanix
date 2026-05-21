@@ -38,6 +38,7 @@ Outputs (written to the run's directory under benchmarks/results/):
 Upload to Google Drive:
     Pramanix_V1_Sovereign_Audit_500M/03_Telemetry_and_Visuals/Charts/
 """
+
 from __future__ import annotations
 
 import argparse
@@ -46,7 +47,7 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")   # headless — no display needed
+matplotlib.use("Agg")  # headless — no display needed
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
@@ -68,7 +69,8 @@ def find_latest_run(domain_name: str) -> Path | None:
     """Return the most recent completed run dir, or None."""
     candidates = sorted(
         [
-            d for d in RESULTS_ROOT.glob(f"run_{domain_name}_*")
+            d
+            for d in RESULTS_ROOT.glob(f"run_{domain_name}_*")
             if d.is_dir() and (d / "summary.json").exists()
         ],
         key=lambda d: d.name,
@@ -115,18 +117,19 @@ def chart_p99_over_time(
         recs = checkpoints[wid]
         xs = list(range(1, len(recs) + 1))
         ys = [r["p99"] for r in recs]
-        ax.plot(xs, ys, color=_worker_color(wid), linewidth=0.8,
-                alpha=0.75, label=f"w{wid:02d}")
+        ax.plot(xs, ys, color=_worker_color(wid), linewidth=0.8, alpha=0.75, label=f"w{wid:02d}")
 
     ax.set_title(
         f"Pramanix — {domain_name.upper()} — P99 Latency per Checkpoint",
-        fontsize=13, fontweight="bold",
+        fontsize=13,
+        fontweight="bold",
     )
     ax.set_xlabel("Checkpoint index (every 100 k decisions)", fontsize=11)
     ax.set_ylabel("P99 latency (ms)", fontsize=11)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.1f ms"))
-    ax.axhline(y=150, color="red", linestyle="--", linewidth=1,
-               label="Z3 timeout threshold (150 ms)")
+    ax.axhline(
+        y=150, color="red", linestyle="--", linewidth=1, label="Z3 timeout threshold (150 ms)"
+    )
     ax.legend(loc="upper right", fontsize=7, ncol=3)
     ax.grid(axis="y", linestyle="--", alpha=0.4)
     fig.tight_layout()
@@ -158,12 +161,12 @@ def chart_allow_rate_over_time(
             total = r["allow"] + r["block"] + r.get("timeout", 0)
             rate = (r["allow"] / total * 100) if total > 0 else 0.0
             ys.append(rate)
-        ax.plot(xs, ys, color=_worker_color(wid), linewidth=0.8,
-                alpha=0.75, label=f"w{wid:02d}")
+        ax.plot(xs, ys, color=_worker_color(wid), linewidth=0.8, alpha=0.75, label=f"w{wid:02d}")
 
     ax.set_title(
         f"Pramanix — {domain_name.upper()} — Cumulative Allow Rate",
-        fontsize=13, fontweight="bold",
+        fontsize=13,
+        fontweight="bold",
     )
     ax.set_xlabel("Checkpoint index (every 100 k decisions)", fontsize=11)
     ax.set_ylabel("Allow rate (%)", fontsize=11)
@@ -201,8 +204,11 @@ def chart_worker_p99_comparison(
 
     fig, ax = plt.subplots(figsize=(16, 5))
     bars = ax.bar(
-        [f"w{wid:02d}" for wid in wids], p99s,
-        color=colors, edgecolor="white", linewidth=0.5,
+        [f"w{wid:02d}" for wid in wids],
+        p99s,
+        color=colors,
+        edgecolor="white",
+        linewidth=0.5,
     )
 
     # Annotate each bar with the value
@@ -211,14 +217,16 @@ def chart_worker_p99_comparison(
             bar.get_x() + bar.get_width() / 2,
             bar.get_height() + 0.3,
             f"{val:.1f}",
-            ha="center", va="bottom", fontsize=7,
+            ha="center",
+            va="bottom",
+            fontsize=7,
         )
 
-    ax.axhline(y=150, color="red", linestyle="--", linewidth=1,
-               label="Timeout threshold (150 ms)")
+    ax.axhline(y=150, color="red", linestyle="--", linewidth=1, label="Timeout threshold (150 ms)")
     ax.set_title(
         f"Pramanix — {domain_name.upper()} — Max P99 per Worker",
-        fontsize=13, fontweight="bold",
+        fontsize=13,
+        fontweight="bold",
     )
     ax.set_xlabel("Worker ID", fontsize=11)
     ax.set_ylabel("Max P99 latency (ms)", fontsize=11)
@@ -248,10 +256,10 @@ def chart_latency_distribution(
         all_p99.extend(r["p99"] for r in recs)
 
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.hist(all_p99, bins=60, color="#2196F3", edgecolor="white",
-            linewidth=0.4, alpha=0.85)
-    ax.axvline(x=150, color="red", linestyle="--", linewidth=1.2,
-               label="Timeout threshold (150 ms)")
+    ax.hist(all_p99, bins=60, color="#2196F3", edgecolor="white", linewidth=0.4, alpha=0.85)
+    ax.axvline(
+        x=150, color="red", linestyle="--", linewidth=1.2, label="Timeout threshold (150 ms)"
+    )
 
     # Mark percentiles
     if all_p99:
@@ -265,13 +273,14 @@ def chart_latency_distribution(
             (p95, "P95", "#FF9800"),
             (p99, "P99", "#9C27B0"),
         ]:
-            ax.axvline(x=val, color=color, linestyle=":", linewidth=1.2,
-                       label=f"{lbl} = {val:.1f} ms")
+            ax.axvline(
+                x=val, color=color, linestyle=":", linewidth=1.2, label=f"{lbl} = {val:.1f} ms"
+            )
 
     ax.set_title(
-        f"Pramanix — {domain_name.upper()} — P99 Latency Distribution"
-        " (all checkpoints)",
-        fontsize=13, fontweight="bold",
+        f"Pramanix — {domain_name.upper()} — P99 Latency Distribution" " (all checkpoints)",
+        fontsize=13,
+        fontweight="bold",
     )
     ax.set_xlabel("P99 latency (ms)", fontsize=11)
     ax.set_ylabel("Number of checkpoints", fontsize=11)

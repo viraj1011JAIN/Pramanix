@@ -29,6 +29,7 @@ Rotation:
     remain verifiable indefinitely using the archived public key.
     New key_id appears in all new decisions, indicating which key to use.
 """
+
 from __future__ import annotations
 
 import base64
@@ -97,8 +98,7 @@ def _increment_signing_failure_counter() -> None:
         pass
     except Exception as _e:
         log.error(
-            "pramanix.crypto: failed to increment "
-            "pramanix_signing_failure_total: %s",
+            "pramanix.crypto: failed to increment " "pramanix_signing_failure_total: %s",
             _e,
         )
 
@@ -179,12 +179,10 @@ class PramanixSigner:
             ) from e
 
         if private_key_pem is not None:
-            raw = (
-                private_key_pem.encode()
-                if isinstance(private_key_pem, str)
-                else private_key_pem
+            raw = private_key_pem.encode() if isinstance(private_key_pem, str) else private_key_pem
+            self._private_key: Ed25519PrivateKey = cast(
+                "Ed25519PrivateKey", load_pem_private_key(raw, password=None)
             )
-            self._private_key: Ed25519PrivateKey = cast("Ed25519PrivateKey", load_pem_private_key(raw, password=None))
             if not isinstance(self._private_key, Ed25519PrivateKey):
                 raise ValueError(
                     "PEM key is not an Ed25519 private key. "
@@ -193,11 +191,11 @@ class PramanixSigner:
         else:
             env_pem = os.environ.get(_ENV_KEY_PEM, "")
             if env_pem:
-                self._private_key = cast("Ed25519PrivateKey", load_pem_private_key(env_pem.encode(), password=None))
+                self._private_key = cast(
+                    "Ed25519PrivateKey", load_pem_private_key(env_pem.encode(), password=None)
+                )
                 if not isinstance(self._private_key, Ed25519PrivateKey):
-                    raise ValueError(
-                        "PRAMANIX_SIGNING_KEY_PEM is not an Ed25519 private key."
-                    )
+                    raise ValueError("PRAMANIX_SIGNING_KEY_PEM is not an Ed25519 private key.")
             elif force_ephemeral:
                 # Ephemeral key — development only, warn loudly
                 self._private_key = Ed25519PrivateKey.generate()
@@ -297,9 +295,7 @@ class PramanixSigner:
             if not decision.decision_hash:
                 log.error("Cannot sign Decision with empty decision_hash")
                 return ""
-            sig_bytes = self._private_key.sign(
-                decision.decision_hash.encode("utf-8")
-            )
+            sig_bytes = self._private_key.sign(decision.decision_hash.encode("utf-8"))
             return _b64url(sig_bytes)
         except Exception as e:
             log.error("Decision signing failed: %s", e, exc_info=True)
@@ -375,11 +371,7 @@ class PramanixVerifier:
                 "pip install cryptography"
             ) from e
 
-        raw = (
-            public_key_pem.encode()
-            if isinstance(public_key_pem, str)
-            else public_key_pem
-        )
+        raw = public_key_pem.encode() if isinstance(public_key_pem, str) else public_key_pem
         loaded_pub = load_pem_public_key(raw)
         if not isinstance(loaded_pub, Ed25519PublicKey):
             raise ValueError(
@@ -408,9 +400,7 @@ class PramanixVerifier:
         except (InvalidSignature, ValueError):
             return False
         except Exception as exc:
-            raise VerificationError(
-                f"Ed25519 verify: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise VerificationError(f"Ed25519 verify: {type(exc).__name__}: {exc}") from exc
 
     def verify_decision(self, decision: Decision) -> bool:
         """Verify a Decision object's signature against its hash.
@@ -519,8 +509,7 @@ class RS256Signer:
             raise ValueError("PEM key is not an RSA private key.")
         if _loaded.key_size < 2048:
             raise ValueError(
-                f"RSA key size {_loaded.key_size} bits is too small. "
-                "Minimum 2048 bits required."
+                f"RSA key size {_loaded.key_size} bits is too small. " "Minimum 2048 bits required."
             )
         self._private_key: RSAPrivateKey = _loaded
         self._public_key_obj = self._private_key.public_key()
@@ -531,7 +520,7 @@ class RS256Signer:
         self._key_id = hashlib.sha256(self._public_pem).hexdigest()[:16]
 
     @classmethod
-    def generate(cls, key_size: int = 2048) -> "RS256Signer":
+    def generate(cls, key_size: int = 2048) -> RS256Signer:
         """Generate a new RSA key pair for development use."""
         if key_size < 2048:
             raise ValueError("key_size must be at least 2048 bits.")
@@ -550,7 +539,7 @@ class RS256Signer:
         )
         return cls(private_key_pem=pem)
 
-    def sign(self, decision: "Decision") -> str:
+    def sign(self, decision: Decision) -> str:
         """Sign ``decision.decision_hash`` with RSA-PKCS1v15-SHA256.
 
         Returns a base64url-encoded signature.  Never raises; failures log ERROR.
@@ -633,11 +622,9 @@ class RS256Verifier:
         except Exception as exc:
             from pramanix.exceptions import VerificationError
 
-            raise VerificationError(
-                f"RS256 verify: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise VerificationError(f"RS256 verify: {type(exc).__name__}: {exc}") from exc
 
-    def verify_decision(self, decision: "Decision") -> bool:
+    def verify_decision(self, decision: Decision) -> bool:
         """Verify a Decision object's RS256 signature."""
         try:
             if not decision.signature or not decision.decision_hash:
@@ -654,9 +641,7 @@ class RS256Verifier:
 
             if isinstance(exc, VerificationError):
                 raise
-            raise VerificationError(
-                f"RS256 verify_decision: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise VerificationError(f"RS256 verify_decision: {type(exc).__name__}: {exc}") from exc
 
 
 class ES256Signer:
@@ -743,7 +728,7 @@ class ES256Signer:
         self._key_id = hashlib.sha256(self._public_pem).hexdigest()[:16]
 
     @classmethod
-    def generate(cls) -> "ES256Signer":
+    def generate(cls) -> ES256Signer:
         """Generate a new P-256 key pair for development use."""
         from cryptography.hazmat.primitives.asymmetric.ec import (
             SECP256R1,
@@ -763,7 +748,7 @@ class ES256Signer:
         )
         return cls(private_key_pem=pem)
 
-    def sign(self, decision: "Decision") -> str:
+    def sign(self, decision: Decision) -> str:
         """Sign ``decision.decision_hash`` with ECDSA-P256-SHA256.
 
         Returns a base64url-encoded DER-encoded signature.  Never raises; failures log ERROR.
@@ -824,9 +809,7 @@ class ES256Verifier:
         if not isinstance(loaded, EllipticCurvePublicKey):
             raise ValueError("PEM key is not an EC public key.")
         if not isinstance(loaded.curve, SECP256R1):
-            raise ValueError(
-                f"ES256Verifier requires P-256, got {type(loaded.curve).__name__}."
-            )
+            raise ValueError(f"ES256Verifier requires P-256, got {type(loaded.curve).__name__}.")
         self._public_key: EllipticCurvePublicKey = loaded
 
     def verify(self, decision_hash: str, signature: str) -> bool:
@@ -851,11 +834,9 @@ class ES256Verifier:
         except Exception as exc:
             from pramanix.exceptions import VerificationError
 
-            raise VerificationError(
-                f"ES256 verify: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise VerificationError(f"ES256 verify: {type(exc).__name__}: {exc}") from exc
 
-    def verify_decision(self, decision: "Decision") -> bool:
+    def verify_decision(self, decision: Decision) -> bool:
         """Verify a Decision object's ES256 signature."""
         try:
             if not decision.signature or not decision.decision_hash:
@@ -872,6 +853,4 @@ class ES256Verifier:
 
             if isinstance(exc, VerificationError):
                 raise
-            raise VerificationError(
-                f"ES256 verify_decision: {type(exc).__name__}: {exc}"
-            ) from exc
+            raise VerificationError(f"ES256 verify_decision: {type(exc).__name__}: {exc}") from exc

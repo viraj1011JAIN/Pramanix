@@ -10,6 +10,7 @@ exposes the ``/chat/completions`` endpoint.
 
 Requires the ``pramanix[translator]`` extra (``openai``, ``tenacity``).
 """
+
 from __future__ import annotations
 
 import os
@@ -125,16 +126,14 @@ class OpenAICompatTranslator:
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"OpenAI model '{self.model}' unreachable after "
-                f"{attempts} attempt(s): {exc}",
+                f"OpenAI model '{self.model}' unreachable after " f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
 
         except self._api_status_error as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] OpenAI API error "
-                f"{exc.status_code}: {exc.message}"
+                f"[{self.model}] OpenAI API error " f"{exc.status_code}: {exc.message}"
             ) from exc
 
     async def aclose(self) -> None:
@@ -142,6 +141,7 @@ class OpenAICompatTranslator:
         # openai SDK ≥1.0 uses close() (coroutine); older builds used aclose().
         # Prefer close() but fall back gracefully for forward compatibility.
         import inspect
+
         _close = getattr(self._client, "close", None) or getattr(self._client, "aclose", None)
         if _close is not None:
             result = _close()

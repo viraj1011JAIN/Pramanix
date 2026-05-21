@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """FlowEnforcer — stateful enforcement of information-flow policies."""
+
 from __future__ import annotations
 
 import logging

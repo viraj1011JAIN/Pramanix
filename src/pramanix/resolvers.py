@@ -36,6 +36,7 @@ Usage::
     # when the field is needed, caches the result for the duration of the
     # verify() call, then clears it in the finally block.
 """
+
 from __future__ import annotations
 
 import contextvars
@@ -75,9 +76,7 @@ class ResolverRegistry:
 
     # ── Registration ─────────────────────────────────────────────────────────
 
-    def register(
-        self, name: str, resolver: Callable[..., Any], *, force: bool = False
-    ) -> None:
+    def register(self, name: str, resolver: Callable[..., Any], *, force: bool = False) -> None:
         """Register a named resolver callable.
 
         Args:

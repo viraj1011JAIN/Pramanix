@@ -117,11 +117,11 @@ def test_calibrated_scorer_save_load_roundtrip(tmp_path: Path) -> None:
     cs.fit(safe + inj, [0] * 150 + [1] * 150)
 
     path = tmp_path / "scorer.pkl"
-    _TEST_HMAC_KEY = b"\x00" * 32  # 32-byte sentinel — test only
-    cs.save(path, hmac_key=_TEST_HMAC_KEY)
+    _test_hmac_key = b"\x00" * 32  # 32-byte sentinel — test only
+    cs.save(path, hmac_key=_test_hmac_key)
     assert path.exists()
 
-    loaded = CalibratedScorer.load(path, hmac_key=_TEST_HMAC_KEY)
+    loaded = CalibratedScorer.load(path, hmac_key=_test_hmac_key)
     assert isinstance(loaded, CalibratedScorer)
 
     # Scores should be reproducible after roundtrip

@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Policy lifecycle management: structural diffs and shadow evaluation."""
+
 from pramanix.lifecycle.diff import (
     FieldChange,
     InvariantChange,

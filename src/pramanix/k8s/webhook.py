@@ -26,6 +26,7 @@ Usage::
 
     uvicorn.run(app, host="0.0.0.0", port=8443)
 """
+
 from __future__ import annotations
 
 import logging

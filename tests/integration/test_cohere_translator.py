@@ -216,9 +216,11 @@ def test_cohere_missing_package_raises_configuration_error() -> None:
 
     from pramanix.translator.cohere import CohereTranslator
 
-    with patch.dict(sys.modules, {"cohere": None}):  # type: ignore[arg-type]
-        with pytest.raises(ConfigurationError, match="pramanix\\[cohere\\]"):
-            CohereTranslator("command-r", api_key="k")
+    with (
+        patch.dict(sys.modules, {"cohere": None}),  # type: ignore[arg-type]
+        pytest.raises(ConfigurationError, match="pramanix\\[cohere\\]"),
+    ):
+        CohereTranslator("command-r", api_key="k")
 
 
 # ── Live tests (require COHERE_API_KEY) ────────────────────────────────────────

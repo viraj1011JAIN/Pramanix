@@ -17,6 +17,7 @@ Design:
   - Lines 704-709: verify_async with min_response_ms > 0 → _timed() loop executes.
   - Line 873: unknown execution_mode after pool is initialised → fallthrough.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -60,6 +61,7 @@ class _SemverPolicy(Policy):
 
 class _BadStateModel(BaseModel):
     """State model missing the required state_version field."""
+
     balance: Decimal
 
 

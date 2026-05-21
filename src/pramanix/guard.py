@@ -146,7 +146,7 @@ def _is_picklable(obj: Any) -> bool:
         # Log unexpected non-pickling errors (MemoryError, RecursionError,
         # SystemError) at WARNING so operators can distinguish infrastructure
         # pressure from a legitimate serialisation incompatibility.
-        if not isinstance(_exc, (AttributeError, TypeError)):
+        if not isinstance(_exc, AttributeError | TypeError):
             _log_pickle.getLogger(__name__).warning(
                 "_is_picklable: unexpected %s during serialisation check — "
                 "returning False; this may indicate memory pressure or a "
@@ -201,6 +201,7 @@ def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[st
         # extraction or consensus is degraded.  Log at WARNING so the metric
         # infrastructure issue is visible without blocking the guard path.
         import logging as _guard_log
+
         _guard_log.getLogger(__name__).warning(
             "pramanix.guard: Prometheus metric emit failed for %r — "
             "LLM failure counter not incremented (%s: %s). "

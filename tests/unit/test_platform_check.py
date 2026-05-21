@@ -10,6 +10,7 @@ Gate condition (from engineering plan):
     # On Debian container: import succeeds.
     # PRAMANIX_SKIP_MUSL_CHECK=1 env var bypasses the check.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -66,9 +67,7 @@ class TestSkipMuslCheck:
 
             check_platform()  # must not raise
 
-    def test_skip_env_var_zero_does_not_bypass(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_skip_env_var_zero_does_not_bypass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SKIP_MUSL_CHECK", "0")
         with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
             from pramanix._platform import check_platform
@@ -76,9 +75,7 @@ class TestSkipMuslCheck:
             with pytest.raises(ConfigurationError, match="musl libc"):
                 check_platform()
 
-    def test_skip_env_var_absent_does_not_bypass(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_skip_env_var_absent_does_not_bypass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("PRAMANIX_SKIP_MUSL_CHECK", raising=False)
         with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
             from pramanix._platform import check_platform

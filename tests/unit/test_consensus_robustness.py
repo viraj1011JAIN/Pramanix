@@ -13,7 +13,10 @@ Coverage:
 - create_translator: routes "gemini:" prefix to GeminiTranslator
 - create_translator: routes "cohere:" prefix to CohereTranslator
 """
+
 from __future__ import annotations
+
+from typing import ClassVar
 
 import pytest
 
@@ -75,19 +78,19 @@ class TestRawStringsAgree:
 class TestCreateTranslatorRouting:
     def test_gemini_prefix_routing(self, monkeypatch):
         """create_translator with 'gemini:...' should instantiate GeminiTranslator."""
-        import types
         from unittest.mock import patch
 
         from tests.helpers.real_protocols import _GeminiGenaiModule
 
         class _RecordingGeminiTranslator:
-            instances: list = []
+            instances: ClassVar[list] = []
 
             def __init__(self, *args, **kwargs):
                 _RecordingGeminiTranslator.instances.clear()
                 _RecordingGeminiTranslator.instances.append(self)
 
         import pramanix.translator.gemini as gem_mod
+
         original_cls = gem_mod.GeminiTranslator
         gem_mod.GeminiTranslator = _RecordingGeminiTranslator  # type: ignore[assignment]
         try:
@@ -103,13 +106,14 @@ class TestCreateTranslatorRouting:
         from unittest.mock import patch
 
         class _RecordingCohereTranslator:
-            instances: list = []
+            instances: ClassVar[list] = []
 
             def __init__(self, *args, **kwargs):
                 _RecordingCohereTranslator.instances.clear()
                 _RecordingCohereTranslator.instances.append(self)
 
         import pramanix.translator.cohere as coh_mod
+
         original_cls = coh_mod.CohereTranslator
         coh_mod.CohereTranslator = _RecordingCohereTranslator  # type: ignore[assignment]
         try:

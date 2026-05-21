@@ -25,6 +25,7 @@ Design constraints
 * **Thread-safe** — all shared state inside :class:`ShadowEvaluator` is
   protected by ``threading.Lock``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -127,15 +128,17 @@ class PolicyDiff:
     @property
     def is_breaking(self) -> bool:
         """True when any invariant was removed/changed or any field changed."""
-        return any(
-            c.change_type in ("removed", "changed") for c in self.invariant_changes
-        ) or bool(self.field_changes)
+        return any(c.change_type in ("removed", "changed") for c in self.invariant_changes) or bool(
+            self.field_changes
+        )
 
     @property
     def has_changes(self) -> bool:
         """True when there are any differences between the two policies."""
-        return bool(self.invariant_changes) or bool(self.field_changes) or (
-            self.old_version != self.new_version
+        return (
+            bool(self.invariant_changes)
+            or bool(self.field_changes)
+            or (self.old_version != self.new_version)
         )
 
     def summary(self) -> str:
@@ -439,7 +442,12 @@ def _collect_invariants(policy: type[Policy]) -> dict[str, str]:
         return {}
     result: dict[str, str] = {}
     for inv in invs:
-        name = getattr(inv, "_name", None) or getattr(inv, "label", None) or getattr(inv, "name", None) or id(inv)
+        name = (
+            getattr(inv, "_name", None)
+            or getattr(inv, "label", None)
+            or getattr(inv, "name", None)
+            or id(inv)
+        )
         label = getattr(inv, "label", None) or ""
         explanation = getattr(inv, "explanation", None) or ""
         node = getattr(inv, "node", None)

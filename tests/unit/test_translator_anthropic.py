@@ -13,6 +13,7 @@ streaming API handles transparently.
 No mocks, stubs, or monkey-patches.  Every assertion exercises real
 HTTP I/O through the real Anthropic SDK client.
 """
+
 from __future__ import annotations
 
 import os
@@ -23,8 +24,8 @@ from pydantic import BaseModel
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.anthropic import AnthropicTranslator
 
-
 # ── Minimal intent schema ─────────────────────────────────────────────────────
+
 
 class _TransferIntent(BaseModel):
     amount: float
@@ -99,6 +100,7 @@ class TestAnthropicTranslatorExtraction:
     async def test_extract_with_context_parameter(self) -> None:
         """context= keyword is accepted without error."""
         from pramanix.translator.base import TranslatorContext
+
         ctx = TranslatorContext(user_id="u_test", extra={"locale": "en"})
         t = AnthropicTranslator(self._MODEL, api_key=self._API_KEY)
         result = await t.extract("pay 10 to Alice", _TransferIntent, context=ctx)
@@ -106,6 +108,7 @@ class TestAnthropicTranslatorExtraction:
 
     async def test_extract_raises_extraction_failure_on_bad_json(self) -> None:
         """When the LLM returns non-JSON text, ExtractionFailureError is raised."""
+
         class _BadSchema(BaseModel):
             # Extremely unusual field name that forces unexpected output
             zxqwerty_unique_9876: str
@@ -131,10 +134,12 @@ class TestAnthropicTranslatorExtraction:
 
 class TestAnthropicTranslatorTimeout:
     """Real timeout test — set an impossibly short timeout so the SDK raises
-    APITimeoutError, tenacity retries 3× (with real exponential backoff),
+    APITimeoutError, tenacity retries 3x (with real exponential backoff),
     then LLMTimeoutError is surfaced."""
 
-    _API_KEY = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY") or "sk-test"
+    _API_KEY = (
+        os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY") or "sk-test"
+    )
     _MODEL = "claude-opus-4-6"
 
     async def test_timeout_raises_llm_timeout_error(self) -> None:

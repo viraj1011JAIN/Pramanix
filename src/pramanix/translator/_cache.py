@@ -22,6 +22,7 @@ Enabled via:
     PRAMANIX_INTENT_CACHE_MAX_SIZE=1024     (in-process LRU, default)
     PRAMANIX_INTENT_CACHE_REDIS_URL=...     (optional Redis backend)
 """
+
 from __future__ import annotations
 
 import hashlib

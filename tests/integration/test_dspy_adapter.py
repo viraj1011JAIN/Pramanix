@@ -189,7 +189,7 @@ class TestBlockPath:
     def test_block_with_zero_amount_satisfies_block_policy(self):
         """Boundary condition: amount=0 satisfies both policies; ensure allow fires."""
         allow_module = _make_module(_ALLOW_GUARD)
-        inner = _ForwardModule(return_value="zero_ok")
+        _ForwardModule(return_value="zero_ok")
         allow_module = PramanixGuardedModule(
             module=_ForwardModule(return_value="zero_ok"),
             guard=_ALLOW_GUARD,

@@ -16,6 +16,7 @@ Coverage targets
 * class method decoration works identically to free function
 * on_block="return" with less-than-2 positional args (kwargs extraction)
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

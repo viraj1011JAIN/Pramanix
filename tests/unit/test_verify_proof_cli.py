@@ -8,6 +8,7 @@
 Covers all branches of _cmd_verify_proof and the main() dispatcher
 that were not exercised by test_audit_cli.py.
 """
+
 from __future__ import annotations
 
 import io
@@ -91,9 +92,7 @@ class TestVerifyProofArgParsing:
 
     def test_whitespace_only_stdin_returns_2(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
-        code, _, _err = _run_cli(
-            ["pramanix", "verify-proof", "--stdin"], stdin_data="   \n\t  "
-        )
+        code, _, _err = _run_cli(["pramanix", "verify-proof", "--stdin"], stdin_data="   \n\t  ")
         assert code == 2
 
     def test_missing_key_returns_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,9 +131,7 @@ class TestVerifyProofValidHuman:
     def test_valid_token_via_stdin(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
         token = _sign_decision()
-        code, out, _ = _run_cli(
-            ["pramanix", "verify-proof", "--stdin"], stdin_data=token
-        )
+        code, out, _ = _run_cli(["pramanix", "verify-proof", "--stdin"], stdin_data=token)
         assert code == 0
         assert "VALID" in out
 
@@ -164,9 +161,7 @@ class TestVerifyProofValidHuman:
 
     def test_invalid_token_exits_1_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
-        code, out, _ = _run_cli(
-            ["pramanix", "verify-proof", "completely.invalid.token"]
-        )
+        code, out, _ = _run_cli(["pramanix", "verify-proof", "completely.invalid.token"])
         assert code == 1
         assert "INVALID" in out
 
@@ -213,9 +208,7 @@ class TestVerifyProofJsonOutput:
         assert parsed["valid"] is True
         assert parsed["allowed"] is True
 
-    def test_json_output_has_all_required_fields(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_json_output_has_all_required_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
         token = _sign_decision()
         _, out, _ = _run_cli(["pramanix", "verify-proof", token, "--json"])
@@ -232,13 +225,9 @@ class TestVerifyProofJsonOutput:
         ):
             assert field in parsed, f"Missing field: {field!r}"
 
-    def test_json_invalid_token_has_error_field(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_json_invalid_token_has_error_field(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
-        code, out, _ = _run_cli(
-            ["pramanix", "verify-proof", "bad.token.here", "--json"]
-        )
+        code, out, _ = _run_cli(["pramanix", "verify-proof", "bad.token.here", "--json"])
         assert code == 1
         parsed = json.loads(out)
         assert parsed["valid"] is False
@@ -272,9 +261,7 @@ class TestVerifyProofJsonOutput:
     def test_json_via_stdin(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SIGNING_KEY", _KEY)
         token = _sign_decision()
-        code, out, _ = _run_cli(
-            ["pramanix", "verify-proof", "--stdin", "--json"], stdin_data=token
-        )
+        code, out, _ = _run_cli(["pramanix", "verify-proof", "--stdin", "--json"], stdin_data=token)
         assert code == 0
         parsed = json.loads(out)
         assert parsed["valid"] is True
@@ -308,9 +295,7 @@ class TestAuditCLIExtras:
         log_path = tmp_path / "audit.jsonl"
         log_path.write_text(json.dumps(rec) + "\n")
 
-        code, _, err = _run_cli(
-            ["pramanix", "audit", "verify", str(log_path), "--public-key", ""]
-        )
+        code, _, err = _run_cli(["pramanix", "audit", "verify", str(log_path), "--public-key", ""])
         assert code == 2
         assert err != ""
 

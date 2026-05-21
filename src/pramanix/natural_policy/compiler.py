@@ -60,10 +60,11 @@ Typical usage::
     # result.verification → MetaVerificationResult  — cryptographic audit of LLM intent
     # result.schema       → NaturalPolicySchema     — the full parsed intermediate form
 """
+
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -228,9 +229,7 @@ class ASTBuilder:
 
     # ── Constraint dispatch ────────────────────────────────────────────────────
 
-    def _build_constraint(
-        self, node: ConstraintNode
-    ) -> tuple[ConstraintExpr, str]:
+    def _build_constraint(self, node: ConstraintNode) -> tuple[ConstraintExpr, str]:
         """Dispatch a constraint node to its handler.
 
         Returns ``(ConstraintExpr, natural_language)`` where the expression is
@@ -338,9 +337,7 @@ class ASTBuilder:
 
     # ── Operator dispatch ──────────────────────────────────────────────────────
 
-    def _check_operator_type_compat(
-        self, field: Field, op: ComparisonOp, label: str
-    ) -> None:
+    def _check_operator_type_compat(self, field: Field, op: ComparisonOp, label: str) -> None:
         """Raise FieldTypeError for operator / type combinations that Z3 cannot solve."""
         if field.z3_type == "Bool" and op in _BOOL_ILLEGAL_OPS:
             raise FieldTypeError(
@@ -358,9 +355,7 @@ class ASTBuilder:
             )
 
     @staticmethod
-    def _apply_arith_op(
-        left: ExpressionNode, op: ArithOp, right: ExpressionNode
-    ) -> ExpressionNode:
+    def _apply_arith_op(left: ExpressionNode, op: ArithOp, right: ExpressionNode) -> ExpressionNode:
         """Apply an arithmetic operator to two ExpressionNodes."""
         match op:
             case ArithOp.ADD:
@@ -521,7 +516,7 @@ class NaturalPolicyCompiler:
             The LLM API timed out after all retries.
         """
         # ── Step 1: LLM extraction ─────────────────────────────────────────
-        json_schema = NaturalPolicySchema.model_json_schema()
+        NaturalPolicySchema.model_json_schema()
         raw_dict = await self._translator.extract(
             text=self._build_prompt(english_policy),
             intent_schema=_SchemaWrapper,
@@ -577,8 +572,7 @@ class NaturalPolicyCompiler:
         except PydanticValidationError as exc:
             # Collect all validation errors into a single message
             errors = "; ".join(
-                f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}"
-                for e in exc.errors()
+                f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors()
             )
             raise ExtractionFailureError(
                 f"LLM output failed schema validation. "

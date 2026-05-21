@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for pramanix.logging_helpers — 100% branch coverage."""
+
 from __future__ import annotations
 
 import io
@@ -36,7 +37,6 @@ def _fresh_logger(name: str = _TEST_NS) -> logging.Logger:
 
 
 class TestConfigureProductionLogging:
-
     def setup_method(self) -> None:
         """Guarantee a clean logger before every test."""
         _fresh_logger(_TEST_NS)
@@ -55,8 +55,7 @@ class TestConfigureProductionLogging:
             logger_name=_TEST_NS,
         )
         assert any(
-            isinstance(h, logging.StreamHandler) and h.stream is stream
-            for h in log.handlers
+            isinstance(h, logging.StreamHandler) and h.stream is stream for h in log.handlers
         )
 
     def test_adds_stream_handler_text(self) -> None:
@@ -68,13 +67,11 @@ class TestConfigureProductionLogging:
             logger_name=_TEST_NS,
         )
         assert any(
-            isinstance(h, logging.StreamHandler) and h.stream is stream
-            for h in log.handlers
+            isinstance(h, logging.StreamHandler) and h.stream is stream for h in log.handlers
         )
         # Formatter is the text variant — check its format string
         handler = next(
-            h for h in log.handlers
-            if isinstance(h, logging.StreamHandler) and h.stream is stream
+            h for h in log.handlers if isinstance(h, logging.StreamHandler) and h.stream is stream
         )
         assert "%(message)s" in (handler.formatter._fmt or "")
 
@@ -91,16 +88,11 @@ class TestConfigureProductionLogging:
     def test_idempotent_same_stream(self) -> None:
         """Calling twice with the same stream must not add a second handler."""
         stream = io.StringIO()
-        configure_production_logging(
-            fmt="json", stream=stream, logger_name=_TEST_NS
-        )
-        configure_production_logging(
-            fmt="json", stream=stream, logger_name=_TEST_NS
-        )
+        configure_production_logging(fmt="json", stream=stream, logger_name=_TEST_NS)
+        configure_production_logging(fmt="json", stream=stream, logger_name=_TEST_NS)
         log = logging.getLogger(_TEST_NS)
         stream_handlers = [
-            h for h in log.handlers
-            if isinstance(h, logging.StreamHandler) and h.stream is stream
+            h for h in log.handlers if isinstance(h, logging.StreamHandler) and h.stream is stream
         ]
         assert len(stream_handlers) == 1
 
@@ -111,11 +103,7 @@ class TestConfigureProductionLogging:
         configure_production_logging(fmt="json", stream=s1, logger_name=_TEST_NS)
         configure_production_logging(fmt="json", stream=s2, logger_name=_TEST_NS)
         log = logging.getLogger(_TEST_NS)
-        streams = {
-            h.stream
-            for h in log.handlers
-            if isinstance(h, logging.StreamHandler)
-        }
+        streams = {h.stream for h in log.handlers if isinstance(h, logging.StreamHandler)}
         assert s1 in streams and s2 in streams
 
     def test_json_format_emits_valid_log_line(self) -> None:
@@ -133,9 +121,7 @@ class TestConfigureProductionLogging:
 
     def test_returns_logger_instance(self) -> None:
         stream = io.StringIO()
-        result = configure_production_logging(
-            fmt="text", stream=stream, logger_name=_TEST_NS
-        )
+        result = configure_production_logging(fmt="text", stream=stream, logger_name=_TEST_NS)
         assert isinstance(result, logging.Logger)
         assert result.name == _TEST_NS
 
@@ -146,7 +132,6 @@ class TestConfigureProductionLogging:
 
 
 class TestCheckLoggingConfiguration:
-
     def setup_method(self) -> None:
         _fresh_logger(_TEST_NS)
 
@@ -292,7 +277,6 @@ class TestCheckLoggingConfiguration:
 
 
 class TestPramanixLoggerNames:
-
     def test_is_tuple(self) -> None:
         assert isinstance(PRAMANIX_LOGGER_NAMES, tuple)
 
@@ -304,9 +288,9 @@ class TestPramanixLoggerNames:
 
     def test_all_start_with_pramanix(self) -> None:
         for name in PRAMANIX_LOGGER_NAMES:
-            assert name.startswith("pramanix"), (
-                f"Logger name {name!r} does not start with 'pramanix'"
-            )
+            assert name.startswith(
+                "pramanix"
+            ), f"Logger name {name!r} does not start with 'pramanix'"
 
     def test_no_duplicates(self) -> None:
         assert len(PRAMANIX_LOGGER_NAMES) == len(set(PRAMANIX_LOGGER_NAMES))

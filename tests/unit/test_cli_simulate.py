@@ -376,9 +376,9 @@ class TestPlainEnglishQuality:
         plain = data["plain_reason"]
         # Must not be a bare underscore-joined identifier like "max_replicas"
         # (a sentence contains spaces or punctuation)
-        assert " " in plain or plain.endswith("."), (
-            f"plain_reason looks like a raw identifier, not a sentence: {plain!r}"
-        )
+        assert " " in plain or plain.endswith(
+            "."
+        ), f"plain_reason looks like a raw identifier, not a sentence: {plain!r}"
 
     def test_plain_reason_has_no_raw_underscores(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
@@ -390,9 +390,9 @@ class TestPlainEnglishQuality:
         words = plain.split()
         for word in words:
             cleaned = word.rstrip(".,;:")
-            assert not (cleaned.startswith("_") or cleaned.endswith("_")), (
-                f"Word in plain_reason has leading/trailing underscore: {word!r}"
-            )
+            assert not (
+                cleaned.startswith("_") or cleaned.endswith("_")
+            ), f"Word in plain_reason has leading/trailing underscore: {word!r}"
 
     def test_next_step_is_actionable_guidance(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
@@ -401,7 +401,9 @@ class TestPlainEnglishQuality:
         next_step = data["next_step"]
         assert next_step, "next_step must not be empty"
         # Must be human-readable guidance, not a status code or identifier
-        assert " " in next_step, f"next_step has no spaces — looks like an identifier: {next_step!r}"
+        assert (
+            " " in next_step
+        ), f"next_step has no spaces — looks like an identifier: {next_step!r}"
 
     def test_block_text_output_shows_reason_line(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
@@ -435,7 +437,6 @@ class TestSimulateDryRunGuarantees:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """simulate must not create files under the system temp directory."""
-        import os
 
         files_before = set(tmp_path.rglob("*"))
         monkeypatch.setattr(
@@ -456,15 +457,14 @@ class TestSimulateDryRunGuarantees:
         )
         main()
         files_after = set(tmp_path.rglob("*"))
-        assert files_before == files_after, (
-            f"simulate created unexpected files: {files_after - files_before}"
-        )
+        assert (
+            files_before == files_after
+        ), f"simulate created unexpected files: {files_after - files_before}"
 
     def test_simulate_uses_no_audit_sinks(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """simulate must build Guard with zero audit sinks regardless of policy meta."""
-        audit_calls: list[dict] = []
 
         policy_src = tmp_path / "audit_policy.py"
         policy_src.write_text(
@@ -516,20 +516,17 @@ policy = AuditPolicy
         # The _SinkSentinel._calls list was NOT populated — simulate never
         # configured an audit sink on the Guard it built.
         import importlib.util
+
         spec = importlib.util.spec_from_file_location("_ap", str(policy_src))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        assert mod._sentinel._calls == [], (
-            "simulate must not call audit sink .emit() — dry-run guarantee violated"
-        )
+        assert (
+            mod._sentinel._calls == []
+        ), "simulate must not call audit sink .emit() — dry-run guarantee violated"
 
-    def test_simulate_succeeds_without_network(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_simulate_succeeds_without_network(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """simulate must not attempt any network I/O — it is entirely local."""
         import socket
-
-        original_connect = socket.socket.connect
 
         def _no_connect(self, address):
             raise AssertionError(

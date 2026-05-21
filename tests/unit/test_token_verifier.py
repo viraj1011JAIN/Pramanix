@@ -11,6 +11,7 @@ Gate condition (from engineering plan):
     # A token used once must be rejected on second use.
     # A token must expire correctly.
 """
+
 from __future__ import annotations
 
 import secrets

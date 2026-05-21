@@ -28,6 +28,7 @@ Design constraints
 * **Thread-safe** — all mutations and reads inside
   :class:`SecureMemoryStore` are protected by ``threading.Lock``.
 """
+
 from __future__ import annotations
 
 import collections
@@ -74,9 +75,7 @@ class MemoryEntry:
     """
 
     entry_id: str = field(
-        default_factory=lambda: str(
-            uuid.UUID(bytes=secrets.token_bytes(16), version=4)
-        )
+        default_factory=lambda: str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
     )
     key: str = ""
     value: Any = None
@@ -175,10 +174,7 @@ class ScopedMemoryPartition:
             MemoryViolationError: When the write violates label policy.
         """
         # Block UNTRUSTED data in high-sensitivity partitions.
-        if (
-            label == TrustLabel.UNTRUSTED
-            and self.min_label >= TrustLabel.CONFIDENTIAL
-        ):
+        if label == TrustLabel.UNTRUSTED and self.min_label >= TrustLabel.CONFIDENTIAL:
             _log.warning(
                 "memory.write_blocked: key=%s label=UNTRUSTED tenant=%s workflow=%s",
                 key,
@@ -308,9 +304,9 @@ class SecureMemoryStore:
         self._lock = threading.Lock()
         # OrderedDict gives O(1) LRU ordering: move-to-end on access,
         # popitem(last=False) to evict the LRU entry when at capacity.
-        self._partitions: collections.OrderedDict[
-            tuple[str, str], ScopedMemoryPartition
-        ] = collections.OrderedDict()
+        self._partitions: collections.OrderedDict[tuple[str, str], ScopedMemoryPartition] = (
+            collections.OrderedDict()
+        )
 
     # ── Partition management ──────────────────────────────────────────────
 

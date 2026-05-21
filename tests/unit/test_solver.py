@@ -44,9 +44,7 @@ INVARIANTS: list[ConstraintExpr] = [
     (E(_amount) <= E(_daily_limit))
     .named("within_daily_limit")
     .explain("Exceeds daily limit: amount={amount}, limit={daily_limit}"),
-    (E(_is_frozen) == False)  # noqa: E712
-    .named("account_not_frozen")
-    .explain("Account is frozen"),
+    (E(_is_frozen) == False).named("account_not_frozen").explain("Account is frozen"),
 ]
 
 # Baseline values that satisfy all three invariants

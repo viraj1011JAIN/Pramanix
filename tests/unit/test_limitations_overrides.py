@@ -14,6 +14,7 @@ Covers four production-hardening packages introduced in v0.9.0:
 
 All tests use real objects (no mocks) per the no-mocks policy.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -103,7 +104,7 @@ class TestStateVersionToken:
             expires_at=token.expires_at,
             token_id=token.token_id,
             signature=token.signature,  # original sig — now invalid for None version
-            state_version=None,         # attacker stripped the version
+            state_version=None,  # attacker stripped the version
         )
         assert verifier.consume(forged) is False
 
@@ -319,7 +320,9 @@ class TestProductionModeWarning:
         assert len(prod_warnings) == 1
         assert "sync" in str(prod_warnings[0].message)
 
-    def test_async_thread_in_production_emits_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_async_thread_in_production_emits_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
         with warnings.catch_warnings(record=True) as w:
@@ -335,7 +338,11 @@ class TestProductionModeWarning:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             self._config_with_mode("async-process")
-        prod_warnings = [x for x in w if "async-process" in str(x.message) and "not recommended" in str(x.message)]
+        prod_warnings = [
+            x
+            for x in w
+            if "async-process" in str(x.message) and "not recommended" in str(x.message)
+        ]
         assert len(prod_warnings) == 0
 
     def test_sync_without_production_env_no_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:

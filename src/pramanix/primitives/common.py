@@ -20,6 +20,7 @@ Example::
                 StatusMustBe(cls.status, 1),  # must be active
             ]
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
@@ -45,7 +46,8 @@ def NotSuspended(is_suspended: Field) -> ConstraintExpr:
         is_suspended: Bool-sorted field; ``True`` means the entity is suspended.
     """
     return (
-        E(is_suspended).is_false()
+        E(is_suspended)
+        .is_false()
         .named("not_suspended")
         .explain("Action blocked: the entity is suspended (is_suspended={is_suspended}).")
     )

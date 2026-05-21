@@ -7,6 +7,7 @@
 
 This module has no external dependencies — it is always importable.
 """
+
 from __future__ import annotations
 
 import json

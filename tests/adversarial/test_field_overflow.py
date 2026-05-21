@@ -22,6 +22,7 @@ Overflow vectors covered:
   W  All fields simultaneously at max valid values → allowed
   X  Extra unexpected field injected alongside valid fields → silently ignored
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

@@ -3,6 +3,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for InvariantASTCache (C-2)."""
+
 from __future__ import annotations
 
 import threading

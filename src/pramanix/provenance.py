@@ -29,6 +29,7 @@ Design constraints
 * **Tool manifest** — ``tool_manifest`` records the set of tool names
   that were active (e.g. from the capability manifest) at decision time.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -115,6 +116,7 @@ def _provenance_key() -> bytes:
         if key_file:
             try:
                 import pathlib as _pathlib
+
                 file_hex = _pathlib.Path(key_file).read_text().strip()
                 key = bytes.fromhex(file_hex)
                 if len(key) != 32:
@@ -136,7 +138,7 @@ def _provenance_key() -> bytes:
             "ProvenanceChain records from this process cannot be verified "
             "against records from a different process or after a restart.  "
             "For persistent cross-process chain integrity set %s to a 64-char hex key "
-            "(e.g. export %s=$(python -c \"import secrets; print(secrets.token_hex(32))\")).",
+            '(e.g. export %s=$(python -c "import secrets; print(secrets.token_hex(32))")).',
             _PROVENANCE_KEY_ENV,
             _PROVENANCE_KEY_ENV,
         )

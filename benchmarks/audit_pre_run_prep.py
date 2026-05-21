@@ -23,6 +23,7 @@ This establishes an immutable, timestamped record of the exact code and hardware
 configuration that generated the 500 M decisions.  If any code changes after this
 snapshot, an auditor can diff the zip against the live repo to detect tampering.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -34,7 +35,7 @@ from pathlib import Path
 import psutil
 
 ROOT = Path(__file__).parent.parent
-OUT  = ROOT / "benchmarks" / "results" / "00_environment"
+OUT = ROOT / "benchmarks" / "results" / "00_environment"
 OUT.mkdir(parents=True, exist_ok=True)
 
 _SEP = "-" * 60
@@ -66,13 +67,10 @@ def _collect_hardware_specs() -> str:
     ]
 
     # ── CPU ───────────────────────────────────────────────────────────────────
-    logical_cores  = psutil.cpu_count(logical=True)
+    logical_cores = psutil.cpu_count(logical=True)
     physical_cores = psutil.cpu_count(logical=False)
-    cpu_freq       = psutil.cpu_freq()
-    freq_str = (
-        f"{cpu_freq.current:.0f} MHz  (max {cpu_freq.max:.0f} MHz)"
-        if cpu_freq else "N/A"
-    )
+    cpu_freq = psutil.cpu_freq()
+    freq_str = f"{cpu_freq.current:.0f} MHz  (max {cpu_freq.max:.0f} MHz)" if cpu_freq else "N/A"
     lines += [
         _SEP,
         "  CPU",
@@ -128,6 +126,7 @@ def _collect_hardware_specs() -> str:
     # ── Z3 ────────────────────────────────────────────────────────────────────
     try:
         import z3
+
         lines.append(f"  Z3          : {z3.get_version_string()}")
     except ImportError:
         lines.append("  Z3          : NOT INSTALLED")
@@ -136,6 +135,7 @@ def _collect_hardware_specs() -> str:
     try:
         sys.path.insert(0, str(ROOT / "src"))
         import pramanix
+
         pver = getattr(pramanix, "__version__", "dev")
         lines.append(f"  Pramanix    : {pver}")
     except ImportError:
@@ -166,8 +166,8 @@ def _create_code_snapshot(zip_path: Path) -> int:
     Returns the total number of files included.
     Excludes: __pycache__/, *.pyc, *.pyo, .git/, results/ (runtime output).
     """
-    EXCLUDE_DIRS  = {"__pycache__", ".git", "results", ".venv", ".mypy_cache"}
-    EXCLUDE_EXTS  = {".pyc", ".pyo", ".pyd"}
+    EXCLUDE_DIRS = {"__pycache__", ".git", "results", ".venv", ".mypy_cache"}
+    EXCLUDE_EXTS = {".pyc", ".pyo", ".pyd"}
 
     folders = [
         ROOT / "src" / "pramanix",
@@ -204,7 +204,7 @@ def main() -> None:
 
     # ── 1. hardware_specs.txt ─────────────────────────────────────────────────
     hw_path = OUT / "hardware_specs.txt"
-    specs   = _collect_hardware_specs()
+    specs = _collect_hardware_specs()
     hw_path.write_text(specs, encoding="utf-8")
     print("  [OK] hardware_specs.txt written")
     print()
@@ -216,8 +216,8 @@ def main() -> None:
     # ── 2. pramanix_code_snapshot.zip ─────────────────────────────────────────
     zip_path = OUT / "pramanix_code_snapshot.zip"
     print("  Creating code snapshot...")
-    n_files  = _create_code_snapshot(zip_path)
-    size_mb  = zip_path.stat().st_size / (1024 * 1024)
+    n_files = _create_code_snapshot(zip_path)
+    size_mb = zip_path.stat().st_size / (1024 * 1024)
     print(f"  [OK] pramanix_code_snapshot.zip  ({n_files} files, {size_mb:.2f} MB)")
 
     # ── 3. Instructions ───────────────────────────────────────────────────────

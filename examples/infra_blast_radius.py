@@ -22,6 +22,7 @@ Run::
 
     python examples/infra_blast_radius.py
 """
+
 from __future__ import annotations
 
 import sys

@@ -13,6 +13,7 @@ Requires the ``pramanix[llamacpp]`` extra (``llama-cpp-python``).
 If the package is not installed, instantiation raises
 :exc:`~pramanix.exceptions.ConfigurationError` with the exact pip command.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -73,6 +74,7 @@ class LlamaCppTranslator:
     ) -> None:
         try:
             import importlib as _il
+
             _il.import_module("llama_cpp")
             del _il
         except ImportError as exc:
@@ -96,6 +98,7 @@ class LlamaCppTranslator:
         with _MODEL_CACHE_LOCK:
             if cache_key not in _MODEL_CACHE:
                 from llama_cpp import Llama
+
                 _MODEL_CACHE[cache_key] = Llama(
                     model_path=self._model_path,
                     n_ctx=self._n_ctx,
@@ -149,9 +152,7 @@ class LlamaCppTranslator:
                 attempts=1,
             ) from exc
         except Exception as exc:
-            raise ExtractionFailureError(
-                f"LlamaCppTranslator: inference failed: {exc!r}"
-            ) from exc
+            raise ExtractionFailureError(f"LlamaCppTranslator: inference failed: {exc!r}") from exc
 
         try:
             return parse_llm_response(raw, model_name=self._model_path)

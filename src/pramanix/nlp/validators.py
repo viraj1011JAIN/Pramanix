@@ -16,22 +16,20 @@ Design goals
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import unicodedata
 import warnings
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass  # keep type stubs import-free at runtime
+from dataclasses import dataclass
+from typing import Any
 
 _log = logging.getLogger(__name__)
 
 # SecurityWarning is a built-in in Python 3.12+.  On 3.11 we define a
 # compatible local class so warnings.warn(SecurityWarning) works on both.
 try:
-    SecurityWarning  # noqa: F821 — built-in on 3.12+
+    SecurityWarning  # — built-in on 3.12+  # noqa: B018
 except NameError:
 
     class SecurityWarning(UserWarning):  # type: ignore[no-redef]
@@ -46,6 +44,7 @@ except NameError:
 _re_engine: Any  # re2 if available, stdlib re as fallback
 try:
     import re2 as _re_engine  # type: ignore[import-not-found]
+
     _RE2_AVAILABLE = True
 except ImportError:
     _re_engine = re
@@ -81,6 +80,7 @@ def _get_nlp_gauge() -> Any:
             return _NLP_GAUGE
         try:
             from prometheus_client import Gauge
+
             _NLP_GAUGE = Gauge(
                 "pramanix_nlp_model_available",
                 "1 if the named NLP safety model loaded successfully, 0 if degraded",
@@ -109,10 +109,8 @@ def _try_detoxify_scorer() -> Any:
 
         g = _get_nlp_gauge()
         if g is not None:
-            try:
+            with contextlib.suppress(Exception):
                 g.labels(model="detoxify").set(1)
-            except Exception:
-                pass
         return _score
     except Exception as _exc:
         _log.warning(
@@ -125,10 +123,8 @@ def _try_detoxify_scorer() -> Any:
         )
         g = _get_nlp_gauge()
         if g is not None:
-            try:
+            with contextlib.suppress(Exception):
                 g.labels(model="detoxify").set(0)
-            except Exception:
-                pass
         return None
 
 
@@ -144,10 +140,8 @@ def _try_sentence_transformer() -> Any:
         model = SentenceTransformer("all-MiniLM-L6-v2")
         g = _get_nlp_gauge()
         if g is not None:
-            try:
+            with contextlib.suppress(Exception):
                 g.labels(model="sentence_transformer").set(1)
-            except Exception:
-                pass
         return model
     except Exception as _exc:
         _log.warning(
@@ -160,15 +154,13 @@ def _try_sentence_transformer() -> Any:
         )
         g = _get_nlp_gauge()
         if g is not None:
-            try:
+            with contextlib.suppress(Exception):
                 g.labels(model="sentence_transformer").set(0)
-            except Exception:
-                pass
         return None
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5
     if norm_a == 0.0 or norm_b == 0.0:
@@ -194,7 +186,7 @@ def _normalise(text: str) -> str:
 _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # US Social Security Number  (xxx-xx-xxxx)
     ("ssn", _re_engine.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
-    # Credit / debit card — 13–19 digit groups separated by spaces or dashes.
+    # Credit / debit card — 13-19 digit groups separated by spaces or dashes.
     # Covers Visa (13/16), MC (16), Amex (15), Discover (16), UnionPay (16-19).
     (
         "credit_card",
@@ -217,10 +209,10 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "phone",
         _re_engine.compile(
             r"\b"
-            r"(?:\+?1[\s\-.]?)?"          # optional US country code
-            r"(?:\(?\d{3}\)?[\s\-.]?)"    # area code
-            r"\d{3}[\s\-.]?"              # exchange
-            r"\d{4}"                       # subscriber
+            r"(?:\+?1[\s\-.]?)?"  # optional US country code
+            r"(?:\(?\d{3}\)?[\s\-.]?)"  # area code
+            r"\d{3}[\s\-.]?"  # exchange
+            r"\d{4}"  # subscriber
             r"\b",
         ),
     ),
@@ -305,18 +297,13 @@ class PIIDetector:
         results: list[PIIMatch] = []
         for label, pattern in self._patterns:
             for m in pattern.finditer(text):
-                results.append(
-                    PIIMatch(label=label, value=m.group(), start=m.start(), end=m.end())
-                )
+                results.append(PIIMatch(label=label, value=m.group(), start=m.start(), end=m.end()))
         results.sort(key=lambda m: m.start)
         return results
 
     def has_pii(self, text: str) -> bool:
         """Return ``True`` if *text* contains at least one PII match."""
-        for _label, pattern in self._patterns:
-            if pattern.search(text):
-                return True
-        return False
+        return any(pattern.search(text) for _label, pattern in self._patterns)
 
     def redact(self, text: str, replacement: str = "[REDACTED]") -> str:
         """Return a copy of *text* with all PII replaced by *replacement*.
@@ -349,14 +336,36 @@ class PIIDetector:
 _DEFAULT_TOXIC_WORDS: frozenset[str] = frozenset(
     {
         # Threats / violence
-        "kill", "murder", "attack", "bomb", "shoot", "stab", "assault", "threaten",
-        "destroy", "annihilate", "eliminate", "slaughter", "execute", "detonate",
+        "kill",
+        "murder",
+        "attack",
+        "bomb",
+        "shoot",
+        "stab",
+        "assault",
+        "threaten",
+        "destroy",
+        "annihilate",
+        "eliminate",
+        "slaughter",
+        "execute",
+        "detonate",
         # Harassment
-        "hate", "harass", "bully", "intimidate", "stalk", "blackmail",
+        "hate",
+        "harass",
+        "bully",
+        "intimidate",
+        "stalk",
+        "blackmail",
         # Explicit sexual content signals
-        "rape", "molest", "grope", "fondle",
+        "rape",
+        "molest",
+        "grope",
+        "fondle",
         # Self-harm
-        "suicide", "self-harm", "overdose",
+        "suicide",
+        "self-harm",
+        "overdose",
         # Slurs (placeholder stems — extend via extra_words in production)
         # Intentionally limited here to avoid reproducing a comprehensive slur list.
     }
@@ -575,8 +584,7 @@ class SemanticSimilarityGuard:
                 self._st_model = _st
                 # Pre-encode anchors for fast inference
                 self._anchor_embeddings: list[list[float]] = [
-                    _st.encode(a, convert_to_tensor=False).tolist()
-                    for a in self._anchors
+                    _st.encode(a, convert_to_tensor=False).tolist() for a in self._anchors
                 ]
                 self._similarity_fn = None
                 self._backend = "sentence-transformers"
@@ -595,9 +603,7 @@ class SemanticSimilarityGuard:
                 )
 
         # Pre-tokenise anchors for the Jaccard fallback path.
-        self._anchor_tokens: list[frozenset[str]] = [
-            self._tokenise(a) for a in self._anchors
-        ]
+        self._anchor_tokens: list[frozenset[str]] = [self._tokenise(a) for a in self._anchors]
 
     @staticmethod
     def _tokenise(text: str) -> frozenset[str]:
@@ -675,7 +681,7 @@ class SemanticSimilarityGuard:
                     best_anchor = anchor
         elif self._st_model is not None:
             text_emb = self._st_model.encode(text, convert_to_tensor=False).tolist()
-            for anchor, anc_emb in zip(self._anchors, self._anchor_embeddings):
+            for anchor, anc_emb in zip(self._anchors, self._anchor_embeddings, strict=False):
                 s = max(0.0, min(1.0, _cosine_similarity(text_emb, anc_emb)))
                 if s > best_score:
                     best_score = s

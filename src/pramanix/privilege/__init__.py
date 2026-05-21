@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Privilege separation for the Pramanix agentic runtime."""
+
 from pramanix.privilege.scope import (
     CapabilityManifest,
     ExecutionContext,

@@ -7,6 +7,7 @@
 
 All tests use real objects — no mocks, no monkeypatching.
 """
+
 from __future__ import annotations
 
 import time
@@ -18,8 +19,8 @@ from pydantic import BaseModel
 from pramanix.exceptions import ProvenanceError
 from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_record(
     decision_id: str = "dec-001",
@@ -41,8 +42,6 @@ def _make_record(
 def _make_real_decision():
     """Create a real Decision via Guard.verify() for from_decision tests."""
     from decimal import Decimal
-
-    from pydantic import BaseModel
 
     from pramanix.expressions import ConstraintExpr, E, Field
     from pramanix.guard import Guard, GuardConfig
@@ -265,3 +264,118 @@ class TestProvenanceChain:
         chain = ProvenanceChain(signing_key=key)
         chain.append(_make_record(decision_id="dec-001"))
         assert chain.verify_integrity()
+
+
+# ── _provenance_key() env-var / file / ephemeral paths ───────────────────────
+
+
+import os
+
+
+def test_provenance_key_loaded_from_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_provenance_key() returns the key encoded in PRAMANIX_PROVENANCE_KEY."""
+    import pramanix.provenance as _prov
+
+    key_bytes = os.urandom(32)
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+    monkeypatch.setenv("PRAMANIX_PROVENANCE_KEY", key_bytes.hex())
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY_FILE", raising=False)
+
+    result = _prov._provenance_key()
+    assert result == key_bytes
+
+    # Restore global so later tests are not affected.
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+
+
+def test_provenance_key_loaded_from_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """_provenance_key() reads the hex key from PRAMANIX_PROVENANCE_KEY_FILE."""
+    import pramanix.provenance as _prov
+
+    key_bytes = os.urandom(32)
+    key_file = tmp_path / "provenance.key"
+    key_file.write_text(key_bytes.hex())
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY", raising=False)
+    monkeypatch.setenv("PRAMANIX_PROVENANCE_KEY_FILE", str(key_file))
+
+    result = _prov._provenance_key()
+    assert result == key_bytes
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+
+
+def test_provenance_key_ephemeral_when_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_provenance_key() generates an ephemeral 32-byte key when no env vars set."""
+    import pramanix.provenance as _prov
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY", raising=False)
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY_FILE", raising=False)
+
+    result = _prov._provenance_key()
+    assert isinstance(result, bytes)
+    assert len(result) == 32
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+
+
+def test_provenance_key_invalid_env_hex_falls_back_to_ephemeral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid hex in PRAMANIX_PROVENANCE_KEY logs warning and falls back to ephemeral."""
+    import pramanix.provenance as _prov
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+    monkeypatch.setenv("PRAMANIX_PROVENANCE_KEY", "not-valid-hex!!")
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY_FILE", raising=False)
+
+    result = _prov._provenance_key()
+    # Fallback to ephemeral random key — still 32 bytes
+    assert isinstance(result, bytes)
+    assert len(result) == 32
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+
+
+def test_provenance_key_double_check_locking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The inner double-check inside _KEY_LOCK is exercised by a concurrent caller."""
+    import threading
+
+    import pramanix.provenance as _prov
+
+    expected_key = os.urandom(32)
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY", raising=False)
+    monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY_FILE", raising=False)
+
+    result: list[bytes] = []
+
+    # Acquire the lock first so the background thread blocks inside the with-block.
+    _prov._KEY_LOCK.acquire()
+    try:
+
+        def _call_from_thread() -> None:
+            # Outer check (_PROVENANCE_KEY is None) → passes.
+            # Then blocks on _KEY_LOCK (held by this thread).
+            result.append(_prov._provenance_key())
+
+        t = threading.Thread(target=_call_from_thread, daemon=True)
+        t.start()
+        # Give the thread time to pass the outer check and block on the lock.
+        import time
+
+        time.sleep(0.02)
+        # Set the key while holding the lock: thread sees it on the inner check.
+        monkeypatch.setattr(_prov, "_PROVENANCE_KEY", expected_key)
+    finally:
+        _prov._KEY_LOCK.release()
+
+    t.join(timeout=2.0)
+    assert result == [expected_key]
+
+    monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)

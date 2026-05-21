@@ -29,6 +29,7 @@ Design notes
 * A pre-flight ``pickle.dumps`` is performed in debug mode (when
   ``__debug__`` is ``True``) to surface subtle pickling failures early.
 """
+
 from __future__ import annotations
 
 import pickle
@@ -96,8 +97,7 @@ def flatten_model(
 
     if _depth > max_depth:
         raise PolicyCompilationError(
-            f"Nested model depth exceeds max_nesting_depth={max_depth} "
-            f"at prefix '{_prefix}'."
+            f"Nested model depth exceeds max_nesting_depth={max_depth} " f"at prefix '{_prefix}'."
         )
     model_type = type(model)
     if model_type in seen:

@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Enterprise transport interceptors — Phase F-3/F-4."""
+
 from __future__ import annotations
 
 __all__ = ["PramanixGrpcInterceptor", "PramanixKafkaConsumer"]
@@ -18,8 +19,10 @@ def __getattr__(name: str) -> object:
     """
     if name == "PramanixGrpcInterceptor":
         from pramanix.interceptors.grpc import PramanixGrpcInterceptor
+
         return PramanixGrpcInterceptor
     if name == "PramanixKafkaConsumer":
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
+
         return PramanixKafkaConsumer
     raise AttributeError(f"module 'pramanix.interceptors' has no attribute {name!r}")

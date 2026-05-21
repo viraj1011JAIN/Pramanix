@@ -15,6 +15,7 @@ Coverage targets:
 - z3_type_hint consistency check: matching hint accepted, mismatched raises
 - Return types are z3.SortRef instances
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

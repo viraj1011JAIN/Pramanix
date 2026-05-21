@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Flow rules and policy — what data is allowed to flow where."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -61,9 +62,8 @@ class FlowRule:
             return False
         if sink_label != self.sink_label:
             return False
-        if (
-            self.source_component is not None
-            and not fnmatch(source_component, self.source_component)
+        if self.source_component is not None and not fnmatch(
+            source_component, self.source_component
         ):
             return False
         return self.sink_component is None or fnmatch(sink_component, self.sink_component)
@@ -158,16 +158,13 @@ class FlowPolicy:
             A :class:`FlowDecision` describing the result and which rule matched.
         """
         for rule in self._rules:
-            if rule.matches(
-                data_label, sink_label, source_component, sink_component
-            ):
+            if rule.matches(data_label, sink_label, source_component, sink_component):
                 return FlowDecision(
                     permitted=rule.permitted,
                     requires_redaction=rule.requires_redaction,
                     matched_rule=rule,
-                    reason=rule.reason or (
-                        "permitted" if rule.permitted else "explicitly forbidden"
-                    ),
+                    reason=rule.reason
+                    or ("permitted" if rule.permitted else "explicitly forbidden"),
                 )
 
         if self._default_deny:

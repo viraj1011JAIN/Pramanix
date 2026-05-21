@@ -16,6 +16,7 @@ Coverage:
 - int → "integer", float/Decimal → "number", str → "string", bool → "boolean"
 - Dynamic policy via from_config also exports schema
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

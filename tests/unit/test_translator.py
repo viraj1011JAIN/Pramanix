@@ -19,6 +19,7 @@ Coverage targets:
 - Guard.parse_and_verify: end-to-end with mocked translators
 - New exception types: hierarchy, attributes, messages
 """
+
 from __future__ import annotations
 
 import json
@@ -26,8 +27,8 @@ import os
 from decimal import Decimal
 from typing import Any
 
-import pytest
 import httpx
+import pytest
 import respx
 from pydantic import BaseModel
 
@@ -184,7 +185,7 @@ class TestExtractFirstJson:
         assert _extract_first_json("no json here") is None
 
     def test_array_is_extracted(self) -> None:
-        raw = '[1, 2, 3]'
+        raw = "[1, 2, 3]"
         assert _extract_first_json(raw) == raw
 
 
@@ -978,7 +979,6 @@ class TestAnthropicTranslator:
         assert exc_info.value.model == "claude-opus-4-6"
 
 
-
 # ── AnthropicTranslator error paths (respx-mocked, no real key required) ───────
 
 
@@ -1098,9 +1098,7 @@ class TestGuardParseAndVerify:
         assert "Cannot extract" in decision.explanation
 
     @pytest.mark.asyncio
-    async def test_error_decision_on_mismatch(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_error_decision_on_mismatch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         guard = self._make_guard()
 
         mismatch = ExtractionMismatchError(
@@ -1124,9 +1122,7 @@ class TestGuardParseAndVerify:
         assert "disagree" in decision.explanation
 
     @pytest.mark.asyncio
-    async def test_error_decision_on_llm_timeout(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_error_decision_on_llm_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         guard = self._make_guard()
 
         def _raise(model_name, **kwargs):

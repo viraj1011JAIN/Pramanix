@@ -331,16 +331,17 @@ def _check_consistency(
             # Check that the operator symbol or its English synonym appears
             op_synonyms = _get_op_synonyms(op_internal)
             nl_lower_check = natural_language.lower()
-            if op_sym not in nl_lower_check:
-                if not any(syn in nl_lower_check for syn in op_synonyms):
-                    return (
-                        False,
-                        f"[{label}] Operator {op_sym!r} ({op_eng}) not found in "
-                        f"natural language and no synonym matched. "
-                        f"Reconstructed: {reconstructed!r}. "
-                        f"Natural language: {natural_language!r}. "
-                        f"Expected one of: {op_synonyms}",
-                    )
+            if op_sym not in nl_lower_check and not any(
+                syn in nl_lower_check for syn in op_synonyms
+            ):
+                return (
+                    False,
+                    f"[{label}] Operator {op_sym!r} ({op_eng}) not found in "
+                    f"natural language and no synonym matched. "
+                    f"Reconstructed: {reconstructed!r}. "
+                    f"Natural language: {natural_language!r}. "
+                    f"Expected one of: {op_synonyms}",
+                )
 
     return True, None
 

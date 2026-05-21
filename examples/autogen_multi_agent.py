@@ -19,6 +19,7 @@ Install: pip install 'pramanix[autogen]' pyautogen
 Run:
     OPENAI_API_KEY=... python examples/autogen_multi_agent.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,9 +33,10 @@ from pramanix.integrations.autogen import PramanixToolCallback
 
 # ── Treasury policy ───────────────────────────────────────────────────────────
 
-_amount    = Field("amount",      Decimal, "Real")
-_balance   = Field("balance",     Decimal, "Real")
-_threshold = Field("threshold",   Decimal, "Real")   # single-signature limit
+_amount = Field("amount", Decimal, "Real")
+_balance = Field("balance", Decimal, "Real")
+_threshold = Field("threshold", Decimal, "Real")  # single-signature limit
+
 
 class TreasuryPolicy(Policy):
     """CFO treasury transfer policy.
@@ -54,13 +56,17 @@ class TreasuryPolicy(Policy):
     @classmethod
     def invariants(cls) -> list:
         return [
-            (E(_amount) > Decimal("0")).named("positive_amount").explain(
-                "Transfer amount {amount} must be positive"
-            ),
-            (E(_amount) <= E(_threshold)).named("single_sig_limit").explain(
+            (E(_amount) > Decimal("0"))
+            .named("positive_amount")
+            .explain("Transfer amount {amount} must be positive"),
+            (E(_amount) <= E(_threshold))
+            .named("single_sig_limit")
+            .explain(
                 "Transfer {amount} exceeds single-signature limit {threshold} — board approval required"
             ),
-            ((E(_balance) - E(_amount)) >= E(_balance) * Decimal("0.10")).named("liquidity_buffer").explain(
+            ((E(_balance) - E(_amount)) >= E(_balance) * Decimal("0.10"))
+            .named("liquidity_buffer")
+            .explain(
                 "Transfer {amount} violates 10% liquidity buffer requirement (balance: {balance})"
             ),
         ]
@@ -68,18 +74,19 @@ class TreasuryPolicy(Policy):
 
 # ── Intent schema ─────────────────────────────────────────────────────────────
 
+
 class TransferIntent(BaseModel):
     amount: Decimal
-    payee:  str = "vendor"
-    memo:   str = ""
+    payee: str = "vendor"
+    memo: str = ""
 
 
 # ── Live treasury state ───────────────────────────────────────────────────────
 
 _TREASURY: dict[str, Any] = {
     "state_version": "1.0",
-    "balance":     Decimal("500000.00"),
-    "threshold":   Decimal("25000.00"),
+    "balance": Decimal("500000.00"),
+    "threshold": Decimal("25000.00"),
 }
 
 
@@ -111,6 +118,7 @@ async def treasury_transfer(amount: Decimal, payee: str = "vendor", memo: str = 
 
 # ── Demo (simulates AutoGen multi-agent conversation) ─────────────────────────
 
+
 async def simulate_agent_conversation() -> None:
     """Simulate the CFO agent requesting transfers via the guarded tool."""
 
@@ -135,9 +143,7 @@ async def simulate_agent_conversation() -> None:
     # Transfer 3: BLOCK — violates 10% liquidity buffer
     large = Decimal("460000")
     print(f"[CFO Agent] Request 3: Wire ${large:,} for acquisition deposit")
-    result = await treasury_transfer(
-        amount=large, payee="Target Corp", memo="Acquisition deposit"
-    )
+    result = await treasury_transfer(amount=large, payee="Target Corp", memo="Acquisition deposit")
     print(f"[Execution Agent] {result}\n")
     print("[CFO Agent] Understood — we need to maintain the liquidity buffer.\n")
 

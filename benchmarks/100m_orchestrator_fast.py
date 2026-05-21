@@ -63,6 +63,7 @@ Each invocation:
   * Collects results from a shared Queue as workers finish.
   * Writes summary.json and prints a verdict table when all workers complete.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,15 +81,15 @@ import psutil
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DECISIONS_PER_DOMAIN      = 100_000_000
-N_WORKERS                 = 18
+DECISIONS_PER_DOMAIN = 100_000_000
+N_WORKERS = 18
 # Use ceiling division so N_WORKERS × DECISIONS_PER_WORKER ≥ DECISIONS_PER_DOMAIN
-DECISIONS_PER_WORKER      = (DECISIONS_PER_DOMAIN + N_WORKERS - 1) // N_WORKERS  # 5_555_556
-SOLVER_TIMEOUT_MS         = 150
-MAX_DECISIONS_PER_WORKER  = 10_000       # DO NOT CHANGE — keeps RSS bounded
-CHECKPOINT_EVERY          = 100_000
-BASE_SEED                 = 42
-RESULTS_ROOT              = Path("benchmarks/results")
+DECISIONS_PER_WORKER = (DECISIONS_PER_DOMAIN + N_WORKERS - 1) // N_WORKERS  # 5_555_556
+SOLVER_TIMEOUT_MS = 150
+MAX_DECISIONS_PER_WORKER = 10_000  # DO NOT CHANGE — keeps RSS bounded
+CHECKPOINT_EVERY = 100_000
+BASE_SEED = 42
+RESULTS_ROOT = Path("benchmarks/results")
 
 # Domain names: hardcoded to avoid a module-level importlib call that would
 # execute in every child process.
@@ -107,6 +108,7 @@ _DOMAIN_NAMES = ["finance", "banking", "fintech", "healthcare", "infra"]
 # prevents the spawning block from running again — no infinite recursion.
 #
 # The function must be at module level; nested functions are not picklable.
+
 
 def worker_entry(
     domain_name: str,
@@ -130,11 +132,17 @@ def worker_entry(
         "_bench_worker_fast_100m",
         _bench_dir / "100m_worker_fast.py",
     )
-    _mod = _iutil.module_from_spec(_spec)   # type: ignore[arg-type]
-    _spec.loader.exec_module(_mod)           # type: ignore[union-attr]
+    _mod = _iutil.module_from_spec(_spec)  # type: ignore[arg-type]
+    _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
     _mod.worker_entry(
-        domain_name, n_decisions, worker_id, output_dir, seed,
-        solver_timeout_ms, max_decisions_per_worker, checkpoint_every,
+        domain_name,
+        n_decisions,
+        worker_id,
+        output_dir,
+        seed,
+        solver_timeout_ms,
+        max_decisions_per_worker,
+        checkpoint_every,
         result_queue,
     )
 
@@ -156,14 +164,14 @@ def preflight(domain_name: str) -> bool:
 
     # 1. Disk space — uncompressed JSONL: ~7-20 GB per domain run.
     disk = psutil.disk_usage("C:\\")
-    free_gb = disk.free / 1024 ** 3
+    free_gb = disk.free / 1024**3
     checks["disk_25gb"] = free_gb >= 25
     tag = "[OK]" if checks["disk_25gb"] else "[NO]"
     print(f"  {tag} Disk free  : {free_gb:.1f} GB  (need >= 25)")
 
     # 2. Available RAM — 18 processes × ~200 MiB each ≈ 3.6 GiB.
     mem = psutil.virtual_memory()
-    free_ram_gb = mem.available / 1024 ** 3
+    free_ram_gb = mem.available / 1024**3
     checks["ram_4gb"] = free_ram_gb >= 4
     tag = "[OK]" if checks["ram_4gb"] else "[NO]"
     print(f"  {tag} RAM free   : {free_ram_gb:.1f} GB  (need >= 4)")
@@ -177,14 +185,19 @@ def preflight(domain_name: str) -> bool:
     # 4. Windows sleep disabled — prevents OS from sleeping mid-run.
     try:
         import subprocess
+
         result = subprocess.run(
             ["powercfg", "-query", "SCHEME_CURRENT", "SUB_SLEEP"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         sleep_ok = "0x00000000" in result.stdout
         checks["sleep_disabled"] = sleep_ok
         tag = "[OK]" if sleep_ok else "[NO]"
-        print(f"  {tag} Sleep off  : {'YES' if sleep_ok else 'NO  (run: powercfg -change -standby-timeout-ac 0)'}")
+        print(
+            f"  {tag} Sleep off  : {'YES' if sleep_ok else 'NO  (run: powercfg -change -standby-timeout-ac 0)'}"
+        )
     except Exception:
         checks["sleep_disabled"] = True  # can't check on non-Windows
         print("  [~~] Sleep off : check skipped (non-Windows or powercfg unavailable)")
@@ -194,13 +207,13 @@ def preflight(domain_name: str) -> bool:
     completed = [d for d in existing if (d / "summary.json").exists()]
     if completed:
         print(f"\n  [!!] {len(completed)} prior completed run(s) found for '{domain_name}':")
-        for c in completed[-3:]:   # show last 3 only
+        for c in completed[-3:]:  # show last 3 only
             print(f"       {c.name}")
         print("       A NEW timestamped run will be created (prior runs untouched).")
 
     all_pass = all(checks.values())
-    verdict  = "  GO  [OK]" if all_pass else "  NO-GO [!!]"
-    note     = "Safe to proceed." if all_pass else "Fix issues above before running."
+    verdict = "  GO  [OK]" if all_pass else "  NO-GO [!!]"
+    note = "Safe to proceed." if all_pass else "Fix issues above before running."
     print(f"\n{verdict}  {note}")
     print(f"{'=' * 60}\n")
     return all_pass
@@ -211,7 +224,7 @@ def preflight(domain_name: str) -> bool:
 
 def make_run_dir(domain_name: str) -> Path:
     """Create a unique timestamped output directory for this domain run."""
-    ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = RESULTS_ROOT / f"run_{domain_name}_{ts}"
     (run_dir / "workers").mkdir(parents=True, exist_ok=True)
     return run_dir
@@ -231,32 +244,34 @@ def run_domain(domain_name: str, run_dir: Path) -> dict:
         summary dict written to ``run_dir / summary.json``.
     """
     workers_dir = run_dir / "workers"
-    proc         = psutil.Process(os.getpid())
+    proc = psutil.Process(os.getpid())
     baseline_rss = proc.memory_info().rss / 1_048_576
 
     # Write run_meta.json before spawning — survives a crash.
     meta: dict = {
-        "domain":                   domain_name,
-        "architecture":             "18 × multiprocessing.Process + sync Guard (zero IPC)",
-        "decisions_target":         DECISIONS_PER_DOMAIN,
-        "n_workers":                N_WORKERS,
-        "decisions_per_worker":     DECISIONS_PER_WORKER,
+        "domain": domain_name,
+        "architecture": "18 × multiprocessing.Process + sync Guard (zero IPC)",
+        "decisions_target": DECISIONS_PER_DOMAIN,
+        "n_workers": N_WORKERS,
+        "decisions_per_worker": DECISIONS_PER_WORKER,
         "max_decisions_per_worker": MAX_DECISIONS_PER_WORKER,
-        "solver_timeout_ms":        SOLVER_TIMEOUT_MS,
-        "checkpoint_every":         CHECKPOINT_EVERY,
-        "base_seed":                BASE_SEED,
-        "baseline_rss_mib":         round(baseline_rss, 2),
-        "started_at":               datetime.now().isoformat(),
-        "run_dir":                  str(run_dir),
+        "solver_timeout_ms": SOLVER_TIMEOUT_MS,
+        "checkpoint_every": CHECKPOINT_EVERY,
+        "base_seed": BASE_SEED,
+        "baseline_rss_mib": round(baseline_rss, 2),
+        "started_at": datetime.now().isoformat(),
+        "run_dir": str(run_dir),
     }
     with open(run_dir / "run_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
-    proj_rps  = N_WORKERS * 100          # conservative estimate
-    proj_h    = DECISIONS_PER_DOMAIN / proj_rps / 3600
+    proj_rps = N_WORKERS * 100  # conservative estimate
+    proj_h = DECISIONS_PER_DOMAIN / proj_rps / 3600
     print(f"\n[{domain_name.upper()}] launching {N_WORKERS} OS processes...")
-    print(f"  {DECISIONS_PER_WORKER:,} decisions/worker x {N_WORKERS} workers = "
-          f"{N_WORKERS * DECISIONS_PER_WORKER:,} total")
+    print(
+        f"  {DECISIONS_PER_WORKER:,} decisions/worker x {N_WORKERS} workers = "
+        f"{N_WORKERS * DECISIONS_PER_WORKER:,} total"
+    )
     print(f"  projected: ~{proj_rps:,} aggregate RPS -> ~{proj_h:.1f}h\n")
 
     t0 = time.perf_counter()
@@ -279,7 +294,7 @@ def run_domain(domain_name: str, run_dir: Path) -> dict:
                 CHECKPOINT_EVERY,
                 result_queue,
             ),
-            daemon=False,       # non-daemon: survives orchestrator sleep/wait
+            daemon=False,  # non-daemon: survives orchestrator sleep/wait
             name=f"{domain_name}_w{w:02d}",
         )
         p.start()
@@ -317,20 +332,23 @@ def run_domain(domain_name: str, run_dir: Path) -> dict:
             # Queue.get() timed out — check for crashed workers.
             consecutive_timeouts += 1
             alive = [p for p in processes if p.is_alive()]
-            dead  = [
-                p for p in processes
-                if not p.is_alive() and p.exitcode not in (0, None)
-            ]
+            dead = [p for p in processes if not p.is_alive() and p.exitcode not in (0, None)]
             if dead:
-                print(f"  [WARN] {len(dead)} worker(s) crashed: "
-                      f"{[(p.name, p.exitcode) for p in dead]}")
-            print(f"  waiting... {len(alive)} workers still running  "
-                  f"(timeout #{consecutive_timeouts})")
+                print(
+                    f"  [WARN] {len(dead)} worker(s) crashed: "
+                    f"{[(p.name, p.exitcode) for p in dead]}"
+                )
+            print(
+                f"  waiting... {len(alive)} workers still running  "
+                f"(timeout #{consecutive_timeouts})"
+            )
 
             if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS:
                 # Something is catastrophically wrong -- orphan all workers.
-                print(f"  [FATAL] no result for {consecutive_timeouts * 60}s -- "
-                      "terminating remaining workers")
+                print(
+                    f"  [FATAL] no result for {consecutive_timeouts * 60}s -- "
+                    "terminating remaining workers"
+                )
                 for p in alive:
                     p.terminate()
                 break
@@ -342,63 +360,65 @@ def run_domain(domain_name: str, run_dir: Path) -> dict:
             p.terminate()
             p.join(timeout=5)
 
-    elapsed   = time.perf_counter() - t0
+    elapsed = time.perf_counter() - t0
     final_rss = proc.memory_info().rss / 1_048_576
 
     # ── Aggregate statistics ───────────────────────────────────────────────────
-    good    = [r for r in worker_results if "error" not in r]
+    good = [r for r in worker_results if "error" not in r]
     errored = [r for r in worker_results if "error" in r]
 
     n_decisions = sum(r.get("n_decisions", 0) for r in good)
-    n_allow     = sum(r.get("n_allow",     0) for r in good)
-    n_block     = sum(r.get("n_block",     0) for r in good)
-    n_timeout   = sum(r.get("n_timeout",   0) for r in good)
-    n_error     = sum(r.get("n_error",     0) for r in good) + len(errored)
+    n_allow = sum(r.get("n_allow", 0) for r in good)
+    n_block = sum(r.get("n_block", 0) for r in good)
+    n_timeout = sum(r.get("n_timeout", 0) for r in good)
+    n_error = sum(r.get("n_error", 0) for r in good) + len(errored)
 
     rss_growths = [r["rss_growth"] for r in good if "rss_growth" in r]
-    all_p99     = [r["p99_ms"]     for r in good if "p99_ms"     in r]
-    all_rps     = [r["avg_rps"]    for r in good if "avg_rps"    in r]
+    all_p99 = [r["p99_ms"] for r in good if "p99_ms" in r]
+    all_rps = [r["avg_rps"] for r in good if "avg_rps" in r]
 
     agg_rps = n_decisions / elapsed if elapsed > 0 else 0.0
 
     # Verdict: all five sub-checks must pass.
-    verdict_complete    = n_decisions >= DECISIONS_PER_DOMAIN
+    verdict_complete = n_decisions >= DECISIONS_PER_DOMAIN
     verdict_no_timeouts = n_timeout == 0
-    verdict_no_errors   = n_error == 0
-    verdict_no_crashes  = len(errored) == 0 and len(good) == N_WORKERS
+    verdict_no_errors = n_error == 0
+    verdict_no_crashes = len(errored) == 0 and len(good) == N_WORKERS
     verdict_rss_bounded = (max(rss_growths) < 50) if rss_growths else False
 
     summary = {
         **meta,
-        "completed_at":           datetime.now().isoformat(),
-        "elapsed_s":              round(elapsed, 1),
-        "elapsed_hours":          round(elapsed / 3600, 3),
-        "agg_rps":                round(agg_rps, 1),
-        "n_decisions":            n_decisions,
-        "n_allow":                n_allow,
-        "n_block":                n_block,
-        "n_timeout":              n_timeout,
-        "n_error":                n_error,
-        "baseline_rss_mib":       round(baseline_rss, 2),
+        "completed_at": datetime.now().isoformat(),
+        "elapsed_s": round(elapsed, 1),
+        "elapsed_hours": round(elapsed / 3600, 3),
+        "agg_rps": round(agg_rps, 1),
+        "n_decisions": n_decisions,
+        "n_allow": n_allow,
+        "n_block": n_block,
+        "n_timeout": n_timeout,
+        "n_error": n_error,
+        "baseline_rss_mib": round(baseline_rss, 2),
         "final_orchestrator_rss": round(final_rss, 2),
-        "max_worker_rss_growth":  round(max(rss_growths), 2) if rss_growths else None,
-        "avg_worker_p99_ms":      round(sum(all_p99)  / len(all_p99),  2) if all_p99 else None,
-        "min_worker_rps":         round(min(all_rps), 1) if all_rps else None,
-        "max_worker_rps":         round(max(all_rps), 1) if all_rps else None,
-        "workers":                worker_results,
+        "max_worker_rss_growth": round(max(rss_growths), 2) if rss_growths else None,
+        "avg_worker_p99_ms": round(sum(all_p99) / len(all_p99), 2) if all_p99 else None,
+        "min_worker_rps": round(min(all_rps), 1) if all_rps else None,
+        "max_worker_rps": round(max(all_rps), 1) if all_rps else None,
+        "workers": worker_results,
         "verdict": {
-            "complete":       verdict_complete,
-            "no_timeouts":    verdict_no_timeouts,
-            "no_errors":      verdict_no_errors,
-            "no_crashes":     verdict_no_crashes,
-            "rss_bounded":    verdict_rss_bounded,
-            "pass":           all([
-                verdict_complete,
-                verdict_no_timeouts,
-                verdict_no_errors,
-                verdict_no_crashes,
-                verdict_rss_bounded,
-            ]),
+            "complete": verdict_complete,
+            "no_timeouts": verdict_no_timeouts,
+            "no_errors": verdict_no_errors,
+            "no_crashes": verdict_no_crashes,
+            "rss_bounded": verdict_rss_bounded,
+            "pass": all(
+                [
+                    verdict_complete,
+                    verdict_no_timeouts,
+                    verdict_no_errors,
+                    verdict_no_crashes,
+                    verdict_rss_bounded,
+                ]
+            ),
         },
     }
 
@@ -420,13 +440,13 @@ def print_summary(s: dict) -> None:
     print(f"\n{'=' * 60}")
     print(f"  COMPLETE: {d}")
     print(f"{'=' * 60}")
-    print(f"  decisions   : {s['n_decisions']:,}  "
-          f"(target: {DECISIONS_PER_DOMAIN:,})")
-    print(f"  elapsed     : {s['elapsed_hours']:.3f}h  "
-          f"({s['elapsed_s']:.0f}s)")
+    print(f"  decisions   : {s['n_decisions']:,}  " f"(target: {DECISIONS_PER_DOMAIN:,})")
+    print(f"  elapsed     : {s['elapsed_hours']:.3f}h  " f"({s['elapsed_s']:.0f}s)")
     print(f"  agg RPS     : {s['agg_rps']:.0f}")
-    print(f"  allow/block : {s['n_allow']:,} / {s['n_block']:,}  "
-          f"({100*s['n_allow']/max(s['n_decisions'],1):.1f}% allow)")
+    print(
+        f"  allow/block : {s['n_allow']:,} / {s['n_block']:,}  "
+        f"({100*s['n_allow']/max(s['n_decisions'],1):.1f}% allow)"
+    )
     print(f"  timeouts    : {s['n_timeout']}")
     print(f"  errors      : {s['n_error']}")
     _rss = s.get("max_worker_rss_growth")
@@ -435,8 +455,10 @@ def print_summary(s: dict) -> None:
     print(f"  avg P99     : {f'{_p99:.1f}' if _p99 is not None else 'N/A'} ms")
     _rmin = s.get("min_worker_rps")
     _rmax = s.get("max_worker_rps")
-    print(f"  RPS range   : {f'{_rmin:.0f}' if _rmin is not None else 'N/A'} - "
-          f"{f'{_rmax:.0f}' if _rmax is not None else 'N/A'} per worker")
+    print(
+        f"  RPS range   : {f'{_rmin:.0f}' if _rmin is not None else 'N/A'} - "
+        f"{f'{_rmax:.0f}' if _rmax is not None else 'N/A'} per worker"
+    )
     print()
     for check, passed in v.items():
         if check == "pass":

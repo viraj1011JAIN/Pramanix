@@ -26,12 +26,11 @@ Run 1 000 examples:  ``pytest tests/property/ -q``
 from __future__ import annotations
 
 import gc
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 import z3
-from datetime import timedelta
-
 from hypothesis import given, settings
 from hypothesis import strategies as st
 

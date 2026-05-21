@@ -32,6 +32,7 @@ Typical usage::
         .explain("Overdraft: balance={balance}, amount={amount}")
     )
 """
+
 from __future__ import annotations
 
 import logging
@@ -133,6 +134,7 @@ def _infer_z3_type(python_type: type) -> Z3Type:
     """Infer Z3 sort from a Python annotation type."""
     from datetime import datetime as _dt
     from decimal import Decimal as _Decimal
+
     if python_type is bool:
         return "Bool"
     if python_type in (int,):
@@ -271,6 +273,7 @@ class _PowOp(NamedTuple):
     Symbolic exponents (``E(x) ** E(y)``) are prohibited because Z3
     real/integer arithmetic does not support non-constant exponents.
     """
+
     base: Any
     exp: int
 
@@ -282,6 +285,7 @@ class _ModOp(NamedTuple):
     on Real-sorted fields raises :exc:`~pramanix.exceptions.TranspileError`
     at transpilation time.
     """
+
     dividend: Any
     divisor: Any
 
@@ -454,6 +458,7 @@ def DatetimeField(name: str) -> Field:
         recent = E(trade_time).within_seconds(3600).named('trade_within_last_hour')
     """
     from datetime import datetime as _dt
+
     return Field(name, _dt, "Int")
 
 
@@ -493,14 +498,6 @@ class ExpressionNode:
 
     __slots__ = ("node",)
     __hash__ = object.__hash__
-
-    def __bool__(self) -> bool:
-        raise TypeError(
-            "ExpressionNode cannot be used as a boolean condition. "
-            "Use the comparison operators (==, !=, <, <=, >, >=) or "
-            "the & / | bitwise operators to build ConstraintExpr objects, "
-            "then pass them to policy invariants()."
-        )
 
     def __init__(self, node: Any) -> None:
         self.node = node
@@ -636,8 +633,7 @@ class ExpressionNode:
         """
         if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
             raise PolicyCompilationError(
-                f"within_seconds() duration must be a non-negative integer; "
-                f"got {duration!r}."
+                f"within_seconds() duration must be a non-negative integer; " f"got {duration!r}."
             )
         now = ExpressionNode(_NowOp())
         delta = now - self
@@ -756,9 +752,7 @@ class ExpressionNode:
                 f"length_between() hi must be a non-negative int; got {type(hi).__name__!r}."
             )
         if lo < 0:
-            raise PolicyCompilationError(
-                f"length_between() lo must be >= 0; got {lo}."
-            )
+            raise PolicyCompilationError(f"length_between() lo must be >= 0; got {lo}.")
         if hi < lo:
             raise PolicyCompilationError(
                 f"length_between() hi must be >= lo; got hi={hi}, lo={lo}."

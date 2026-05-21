@@ -13,6 +13,7 @@ Tests cover:
 * worker failure isolation (never propagates to caller)
 * process boundary: no Pydantic objects in pickle payload
 """
+
 from __future__ import annotations
 
 import pickle

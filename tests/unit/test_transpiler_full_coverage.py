@@ -15,6 +15,7 @@ to exercise precise branches without going through Guard.verify().
 InvariantASTCache tests manipulate internal class-level dicts directly
 to reproduce inconsistent state (key in cache but not in access_order).
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -392,7 +393,6 @@ class TestInvariantASTCachePutValueError:
                 explain_template="",
                 tree_repr="FieldRef(f)",
                 field_refs=frozenset(["y"]),
-
                 has_literal=False,
             )
         ]
@@ -402,7 +402,6 @@ class TestInvariantASTCachePutValueError:
                 explain_template="",
                 tree_repr="FieldRef(f)",
                 field_refs=frozenset(["y"]),
-
                 has_literal=False,
             )
         ]
@@ -436,7 +435,6 @@ class TestInvariantASTCachePutValueError:
                 explain_template="",
                 tree_repr="FieldRef(f)",
                 field_refs=frozenset(["z"]),
-
                 has_literal=False,
             )
         ]
@@ -485,7 +483,6 @@ class TestInvariantASTCacheClearPolicyClass:
                 explain_template="",
                 tree_repr="FieldRef(f)",
                 field_refs=frozenset(["w"]),
-
                 has_literal=False,
             )
         ]
@@ -525,7 +522,6 @@ class TestInvariantASTCacheClearPolicyClass:
                 explain_template="",
                 tree_repr="FieldRef(f)",
                 field_refs=frozenset(["g"]),
-
                 has_literal=False,
             )
         ]
@@ -549,7 +545,6 @@ class TestInvariantASTCacheClearPolicyClass:
                 explain_template="",
                 tree_repr="FieldRef(f)",
                 field_refs=frozenset(["h"]),
-
                 has_literal=False,
             )
         ]

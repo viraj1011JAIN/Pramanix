@@ -20,6 +20,7 @@ Example::
                 ConsentRequired(cls.consent),
             ]
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -65,7 +66,8 @@ def ConsentRequired(consent: Field) -> ConstraintExpr:
         consent: Bool-sorted field; ``True`` means consent was granted.
     """
     return (
-        E(consent).is_true()
+        E(consent)
+        .is_true()
         .named("consent_required")
         .explain("Access denied: explicit user consent is required ({consent}=False).")
     )

@@ -27,6 +27,7 @@ Run::
 
     python examples/fintech_killshot.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -221,10 +222,10 @@ def scenario_three_simultaneous_violations() -> Decision:
         intent={"amount": Decimal("5_000"), "cumulative_24h": Decimal("11_000")},
         state={
             "state_version": "0.6",
-            "balance": Decimal("1_000"),      # ← insufficient
+            "balance": Decimal("1_000"),  # ← insufficient
             "account_equity": Decimal("10_000"),  # ← margin call
             "position_value": Decimal("100_000"),
-            "counterparty_flagged": True,     # ← OFAC hit
+            "counterparty_flagged": True,  # ← OFAC hit
             "kyc_tier": 0,
         },
     )

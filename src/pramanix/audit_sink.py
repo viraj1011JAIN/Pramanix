@@ -182,7 +182,9 @@ def _increment_overflow_metric() -> None:
         if _OVERFLOW_COUNTER is not None:
             _OVERFLOW_COUNTER.inc()
     except Exception as exc:
-        log.warning("pramanix.audit_sink: failed to increment overflow metric: %s", exc, exc_info=True)
+        log.warning(
+            "pramanix.audit_sink: failed to increment overflow metric: %s", exc, exc_info=True
+        )
 
 
 class KafkaAuditSink:
@@ -359,15 +361,18 @@ class S3AuditSink:
 
     def _worker(self) -> None:
         """Background thread: drains the upload queue."""
-        while not self._stop_event.is_set():
+        while True:
             try:
-                item = self._queue.get(timeout=0.5)
-                if item is None:
-                    break
-                key, body = item
-                self._pool.submit(self._upload, key, body)
+                item = self._queue.get(timeout=0.05)
             except queue.Empty:
+                if self._stop_event.is_set():
+                    break
                 continue
+            if item is None:
+                break  # sentinel received — all queued uploads have been submitted
+            key, body = item
+            try:
+                self._pool.submit(self._upload, key, body)
             except Exception as exc:
                 log.error("S3AuditSink: worker error: %s", exc, exc_info=True)
 
@@ -410,9 +415,13 @@ class S3AuditSink:
 
     def close(self) -> None:
         """Shut down the upload worker and thread pool.  Call at application teardown."""
-        self._stop_event.set()
+        # Put the sentinel BEFORE setting stop_event to guarantee all queued
+        # uploads are submitted before the worker exits.  Setting stop_event
+        # first would allow the worker to exit via the `except queue.Empty`
+        # branch before draining pending items — identical fix to Splunk/Datadog.
         with contextlib.suppress(queue.Full):
-            self._queue.put_nowait(None)  # sentinel to unblock the worker
+            self._queue.put_nowait(None)  # sentinel to unblock and drain worker
+        self._stop_event.set()
         self._worker_thread.join(timeout=5.0)
         self._pool.shutdown(wait=True, cancel_futures=False)
 

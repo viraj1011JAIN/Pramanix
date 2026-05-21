@@ -24,6 +24,7 @@ Design principles
   to verify the circuit breaker does NOT call the guard when OPEN —
   a circuit-breaker correctness invariant.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -190,9 +191,9 @@ class TestCircuitBreakerOpen:
         # This call must be intercepted by the breaker, guard NOT called
         decision = await breaker.verify_async(intent=_ALLOW_INTENT, state=_STATE)
 
-        assert counting.call_count == count_at_open, (
-            "Guard was called while circuit was OPEN — invariant violated"
-        )
+        assert (
+            counting.call_count == count_at_open
+        ), "Guard was called while circuit was OPEN — invariant violated"
         assert not decision.allowed
 
     @pytest.mark.asyncio
@@ -286,9 +287,9 @@ class TestCircuitBreakerIsolation:
 
         count_before = counting.call_count
         decision = await breaker.verify_async(intent=_ALLOW_INTENT, state=_STATE)
-        assert counting.call_count == count_before, (
-            "Guard was called while circuit was ISOLATED — invariant violated"
-        )
+        assert (
+            counting.call_count == count_before
+        ), "Guard was called while circuit was ISOLATED — invariant violated"
         assert not decision.allowed
 
     @pytest.mark.asyncio

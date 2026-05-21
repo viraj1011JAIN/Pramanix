@@ -26,6 +26,7 @@ Design notes
   the required ``state_version`` field — this is a policy definition error,
   not a data error.
 """
+
 from __future__ import annotations
 
 from typing import Any

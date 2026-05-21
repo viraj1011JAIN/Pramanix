@@ -13,6 +13,7 @@ These tests do NOT assert hard P99 numbers in CI (hardware varies), but they
 DOCUMENT the measured behaviour and assert that warmup=True is always faster
 than or equal to warmup=False at P99.
 """
+
 from __future__ import annotations
 
 import statistics
@@ -94,6 +95,7 @@ class TestColdStartWarmup:
         see tests/perf/.  An absolute ceiling of 5 000 ms is kept only to catch
         pathological hangs on any hardware.
         """
+
         def _run_recycle_pool(warmup: bool) -> list[float]:
             pool = WorkerPool(
                 mode="async-thread",
@@ -127,7 +129,7 @@ class TestColdStartWarmup:
         assert len(lats_cold) == 20
 
         # Structural guard: warmup should not be significantly worse than cold
-        # (≤ 2× is a very generous bound valid on any hardware/load level).
+        # (≤ 2x is a very generous bound valid on any hardware/load level).
         assert p99_warm <= p99_cold * 2 or p99_warm < 2000.0, (
             f"warmup P99={p99_warm:.1f}ms is unexpectedly worse than "
             f"cold P99={p99_cold:.1f}ms; recycle machinery may be broken"

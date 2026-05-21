@@ -7,6 +7,7 @@
 
 Tests DecisionSigner, DecisionVerifier, MerkleAnchor, and CLI.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,9 +18,9 @@ import pytest
 
 from pramanix.audit.merkle import MerkleAnchor
 from pramanix.audit.signer import DecisionSigner, SignedDecision
-from pramanix.exceptions import ConfigurationError
 from pramanix.audit.verifier import DecisionVerifier
 from pramanix.decision import Decision
+from pramanix.exceptions import ConfigurationError
 
 _KEY_32 = "x" * 32
 _KEY_64 = "x" * 64
@@ -160,12 +161,12 @@ class TestIncSigningFailure:
 
         import pramanix.audit.signer as _mod
 
-        orig = sys.modules.get("prometheus_client", _MISSING := object())
+        orig = sys.modules.get("prometheus_client", _missing := object())
         sys.modules["prometheus_client"] = None  # blocks `from prometheus_client import …`
         try:
             _mod._inc_signing_failure()  # must not raise
         finally:
-            if orig is _MISSING:
+            if orig is _missing:
                 del sys.modules["prometheus_client"]
             else:
                 sys.modules["prometheus_client"] = orig  # type: ignore[assignment]
@@ -181,7 +182,9 @@ class TestIncSigningFailure:
         finally:
             _mod._signing_failure_counter = saved
 
-    def test_unexpected_exception_from_inc_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_unexpected_exception_from_inc_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Fix #10: when counter.inc() raises, a WARNING is logged (not silently swallowed)."""
         import logging
 

@@ -146,9 +146,7 @@ class TestIntegrationStatus:
 
         status = _int.INTEGRATION_STATUS
         non_status = [
-            name
-            for name in _int.__all__
-            if name != "INTEGRATION_STATUS" and name not in status
+            name for name in _int.__all__ if name != "INTEGRATION_STATUS" and name not in status
         ]
         assert non_status == [], (
             f"These exported integrations have no maturity label in INTEGRATION_STATUS: "
@@ -163,19 +161,27 @@ class TestIntegrationStatus:
 
     def test_phase_f1_stubs_are_labeled_beta(self) -> None:
         status = self._get_status()
-        stubs = ["HaystackGuardedComponent", "PramanixCrewAITool",
-                 "PramanixGuardedModule", "PramanixPydanticAIValidator",
-                 "PramanixSemanticKernelPlugin"]
+        stubs = [
+            "HaystackGuardedComponent",
+            "PramanixCrewAITool",
+            "PramanixGuardedModule",
+            "PramanixPydanticAIValidator",
+            "PramanixSemanticKernelPlugin",
+        ]
         for name in stubs:
             assert status.get(name) == "beta", (
-                f"Phase F-1 stub {name!r} should be labeled 'beta', "
-                f"got {status.get(name)!r}"
+                f"Phase F-1 stub {name!r} should be labeled 'beta', " f"got {status.get(name)!r}"
             )
 
     def test_core_integrations_are_labeled_stable(self) -> None:
         status = self._get_status()
-        core = ["PramanixGuardNode", "pramanix_node", "PramanixGuardedTool",
-                "PramanixMiddleware", "PramanixFunctionTool"]
+        core = [
+            "PramanixGuardNode",
+            "pramanix_node",
+            "PramanixGuardedTool",
+            "PramanixMiddleware",
+            "PramanixFunctionTool",
+        ]
         for name in core:
             assert status.get(name) == "stable", (
                 f"Core integration {name!r} should be labeled 'stable', "

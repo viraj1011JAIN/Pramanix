@@ -15,13 +15,13 @@ Targets:
   cpu_request / cpu_limit non-numeric
   memory_request / memory_limit non-numeric
 """
+
 from __future__ import annotations
 
 import pytest
 
 from pramanix.exceptions import SemanticPolicyViolation
 from pramanix.guard_pipeline import _semantic_post_consensus_check
-
 
 # ── Balance / minimum-reserve: non-numeric state injection (§4.12/22) ─────────
 

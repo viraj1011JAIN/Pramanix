@@ -17,6 +17,7 @@ Injection vectors covered:
   N  Attacker uses hex-encoded ID to bypass regex patterns
   O  Legitimate transfer with known account passes unimpeded
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

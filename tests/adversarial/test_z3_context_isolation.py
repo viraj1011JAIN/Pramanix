@@ -34,6 +34,7 @@ Test design follows the CTO's "sledgehammer" brief:
     * Each scenario uses a distinct balance gap so there is zero ambiguity in
       which thread produced any given result.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -282,9 +283,8 @@ class TestZ3ContextIsolationAsyncThread:
     async def test_all_async_thread_decisions_are_correct(self) -> None:
         """10 concurrent verify_async() calls in async-thread mode must each
         return the decision for their own inputs — no cross-contamination."""
-        async def _run_one(
-            balance: Decimal, amount: Decimal, expected: bool
-        ) -> dict[str, Any]:
+
+        async def _run_one(balance: Decimal, amount: Decimal, expected: bool) -> dict[str, Any]:
             decision = await _ASYNC_GUARD.verify_async(
                 intent={"amount": amount},
                 state={"balance": balance, "state_version": "1.0"},
@@ -297,10 +297,7 @@ class TestZ3ContextIsolationAsyncThread:
                 "expected": expected,
             }
 
-        tasks = [
-            _run_one(bal, amt, exp)
-            for _, bal, amt, exp in _SCENARIOS
-        ]
+        tasks = [_run_one(bal, amt, exp) for _, bal, amt, exp in _SCENARIOS]
         results = await asyncio.gather(*tasks)
 
         failures = []
@@ -317,6 +314,7 @@ class TestZ3ContextIsolationAsyncThread:
     @pytest.mark.asyncio
     async def test_unsafe_async_thread_decisions_never_return_safe(self) -> None:
         """T4 worst-case for async-thread: UNSAFE scenario must never return SAFE."""
+
         async def _run_one(balance: Decimal, amount: Decimal) -> dict[str, Any]:
             decision = await _ASYNC_GUARD.verify_async(
                 intent={"amount": amount},

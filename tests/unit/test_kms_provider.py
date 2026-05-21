@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase E-3: Tests for KeyProvider implementations and PramanixSigner.from_provider()
 """Verifies KeyProvider protocol, built-in providers, and signer factory."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,9 +24,11 @@ from pramanix.key_provider import (
 
 # ── Shared test key fixture ───────────────────────────────────────────────────
 
+
 def _generate_test_pem() -> bytes:
     """Generate a fresh Ed25519 private key PEM for testing."""
     from pramanix.crypto import PramanixSigner
+
     signer = PramanixSigner.generate()
     return signer.private_key_pem()
 
@@ -229,8 +232,8 @@ def _has_module(name: str) -> bool:
 
 _HAS_BOTO3 = _has_module("boto3")
 _HAS_AZURE = _has_module("azure.keyvault.secrets") and _has_module("azure.identity")
-_HAS_GCP   = _has_module("google.cloud.secretmanager")
-_HAS_HVAC  = _has_module("hvac")
+_HAS_GCP = _has_module("google.cloud.secretmanager")
+_HAS_HVAC = _has_module("hvac")
 
 
 class TestCloudKmsImportGuard:
@@ -276,6 +279,7 @@ class TestAwsKmsKeyProviderBehavior:
         explicit_version: str | None = None,
     ) -> AwsKmsKeyProvider:
         import threading
+
         p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
         p._client = client
         p._secret_arn = self._ARN
@@ -332,6 +336,7 @@ class TestAzureKeyVaultKeyProviderBehavior:
 
     def _provider(self, client: _AzureSecretClient) -> AzureKeyVaultKeyProvider:
         import threading
+
         p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
         p._client = client
         p._secret_name = "pramanix-signing-key"
@@ -378,6 +383,7 @@ class TestGcpKmsKeyProviderBehavior:
         version_id: str = "latest",
     ) -> GcpKmsKeyProvider:
         import threading
+
         p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
         p._client = client
         p._project_id = "my-project"
@@ -421,6 +427,7 @@ class TestHashiCorpVaultKeyProviderBehavior:
 
     def _provider(self, client: _HvacClient) -> HashiCorpVaultKeyProvider:
         import threading
+
         p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
         p._client = client
         p._secret_path = "pramanix/signing-key"

@@ -161,12 +161,13 @@ import threading
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
-from pydantic import Field as PF
+from pydantic import Field as _PF  # noqa: N814
 
-from pramanix.provenance import ProvenanceRecord
+if TYPE_CHECKING:
+    from pramanix.provenance import ProvenanceRecord
 
 __all__ = [
     "ComplianceAttestation",
@@ -358,11 +359,11 @@ class ControlMapping(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    framework: RegulatoryFramework = PF(
+    framework: RegulatoryFramework = _PF(
         ...,
         description="The regulatory framework to which this control belongs.",
     )
-    control_id: str = PF(
+    control_id: str = _PF(
         ...,
         min_length=1,
         description=(
@@ -370,12 +371,12 @@ class ControlMapping(BaseModel):
             "e.g. 'CC6.1', 'Art.14', '§164.312(a)(1)', 'GOVERN-1.1'."
         ),
     )
-    control_title: str = PF(
+    control_title: str = _PF(
         ...,
         min_length=1,
         description="Short human-readable title of the control.",
     )
-    description: str = PF(
+    description: str = _PF(
         ...,
         min_length=1,
         description=(
@@ -383,14 +384,14 @@ class ControlMapping(BaseModel):
             "evidences this control.  Reproduced verbatim in attestation output."
         ),
     )
-    invariant_label: str | None = PF(
+    invariant_label: str | None = _PF(
         default=None,
         description=(
             "Pramanix invariant label (Rule.name from the compiled PolicyIR) that "
             "evidences this control.  Required if principal_pattern is None."
         ),
     )
-    principal_pattern: str | None = PF(
+    principal_pattern: str | None = _PF(
         default=None,
         description=(
             "fnmatch-compatible glob pattern matched against "
@@ -398,7 +399,7 @@ class ControlMapping(BaseModel):
             "Required if invariant_label is None."
         ),
     )
-    require_both: bool = PF(
+    require_both: bool = _PF(
         default=True,
         description=(
             "When both invariant_label and principal_pattern are provided: "
@@ -456,18 +457,18 @@ class ControlSatisfactionResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    control_id: str = PF(..., description="Regulatory control identifier.")
-    control_title: str = PF(..., description="Human-readable title of the control.")
-    description: str = PF(..., description="Regulatory justification text.")
-    matched_invariant: str | None = PF(
+    control_id: str = _PF(..., description="Regulatory control identifier.")
+    control_title: str = _PF(..., description="Human-readable title of the control.")
+    description: str = _PF(..., description="Regulatory justification text.")
+    matched_invariant: str | None = _PF(
         default=None,
         description="Invariant label that evidenced this control, if applicable.",
     )
-    matched_principal: str | None = PF(
+    matched_principal: str | None = _PF(
         default=None,
         description="principal_id that matched the pattern, if applicable.",
     )
-    match_kind: MappingMatchKind = PF(..., description="How this control was matched.")
+    match_kind: MappingMatchKind = _PF(..., description="How this control was matched.")
 
 
 class ControlEnforcementResult(BaseModel):
@@ -508,19 +509,19 @@ class ControlEnforcementResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    control_id: str = PF(..., description="Regulatory control identifier.")
-    control_title: str = PF(..., description="Human-readable title of the control.")
-    description: str = PF(..., description="Regulatory justification text.")
-    matched_invariant: str | None = PF(
+    control_id: str = _PF(..., description="Regulatory control identifier.")
+    control_title: str = _PF(..., description="Human-readable title of the control.")
+    description: str = _PF(..., description="Regulatory justification text.")
+    matched_invariant: str | None = _PF(
         default=None,
         description="Violated invariant label that triggered this control, if applicable.",
     )
-    matched_principal: str | None = PF(
+    matched_principal: str | None = _PF(
         default=None,
         description="principal_id that matched the pattern, if applicable.",
     )
-    match_kind: MappingMatchKind = PF(..., description="How this control was matched.")
-    violation_prevented: str = PF(
+    match_kind: MappingMatchKind = _PF(..., description="How this control was matched.")
+    violation_prevented: str = _PF(
         ...,
         description=(
             "Machine-generated description of the violation that was prevented "
@@ -550,12 +551,12 @@ class FrameworkAttestation(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    framework: RegulatoryFramework = PF(..., description="The regulatory framework.")
-    controls_satisfied: list[ControlSatisfactionResult] = PF(
+    framework: RegulatoryFramework = _PF(..., description="The regulatory framework.")
+    controls_satisfied: list[ControlSatisfactionResult] = _PF(
         default_factory=list,
         description="Controls satisfied on ALLOWED decisions.",
     )
-    controls_enforced: list[ControlEnforcementResult] = PF(
+    controls_enforced: list[ControlEnforcementResult] = _PF(
         default_factory=list,
         description="Controls enforced (violation prevented) on BLOCKED decisions.",
     )
@@ -651,55 +652,53 @@ class ComplianceAttestation(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    attestation_id: str = PF(
-        default_factory=lambda: str(
-            uuid.UUID(bytes=secrets.token_bytes(16), version=4)
-        ),
+    attestation_id: str = _PF(
+        default_factory=lambda: str(uuid.UUID(bytes=secrets.token_bytes(16), version=4)),
         description="UUID uniquely identifying this attestation.",
     )
-    timestamp_utc: str = PF(
+    timestamp_utc: str = _PF(
         ...,
         description="ISO 8601 UTC timestamp of attestation generation.",
     )
-    decision_id: str = PF(
+    decision_id: str = _PF(
         ...,
         description="decision_id from the source ProvenanceRecord.",
     )
-    record_id: str = PF(
+    record_id: str = _PF(
         ...,
         description="record_id of the source ProvenanceRecord.",
     )
-    policy_hash: str = PF(
+    policy_hash: str = _PF(
         ...,
         description="SHA-256 fingerprint of the policy at decision time.",
     )
-    principal_id: str = PF(
+    principal_id: str = _PF(
         ...,
         description="SPIFFE URI or identity string of the decision-triggering agent.",
     )
-    outcome: str = PF(
+    outcome: str = _PF(
         ...,
         description="'ALLOWED' or 'BLOCKED'.",
     )
-    record_hmac_tag: str = PF(
+    record_hmac_tag: str = _PF(
         ...,
         description=(
             "HMAC-SHA-256 of the source ProvenanceRecord.  "
             "Cryptographic proof that the attestation was derived from an unmodified record."
         ),
     )
-    framework_results: list[FrameworkAttestation] = PF(
+    framework_results: list[FrameworkAttestation] = _PF(
         default_factory=list,
         description=(
             "Per-framework compliance attestation results.  "
             "Only frameworks with matched controls are included."
         ),
     )
-    summary: str = PF(
+    summary: str = _PF(
         ...,
         description="Plain-English compliance summary for CISO reporting.",
     )
-    total_controls_matched: int = PF(
+    total_controls_matched: int = _PF(
         ...,
         description="Total controls attested across all frameworks.",
     )

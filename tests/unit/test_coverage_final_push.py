@@ -153,16 +153,18 @@ class TestGeminiSingleCall:
         t._genai = genai
         t._client = None
 
-        with patch.dict(
-            sys.modules,
-            {
-                "google.generativeai": genai,
-                "google.api_core": None,
-                "google.api_core.exceptions": None,
-            },
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "google.generativeai": genai,
+                    "google.api_core": None,
+                    "google.api_core.exceptions": None,
+                },
+            ),
+            pytest.raises(LLMTimeoutError, match="unreachable"),
         ):
-            with pytest.raises(LLMTimeoutError, match="unreachable"):
-                await t.extract("pay X 1", _Pay)
+            await t.extract("pay X 1", _Pay)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -198,7 +200,7 @@ class TestPramanixSignerStrPem:
 
         signer = PramanixSigner(private_key_pem=_ed25519_pem_bytes.decode())
         verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
-        ok = verifier.verify("testhash", signer._private_key.sign(b"testhash").hex())
+        verifier.verify("testhash", signer._private_key.sign(b"testhash").hex())
         # Direct sign call — we're exercising the str-pem init path
         assert signer.public_key_pem() is not None
 
@@ -413,9 +415,11 @@ class TestMistralTenacityMissing:
         t._api_key = "k"
         t._timeout = 5.0
 
-        with patch.dict(sys.modules, {"tenacity": None}):
-            with pytest.raises(ConfigurationError, match="tenacity"):
-                await t.extract("test", _Pay)
+        with (
+            patch.dict(sys.modules, {"tenacity": None}),
+            pytest.raises(ConfigurationError, match="tenacity"),
+        ):
+            await t.extract("test", _Pay)
 
 
 class TestMistralEmptyContent:
@@ -1074,9 +1078,11 @@ class TestCohereTenacityImportError:
         t._client = object()
         t._cohere = object()
 
-        with patch.dict(sys.modules, {"tenacity": None}):
-            with pytest.raises(ConfigurationError, match="tenacity"):
-                await t.extract("pay B 10", _Pay)
+        with (
+            patch.dict(sys.modules, {"tenacity": None}),
+            pytest.raises(ConfigurationError, match="tenacity"),
+        ):
+            await t.extract("pay B 10", _Pay)
 
 
 class TestCohereStrResponseFallback:
@@ -1131,9 +1137,11 @@ class TestGeminiTenacityImportError:
         t._timeout = 30.0
         t._genai = mock_genai  # provide the genai stub so extract() can proceed to tenacity
 
-        with patch.dict(sys.modules, {"tenacity": None}):
-            with pytest.raises(ConfigurationError, match="tenacity"):
-                await t.extract("pay X 1", _Pay)
+        with (
+            patch.dict(sys.modules, {"tenacity": None}),
+            pytest.raises(ConfigurationError, match="tenacity"),
+        ):
+            await t.extract("pay X 1", _Pay)
 
 
 class TestGeminiNoApiKey:
@@ -1167,15 +1175,17 @@ class TestMistralBothImportsFail:
         from pramanix.translator.mistral import MistralTranslator
 
         # Patch before construction — the import failure is in __init__, not extract()
-        with patch.dict(
-            sys.modules,
-            {
-                "mistralai.client": None,  # v2 import fails
-                "mistralai": None,  # v1 import also fails
-            },
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "mistralai.client": None,  # v2 import fails
+                    "mistralai": None,  # v1 import also fails
+                },
+            ),
+            pytest.raises((ConfigurationError, ImportError)),
         ):
-            with pytest.raises((ConfigurationError, ImportError)):
-                MistralTranslator("mistral-large-latest", api_key="key")
+            MistralTranslator("mistral-large-latest", api_key="key")
 
 
 class TestMistralParseNonExtractionError:
@@ -1200,9 +1210,11 @@ class TestMistralParseNonExtractionError:
 
         t._single_call = _fake_single_call  # type: ignore[method-assign]
 
-        with patch(
-            "pramanix.translator.mistral.parse_llm_response",
-            side_effect=ValueError("unexpected parse error"),
+        with (
+            patch(
+                "pramanix.translator.mistral.parse_llm_response",
+                side_effect=ValueError("unexpected parse error"),
+            ),
+            pytest.raises(ExtractionFailureError, match="failed to parse"),
         ):
-            with pytest.raises(ExtractionFailureError, match="failed to parse"):
-                await t.extract("pay Z 10", _Pay)
+            await t.extract("pay Z 10", _Pay)

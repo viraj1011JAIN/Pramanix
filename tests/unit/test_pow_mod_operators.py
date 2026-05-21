@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase A-1: Tests for POW/MOD DSL operators (_PowOp, _ModOp)
 """Verifies that ** and % work end-to-end from DSL through Z3 transpilation."""
+
 from __future__ import annotations
 
 import pytest

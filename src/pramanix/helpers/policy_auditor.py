@@ -33,6 +33,7 @@ Integrate with Guard startup::
     guard = Guard(BankingPolicy, config)
     PolicyAuditor.audit(BankingPolicy)   # call after Guard construction
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,7 +44,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-from pramanix.expressions import (
+from pramanix.expressions import (  # noqa: E402
     ConstraintExpr,
     Field,
     _AbsOp,
@@ -89,7 +90,9 @@ def _collect_field_names(node: Any) -> set[str]:
         return _collect_field_names(node.base)
     if isinstance(node, _ModOp):
         return _collect_field_names(node.dividend) | _collect_field_names(node.divisor)
-    if isinstance(node, _StartsWithOp | _EndsWithOp | _ContainsOp | _LengthBetweenOp | _RegexMatchOp):
+    if isinstance(
+        node, _StartsWithOp | _EndsWithOp | _ContainsOp | _LengthBetweenOp | _RegexMatchOp
+    ):
         return _collect_field_names(node.operand)
     if isinstance(node, _ForAllOp | _ExistsOp):
         return {node.array_field.name}
@@ -103,7 +106,9 @@ def _collect_field_names(node: Any) -> set[str]:
 # ── Model value extractor ─────────────────────────────────────────────────────
 
 
-def _model_to_dict(model: Any, fields: dict[str, Field], ctx: Any, z3_var_fn: Any) -> dict[str, Any]:
+def _model_to_dict(
+    model: Any, fields: dict[str, Field], ctx: Any, z3_var_fn: Any
+) -> dict[str, Any]:
     """Extract a Z3 model into a dict of Python values keyed by field name."""
     import z3
 
@@ -204,9 +209,9 @@ class PolicyAuditor:
             invariants = policy_cls.invariants()
         except Exception as exc:
             import logging as _logging
+
             _logging.getLogger(__name__).error(
-                "PolicyAuditor: invariants() raised on %s — "
-                "coverage report will be empty: %s",
+                "PolicyAuditor: invariants() raised on %s — " "coverage report will be empty: %s",
                 policy_cls.__name__,
                 exc,
                 exc_info=True,

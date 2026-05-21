@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase A-3: Tests for ArrayField, ForAll, Exists quantifiers
 """Gate tests: BasketTradePolicy ForAll must ALLOW all-positive and BLOCK any-negative."""
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -158,7 +159,9 @@ class TestForAllGuardIntegration:
 
     def test_last_negative_is_blocked(self) -> None:
         guard = _make_basket_guard()
-        d = guard.verify(intent={"amounts": [Decimal("10"), Decimal("20"), Decimal("-3")]}, state={})
+        d = guard.verify(
+            intent={"amounts": [Decimal("10"), Decimal("20"), Decimal("-3")]}, state={}
+        )
         assert d.allowed is False
 
     def test_empty_array_vacuously_allowed(self) -> None:
@@ -243,6 +246,7 @@ class TestHypothesisArrayRobustness:
 
     def test_random_arrays_length_1_to_max(self) -> None:
         import random
+
         rng = random.Random(42)
         for _ in range(50):
             n = rng.randint(1, 8)

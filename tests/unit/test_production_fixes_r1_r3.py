@@ -5,12 +5,13 @@
 # - docs/PROOF_DOSSIER.md
 """Regression tests for production gap fixes R1-R3.
 
-    R1  DecisionVerifier reads the correct payload fields after N2/N6 fixes:
-        - ``policy_hash`` (not the defunct ``policy`` key)
-        - ``issued_at`` is always 0 (``iat`` was removed from the signed payload)
-    R2  GuardConfig(otel_enabled=True) emits UserWarning when opentelemetry is absent
-    R3  MerkleAnchor._build_root is iterative — no RecursionError on large batches
+R1  DecisionVerifier reads the correct payload fields after N2/N6 fixes:
+    - ``policy_hash`` (not the defunct ``policy`` key)
+    - ``issued_at`` is always 0 (``iat`` was removed from the signed payload)
+R2  GuardConfig(otel_enabled=True) emits UserWarning when opentelemetry is absent
+R3  MerkleAnchor._build_root is iterative — no RecursionError on large batches
 """
+
 from __future__ import annotations
 
 import warnings
@@ -65,12 +66,12 @@ class TestR1VerifierFieldAlignment:
     def test_result_has_policy_hash_attribute_not_policy(self) -> None:
         """VerificationResult must expose policy_hash, not the defunct policy."""
         result = _verify(_sign(_safe_decision()))
-        assert hasattr(result, "policy_hash"), (
-            "VerificationResult missing 'policy_hash' field — field rename not applied"
-        )
-        assert not hasattr(result, "policy"), (
-            "VerificationResult still has deprecated 'policy' field"
-        )
+        assert hasattr(
+            result, "policy_hash"
+        ), "VerificationResult missing 'policy_hash' field — field rename not applied"
+        assert not hasattr(
+            result, "policy"
+        ), "VerificationResult still has deprecated 'policy' field"
 
     def test_policy_hash_is_string(self) -> None:
         result = _verify(_sign(_safe_decision()))
@@ -105,9 +106,9 @@ class TestR1VerifierFieldAlignment:
     def test_issued_at_is_zero_for_current_tokens(self) -> None:
         """iat is not in the signed payload (removed in N6) — must be 0."""
         result = _verify(_sign(_safe_decision()))
-        assert result.issued_at == 0, (
-            f"issued_at should be 0 (iat not in signed payload) but got {result.issued_at!r}"
-        )
+        assert (
+            result.issued_at == 0
+        ), f"issued_at should be 0 (iat not in signed payload) but got {result.issued_at!r}"
 
     def test_invalid_result_has_policy_hash_empty_string(self) -> None:
         """_invalid() must use policy_hash='', not the defunct policy='' kwarg."""
@@ -154,35 +155,42 @@ class TestR2OtelEnabledWarning:
             warnings.simplefilter("always")
             GuardConfig(otel_enabled=False)
         otel_warnings = [w for w in caught if "opentelemetry" in str(w.message).lower()]
-        assert otel_warnings == [], (
-            "Unexpected OTel UserWarning raised when otel_enabled=False"
-        )
+        assert otel_warnings == [], "Unexpected OTel UserWarning raised when otel_enabled=False"
 
     def test_warning_when_otel_enabled_but_unavailable(self) -> None:
         """When otel_enabled=True and opentelemetry not installed, emit UserWarning."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_OTEL_AVAILABLE", False), pytest.warns(UserWarning, match="opentelemetry"):
+        with (
+            patch.object(_gc, "_OTEL_AVAILABLE", False),
+            pytest.warns(UserWarning, match="opentelemetry"),
+        ):
             GuardConfig(otel_enabled=True)
 
     def test_warning_message_contains_install_hint(self) -> None:
         """Warning message must guide the user to install the extra."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_OTEL_AVAILABLE", False), pytest.warns(UserWarning, match="pramanix\\[otel\\]"):
+        with (
+            patch.object(_gc, "_OTEL_AVAILABLE", False),
+            pytest.warns(UserWarning, match="pramanix\\[otel\\]"),
+        ):
             GuardConfig(otel_enabled=True)
 
     def test_no_warning_when_otel_enabled_and_available(self) -> None:
         """No warning when opentelemetry IS installed."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_OTEL_AVAILABLE", True), warnings.catch_warnings(record=True) as caught:
+        with (
+            patch.object(_gc, "_OTEL_AVAILABLE", True),
+            warnings.catch_warnings(record=True) as caught,
+        ):
             warnings.simplefilter("always")
             GuardConfig(otel_enabled=True)
         otel_warnings = [w for w in caught if "opentelemetry" in str(w.message).lower()]
-        assert otel_warnings == [], (
-            "Spurious OTel UserWarning raised when opentelemetry IS available"
-        )
+        assert (
+            otel_warnings == []
+        ), "Spurious OTel UserWarning raised when opentelemetry IS available"
 
     def test_otel_available_flag_is_bool(self) -> None:
         """_OTEL_AVAILABLE must be set to a bool in guard_config module."""
@@ -239,12 +247,8 @@ class TestR3IterativeMerkleRoot:
         anchor = MerkleAnchor()
         leaves = ["d1", "d2", "d3", "d4"]
         # H-07: internal nodes use \x01 prefix
-        h01 = hashlib.sha256(
-            b"\x01" + (leaves[0] + leaves[1]).encode()
-        ).hexdigest()
-        h23 = hashlib.sha256(
-            b"\x01" + (leaves[2] + leaves[3]).encode()
-        ).hexdigest()
+        h01 = hashlib.sha256(b"\x01" + (leaves[0] + leaves[1]).encode()).hexdigest()
+        h23 = hashlib.sha256(b"\x01" + (leaves[2] + leaves[3]).encode()).hexdigest()
         root = hashlib.sha256(b"\x01" + (h01 + h23).encode()).hexdigest()
         assert anchor._build_root(leaves) == root  # type: ignore[attr-defined]
 

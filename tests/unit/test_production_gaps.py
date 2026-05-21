@@ -363,9 +363,9 @@ class TestTimingPadDistribution:
     def test_sync_median_not_excessively_slow(self, timed_guard: Guard) -> None:
         """Timing pad should add ~budget_ms, not seconds.
 
-        We allow 50× the budget (1 500 ms) as the upper bound.  The first call
-        in a test session may include Z3 JIT warm-up (~200–400 ms on Windows);
-        subsequent calls settle well below 100 ms.  The 50× threshold detects
+        We allow 50x the budget (1 500 ms) as the upper bound.  The first call
+        in a test session may include Z3 JIT warm-up (~200-400 ms on Windows);
+        subsequent calls settle well below 100 ms.  The 50x threshold detects
         genuine blocking hangs (deadlock, exhausted thread pool) while
         tolerating cold-start spikes on low-memory CI machines.
         """

@@ -16,6 +16,7 @@ Critical invariants under test
 4. **Thread-local isolation** — Each thread owns an independent cache; writing
    to one thread's cache does not affect another thread's cache.
 """
+
 from __future__ import annotations
 
 import threading

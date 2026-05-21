@@ -201,9 +201,7 @@ def test_collateral_haircut_no_float_drift(
 
 @given(current=_positive_decimal, peak=_positive_decimal, max_dd=_pct)
 @settings(max_examples=1_000, deadline=timedelta(seconds=5))
-def test_max_drawdown_agrees_with_python(
-    current: Decimal, peak: Decimal, max_dd: Decimal
-) -> None:
+def test_max_drawdown_agrees_with_python(current: Decimal, peak: Decimal, max_dd: Decimal) -> None:
     """Z3 agrees with Python: (peak - current) <= max_dd * peak iff SAT.
 
     MaxDrawdown uses multiplication (not division), so peak == 0 is a valid

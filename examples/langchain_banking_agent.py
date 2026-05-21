@@ -17,6 +17,7 @@ Install: pip install 'pramanix[langchain]' langchain langchain-openai
 Run:
     OPENAI_API_KEY=... python examples/langchain_banking_agent.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,10 +32,10 @@ from pramanix.integrations.langchain import PramanixGuardedTool
 
 # ── Transfer policy ──────────────────────────────────────────────────────────
 
-_amount  = Field("amount",      Decimal, "Real")
-_balance = Field("balance",     Decimal, "Real")
-_limit   = Field("daily_limit", Decimal, "Real")
-_spent   = Field("daily_spent", Decimal, "Real")
+_amount = Field("amount", Decimal, "Real")
+_balance = Field("balance", Decimal, "Real")
+_limit = Field("daily_limit", Decimal, "Real")
+_spent = Field("daily_spent", Decimal, "Real")
 
 
 class TransferPolicy(Policy):
@@ -43,22 +44,32 @@ class TransferPolicy(Policy):
 
     @classmethod
     def fields(cls) -> dict:
-        return {"amount": _amount, "balance": _balance, "daily_limit": _limit, "daily_spent": _spent}
+        return {
+            "amount": _amount,
+            "balance": _balance,
+            "daily_limit": _limit,
+            "daily_spent": _spent,
+        }
 
     @classmethod
     def invariants(cls) -> list:
         return [
-            (E(_amount) > Decimal("0")).named("positive").explain("Amount {amount} must be positive"),
-            ((E(_balance) - E(_amount)) >= Decimal("0")).named("sufficient_balance").explain(
-                "Balance {balance} insufficient for transfer {amount}"
-            ),
-            ((E(_spent) + E(_amount)) <= E(_limit)).named("daily_limit").explain(
+            (E(_amount) > Decimal("0"))
+            .named("positive")
+            .explain("Amount {amount} must be positive"),
+            ((E(_balance) - E(_amount)) >= Decimal("0"))
+            .named("sufficient_balance")
+            .explain("Balance {balance} insufficient for transfer {amount}"),
+            ((E(_spent) + E(_amount)) <= E(_limit))
+            .named("daily_limit")
+            .explain(
                 "Daily limit {daily_limit} exceeded: spent {daily_spent} + requested {amount}"
             ),
         ]
 
 
 # ── Intent schema ─────────────────────────────────────────────────────────────
+
 
 class TransferIntent(BaseModel):
     amount: Decimal
@@ -69,7 +80,7 @@ class TransferIntent(BaseModel):
 
 _ACCOUNT_STATE: dict[str, Any] = {
     "state_version": "1.0",
-    "balance":     Decimal("3000.00"),
+    "balance": Decimal("3000.00"),
     "daily_limit": Decimal("2000.00"),
     "daily_spent": Decimal("500.00"),
 }
@@ -81,13 +92,16 @@ def get_state() -> dict:
 
 # ── Tool implementations ──────────────────────────────────────────────────────
 
+
 def execute_transfer(intent: dict) -> str:
     """Execute the actual transfer after Guard approves it."""
     amount = intent["amount"]
     recipient = intent.get("recipient", "default")
     _ACCOUNT_STATE["balance"] -= Decimal(str(amount))
     _ACCOUNT_STATE["daily_spent"] += Decimal(str(amount))
-    return f"Transferred ${amount:,.2f} to {recipient}. New balance: ${_ACCOUNT_STATE['balance']:,.2f}"
+    return (
+        f"Transferred ${amount:,.2f} to {recipient}. New balance: ${_ACCOUNT_STATE['balance']:,.2f}"
+    )
 
 
 # ── Guarded tool ─────────────────────────────────────────────────────────────
@@ -109,6 +123,7 @@ transfer_tool = PramanixGuardedTool(
 
 
 # ── Demo ──────────────────────────────────────────────────────────────────────
+
 
 async def demo() -> None:
     print("=== Pramanix LangChain Banking Agent Demo ===\n")

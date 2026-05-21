@@ -28,6 +28,7 @@ Run::
 
     python examples/healthcare_phi_access.py
 """
+
 from __future__ import annotations
 
 import sys

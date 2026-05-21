@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase A-4: Tests for DatetimeField, within_seconds, is_before, is_business_hours
 """Gate: TradeWindowPolicy must ALLOW within-window datetimes and BLOCK outside."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -49,6 +50,7 @@ class TestDatetimeField:
 class TestDatetimeConversion:
     def test_aware_datetime_converts(self) -> None:
         from pramanix.transpiler import z3_val
+
         f = DatetimeField("ts")
         now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
         result = z3_val(f, now)
@@ -57,6 +59,7 @@ class TestDatetimeConversion:
 
     def test_naive_datetime_raises(self) -> None:
         from pramanix.transpiler import z3_val
+
         f = DatetimeField("ts")
         naive = datetime(2026, 1, 1, 12, 0, 0)
         with pytest.raises(FieldTypeError, match="naive datetime"):
@@ -64,6 +67,7 @@ class TestDatetimeConversion:
 
     def test_int_still_works(self) -> None:
         from pramanix.transpiler import z3_val
+
         f = DatetimeField("ts")
         result = z3_val(f, 1_700_000_000)
         assert result is not None

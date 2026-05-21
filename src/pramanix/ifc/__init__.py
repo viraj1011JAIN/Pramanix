@@ -35,6 +35,7 @@ Quick-start::
         sink_component="llm_extractor",
     )
 """
+
 from pramanix.ifc.enforcer import FlowEnforcer
 from pramanix.ifc.flow_policy import FlowDecision, FlowPolicy, FlowRule
 from pramanix.ifc.labels import ClassifiedData, TrustLabel

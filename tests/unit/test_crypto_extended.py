@@ -7,6 +7,7 @@ Covers uncovered lines in crypto.py:
   PramanixSigner.__init__ from env var, from_provider, sign empty hash,
   PramanixSigner.verify, RS256Signer, RS256Verifier, ES256Signer, ES256Verifier.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -19,7 +20,6 @@ from pramanix.crypto import (
     ES256Signer,
     ES256Verifier,
     PramanixSigner,
-    PramanixVerifier,
     RS256Signer,
     RS256Verifier,
     _b64url,
@@ -27,8 +27,8 @@ from pramanix.crypto import (
 )
 from pramanix.decision import Decision
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _make_decision(*, allowed: bool = True, amount: str = "100") -> Decision:
     if allowed:
@@ -179,11 +179,7 @@ class TestRS256Signer:
         assert len(signer.key_id()) == 16
 
     def test_load_from_pem(self) -> None:
-        gen = RS256Signer.generate()
-        from cryptography.hazmat.primitives.asymmetric import rsa
-        from cryptography.hazmat.primitives.serialization import (
-            Encoding, NoEncryption, PrivateFormat,
-        )
+        RS256Signer.generate()
         # Re-export the private key by generating a known one
         signer2 = RS256Signer.generate()
         pem = signer2.public_key_pem()

@@ -22,16 +22,15 @@ Files covered here (gaps not already covered by other test suites):
   circuit_breaker.py     — _register_metrics: prometheus_client ImportError path
   guard_config.py        — module-level OTel/prometheus ImportError branches
 """
+
 from __future__ import annotations
 
-import importlib
 import sys
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 import z3
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # solver.py — _attribute_violations: z3.unknown → SolverTimeoutError
@@ -44,7 +43,7 @@ class TestSolverAttributeViolationsZ3Unknown:
         from pramanix import E, Field
         from pramanix.exceptions import SolverTimeoutError
         from pramanix.solver import _attribute_violations
-        from pramanix.transpiler import z3_var, z3_val
+        from pramanix.transpiler import z3_val, z3_var
 
         amount = Field("amount", Decimal, "Real")
         inv = (E(amount) >= Decimal("0")).named("pos").explain("non-negative")
@@ -58,7 +57,7 @@ class TestSolverAttributeViolationsZ3Unknown:
         # Real MagicMock-free substitute: a thin object whose check() returns
         # z3.unknown (the real Z3 sentinel), and whose other methods are no-ops.
         class _UnknownSolver:
-            def set(self, *args, **kwargs) -> None:  # noqa: A003
+            def set(self, *args, **kwargs) -> None:
                 pass
 
             def add(self, *expr) -> None:
@@ -73,9 +72,11 @@ class TestSolverAttributeViolationsZ3Unknown:
             def reset(self) -> None:
                 pass
 
-        with patch.object(z3, "Solver", return_value=_UnknownSolver()):
-            with pytest.raises(SolverTimeoutError) as exc_info:
-                _attribute_violations([inv], bindings, timeout_ms=100, ctx=ctx)
+        with (
+            patch.object(z3, "Solver", return_value=_UnknownSolver()),
+            pytest.raises(SolverTimeoutError) as exc_info,
+        ):
+            _attribute_violations([inv], bindings, timeout_ms=100, ctx=ctx)
 
         assert exc_info.value.label == "pos"
         assert exc_info.value.timeout_ms == 100
@@ -85,7 +86,7 @@ class TestSolverAttributeViolationsZ3Unknown:
         from pramanix import E, Field
         from pramanix.exceptions import SolverTimeoutError
         from pramanix.solver import _fast_check
-        from pramanix.transpiler import z3_var, z3_val
+        from pramanix.transpiler import z3_val, z3_var
 
         amount = Field("amount", Decimal, "Real")
         inv = (E(amount) >= Decimal("0")).named("pos").explain("positive")
@@ -96,7 +97,7 @@ class TestSolverAttributeViolationsZ3Unknown:
         bindings: list = [(var, val)]
 
         class _UnknownSolver:
-            def set(self, *args, **kwargs) -> None:  # noqa: A003
+            def set(self, *args, **kwargs) -> None:
                 pass
 
             def add(self, *expr) -> None:
@@ -108,9 +109,11 @@ class TestSolverAttributeViolationsZ3Unknown:
             def reset(self) -> None:
                 pass
 
-        with patch.object(z3, "Solver", return_value=_UnknownSolver()):
-            with pytest.raises(SolverTimeoutError) as exc_info:
-                _fast_check([inv], bindings, timeout_ms=50, ctx=ctx)
+        with (
+            patch.object(z3, "Solver", return_value=_UnknownSolver()),
+            pytest.raises(SolverTimeoutError) as exc_info,
+        ):
+            _fast_check([inv], bindings, timeout_ms=50, ctx=ctx)
 
         assert exc_info.value.label == "<all-invariants>"
 
@@ -210,16 +213,18 @@ class TestSecureMemoryStorePartitionGuards:
         from pramanix.memory.store import SecureMemoryStore
 
         store = SecureMemoryStore()
-        with patch.object(store, "get_partition", return_value=None):
-            with pytest.raises(RuntimeError, match="bug in the store"):
-                store.write(
-                    "t1",
-                    "w1",
-                    "k",
-                    value="v",
-                    label=TrustLabel.PUBLIC,
-                    source="test_source",
-                )
+        with (
+            patch.object(store, "get_partition", return_value=None),
+            pytest.raises(RuntimeError, match="bug in the store"),
+        ):
+            store.write(
+                "t1",
+                "w1",
+                "k",
+                value="v",
+                label=TrustLabel.PUBLIC,
+                source="test_source",
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -505,8 +510,9 @@ class TestGuardOtelSpanAttributes:
         import opentelemetry.trace as _otel_trace
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
         from pramanix import E, Field, Guard, GuardConfig, Policy
 
         # OTel's global TracerProvider is set-once across the process — earlier

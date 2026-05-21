@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase C-5: Tests for DistributedCircuitBreaker
 """Verifies distributed circuit breaker state sharing across replicas."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +39,9 @@ def _make_guard() -> Guard:
 def _make_distributed_breaker(namespace: str = "test") -> DistributedCircuitBreaker:
     return DistributedCircuitBreaker(
         _make_guard(),
-        CircuitBreakerConfig(namespace=namespace, pressure_threshold_ms=5.0, consecutive_pressure_count=3),
+        CircuitBreakerConfig(
+            namespace=namespace, pressure_threshold_ms=5.0, consecutive_pressure_count=3
+        ),
     )
 
 
@@ -109,7 +112,9 @@ class TestDistributedCBStateSharing:
     def test_open_state_blocks_other_replicas(self) -> None:
         """When aggregate state is OPEN, all replicas return blocked Decision."""
         ns = "block_ns"
-        cfg = CircuitBreakerConfig(namespace=ns, pressure_threshold_ms=0.0001, consecutive_pressure_count=3)
+        cfg = CircuitBreakerConfig(
+            namespace=ns, pressure_threshold_ms=0.0001, consecutive_pressure_count=3
+        )
         guard = _make_guard()
         r1 = DistributedCircuitBreaker(guard, cfg)
         r2 = DistributedCircuitBreaker(guard, cfg)
@@ -124,7 +129,9 @@ class TestDistributedCBStateSharing:
 
     def test_different_namespaces_independent(self) -> None:
         """Circuit breakers in different namespaces don't affect each other."""
-        cfg_a = CircuitBreakerConfig(namespace="ns_a", pressure_threshold_ms=0.0001, consecutive_pressure_count=3)
+        cfg_a = CircuitBreakerConfig(
+            namespace="ns_a", pressure_threshold_ms=0.0001, consecutive_pressure_count=3
+        )
         cfg_b = CircuitBreakerConfig(namespace="ns_b")
         guard = _make_guard()
         r_a = DistributedCircuitBreaker(guard, cfg_a)
@@ -158,26 +165,34 @@ class TestInMemoryBackend:
     def test_conservative_merge_escalates_to_open(self) -> None:
         """If one set is CLOSED and another OPEN, result is OPEN."""
         ns = "merge_ns"
-        asyncio.run(InMemoryDistributedBackend.set_state(
-            ns, _DistributedState(circuit_state=CircuitState.CLOSED.value, failure_count=0)
-        ))
-        asyncio.run(InMemoryDistributedBackend.set_state(
-            ns, _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=2)
-        ))
+        asyncio.run(
+            InMemoryDistributedBackend.set_state(
+                ns, _DistributedState(circuit_state=CircuitState.CLOSED.value, failure_count=0)
+            )
+        )
+        asyncio.run(
+            InMemoryDistributedBackend.set_state(
+                ns, _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=2)
+            )
+        )
         got = asyncio.run(InMemoryDistributedBackend.get_state(ns))
         assert got.circuit_state == CircuitState.OPEN.value
 
     def test_clear_specific_namespace(self) -> None:
-        asyncio.run(InMemoryDistributedBackend.set_state(
-            "clr_ns", _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=1)
-        ))
+        asyncio.run(
+            InMemoryDistributedBackend.set_state(
+                "clr_ns", _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=1)
+            )
+        )
         InMemoryDistributedBackend.clear("clr_ns")
         got = asyncio.run(InMemoryDistributedBackend.get_state("clr_ns"))
         assert got.circuit_state == CircuitState.CLOSED.value
 
     def test_reset_clears_distributed_state(self) -> None:
         ns = "reset_ns"
-        cfg = CircuitBreakerConfig(namespace=ns, pressure_threshold_ms=0.0001, consecutive_pressure_count=3)
+        cfg = CircuitBreakerConfig(
+            namespace=ns, pressure_threshold_ms=0.0001, consecutive_pressure_count=3
+        )
         cb = DistributedCircuitBreaker(_make_guard(), cfg)
         for _ in range(3):
             asyncio.run(cb.verify_async(intent={"amount": 5}, state={}))

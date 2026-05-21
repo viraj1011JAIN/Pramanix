@@ -40,6 +40,7 @@ Usage (persistent checkpointing)::
     # Flush any remaining leaves that haven't triggered a checkpoint:
     anchor.flush()
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -151,9 +152,7 @@ class MerkleAnchor:
                 padded = hashlib.sha256(b"\x01" + level[-1].encode()).hexdigest()
                 level.append(padded)
             level = [
-                hashlib.sha256(
-                    b"\x01" + (level[i] + level[i + 1]).encode()
-                ).hexdigest()
+                hashlib.sha256(b"\x01" + (level[i] + level[i + 1]).encode()).hexdigest()
                 for i in range(0, len(level), 2)
             ]
         return level[0]

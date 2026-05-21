@@ -8,10 +8,12 @@
 Install: pip install 'pramanix[langchain]'
 Requires: langchain-core >= 0.1
 """
+
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import json
 import logging
 import weakref
@@ -40,9 +42,7 @@ except ImportError:
         name: str = ""
         description: str = ""
 
-        def __init__(
-            self, *, name: str = "", description: str = "", **kwargs: Any
-        ) -> None:
+        def __init__(self, *, name: str = "", description: str = "", **kwargs: Any) -> None:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
@@ -59,6 +59,7 @@ except ImportError:
             self, tool_input: str, **kwargs: Any
         ) -> str:
             raise NotImplementedError
+
 
 # Build model_config at module level to avoid polluting the class namespace
 # (Pydantic would treat an in-class `from pydantic import ConfigDict` as a field)
@@ -151,10 +152,8 @@ class PramanixGuardedTool(BaseTool):
 
     @staticmethod
     def _shutdown_executor(executor: concurrent.futures.ThreadPoolExecutor) -> None:
-        try:
+        with contextlib.suppress(Exception):
             executor.shutdown(wait=False)
-        except Exception:
-            pass
 
     def close(self) -> None:
         """Shut down the shared thread pool executor."""

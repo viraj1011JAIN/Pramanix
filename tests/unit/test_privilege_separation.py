@@ -7,6 +7,7 @@
 
 All tests use real objects — no mocks, no monkeypatching of Pramanix internals.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,7 +20,6 @@ from pramanix.privilege import (
     ScopeEnforcer,
     ToolCapability,
 )
-
 
 # ── ExecutionScope tests ──────────────────────────────────────────────────────
 

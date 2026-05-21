@@ -30,6 +30,8 @@ import pytest
 _ASYNCPG_AVAILABLE = _ilu.find_spec("asyncpg") is not None
 _skip_without_asyncpg = pytest.mark.skipif(not _ASYNCPG_AVAILABLE, reason="asyncpg not installed")
 
+import contextlib
+
 from tests.helpers.real_protocols import (
     _AnthropicErrorMessagesNS,
     _AnthropicMessagesNS,
@@ -51,6 +53,7 @@ from tests.helpers.real_protocols import (
     _RpcContext,
     _SyncScanRedis,
 )
+
 # ── Helper factories ─────────────────────────────────────────────────────────
 
 
@@ -464,17 +467,17 @@ class TestCryptoSigningFailureCounter:
         ValueError on the duplicate registration → _COUNTER_DISABLED is set.
         No mocking of prometheus internals required.
         """
+        from prometheus_client import Counter as _PCounter
+
         import pramanix.crypto as _crypto_mod
         from pramanix.crypto import _COUNTER_DISABLED, _increment_signing_failure_counter
-        from prometheus_client import Counter as _PCounter
 
         # Ensure the metric name is in real prometheus (first call creates it;
         # subsequent calls raise ValueError which we swallow — either way the
         # name is registered).
-        try:
+        with contextlib.suppress(ValueError):
             _PCounter("pramanix_signing_failure_total", "Total decision signing failures")
-        except ValueError:
-            pass  # Already registered from a previous test — that's the state we need.
+        # Already registered from a previous test — that's the state we need.
 
         # Reset lazy singleton so the lazy-init branch runs again.
         _crypto_mod._signing_failure_counter = None
@@ -491,14 +494,13 @@ class TestCryptoSigningFailureCounter:
 
     def test_increment_when_registry_lookup_returns_none(self) -> None:
         """ValueError on Counter registration → DISABLED sentinel set, no crash."""
-        import pramanix.crypto as _crypto_mod
-        from pramanix.crypto import _COUNTER_DISABLED, _increment_signing_failure_counter
         from prometheus_client import Counter as _PCounter
 
-        try:
+        import pramanix.crypto as _crypto_mod
+        from pramanix.crypto import _COUNTER_DISABLED, _increment_signing_failure_counter
+
+        with contextlib.suppress(ValueError):
             _PCounter("pramanix_signing_failure_total", "Total decision signing failures")
-        except ValueError:
-            pass
 
         _crypto_mod._signing_failure_counter = None
         _increment_signing_failure_counter()  # must not raise
@@ -646,8 +648,8 @@ class TestGrpcWrappedHandlerCalls:
             def invariants(cls):
                 return [(E(_amount) >= Decimal("999999")).named("fail").explain("fail")]
 
-        PolicyCls = _AllowPolicy if always_allow else _BlockPolicy
-        guard = Guard(PolicyCls, GuardConfig(execution_mode="sync"))
+        policy_cls = _AllowPolicy if always_allow else _BlockPolicy
+        guard = Guard(policy_cls, GuardConfig(execution_mode="sync"))
 
         from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
@@ -1104,17 +1106,17 @@ class TestEmitTranslatorMetric:
         then evict it from _translator_counters so _emit_translator_metric tries to
         register it again → real ValueError → early return.  No mocking required.
         """
+        from prometheus_client import Counter as _PCounter
+
         import pramanix.guard as _guard_mod
         from pramanix.guard import _emit_translator_metric
-        from prometheus_client import Counter as _PCounter
 
         counter_name = "pramanix_extraction_failure_total"
 
         # Ensure the metric is in real prometheus.
-        try:
+        with contextlib.suppress(ValueError):
             _PCounter(counter_name, "Total LLM extraction failures by model", ["model"])
-        except ValueError:
-            pass  # Already registered — exactly the collision we need.
+        # Already registered — exactly the collision we need.
 
         # Evict from module cache so _emit_translator_metric tries to re-register.
         _guard_mod._translator_counters.pop(counter_name, None)
@@ -1131,6 +1133,7 @@ class TestEmitTranslatorMetric:
 
         class _ErrorCounter:
             """Real duck-type counter that raises RuntimeError on labels() — no Mock."""
+
             def labels(self, **kw: Any) -> None:
                 raise RuntimeError("prom down")
 
@@ -1163,7 +1166,6 @@ class TestArchiverSegmentWriteFailure:
 
         def _failing_fdopen(fd, mode, *args, **kwargs):
             fh = original_fdopen(fd, mode, *args, **kwargs)
-            real_write = fh.write
 
             def _boom(data):
                 raise OSError("disk full")
@@ -1171,11 +1173,8 @@ class TestArchiverSegmentWriteFailure:
             fh.write = _boom
             return fh
 
-        with patch("os.fdopen", side_effect=_failing_fdopen):
-            try:
-                archiver._archive_segment()
-            except OSError:
-                pass
+        with patch("os.fdopen", side_effect=_failing_fdopen), contextlib.suppress(OSError):
+            archiver._archive_segment()
 
         # No partial tmp files should remain
         partials = list(tmp_path.glob(".merkle.tmp.*"))

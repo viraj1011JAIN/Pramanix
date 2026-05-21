@@ -27,12 +27,12 @@ Run locally:
   AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=... \
   pytest tests/integration/test_azure_keyvault.py -v
 """
+
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
 

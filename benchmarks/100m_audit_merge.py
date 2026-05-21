@@ -27,6 +27,7 @@ final report.  Use this as a progress check between runs:
     python benchmarks/100m_audit_merge.py  # after run 2
     # ...
 """
+
 from __future__ import annotations
 
 import json
@@ -36,7 +37,7 @@ from pathlib import Path
 RESULTS_ROOT = Path("benchmarks/results")
 DOMAIN_ORDER = ["finance", "banking", "fintech", "healthcare", "infra"]
 
-_SEP_WIDE   = "=" * 72
+_SEP_WIDE = "=" * 72
 _SEP_NARROW = "-" * 72
 
 
@@ -44,7 +45,8 @@ def find_latest_run(domain_name: str) -> Path | None:
     """Return the most recent completed run directory for *domain_name*, or None."""
     candidates = sorted(
         [
-            d for d in RESULTS_ROOT.glob(f"run_{domain_name}_*")
+            d
+            for d in RESULTS_ROOT.glob(f"run_{domain_name}_*")
             if d.is_dir() and (d / "summary.json").exists()
         ],
         key=lambda d: d.name,
@@ -78,13 +80,13 @@ def main() -> None:
             s = json.load(f)
         domain_summaries[domain] = s
 
-        v      = s["verdict"]
-        vpass  = v.get("pass", False)
-        p99    = s.get("avg_p99_ms") or s.get("max_p99_ms") or 0.0
-        mrss   = s.get("max_worker_rss_growth") or 0.0
-        elh    = s.get("elapsed_hours", 0.0)
-        rps    = s.get("avg_rps", 0.0)
-        ndec   = s.get("n_decisions", 0)
+        v = s["verdict"]
+        vpass = v.get("pass", False)
+        p99 = s.get("avg_p99_ms") or s.get("max_p99_ms") or 0.0
+        mrss = s.get("max_worker_rss_growth") or 0.0
+        elh = s.get("elapsed_hours", 0.0)
+        rps = s.get("avg_rps", 0.0)
+        ndec = s.get("n_decisions", 0)
 
         print(
             f"  {'PASS [OK]' if vpass else 'FAIL [NO]'}  "
@@ -105,21 +107,18 @@ def main() -> None:
         return
 
     # ── Aggregate totals ──────────────────────────────────────────────────────
-    total_decisions = sum(s["n_decisions"]    for s in domain_summaries.values())
-    total_allow     = sum(s["n_allow"]        for s in domain_summaries.values())
-    total_block     = sum(s["n_block"]        for s in domain_summaries.values())
-    total_timeout   = sum(s["n_timeout"]      for s in domain_summaries.values())
-    total_error     = sum(s["n_error"]        for s in domain_summaries.values())
-    total_hours     = sum(s["elapsed_hours"]  for s in domain_summaries.values())
+    total_decisions = sum(s["n_decisions"] for s in domain_summaries.values())
+    total_allow = sum(s["n_allow"] for s in domain_summaries.values())
+    total_block = sum(s["n_block"] for s in domain_summaries.values())
+    total_timeout = sum(s["n_timeout"] for s in domain_summaries.values())
+    total_error = sum(s["n_error"] for s in domain_summaries.values())
+    total_hours = sum(s["elapsed_hours"] for s in domain_summaries.values())
 
-    max_rss  = max(
-        (s.get("max_worker_rss_growth") or 0.0) for s in domain_summaries.values()
-    )
-    all_p99  = [
-        (s.get("avg_p99_ms") or s.get("max_p99_ms") or 0.0)
-        for s in domain_summaries.values()
+    max_rss = max((s.get("max_worker_rss_growth") or 0.0) for s in domain_summaries.values())
+    all_p99 = [
+        (s.get("avg_p99_ms") or s.get("max_p99_ms") or 0.0) for s in domain_summaries.values()
     ]
-    max_p99      = max(all_p99)
+    max_p99 = max(all_p99)
     overall_pass = all(s["verdict"].get("pass", False) for s in domain_summaries.values())
 
     # ── Merkle summary (one root per worker per domain) ───────────────────────
@@ -143,8 +142,10 @@ def main() -> None:
     for domain in DOMAIN_ORDER:
         s = domain_summaries[domain]
         v = s["verdict"]
-        print(f"  {domain:<12} : complete={v['complete']}  no_timeouts={v['no_timeouts']}  "
-              f"no_errors={v['no_errors']}  rss_bounded={v['rss_bounded']}")
+        print(
+            f"  {domain:<12} : complete={v['complete']}  no_timeouts={v['no_timeouts']}  "
+            f"no_errors={v['no_errors']}  rss_bounded={v['rss_bounded']}"
+        )
 
     print(f"\n{_SEP_NARROW}")
     print(f"  FINAL VERDICT: {_fmt_verdict(overall_pass)}")
@@ -153,18 +154,18 @@ def main() -> None:
     # ── Save combined report ──────────────────────────────────────────────────
     report_path = RESULTS_ROOT / "500m_final_report.json"
     report = {
-        "generated_at":                  datetime.now().isoformat(),
-        "total_decisions":               total_decisions,
-        "total_hours":                   round(total_hours, 3),
-        "total_allow":                   total_allow,
-        "total_block":                   total_block,
-        "total_timeout":                 total_timeout,
-        "total_error":                   total_error,
+        "generated_at": datetime.now().isoformat(),
+        "total_decisions": total_decisions,
+        "total_hours": round(total_hours, 3),
+        "total_allow": total_allow,
+        "total_block": total_block,
+        "total_timeout": total_timeout,
+        "total_error": total_error,
         "max_rss_growth_per_worker_mib": round(max_rss, 3),
-        "max_domain_p99_ms":             round(max_p99, 3),
-        "overall_pass":                  overall_pass,
-        "merkle_roots_per_domain":       all_merkle_roots,
-        "domains":                       domain_summaries,
+        "max_domain_p99_ms": round(max_p99, 3),
+        "overall_pass": overall_pass,
+        "merkle_roots_per_domain": all_merkle_roots,
+        "domains": domain_summaries,
     }
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)

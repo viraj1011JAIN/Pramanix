@@ -22,7 +22,7 @@ The module is split into four isolated layers:
    Any JSON the LLM produces is Pydantic-validated *before* any compiler code runs.
 
 2. **PolicyCompiler** — deterministic, pure-Python converter:
-   ``PolicyIR × type[Policy] → list[ConstraintExpr]``.
+   ``PolicyIR x type[Policy] → list[ConstraintExpr]``.
    Validates field existence, type compatibility, and operator applicability
    at compile time; every error is a loud, attributed exception.  Zero ``eval``,
    zero ``exec``, zero dynamic code generation.
@@ -105,7 +105,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-from pydantic import Field as PF
+from pydantic import Field as _PF  # noqa: N814
 
 from pramanix.exceptions import FieldTypeError, PolicyCompilationError
 from pramanix.expressions import (
@@ -298,7 +298,7 @@ class FieldReference(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    type: Literal["field"] = PF(
+    type: Literal["field"] = _PF(
         default="field",
         description=(
             "Discriminator tag identifying this RHS as a field reference.  "
@@ -306,14 +306,14 @@ class FieldReference(BaseModel):
             "required in JSON when used as Condition.rhs."
         ),
     )
-    source: FieldSource = PF(
+    source: FieldSource = _PF(
         ...,
         description=(
             "The Pydantic model this field originates from: 'intent' for the "
             "requested action, 'state' for the current system state."
         ),
     )
-    field_name: str = PF(
+    field_name: str = _PF(
         ...,
         min_length=1,
         description=(
@@ -360,11 +360,11 @@ class LiteralValue(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    type: Literal["literal"] = PF(
+    type: Literal["literal"] = _PF(
         default="literal",
         description='Discriminator tag identifying this RHS as a literal value.  Must be "literal".',
     )
-    value: bool | int | float | str | list[bool | int | float | str] = PF(
+    value: bool | int | float | str | list[bool | int | float | str] = _PF(
         ...,
         description=(
             "The scalar constant (bool / int / float / str) or a non-empty list of scalars "
@@ -419,17 +419,17 @@ class Condition(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    lhs: FieldReference = PF(
+    lhs: FieldReference = _PF(
         ...,
         description="The field on the left-hand side of the comparison.",
     )
-    op: Operator = PF(
+    op: Operator = _PF(
         ...,
         description="The binary comparison operator.",
     )
     # Discriminated union: Pydantic reads the 'type' key to select the branch.
     # LiteralValue carries type="literal"; FieldReference carries type="field".
-    rhs: LiteralValue | FieldReference = PF(
+    rhs: LiteralValue | FieldReference = _PF(
         ...,
         discriminator="type",
         description=(
@@ -439,14 +439,14 @@ class Condition(BaseModel):
             "for comparisons against a constant scalar or a membership list."
         ),
     )
-    label: str = PF(
+    label: str = _PF(
         default="",
         description=(
             "Optional snake_case label for this condition.  If omitted, the compiler "
             "generates one from the parent Rule name and the condition's index."
         ),
     )
-    natural_language: str = PF(
+    natural_language: str = _PF(
         default="",
         description=(
             "Plain English description of what this condition enforces.  "
@@ -580,7 +580,7 @@ class Rule(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = PF(
+    name: str = _PF(
         ...,
         min_length=1,
         description=(
@@ -588,7 +588,7 @@ class Rule(BaseModel):
             "ConstraintExpr.  Must be unique within the PolicyIR."
         ),
     )
-    description: str = PF(
+    description: str = _PF(
         default="",
         description=(
             "Plain English description of what this rule enforces.  "
@@ -596,14 +596,14 @@ class Rule(BaseModel):
             "in the Decompiler report for CISO sign-off."
         ),
     )
-    logic: Logic = PF(
+    logic: Logic = _PF(
         ...,
         description=(
             "Logical connective: 'AND' requires all conditions to hold; "
             "'OR' requires at least one condition to hold."
         ),
     )
-    conditions: list[Condition | Rule] = PF(
+    conditions: list[Condition | Rule] = _PF(
         ...,
         min_length=1,
         description=(
@@ -669,24 +669,24 @@ class PolicyIR(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    name: str = PF(
+    name: str = _PF(
         ...,
         min_length=1,
         description="Human-readable policy name (e.g. 'WireTransferPolicy').",
     )
-    version: str = PF(
+    version: str = _PF(
         default="1.0.0",
         pattern=r"^\d+\.\d+\.\d+$",
         description="Semantic version string in semver format (MAJOR.MINOR.PATCH).",
     )
-    description: str = PF(
+    description: str = _PF(
         default="",
         description=(
             "Plain English summary of the policy intent.  "
             "This is what the CISO signs off on — not the rules themselves."
         ),
     )
-    rules: list[Rule] = PF(
+    rules: list[Rule] = _PF(
         ...,
         min_length=1,
         description=(
@@ -1281,7 +1281,7 @@ class PolicyCompiler:
                     "Numeric fields do not accept bool values.  "
                     "Use an int or float literal instead."
                 )
-            if not isinstance(scalar, (int, float)):
+            if not isinstance(scalar, int | float):
                 raise PolicyCompilationError(
                     f"Type mismatch: field '{field.name}' has sort '{z3_type}' but "
                     f"received RHS scalar {scalar!r} "
@@ -1476,7 +1476,7 @@ class PolicyCompiler:
             return str(value)
         if isinstance(value, Decimal):
             return str(value.normalize())
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return str(value)
         # str
         return f'"{value}"'
@@ -1486,8 +1486,8 @@ class PolicyCompiler:
 
 _BINOP_TO_SYMBOL: dict[str, str] = {
     "add": "+",
-    "sub": "−",
-    "mul": "×",
+    "sub": "-",
+    "mul": "x",
     "div": "÷",
 }
 """Human-readable infix symbols for arithmetic binary operators in the DSL AST.
@@ -1540,7 +1540,7 @@ class Decompiler:
         Generated: 2026-05-13T00:00:00Z
         Rules: 3
 
-        Rule 1 [non_negative_balance]: (balance − amount) ≥ 0
+        Rule 1 [non_negative_balance]: (balance - amount) >= 0
           → The balance after transfer must remain non-negative.
 
         Rule 2 [within_daily_limit]: amount ≤ daily_limit

@@ -12,6 +12,7 @@ Primitives under test (Phase 8 additions)
 BlastRadiusCheck, CircuitBreakerState, ProdDeployApproval,
 ReplicaBudget, CPUMemoryGuard
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

@@ -76,11 +76,13 @@ import logging
 import secrets
 import threading
 import time
-import types
 import warnings
 from dataclasses import dataclass
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import types
+    from collections.abc import Callable
 
 _log = logging.getLogger(__name__)
 
@@ -146,9 +148,7 @@ class ExecutionToken:
 
     # ── Convenience predicates ────────────────────────────────────────────────
 
-    def is_expired(
-        self, *, clock: Callable[[], float] = time.time
-    ) -> bool:
+    def is_expired(self, *, clock: Callable[[], float] = time.time) -> bool:
         """Return ``True`` if the token TTL has elapsed."""
         return clock() > self.expires_at
 
@@ -584,9 +584,7 @@ class SQLiteExecutionTokenVerifier:
     def _evict_expired(self) -> None:
         """Delete expired rows.  Must be called under self._lock."""
         cur = self._conn.cursor()
-        cur.execute(
-            "DELETE FROM consumed_tokens WHERE expires_at < ?", (self._clock(),)
-        )
+        cur.execute("DELETE FROM consumed_tokens WHERE expires_at < ?", (self._clock(),))
         self._conn.commit()
 
     def consume(
@@ -938,6 +936,7 @@ class RedisExecutionTokenVerifier:
             # unreliable — a falsely-low 0 may permit requests that should be
             # blocked if a quota check is based on this value.
             import logging as _etlog
+
             _etlog.getLogger(__name__).warning(
                 "execution_token.RedisExecutionTokenVerifier.consumed_count(): "
                 "Redis SCAN failed — returning 0 (fail-open for monitoring). "

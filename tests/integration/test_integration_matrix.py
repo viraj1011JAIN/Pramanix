@@ -14,6 +14,7 @@ Tests all installed integrations against 4 scenarios:
 Uses pytest.importorskip — skips gracefully if framework not installed.
 Zero sys.modules mocking.
 """
+
 from __future__ import annotations
 
 import json

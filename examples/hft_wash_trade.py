@@ -32,6 +32,7 @@ Run::
 
     python examples/hft_wash_trade.py
 """
+
 from __future__ import annotations
 
 import sys

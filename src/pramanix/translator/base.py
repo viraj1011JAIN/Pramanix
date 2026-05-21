@@ -8,6 +8,7 @@
 Both types are pure-Python with no optional dependencies so they can be
 imported unconditionally even when *openai* / *anthropic* are not installed.
 """
+
 from __future__ import annotations
 
 import secrets

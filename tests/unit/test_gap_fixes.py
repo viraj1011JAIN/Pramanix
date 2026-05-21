@@ -17,6 +17,7 @@ These tests verify every fix applied in the gap-hardening pass:
     G9  Guard max_input_bytes is enforced for Pydantic BaseModel inputs
     G10 FailsafeMode.ALLOW_WITH_AUDIT emits DeprecationWarning
 """
+
 from __future__ import annotations
 
 import secrets
@@ -58,9 +59,9 @@ _loss = Field("loss", Decimal, "Real")
 
 def test_z3type_includes_string() -> None:
     """Z3Type Literal must enumerate 'String' in addition to the numeric sorts."""
-    assert "String" in get_args(Z3Type), (
-        "Z3Type Literal does not include 'String' - type annotation is incomplete"
-    )
+    assert "String" in get_args(
+        Z3Type
+    ), "Z3Type Literal does not include 'String' - type annotation is incomplete"
 
 
 def test_z3type_still_includes_numeric_sorts() -> None:
@@ -80,9 +81,7 @@ def test_abs_method_returns_expression_node() -> None:
     from pramanix.expressions import ExpressionNode
 
     result = E(_amount).abs()
-    assert isinstance(result, ExpressionNode), (
-        "ExpressionNode.abs() must return an ExpressionNode"
-    )
+    assert isinstance(result, ExpressionNode), "ExpressionNode.abs() must return an ExpressionNode"
 
 
 def test_abs_expr_convenience_returns_expression_node() -> None:
@@ -109,9 +108,7 @@ def test_abs_policy_safe_on_positive() -> None:
 
         @classmethod
         def invariants(cls):
-            return [
-                (E(cls.amount).abs() >= Decimal("0")).named("abs_nonneg")
-            ]
+            return [(E(cls.amount).abs() >= Decimal("0")).named("abs_nonneg")]
 
     guard = Guard(_AbsPolicy)
     decision = guard.verify({"amount": 100.0}, {})
@@ -126,9 +123,7 @@ def test_abs_policy_safe_on_negative() -> None:
 
         @classmethod
         def invariants(cls):
-            return [
-                (E(cls.amount).abs() >= Decimal("0")).named("abs_nonneg")
-            ]
+            return [(E(cls.amount).abs() >= Decimal("0")).named("abs_nonneg")]
 
     guard = Guard(_AbsPolicy2)
     decision = guard.verify({"amount": -50.0}, {})
@@ -144,9 +139,7 @@ def test_abs_financial_invariant_blocks_large_loss() -> None:
         @classmethod
         def invariants(cls):
             # Allow up to 1000 loss in either direction
-            return [
-                (abs_expr(E(cls.loss)) <= Decimal("1000")).named("max_loss")
-            ]
+            return [(abs_expr(E(cls.loss)) <= Decimal("1000")).named("max_loss")]
 
     guard = Guard(_LossPolicy)
 
@@ -363,14 +356,14 @@ def test_max_input_bytes_enforced_for_basemodel_intent() -> None:
     large_intent = _IntentModel(payload="x" * 500)
     decision = guard.verify(large_intent, {})
 
-    assert not decision.allowed, (
-        "A BaseModel payload exceeding max_input_bytes must be blocked (fail-closed)"
-    )
+    assert (
+        not decision.allowed
+    ), "A BaseModel payload exceeding max_input_bytes must be blocked (fail-closed)"
     # Explanation should mention the size limit
     combined = (decision.explanation or "").lower()
-    assert "exceed" in combined or "size" in combined or "bytes" in combined, (
-        f"Explanation should mention size limit, got: {decision.explanation!r}"
-    )
+    assert (
+        "exceed" in combined or "size" in combined or "bytes" in combined
+    ), f"Explanation should mention size limit, got: {decision.explanation!r}"
 
 
 def test_max_input_bytes_passes_for_small_basemodel() -> None:
@@ -380,9 +373,9 @@ def test_max_input_bytes_passes_for_small_basemodel() -> None:
     intent = _IntentModel(payload="hello")
     decision = guard.verify(intent, {})
     # Size guard must not block; allowed since no invariants
-    assert "exceed" not in (decision.explanation or "").lower(), (
-        "Small BaseModel should not be blocked by size guard"
-    )
+    assert (
+        "exceed" not in (decision.explanation or "").lower()
+    ), "Small BaseModel should not be blocked by size guard"
 
 
 def test_max_input_bytes_zero_disables_check() -> None:
@@ -392,9 +385,9 @@ def test_max_input_bytes_zero_disables_check() -> None:
     large = _IntentModel(payload="z" * 10_000)
     decision = guard.verify(large, {})
     # Must not be blocked because of the size check
-    assert "exceed" not in (decision.explanation or "").lower(), (
-        "max_input_bytes=0 should disable the size check"
-    )
+    assert (
+        "exceed" not in (decision.explanation or "").lower()
+    ), "max_input_bytes=0 should disable the size check"
 
 
 # -----------------------------------------------------------------------------
@@ -409,13 +402,13 @@ def test_allow_with_audit_emits_deprecation_warning() -> None:
         CircuitBreakerConfig(failsafe_mode=FailsafeMode.ALLOW_WITH_AUDIT)
 
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert deprecation_warnings, (
-        "FailsafeMode.ALLOW_WITH_AUDIT must emit a DeprecationWarning at construction"
-    )
+    assert (
+        deprecation_warnings
+    ), "FailsafeMode.ALLOW_WITH_AUDIT must emit a DeprecationWarning at construction"
     msg = str(deprecation_warnings[0].message).lower()
-    assert "deprecated" in msg or "block_all" in msg, (
-        f"DeprecationWarning message should mention 'deprecated' or 'BLOCK_ALL', got: {msg!r}"
-    )
+    assert (
+        "deprecated" in msg or "block_all" in msg
+    ), f"DeprecationWarning message should mention 'deprecated' or 'BLOCK_ALL', got: {msg!r}"
 
 
 def test_block_all_does_not_emit_warning() -> None:
@@ -425,8 +418,4 @@ def test_block_all_does_not_emit_warning() -> None:
         CircuitBreakerConfig(failsafe_mode=FailsafeMode.BLOCK_ALL)
 
     deprecation_warnings = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert not deprecation_warnings, (
-        "BLOCK_ALL must not trigger a DeprecationWarning"
-    )
-
-
+    assert not deprecation_warnings, "BLOCK_ALL must not trigger a DeprecationWarning"

@@ -46,7 +46,7 @@ _log = logging.getLogger(__name__)
 # SecurityWarning is a built-in in Python 3.12+.  On 3.11 we define a
 # compatible local class so warnings.warn(SecurityWarning) works on both.
 try:
-    SecurityWarning  # noqa: F821 — built-in on 3.12+
+    SecurityWarning  # — built-in on 3.12+  # noqa: B018
 except NameError:
 
     class SecurityWarning(UserWarning):  # type: ignore[no-redef]
@@ -65,6 +65,7 @@ __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 _re_engine: Any  # re2 if available, stdlib re as fallback
 try:
     import re2 as _re_engine  # type: ignore[import-not-found]
+
     _RE2_AVAILABLE = True
 except ImportError:
     _re_engine = re
@@ -96,7 +97,7 @@ except ImportError:
 #   - Prompt / system-prompt extraction attempts
 #   - Direct compliance coercion ("you must comply")
 #
-from pramanix.translator._injection_patterns import INJECTION_PATTERNS
+from pramanix.translator._injection_patterns import INJECTION_PATTERNS  # noqa: E402
 
 if not _RE2_AVAILABLE:
     _log.warning(

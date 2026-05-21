@@ -53,6 +53,7 @@ Usage::
     # Decode for display or logging:
     label = _status.decode(0)   # → "CLEAR"
 """
+
 from __future__ import annotations
 
 from pramanix.expressions import ConstraintExpr, E, Field
@@ -87,9 +88,7 @@ class StringEnumField:
 
     def __init__(self, name: str, values: list[str]) -> None:
         if not values:
-            raise ValueError(
-                f"StringEnumField({name!r}): values list must not be empty."
-            )
+            raise ValueError(f"StringEnumField({name!r}): values list must not be empty.")
         if len(values) != len(set(values)):
             dupes = [v for v in values if values.count(v) > 1]
             raise ValueError(
@@ -158,9 +157,7 @@ class StringEnumField:
         Returns:
             A named :class:`~pramanix.expressions.ConstraintExpr`.
         """
-        return E(field_ref).is_in(self.codes).named(
-            f"{self._name}_valid_enum_code"
-        )
+        return E(field_ref).is_in(self.codes).named(f"{self._name}_valid_enum_code")
 
     def is_allowed_constraint(
         self,
@@ -180,9 +177,7 @@ class StringEnumField:
             ValueError: If any label in *allowed_values* is not in the enum.
         """
         codes = [self.encode(v) for v in allowed_values]
-        return E(field_ref).is_in(codes).named(
-            f"{self._name}_in_{'+'.join(allowed_values)}"
-        )
+        return E(field_ref).is_in(codes).named(f"{self._name}_in_{'+'.join(allowed_values)}")
 
     # ── Inspection ────────────────────────────────────────────────────────────
 

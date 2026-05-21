@@ -6,6 +6,7 @@ Covers PIIDetector, ToxicityScorer, RegexClassifier, SemanticSimilarityGuard,
 and module-level helpers _cosine_similarity and _normalise.
 All tests use only stdlib + the module itself — no ML dependencies required.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,7 +20,6 @@ from pramanix.nlp.validators import (
     _cosine_similarity,
     _normalise,
 )
-
 
 # ── _normalise ────────────────────────────────────────────────────────────────
 
@@ -94,6 +94,7 @@ class TestPIIDetectorDetect:
 
     def test_extra_patterns_used(self) -> None:
         import re
+
         custom = [("account_num", re.compile(r"ACCT-\d{8}"))]
         d = PIIDetector(extra_patterns=custom)
         matches = d.detect("Your ACCT-12345678 is linked.")
@@ -190,11 +191,13 @@ class TestToxicityScorerCustomFn:
 
 class TestRegexClassifier:
     def _clf(self) -> RegexClassifier:
-        return RegexClassifier([
-            ("financial", r"\b(balance|transfer|account)\b"),
-            ("medical", r"\b(diagnosis|medication|dosage)\b"),
-            ("credentials", r"\b(password|api.?key|token)\b"),
-        ])
+        return RegexClassifier(
+            [
+                ("financial", r"\b(balance|transfer|account)\b"),
+                ("medical", r"\b(diagnosis|medication|dosage)\b"),
+                ("credentials", r"\b(password|api.?key|token)\b"),
+            ]
+        )
 
     def test_single_label_match(self) -> None:
         clf = self._clf()
@@ -221,6 +224,7 @@ class TestRegexClassifier:
 
     def test_accepts_compiled_pattern(self) -> None:
         import re
+
         clf = RegexClassifier([("ip", re.compile(r"\d{1,3}(\.\d{1,3}){3}"))])
         assert clf.classify("Server at 192.168.1.1") == ["ip"]
 

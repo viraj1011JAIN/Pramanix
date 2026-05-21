@@ -28,6 +28,7 @@ Coverage targets
 * custom GuardConfig forwarded to Guard for sync wrapper
 * sync function callable from within a running event loop (blocking, but correct)
 """
+
 from __future__ import annotations
 
 import asyncio

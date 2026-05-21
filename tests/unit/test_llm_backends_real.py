@@ -560,6 +560,8 @@ class TestLlamaCppTranslatorReal:
 
         # Shadow llama_cpp in sys.modules to simulate it being absent,
         # regardless of whether it is installed in the current environment.
-        with patch.dict(sys.modules, {"llama_cpp": None}):  # type: ignore[arg-type]
-            with pytest.raises(ConfigurationError, match="llama-cpp-python"):
-                LlamaCppTranslator("/path/to/model.gguf")
+        with (
+            patch.dict(sys.modules, {"llama_cpp": None}),  # type: ignore[arg-type]
+            pytest.raises(ConfigurationError, match="llama-cpp-python"),
+        ):
+            LlamaCppTranslator("/path/to/model.gguf")

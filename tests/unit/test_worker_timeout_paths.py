@@ -11,21 +11,17 @@ The approach: replace the pool's executor with a stub whose futures timeout
 on result(), then call submit_solve() and verify we get an error Decision
 with the expected reason text.
 """
+
 from __future__ import annotations
 
 import concurrent.futures
-import threading
 from concurrent.futures import Future
-from dataclasses import dataclass, field
-from typing import Any
 
-import pytest
-
-from pramanix.decision import Decision, SolverStatus
-from pramanix.expressions import ConstraintExpr, E, Field as ExprField
+from pramanix.decision import SolverStatus
+from pramanix.expressions import ConstraintExpr
+from pramanix.expressions import Field as ExprField
 from pramanix.policy import Policy
 from pramanix.worker import WorkerPool
-
 
 # ── Stub executor that always times out ────────────────────────────────────────
 
@@ -88,7 +84,9 @@ class TestThreadModeHostTimeout:
 
         assert not decision.allowed
         assert decision.status == SolverStatus.ERROR
-        assert "deadline" in decision.explanation.lower() or "timeout" in decision.explanation.lower()
+        assert (
+            "deadline" in decision.explanation.lower() or "timeout" in decision.explanation.lower()
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -117,7 +115,9 @@ class TestProcessModeHostTimeout:
 
         assert not decision.allowed
         assert decision.status == SolverStatus.ERROR
-        assert "deadline" in decision.explanation.lower() or "timeout" in decision.explanation.lower()
+        assert (
+            "deadline" in decision.explanation.lower() or "timeout" in decision.explanation.lower()
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -13,9 +13,11 @@ Coverage:
 - PramanixGuardedModule: allowed → delegates to inner_module
 - PramanixGuardedModule: __call__ delegates to forward
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
+
 import pytest
 
 from pramanix.exceptions import GuardViolationError

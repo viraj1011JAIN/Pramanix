@@ -38,6 +38,7 @@ Critical design invariants
 from __future__ import annotations
 
 import collections
+import contextlib
 import contextvars
 import hashlib
 import hmac as _hmac_mod
@@ -159,7 +160,7 @@ class AdaptiveConcurrencyLimiter:
         # Prevents the executor's internal SimpleQueue from growing without bound
         # under burst traffic (OOM denial-of-service).  Tasks beyond this limit
         # receive an immediate Decision.rate_limited() without queuing.
-        # Default: 8× workers — allows reasonable burst headroom while bounding
+        # Default: 8x workers — allows reasonable burst headroom while bounding
         # memory growth.  Override via PRAMANIX_MAX_OUTSTANDING env var.
         if max_outstanding is not None:
             self._max_outstanding = max_outstanding
@@ -324,10 +325,8 @@ def _ppid_watchdog() -> None:
                 exc_info=True,
             )
             if _WORKER_WATCHDOG_ERROR_COUNTER is not None:
-                try:
+                with contextlib.suppress(Exception):
                     _WORKER_WATCHDOG_ERROR_COUNTER.inc()
-                except Exception:
-                    pass
 
 
 def _warmup_worker(_solver_factory: Any = None) -> None:
@@ -350,7 +349,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
 
     import z3  # — intentional local import inside worker
 
-    _Solver = _solver_factory if _solver_factory is not None else z3.Solver
+    _solver_cls = _solver_factory if _solver_factory is not None else z3.Solver
 
     # Start PPID watchdog only in subprocess workers.  In thread-mode pools the
     # watchdog runs inside the parent process where os.getppid() never changes,
@@ -362,14 +361,14 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
     ctx = z3.Context()
     try:
         # ── Pattern 1: Real ≥ 0  (most common financial constraint) ──────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         s.add(z3.Real("__wp_x", ctx) >= z3.RealVal(0, ctx))
         s.check()
         del s
 
         # ── Pattern 2: Real < 0  (negative-value boundary) ───────────────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         x = z3.Real("__wp_neg", ctx)
         s.add(x < z3.RealVal(0, ctx))
@@ -377,7 +376,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         del s
 
         # ── Pattern 3: Integer arithmetic (non-Real sort) ─────────────────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         n = z3.Int("__wp_n", ctx)
         s.add(n + z3.IntVal(1, ctx) > z3.IntVal(0, ctx))
@@ -385,7 +384,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         del s
 
         # ── Pattern 4: Two-variable inequality (most common invariant form) ───
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         a = z3.Real("__wp_a", ctx)
         b = z3.Real("__wp_b", ctx)
@@ -394,7 +393,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         del s
 
         # ── Pattern 5: Boolean conjunction ────────────────────────────────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         p = z3.Bool("__wp_p", ctx)
         q = z3.Bool("__wp_q", ctx)
@@ -403,7 +402,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         del s
 
         # ── Pattern 6: String sort (Seq) ──────────────────────────────────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         sv = z3.String("__wp_s", ctx)
         s.add(sv == z3.StringVal("ok", ctx))
@@ -411,7 +410,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         del s
 
         # ── Pattern 7: Large rational (Decimal-scale) ─────────────────────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         r = z3.Real("__wp_r", ctx)
         s.add(r <= z3.RealVal("999999999999999999999.999999", ctx))
@@ -419,7 +418,7 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         del s
 
         # ── Pattern 8: Unsat path (primes the attribution solver too) ─────────
-        s = _Solver(ctx=ctx)
+        s = _solver_cls(ctx=ctx)
         s.set("timeout", 2_000)
         u = z3.Real("__wp_u", ctx)
         s.add(u > z3.RealVal(10, ctx))
@@ -439,10 +438,8 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
             exc_info=True,
         )
         if _WORKER_WARMUP_FAILURE_COUNTER is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _WORKER_WARMUP_FAILURE_COUNTER.inc()
-            except Exception:
-                pass
     finally:
         del ctx
 
@@ -722,10 +719,8 @@ class WorkerPool:
                 )
         except Exception:
             pass
-        try:
+        with contextlib.suppress(Exception):
             executor.shutdown(wait=False)
-        except Exception:
-            pass
 
     def spawn(self) -> None:
         """Create the executor and, optionally, warm each worker slot.

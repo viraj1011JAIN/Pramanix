@@ -14,6 +14,7 @@ Coverage targets:
   rejection of implicit coercions (string → int)
 - Both functions use strict=True: no implicit coercions accepted
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

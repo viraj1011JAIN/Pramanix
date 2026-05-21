@@ -7,6 +7,7 @@
 
 All tests use real objects — no mocks, no monkeypatching of Pramanix internals.
 """
+
 from __future__ import annotations
 
 import time
@@ -22,7 +23,6 @@ from pramanix.oversight import (
     InMemoryApprovalWorkflow,
     OversightRecord,
 )
-
 
 # ── ApprovalRequest tests ─────────────────────────────────────────────────────
 
@@ -193,11 +193,13 @@ class TestEscalationQueue:
     def test_pending_sorted_oldest_first(self):
         q = EscalationQueue()
         r1 = ApprovalRequest(
-            principal_id="a", action="1",
+            principal_id="a",
+            action="1",
             created_at=time.time() - 10,
         )
         r2 = ApprovalRequest(
-            principal_id="a", action="2",
+            principal_id="a",
+            action="2",
             created_at=time.time() - 5,
         )
         q.enqueue(r2)

@@ -10,6 +10,7 @@ Gate condition (from engineering plan):
     # State dict with old schema version must return BLOCK with reason='schema_version_mismatch'.
     # Migration spec must correctly rename fields.
 """
+
 from __future__ import annotations
 
 import json
@@ -335,13 +336,21 @@ class TestCliPolicyMigrate:
         argv_backup = sys.argv
         try:
             sys.argv = [
-                "pramanix", "policy", "migrate",
-                "--state", str(state_file),
-                "--from-version", "1.0.0",
-                "--to-version", "2.0.0",
-                "--rename", "acct_id=account_number",
-                "--remove", "legacy_flag",
-                "--output", str(out_file),
+                "pramanix",
+                "policy",
+                "migrate",
+                "--state",
+                str(state_file),
+                "--from-version",
+                "1.0.0",
+                "--to-version",
+                "2.0.0",
+                "--rename",
+                "acct_id=account_number",
+                "--remove",
+                "legacy_flag",
+                "--output",
+                str(out_file),
             ]
             rc = cli_main()
         finally:
@@ -366,10 +375,15 @@ class TestCliPolicyMigrate:
         argv_backup = sys.argv
         try:
             sys.argv = [
-                "pramanix", "policy", "migrate",
-                "--state", str(state_file),
-                "--from-version", "1.0.0",
-                "--to-version", "2.0.0",
+                "pramanix",
+                "policy",
+                "migrate",
+                "--state",
+                str(state_file),
+                "--from-version",
+                "1.0.0",
+                "--to-version",
+                "2.0.0",
             ]
             rc = cli_main()
         finally:

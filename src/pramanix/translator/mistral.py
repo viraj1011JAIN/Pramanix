@@ -9,6 +9,7 @@ Requires the ``pramanix[mistral]`` extra (``mistralai``, ``tenacity``).
 If the package is not installed, instantiation raises
 :exc:`~pramanix.exceptions.ConfigurationError` with the exact pip command.
 """
+
 from __future__ import annotations
 
 import os
@@ -105,14 +106,14 @@ class MistralTranslator:
         # M-13: only retry genuine Mistral transport errors, not programmer errors.
         try:
             from mistralai.models import SDKError as _MistralError
-            _retryable_base: tuple[type[Exception], ...] = (
-                _MistralError, TimeoutError, OSError
-            )
+
+            _retryable_base: tuple[type[Exception], ...] = (_MistralError, TimeoutError, OSError)
         except ImportError:
             _retryable_base = (TimeoutError, OSError)
 
         try:
             import httpx as _httpx
+
             _http_errors: tuple[type[Exception], ...] = (
                 _httpx.ConnectError,
                 _httpx.TimeoutException,

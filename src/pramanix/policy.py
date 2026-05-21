@@ -84,6 +84,7 @@ Call :meth:`Policy.validate` (or let :class:`~pramanix.guard.Guard` do it
 automatically at construction) to assert that all labels are present and
 unique before verification begins.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -246,6 +247,7 @@ class Policy:
                                 own = ancestor_inv(_cls)
                         except NotImplementedError as exc:
                             import logging as _logging
+
                             _logging.getLogger(__name__).warning(
                                 "policy '%s': ancestor '%s' raised NotImplementedError "
                                 "from invariants() — this policy will have zero inherited "

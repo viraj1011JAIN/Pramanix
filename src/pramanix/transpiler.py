@@ -28,6 +28,7 @@ Design notes
   alter runtime behaviour.  They suppress pyright/Pylance ``reportOperatorIssue``
   errors caused by incomplete Z3 stub annotations.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -176,6 +177,7 @@ def z3_val(
         return cast("z3.ExprRef", z3.BoolVal(bool(value), ctx))
     if field.z3_type == "Int":
         from datetime import datetime as _dt
+
         if isinstance(value, _dt):
             if value.tzinfo is None:
                 raise FieldTypeError(
@@ -283,8 +285,8 @@ def analyze_string_promotions(
     )
 
     # Track which String fields are eligible and collect their literals.
-    eligible: dict[str, set[str]] = {}      # field_name → set of string literals
-    disqualified: set[str] = set()           # fields used in non-promotable ops
+    eligible: dict[str, set[str]] = {}  # field_name → set of string literals
+    disqualified: set[str] = set()  # fields used in non-promotable ops
 
     def _walk(node: Any) -> None:
         match node:
@@ -298,14 +300,18 @@ def analyze_string_promotions(
                 _walk(r)
                 # Collect string literals from eq/ne comparisons with String fields.
                 if (
-                    isinstance(l, _FieldRef) and l.field.z3_type == "String"
-                    and isinstance(r, _Literal) and isinstance(r.value, str)
+                    isinstance(l, _FieldRef)
+                    and l.field.z3_type == "String"
+                    and isinstance(r, _Literal)
+                    and isinstance(r.value, str)
                     and l.field.name not in disqualified
                 ):
                     eligible.setdefault(l.field.name, set()).add(r.value)
                 if (
-                    isinstance(r, _FieldRef) and r.field.z3_type == "String"
-                    and isinstance(l, _Literal) and isinstance(l.value, str)
+                    isinstance(r, _FieldRef)
+                    and r.field.z3_type == "String"
+                    and isinstance(l, _Literal)
+                    and isinstance(l.value, str)
                     and r.field.name not in disqualified
                 ):
                     eligible.setdefault(r.field.name, set()).add(l.value)
@@ -319,7 +325,13 @@ def analyze_string_promotions(
                 else:
                     _walk(l)
 
-            case _StartsWithOp(operand=o) | _EndsWithOp(operand=o) | _ContainsOp(operand=o) | _LengthBetweenOp(operand=o) | _RegexMatchOp(operand=o):
+            case (
+                _StartsWithOp(operand=o)
+                | _EndsWithOp(operand=o)
+                | _ContainsOp(operand=o)
+                | _LengthBetweenOp(operand=o)
+                | _RegexMatchOp(operand=o)
+            ):
                 # String-theory ops — disqualify the field from promotion.
                 if isinstance(o, _FieldRef) and o.field.z3_type == "String":
                     disqualified.add(o.field.name)
@@ -396,9 +408,21 @@ def transpile(
             # Sort coercion: numeric literals default to RealVal in _z3_lit.
             # When the peer operand is Int-sorted, coerce the literal to IntVal
             # so that Int arithmetic (integer div, mod) propagates correctly.
-            if lz.is_int() and rz.is_real() and isinstance(r, _Literal) and isinstance(r.value, int) and not isinstance(r.value, bool):
+            if (
+                lz.is_int()
+                and rz.is_real()
+                and isinstance(r, _Literal)
+                and isinstance(r.value, int)
+                and not isinstance(r.value, bool)
+            ):
                 rz = cast("z3.ArithRef", z3.IntVal(r.value, ctx))
-            elif rz.is_int() and lz.is_real() and isinstance(l, _Literal) and isinstance(l.value, int) and not isinstance(l.value, bool):
+            elif (
+                rz.is_int()
+                and lz.is_real()
+                and isinstance(l, _Literal)
+                and isinstance(l.value, int)
+                and not isinstance(l.value, bool)
+            ):
                 lz = cast("z3.ArithRef", z3.IntVal(l.value, ctx))
             if op == "add":
                 return cast("z3.ExprRef", lz + rz)
@@ -408,8 +432,8 @@ def transpile(
                 # Non-linear arithmetic warning (Issue #17): Z3's default
                 # arithmetic solver (linear arithmetic) may return "unknown"
                 # or time out when *both* operands are symbolic variables
-                # (variable × variable).  Multiplying a variable by a literal
-                # constant is always linear and safe.  Only variable × variable
+                # (variable x variable).  Multiplying a variable by a literal
+                # constant is always linear and safe.  Only variable x variable
                 # or variable / variable is non-linear.
                 _lhs_is_var = isinstance(l, _FieldRef)
                 _rhs_is_var = isinstance(r, _FieldRef)
@@ -417,7 +441,7 @@ def transpile(
                     warnings.warn(
                         f"Non-linear arithmetic detected: field '{l.field.name}' * "
                         f"field '{r.field.name}'. Z3's linear arithmetic solver "
-                        "may return 'unknown' or time out for variable×variable "
+                        "may return 'unknown' or time out for variable x variable "
                         "multiplication. Consider rewriting the constraint as a "
                         "linear approximation or introducing an auxiliary variable. "
                         "See docs/DECISIONS.md §Non-linear Arithmetic for details.",
@@ -451,13 +475,21 @@ def transpile(
             # string literal, _z3_lit() produces a StringVal which Z3 rejects.
             # Re-encode the literal as IntVal using the promotion table.
             if promotions:
-                if (isinstance(l, _FieldRef) and l.field.z3_type == "String"
-                        and l.field.name in promotions
-                        and isinstance(r, _Literal) and isinstance(r.value, str)):
+                if (
+                    isinstance(l, _FieldRef)
+                    and l.field.z3_type == "String"
+                    and l.field.name in promotions
+                    and isinstance(r, _Literal)
+                    and isinstance(r.value, str)
+                ):
                     rz = z3.IntVal(promotions[l.field.name].get(r.value, -1), ctx)
-                elif (isinstance(r, _FieldRef) and r.field.z3_type == "String"
-                        and r.field.name in promotions
-                        and isinstance(l, _Literal) and isinstance(l.value, str)):
+                elif (
+                    isinstance(r, _FieldRef)
+                    and r.field.z3_type == "String"
+                    and r.field.name in promotions
+                    and isinstance(l, _Literal)
+                    and isinstance(l.value, str)
+                ):
                     lz = z3.IntVal(promotions[r.field.name].get(l.value, -1), ctx)
 
             # eq/ne use Z3_mk_eq directly so that all sorts are handled
@@ -519,7 +551,9 @@ def transpile(
                             lz.as_ast(),
                             (
                                 z3.IntVal((promotions or {})[l.field.name].get(v.value, -1), ctx)
-                                if _promoted_field and isinstance(v, _Literal) and isinstance(v.value, str)
+                                if _promoted_field
+                                and isinstance(v, _Literal)
+                                and isinstance(v.value, str)
                                 else transpile(v, ctx, promotions)
                             ).as_ast(),
                         ),
@@ -552,7 +586,11 @@ def transpile(
             # Integer literals are compiled as RealVal by default (_z3_lit).
             # If the dividend is Int-sorted, coerce a plain integer literal
             # divisor to IntVal so the sorts match.
-            if isinstance(v, _Literal) and isinstance(v.value, int) and not isinstance(v.value, bool):
+            if (
+                isinstance(v, _Literal)
+                and isinstance(v.value, int)
+                and not isinstance(v.value, bool)
+            ):
                 z_divisor: z3.ArithRef = cast("z3.ArithRef", z3.IntVal(v.value, ctx))
             else:
                 z_divisor = cast("z3.ArithRef", transpile(v, ctx, promotions))
@@ -602,6 +640,7 @@ def transpile(
 
         case _NowOp():
             import time as _time
+
             return cast("z3.ExprRef", z3.IntVal(int(_time.time()), ctx))
 
         case _:
@@ -640,7 +679,13 @@ def collect_fields(node: Any) -> dict[str, Field]:
             return collect_fields(b)
         case _ModOp(dividend=d, divisor=v):
             return {**collect_fields(d), **collect_fields(v)}
-        case _StartsWithOp(operand=o) | _EndsWithOp(operand=o) | _ContainsOp(operand=o) | _LengthBetweenOp(operand=o) | _RegexMatchOp(operand=o):
+        case (
+            _StartsWithOp(operand=o)
+            | _EndsWithOp(operand=o)
+            | _ContainsOp(operand=o)
+            | _LengthBetweenOp(operand=o)
+            | _RegexMatchOp(operand=o)
+        ):
             return collect_fields(o)
         case _ForAllOp(array_field=af) | _ExistsOp(array_field=af):
             # Report the array field name (e.g. "amounts") so the field
@@ -841,9 +886,7 @@ class InvariantASTCache:
         super().__init_subclass__(**kwargs)
 
     @classmethod
-    def get(
-        cls, policy_cls: type, field_schema_hash: str
-    ) -> list[InvariantMeta] | None:
+    def get(cls, policy_cls: type, field_schema_hash: str) -> list[InvariantMeta] | None:
         """Retrieve cached metadata for *(policy_cls, field_schema_hash)*.
 
         Args:

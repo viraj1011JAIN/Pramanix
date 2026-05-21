@@ -25,6 +25,7 @@ Example::
                 MaxReplicas(cls.replicas, cls.max_r),
             ]
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -27,6 +27,7 @@ Design rules
 * All guards use real Z3 via real Guard/Policy classes.
 * All CLI tests invoke main() with real sys.argv via monkeypatch.
 """
+
 from __future__ import annotations
 
 import json
@@ -38,7 +39,6 @@ import pytest
 from pramanix import E, Field, Guard, GuardConfig, Policy
 from pramanix.exceptions import ConfigurationError
 from pramanix.helpers.string_enum import StringEnumField
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Gap 1 — audit_sinks ConfigurationError
@@ -67,7 +67,9 @@ class TestAuditSinksProductionError:
         cfg = GuardConfig()
         assert cfg.audit_sinks == ()
 
-    def test_bypass_env_var_true_word_suppresses_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_bypass_env_var_true_word_suppresses_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "true")
         cfg = GuardConfig()

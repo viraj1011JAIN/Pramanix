@@ -12,6 +12,7 @@ Primitives under test
 PHILeastPrivilege, ConsentActive, DosageGradientCheck,
 BreakGlassAuth, PediatricDoseBound
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

@@ -7,6 +7,7 @@
 
 All tests use real objects — no mocks, no monkeypatching of Pramanix internals.
 """
+
 from __future__ import annotations
 
 import threading
@@ -20,7 +21,6 @@ from pramanix.memory import (
     ScopedMemoryPartition,
     SecureMemoryStore,
 )
-
 
 # ── MemoryEntry tests ─────────────────────────────────────────────────────────
 
@@ -60,8 +60,11 @@ class TestMemoryEntry:
 
     def test_lineage_is_tuple(self):
         entry = MemoryEntry(
-            key="k", value=1, label=TrustLabel.PUBLIC,
-            source="src", lineage=("a", "b"),
+            key="k",
+            value=1,
+            label=TrustLabel.PUBLIC,
+            source="src",
+            lineage=("a", "b"),
         )
         assert entry.lineage == ("a", "b")
 
@@ -78,9 +81,7 @@ class TestScopedMemoryPartition:
 
     def test_write_and_retrieve(self):
         p = self._partition()
-        entry = p.write(
-            "goal", value="book flight", label=TrustLabel.INTERNAL, source="planner"
-        )
+        entry = p.write("goal", value="book flight", label=TrustLabel.INTERNAL, source="planner")
         retrieved = p.retrieve("goal")
         assert len(retrieved) == 1
         assert retrieved[0].entry_id == entry.entry_id
@@ -167,8 +168,7 @@ class TestScopedMemoryPartition:
 
     def test_lineage_stored(self):
         p = self._partition()
-        p.write("k", value=1, label=TrustLabel.INTERNAL,
-                source="s", lineage=("a", "b"))
+        p.write("k", value=1, label=TrustLabel.INTERNAL, source="s", lineage=("a", "b"))
         entry = p.retrieve("k")[0]
         assert entry.lineage == ("a", "b")
 
@@ -179,9 +179,8 @@ class TestScopedMemoryPartition:
         def writer(i: int) -> None:
             try:
                 for j in range(10):
-                    p.write(f"k{i}{j}", value=i * j,
-                            label=TrustLabel.PUBLIC, source="t")
-            except Exception as exc:  # noqa: BLE001
+                    p.write(f"k{i}{j}", value=i * j, label=TrustLabel.PUBLIC, source="t")
+            except Exception as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=writer, args=(i,)) for i in range(5)]
@@ -199,8 +198,9 @@ class TestScopedMemoryPartition:
 class TestSecureMemoryStore:
     def test_write_creates_partition(self):
         store = SecureMemoryStore()
-        store.write("acme", "run-001", "goal",
-                    value="book flight", label=TrustLabel.INTERNAL, source="s")
+        store.write(
+            "acme", "run-001", "goal", value="book flight", label=TrustLabel.INTERNAL, source="s"
+        )
         assert store.partition_count() == 1
 
     def test_retrieve_empty_for_unknown_partition(self):
@@ -210,10 +210,22 @@ class TestSecureMemoryStore:
 
     def test_cross_tenant_isolation(self):
         store = SecureMemoryStore()
-        store.write("acme", "run-001", "secret",
-                    value="ACME secret", label=TrustLabel.CONFIDENTIAL, source="a")
-        store.write("beta", "run-001", "secret",
-                    value="BETA secret", label=TrustLabel.CONFIDENTIAL, source="b")
+        store.write(
+            "acme",
+            "run-001",
+            "secret",
+            value="ACME secret",
+            label=TrustLabel.CONFIDENTIAL,
+            source="a",
+        )
+        store.write(
+            "beta",
+            "run-001",
+            "secret",
+            value="BETA secret",
+            label=TrustLabel.CONFIDENTIAL,
+            source="b",
+        )
         acme = store.retrieve("acme", "run-001", "secret")
         beta = store.retrieve("beta", "run-001", "secret")
         assert acme[0].value == "ACME secret"
@@ -264,8 +276,7 @@ class TestSecureMemoryStore:
     def test_write_violation_propagated(self):
         store = SecureMemoryStore(default_min_label=TrustLabel.CONFIDENTIAL)
         with pytest.raises(MemoryViolationError):
-            store.write("t", "w", "k",
-                        value="tainted", label=TrustLabel.UNTRUSTED, source="user")
+            store.write("t", "w", "k", value="tainted", label=TrustLabel.UNTRUSTED, source="user")
 
 
 # ── LlamaIndex migration pattern tests ───────────────────────────────────────
@@ -289,10 +300,22 @@ class TestSecureMemoryStoreLlamaIndexMigrationPattern:
     def test_upsert_pattern_latest_value_wins(self) -> None:
         """Repeated writes to the same key: SecureMemoryStore.latest() returns newest."""
         store = SecureMemoryStore()
-        store.write("acme", "run-1", "user_goal",
-                    value="book flight", label=TrustLabel.INTERNAL, source="planner")
-        store.write("acme", "run-1", "user_goal",
-                    value="book hotel", label=TrustLabel.INTERNAL, source="planner")
+        store.write(
+            "acme",
+            "run-1",
+            "user_goal",
+            value="book flight",
+            label=TrustLabel.INTERNAL,
+            source="planner",
+        )
+        store.write(
+            "acme",
+            "run-1",
+            "user_goal",
+            value="book hotel",
+            label=TrustLabel.INTERNAL,
+            source="planner",
+        )
         latest = store.latest("acme", "run-1", "user_goal")
         assert latest is not None
         assert latest.value == "book hotel"
@@ -300,10 +323,12 @@ class TestSecureMemoryStoreLlamaIndexMigrationPattern:
     def test_vector_store_query_pattern_retrieve_all(self) -> None:
         """LlamaIndex retrieve() → SecureMemoryStore.retrieve() with no key filter."""
         store = SecureMemoryStore()
-        store.write("acme", "run-1", "step_1",
-                    value="action A", label=TrustLabel.INTERNAL, source="agent")
-        store.write("acme", "run-1", "step_2",
-                    value="action B", label=TrustLabel.INTERNAL, source="agent")
+        store.write(
+            "acme", "run-1", "step_1", value="action A", label=TrustLabel.INTERNAL, source="agent"
+        )
+        store.write(
+            "acme", "run-1", "step_2", value="action B", label=TrustLabel.INTERNAL, source="agent"
+        )
         entries = store.retrieve("acme", "run-1")
         assert len(entries) == 2
         values = {e.value for e in entries}
@@ -312,10 +337,22 @@ class TestSecureMemoryStoreLlamaIndexMigrationPattern:
     def test_session_isolation_maps_to_workflow_scope(self) -> None:
         """LlamaIndex index_id scoping → SecureMemoryStore (tenant, workflow) isolation."""
         store = SecureMemoryStore()
-        store.write("tenant-a", "session-1", "secret",
-                    value="A1", label=TrustLabel.CONFIDENTIAL, source="agent")
-        store.write("tenant-b", "session-2", "secret",
-                    value="B2", label=TrustLabel.CONFIDENTIAL, source="agent")
+        store.write(
+            "tenant-a",
+            "session-1",
+            "secret",
+            value="A1",
+            label=TrustLabel.CONFIDENTIAL,
+            source="agent",
+        )
+        store.write(
+            "tenant-b",
+            "session-2",
+            "secret",
+            value="B2",
+            label=TrustLabel.CONFIDENTIAL,
+            source="agent",
+        )
         a_entries = store.retrieve("tenant-a", "session-1")
         b_entries = store.retrieve("tenant-b", "session-2")
         assert {e.value for e in a_entries} == {"A1"}
@@ -326,10 +363,17 @@ class TestSecureMemoryStoreLlamaIndexMigrationPattern:
     def test_read_only_access_pattern_max_label_filter(self) -> None:
         """LlamaIndex metadata filter → SecureMemoryStore max_label ceiling."""
         store = SecureMemoryStore()
-        store.write("acme", "run-1", "public_plan",
-                    value="step 1", label=TrustLabel.PUBLIC, source="agent")
-        store.write("acme", "run-1", "secret_plan",
-                    value="step 2 confidential", label=TrustLabel.CONFIDENTIAL, source="agent")
+        store.write(
+            "acme", "run-1", "public_plan", value="step 1", label=TrustLabel.PUBLIC, source="agent"
+        )
+        store.write(
+            "acme",
+            "run-1",
+            "secret_plan",
+            value="step 2 confidential",
+            label=TrustLabel.CONFIDENTIAL,
+            source="agent",
+        )
         # A read-only caller capped at INTERNAL should not see CONFIDENTIAL entries
         visible = store.retrieve("acme", "run-1", max_label=TrustLabel.INTERNAL)
         assert all(e.label <= TrustLabel.INTERNAL for e in visible)
@@ -340,7 +384,9 @@ class TestSecureMemoryStoreLlamaIndexMigrationPattern:
         """LlamaIndex provenance metadata → SecureMemoryStore lineage tuple."""
         store = SecureMemoryStore()
         entry = store.write(
-            "acme", "run-1", "enriched_data",
+            "acme",
+            "run-1",
+            "enriched_data",
             value={"amount": 500},
             label=TrustLabel.INTERNAL,
             source="enricher_agent",

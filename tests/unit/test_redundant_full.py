@@ -229,10 +229,10 @@ class TestSemanticFieldEqual:
             "-inf",
             "Inf",
             "1e999",
-            "١٢٣",   # Arabic-Indic numerals — Decimal raises InvalidOperation
-            "½",     # vulgar fraction — Decimal raises InvalidOperation
+            "١٢٣",  # Arabic-Indic numerals — Decimal raises InvalidOperation
+            "½",  # vulgar fraction — Decimal raises InvalidOperation
             "1_000_000",  # Python underscore syntax — Decimal rejects it
-            str(None),    # "None" — Decimal raises InvalidOperation
+            str(None),  # "None" — Decimal raises InvalidOperation
         ],
     )
     def test_boundary_string_never_raises(self, val: str) -> None:
@@ -261,7 +261,7 @@ class TestSemanticFieldEqual:
         assert _semantic_field_equal("-inf", "1e999") is False
 
     def test_arabic_indic_numerals_accepted_by_decimal(self) -> None:
-        """§35: Python's Decimal accepts Unicode digit characters (U+0661–U+0669).
+        """§35: Python's Decimal accepts Unicode digit characters (U+0661-U+0669).
 
         Decimal("١٢٣") parses to 123, so Arabic-Indic numerals compare equal to
         their ASCII equivalents via the Decimal path — not via casefold fallback.
@@ -564,17 +564,19 @@ class TestExtractWithConsensus:
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
-        with patch.object(_meta, "entry_points", return_value=[fake_ep]):
-            with pytest.raises(InjectionBlockedError):
-                self._run(
-                    extract_with_consensus(
-                        "Pay Alice 100",
-                        _Transfer,
-                        (ta, tb),
-                        injection_scorer_path="adversarial_scorer",
-                        injection_threshold=0.5,
-                    )
+        with (
+            patch.object(_meta, "entry_points", return_value=[fake_ep]),
+            pytest.raises(InjectionBlockedError),
+        ):
+            self._run(
+                extract_with_consensus(
+                    "Pay Alice 100",
+                    _Transfer,
+                    (ta, tb),
+                    injection_scorer_path="adversarial_scorer",
+                    injection_threshold=0.5,
                 )
+            )
 
 
 class TestEnforceConsensusUnknownMode:

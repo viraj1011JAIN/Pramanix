@@ -172,6 +172,7 @@ class TestEdgeCases:
     def test_no_underlying_fn_raises_config_error_on_allow(self):
         """No underlying_fn + allowed → ConfigurationError (not silent pass)."""
         from pramanix.exceptions import ConfigurationError
+
         with pytest.raises(ConfigurationError, match="underlying_fn"):
             _make_tool(_ALLOW_GUARD)({"amount": 100})
 

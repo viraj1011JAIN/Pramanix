@@ -30,6 +30,7 @@ Design constraints
 * Workflows are pluggable: swap in a Slack-bot, PagerDuty, or JIRA backend
   by implementing :class:`ApprovalWorkflow`.
 """
+
 from __future__ import annotations
 
 import collections
@@ -37,9 +38,9 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
 import threading
 import time
-import secrets
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -100,9 +101,7 @@ class ApprovalRequest:
     """
 
     request_id: str = field(
-        default_factory=lambda: str(
-            uuid.UUID(bytes=secrets.token_bytes(16), version=4)
-        )
+        default_factory=lambda: str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
     )
     principal_id: str = ""
     action: str = ""
@@ -493,14 +492,10 @@ class InMemoryApprovalWorkflow:
         self._ttl = auto_reject_after_s
         self._queue = EscalationQueue()
         # Bounded FIFO: oldest decisions are evicted when max_decisions is reached.
-        self._decisions: collections.OrderedDict[str, ApprovalDecision] = (
-            collections.OrderedDict()
-        )
+        self._decisions: collections.OrderedDict[str, ApprovalDecision] = collections.OrderedDict()
         self._max_decisions = max_decisions
         # Bounded deque: oldest records are automatically evicted at max_records.
-        self._records: collections.deque[OversightRecord] = collections.deque(
-            maxlen=max_records
-        )
+        self._records: collections.deque[OversightRecord] = collections.deque(maxlen=max_records)
         self._lock = threading.Lock()
         self._stop_sweeper = threading.Event()
         self._sweeper = threading.Thread(
@@ -545,8 +540,7 @@ class InMemoryApprovalWorkflow:
         )
         self._queue.enqueue(req)
         raise OversightRequiredError(
-            f"Action '{action}' requires human approval "
-            f"(request_id={req.request_id}).",
+            f"Action '{action}' requires human approval " f"(request_id={req.request_id}).",
             request_id=req.request_id,
             action=action,
             reason=reason,

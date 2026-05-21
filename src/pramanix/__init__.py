@@ -86,7 +86,14 @@ from pramanix.compliance import (
     MappingMatchKind,
     RegulatoryFramework,
 )
-from pramanix.crypto import ES256Signer, ES256Verifier, PramanixSigner, PramanixVerifier, RS256Signer, RS256Verifier
+from pramanix.crypto import (
+    ES256Signer,
+    ES256Verifier,
+    PramanixSigner,
+    PramanixVerifier,
+    RS256Signer,
+    RS256Verifier,
+)
 from pramanix.decision import Decision, SolverStatus
 from pramanix.decorator import guard
 from pramanix.exceptions import (
@@ -188,6 +195,13 @@ from pramanix.memory import (
 )
 from pramanix.mesh.authenticator import MeshAuthenticator, SpiffeIdentity
 from pramanix.migration import PolicyMigration
+from pramanix.nlp import (
+    PIIDetector,
+    PIIMatch,
+    RegexClassifier,
+    SemanticSimilarityGuard,
+    ToxicityScorer,
+)
 from pramanix.oversight import (
     ApprovalDecision,
     ApprovalRequest,
@@ -204,7 +218,6 @@ from pramanix.privilege import (
     ScopeEnforcer,
     ToolCapability,
 )
-from pramanix.nlp import PIIDetector, PIIMatch, RegexClassifier, SemanticSimilarityGuard, ToxicityScorer
 from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 from pramanix.resolvers import ResolverRegistry
 from pramanix.translator.injection_scorer import BuiltinScorer, CalibratedScorer, InjectionScorer

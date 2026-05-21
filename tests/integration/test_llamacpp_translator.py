@@ -20,18 +20,16 @@ These tests validate behaviour that _FakeLlama cannot replicate:
   - Multiple Guard instances sharing one loaded model (module-level cache)
   - Context window limits (n_ctx)
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
 import time
 
-import pytest
-
 from pydantic import BaseModel
 
-from pramanix.exceptions import ExtractionFailureError
-from pramanix.translator.llamacpp import LlamaCppTranslator, _MODEL_CACHE
+from pramanix.translator.llamacpp import _MODEL_CACHE, LlamaCppTranslator
 
 from .conftest import requires_llamacpp
 
@@ -141,6 +139,6 @@ def test_llamacpp_extract_is_deterministic_at_temperature_zero() -> None:
 
     # Both should have the same keys (exact values may vary across runs due to
     # system-level floating point, but structure should match)
-    assert set(r1.keys()) == set(r2.keys()), (
-        f"Deterministic inference should produce same keys: {r1.keys()} vs {r2.keys()}"
-    )
+    assert set(r1.keys()) == set(
+        r2.keys()
+    ), f"Deterministic inference should produce same keys: {r1.keys()} vs {r2.keys()}"

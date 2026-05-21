@@ -27,6 +27,7 @@ Security guarantees:
    fast, not at the first incoming request.
 7. Caller-provided state in the request body is IGNORED.
 """
+
 from __future__ import annotations
 
 import base64
@@ -37,11 +38,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
-    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+from typing import Any, Protocol
 
 
 class JWTAlgorithm(enum.Enum):
@@ -329,17 +326,15 @@ class JWTIdentityLinker:
 
         if algorithm is JWTAlgorithm.RS256:
             from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
             if not isinstance(key, RSAPublicKey):
-                raise ValueError(
-                    "RS256 requires an RSA public key; "
-                    f"got {type(key).__name__}"
-                )
+                raise ValueError("RS256 requires an RSA public key; " f"got {type(key).__name__}")
         else:  # ES256
             from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
+
             if not isinstance(key, EllipticCurvePublicKey):
                 raise ValueError(
-                    "ES256 requires an EC (elliptic curve) public key; "
-                    f"got {type(key).__name__}"
+                    "ES256 requires an EC (elliptic curve) public key; " f"got {type(key).__name__}"
                 )
         return key
 

@@ -13,6 +13,7 @@ Targets by file:
   solver.py       : 191-194
   key_provider.py : 116->118, 211-212, 264-267, 328, 334-336, 398-401, 415, 468-471
 """
+
 from __future__ import annotations
 
 import base64
@@ -145,7 +146,9 @@ class TestGuardConfigValidation:
         with pytest.warns(UserWarning, match="solver_rlimit"):
             GuardConfig(solver_rlimit=0)
 
-    def test_max_input_bytes_zero_in_production_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_max_input_bytes_zero_in_production_warns(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Line 456: PRAMANIX_ENV=production + max_input_bytes=0 → UserWarning."""
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
@@ -312,10 +315,9 @@ class TestRealizeNodeBoolOp:
                 # _BoolOp("and", [_ForAllOp, _CmpOp]) — hits line 191-192
                 # _CmpOp falls through to line 194 in the recursive call
                 return [
-                    (
-                        ForAll(cls.amounts, lambda f: E(f) >= 0)
-                        & (E(cls.amount) >= 0)
-                    ).named("combined")
+                    (ForAll(cls.amounts, lambda f: E(f) >= 0) & (E(cls.amount) >= 0)).named(
+                        "combined"
+                    )
                 ]
 
         config = GuardConfig(execution_mode="sync")
@@ -503,8 +505,7 @@ class TestGcpKmsKeyProviderInit:
         # dropping google from sys.modules entirely breaks later tests that
         # import google.auth, google.api_core, etc.
         _orig_google = {
-            k: sys.modules.get(k)
-            for k in ["google", "google.cloud", "google.cloud.secretmanager"]
+            k: sys.modules.get(k) for k in ["google", "google.cloud", "google.cloud.secretmanager"]
         }
         try:
             fake_google = types.ModuleType("google")

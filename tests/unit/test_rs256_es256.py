@@ -1,12 +1,13 @@
 """Tests for RS256 and ES256 asymmetric JWT-compatible signers (Issue #15)."""
+
 from __future__ import annotations
 
 import pytest
 
 from pramanix.crypto import ES256Signer, ES256Verifier, RS256Signer, RS256Verifier
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(scope="module")
 def rs256_signer() -> RS256Signer:
@@ -99,18 +100,14 @@ class TestRS256Verifier:
         signer_b = RS256Signer.generate()
         sig = signer_a.sign(mock_decision)
         verifier_b = RS256Verifier(public_key_pem=signer_b.public_key_pem())
-        assert not verifier_b.verify(
-            decision_hash=mock_decision.decision_hash, signature=sig
-        )
+        assert not verifier_b.verify(decision_hash=mock_decision.decision_hash, signature=sig)
 
     def test_non_rsa_public_key_raises(self) -> None:
         es_signer = ES256Signer.generate()
         with pytest.raises(ValueError, match="not an RSA public key"):
             RS256Verifier(public_key_pem=es_signer.public_key_pem())
 
-    def test_verify_decision_valid(
-        self, rs256_signer: RS256Signer, mock_decision
-    ) -> None:
+    def test_verify_decision_valid(self, rs256_signer: RS256Signer, mock_decision) -> None:
         import dataclasses
 
         from pramanix.decision import Decision, SolverStatus
@@ -126,9 +123,7 @@ class TestRS256Verifier:
         verifier = RS256Verifier(public_key_pem=rs256_signer.public_key_pem())
         assert verifier.verify_decision(d)
 
-    def test_verify_decision_empty_sig_fails(
-        self, rs256_signer: RS256Signer
-    ) -> None:
+    def test_verify_decision_empty_sig_fails(self, rs256_signer: RS256Signer) -> None:
         from pramanix.decision import Decision, SolverStatus
 
         d = Decision(
@@ -220,9 +215,7 @@ class TestES256Verifier:
         signer_b = ES256Signer.generate()
         sig = signer_a.sign(mock_decision)
         verifier_b = ES256Verifier(public_key_pem=signer_b.public_key_pem())
-        assert not verifier_b.verify(
-            decision_hash=mock_decision.decision_hash, signature=sig
-        )
+        assert not verifier_b.verify(decision_hash=mock_decision.decision_hash, signature=sig)
 
     def test_non_ec_public_key_raises(self) -> None:
         rs_signer = RS256Signer.generate()
@@ -256,14 +249,10 @@ class TestCrossAlgorithmRejection:
         rs_sig = rs256_signer.sign(mock_decision)
         es_signer = ES256Signer.generate()
         es_verifier = ES256Verifier(public_key_pem=es_signer.public_key_pem())
-        assert not es_verifier.verify(
-            decision_hash=mock_decision.decision_hash, signature=rs_sig
-        )
+        assert not es_verifier.verify(decision_hash=mock_decision.decision_hash, signature=rs_sig)
 
     def test_es256_sig_fails_rs256_verify(self, es256_signer: ES256Signer, mock_decision) -> None:
         es_sig = es256_signer.sign(mock_decision)
         rs_signer = RS256Signer.generate()
         rs_verifier = RS256Verifier(public_key_pem=rs_signer.public_key_pem())
-        assert not rs_verifier.verify(
-            decision_hash=mock_decision.decision_hash, signature=es_sig
-        )
+        assert not rs_verifier.verify(decision_hash=mock_decision.decision_hash, signature=es_sig)

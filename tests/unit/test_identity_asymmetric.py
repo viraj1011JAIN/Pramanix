@@ -347,9 +347,11 @@ class TestCryptographyImportErrors:
             public_key_pem=public_pem,
             algorithm=JWTAlgorithm.RS256,
         )
-        with patch.dict(sys.modules, {"cryptography.exceptions": None}):
-            with pytest.raises(ImportError, match="RS256 requires the 'cryptography' package"):
-                linker._verify_rs256(b"header.payload", "AAAA")
+        with (
+            patch.dict(sys.modules, {"cryptography.exceptions": None}),
+            pytest.raises(ImportError, match="RS256 requires the 'cryptography' package"),
+        ):
+            linker._verify_rs256(b"header.payload", "AAAA")
 
     def test_verify_es256_raises_on_missing_cryptography(self, ec_key_pair) -> None:
         private_key, public_pem = ec_key_pair
@@ -358,17 +360,21 @@ class TestCryptographyImportErrors:
             public_key_pem=public_pem,
             algorithm=JWTAlgorithm.ES256,
         )
-        with patch.dict(sys.modules, {"cryptography.exceptions": None}):
-            with pytest.raises(ImportError, match="ES256 requires the 'cryptography' package"):
-                linker._verify_es256(b"header.payload", "AAAA")
+        with (
+            patch.dict(sys.modules, {"cryptography.exceptions": None}),
+            pytest.raises(ImportError, match="ES256 requires the 'cryptography' package"),
+        ):
+            linker._verify_es256(b"header.payload", "AAAA")
 
     def test_load_and_validate_raises_on_missing_cryptography(self) -> None:
-        with patch.dict(
-            sys.modules,
-            {"cryptography.hazmat.primitives.serialization": None},
+        with (
+            patch.dict(
+                sys.modules,
+                {"cryptography.hazmat.primitives.serialization": None},
+            ),
+            pytest.raises(ImportError, match="requires the 'cryptography' package"),
         ):
-            with pytest.raises(ImportError, match="requires the 'cryptography' package"):
-                JWTIdentityLinker._load_and_validate_public_key(
-                    JWTAlgorithm.RS256,
-                    b"-----BEGIN PUBLIC KEY-----\ndummy\n-----END PUBLIC KEY-----\n",
-                )
+            JWTIdentityLinker._load_and_validate_public_key(
+                JWTAlgorithm.RS256,
+                b"-----BEGIN PUBLIC KEY-----\ndummy\n-----END PUBLIC KEY-----\n",
+            )

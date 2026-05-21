@@ -13,13 +13,13 @@ fakeredis cannot replicate:
   - Real Pub/Sub notifications on state change
   - Concurrent writers racing on half-open permit slot
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
 from typing import Any
 
-import pytest
 import redis.asyncio as aioredis
 
 from pramanix.circuit_breaker import (
@@ -29,7 +29,6 @@ from pramanix.circuit_breaker import (
 )
 
 from .conftest import requires_docker
-
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
@@ -83,7 +82,7 @@ def test_redis_backend_ttl_expiry_returns_closed(redis_url: str) -> None:
         await backend.set_state(key, CircuitState.OPEN, ttl_ms=100)
         before = await backend.get_state(key)
 
-        await asyncio.sleep(0.25)   # wait for real Redis TTL to fire
+        await asyncio.sleep(0.25)  # wait for real Redis TTL to fire
 
         after = await backend.get_state(key)
         return before, after
@@ -131,6 +130,7 @@ def test_redis_backend_half_open_permit_slot(redis_url: str) -> None:
         client = aioredis.from_url(redis_url)
 
         wins: list[bool] = []
+
         async def _try_acquire() -> None:
             acquired = await client.set(permit_key, "1", nx=True, px=200)
             wins.append(bool(acquired))
@@ -198,13 +198,11 @@ def test_redis_connection_failure_is_fail_safe(redis_url: str) -> None:
 
     async def _run() -> CircuitState:
         # Deliberately wrong port
-        backend = RedisDistributedBackend(
-            redis_url="redis://127.0.0.1:19999"
-        )
+        backend = RedisDistributedBackend(redis_url="redis://127.0.0.1:19999")
         key = "pramanix:cb:failsafe"
         return await backend.get_state(key)
 
     state = asyncio.run(_run())
-    assert state == CircuitState.OPEN, (
-        "Redis connection failure must default to OPEN (fail-safe), not CLOSED"
-    )
+    assert (
+        state == CircuitState.OPEN
+    ), "Redis connection failure must default to OPEN (fail-safe), not CLOSED"

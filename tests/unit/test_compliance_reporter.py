@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for ComplianceReporter (Phase 11.4)."""
+
 from __future__ import annotations
 
 import json
@@ -195,9 +196,16 @@ class TestComplianceReportSerialization:
         report = reporter.generate(d)
         parsed = json.loads(report.to_json())
         required = [
-            "decision_id", "decision_hash", "verdict", "severity",
-            "policy_name", "policy_version", "violated_rules",
-            "compliance_rationale", "regulatory_refs", "explanation",
+            "decision_id",
+            "decision_hash",
+            "verdict",
+            "severity",
+            "policy_name",
+            "policy_version",
+            "violated_rules",
+            "compliance_rationale",
+            "regulatory_refs",
+            "explanation",
         ]
         for f in required:
             assert f in parsed, f"Missing field: {f}"
@@ -214,6 +222,7 @@ class TestComplianceReportSerialization:
     def test_to_pdf_raises_without_fpdf2(self, monkeypatch):
         """to_pdf() raises ImportError with a helpful message when fpdf2 is absent."""
         import builtins
+
         real_import = builtins.__import__
 
         def _block_fpdf(name, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -244,7 +253,7 @@ class TestComplianceReporterEndToEnd:
         """End-to-end: real Guard → real Decision → ComplianceReport."""
         from pramanix import E, Field, Guard, GuardConfig, Policy
 
-        _amount  = Field("amount",  Decimal, "Real")
+        _amount = Field("amount", Decimal, "Real")
         _balance = Field("balance", Decimal, "Real")
 
         class _BankingPolicy(Policy):
@@ -261,9 +270,7 @@ class TestComplianceReporterEndToEnd:
                 return [
                     ((E(_balance) - E(_amount)) >= Decimal("0"))
                     .named("sufficient_balance")
-                    .explain(
-                        "Transfer of {amount} blocked: balance {balance} insufficient"
-                    )
+                    .explain("Transfer of {amount} blocked: balance {balance} insufficient")
                 ]
 
         guard = Guard(_BankingPolicy, GuardConfig(execution_mode="sync"))
@@ -283,5 +290,6 @@ class TestComplianceReporterEndToEnd:
         assert "sufficient_balance" in report.violated_rules
         refs_str = " ".join(report.regulatory_refs)
         assert "Basel" in refs_str or "BCBS" in refs_str
-        assert "insufficient" in report.explanation.lower() or \
-               "blocked" in report.explanation.lower()
+        assert (
+            "insufficient" in report.explanation.lower() or "blocked" in report.explanation.lower()
+        )

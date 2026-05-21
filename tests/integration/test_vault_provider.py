@@ -129,18 +129,18 @@ def test_vault_provider_key_rotation(
     addr, token = vault_addr_and_token
     client = _vault_client(addr, token)
 
-    _PEM_V1 = b"-----BEGIN PRIVATE KEY-----\nVERSION1\n-----END PRIVATE KEY-----\n"
-    _PEM_V2 = b"-----BEGIN PRIVATE KEY-----\nVERSION2\n-----END PRIVATE KEY-----\n"
+    _pem_v1 = b"-----BEGIN PRIVATE KEY-----\nVERSION1\n-----END PRIVATE KEY-----\n"
+    _pem_v2 = b"-----BEGIN PRIVATE KEY-----\nVERSION2\n-----END PRIVATE KEY-----\n"
 
     rot_path = "pramanix/rotation-test"
     client.secrets.kv.v2.create_or_update_secret(
         path=rot_path,
-        secret={"private_key_pem": _PEM_V1.decode()},
+        secret={"private_key_pem": _pem_v1.decode()},
         mount_point=_SECRET_MOUNT,
     )
     client.secrets.kv.v2.create_or_update_secret(
         path=rot_path,
-        secret={"private_key_pem": _PEM_V2.decode()},
+        secret={"private_key_pem": _pem_v2.decode()},
         mount_point=_SECRET_MOUNT,
     )
 

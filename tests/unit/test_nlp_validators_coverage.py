@@ -16,13 +16,13 @@ Coverage targets:
 No MagicMock, no patch objects — only patch.dict(sys.modules) to exercise the
 ImportError branch (the same pattern used in test_audit_sink_full_coverage.py).
 """
+
 from __future__ import annotations
 
 import sys
 from unittest.mock import patch
 
 import pytest
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -34,7 +34,7 @@ def _gauge_value(model_label: str) -> float | None:
     been registered yet.
     """
     try:
-        from prometheus_client import REGISTRY  # noqa: PLC0415
+        from prometheus_client import REGISTRY
 
         for metric in REGISTRY.collect():
             if metric.name == "pramanix_nlp_model_available":
@@ -49,7 +49,9 @@ def _gauge_value(model_label: str) -> float | None:
 # ── _try_detoxify_scorer: failure path (§4.14/34) ─────────────────────────────
 
 
-def test_try_detoxify_scorer_failure_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_try_detoxify_scorer_failure_returns_none_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """When detoxify import fails, _try_detoxify_scorer returns None and emits WARNING.
 
     The WARNING must reference toxicity scoring being DISABLED so operators
@@ -60,9 +62,11 @@ def test_try_detoxify_scorer_failure_returns_none_and_warns(caplog: pytest.LogCa
 
     import pramanix.nlp.validators as _nlp_mod
 
-    with patch.dict(sys.modules, {"detoxify": None}):
-        with caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"):
-            result = _nlp_mod._try_detoxify_scorer()
+    with (
+        patch.dict(sys.modules, {"detoxify": None}),
+        caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"),
+    ):
+        result = _nlp_mod._try_detoxify_scorer()
 
     assert result is None, "_try_detoxify_scorer must return None on import failure"
     assert any(
@@ -85,9 +89,9 @@ def test_try_detoxify_scorer_failure_sets_gauge_to_zero() -> None:
 
     value = _gauge_value("detoxify")
     if value is not None:
-        assert value == 0.0, (
-            "pramanix_nlp_model_available{model='detoxify'} must be 0 after load failure"
-        )
+        assert (
+            value == 0.0
+        ), "pramanix_nlp_model_available{model='detoxify'} must be 0 after load failure"
 
 
 def test_try_detoxify_scorer_success_returns_callable() -> None:
@@ -100,7 +104,9 @@ def test_try_detoxify_scorer_success_returns_callable() -> None:
     import pramanix.nlp.validators as _nlp_mod
 
     result = _nlp_mod._try_detoxify_scorer()
-    assert callable(result), "_try_detoxify_scorer must return a callable when detoxify is available"
+    assert callable(
+        result
+    ), "_try_detoxify_scorer must return a callable when detoxify is available"
 
 
 def test_try_detoxify_scorer_success_sets_gauge_to_one() -> None:
@@ -113,9 +119,9 @@ def test_try_detoxify_scorer_success_sets_gauge_to_one() -> None:
     _nlp_mod._try_detoxify_scorer()
     value = _gauge_value("detoxify")
     if value is not None:
-        assert value == 1.0, (
-            "pramanix_nlp_model_available{model='detoxify'} must be 1 after successful load"
-        )
+        assert (
+            value == 1.0
+        ), "pramanix_nlp_model_available{model='detoxify'} must be 1 after successful load"
 
 
 # ── _try_sentence_transformer: failure path (§4.14/34) ────────────────────────
@@ -132,9 +138,11 @@ def test_try_sentence_transformer_failure_returns_none_and_warns(
 
     import pramanix.nlp.validators as _nlp_mod
 
-    with patch.dict(sys.modules, {"sentence_transformers": None}):
-        with caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"):
-            result = _nlp_mod._try_sentence_transformer()
+    with (
+        patch.dict(sys.modules, {"sentence_transformers": None}),
+        caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"),
+    ):
+        result = _nlp_mod._try_sentence_transformer()
 
     assert result is None, "_try_sentence_transformer must return None on import failure"
     assert any(
@@ -170,9 +178,9 @@ def test_try_sentence_transformer_success_returns_model() -> None:
     import pramanix.nlp.validators as _nlp_mod
 
     result = _nlp_mod._try_sentence_transformer()
-    assert result is not None, (
-        "_try_sentence_transformer must return a model when sentence-transformers is available"
-    )
+    assert (
+        result is not None
+    ), "_try_sentence_transformer must return a model when sentence-transformers is available"
 
 
 def test_try_sentence_transformer_success_sets_gauge_to_one() -> None:
@@ -206,13 +214,13 @@ def test_nlp_validators_re2_fallback_emits_security_warning(
     import importlib
     import warnings as _warnings
 
-    monkeypatch.delitem(
-        sys.modules, "pramanix.nlp.validators", raising=False
-    )
-    with patch.dict(sys.modules, {"re2": None}):
-        with _warnings.catch_warnings(record=True) as caught:
-            _warnings.simplefilter("always")
-            importlib.import_module("pramanix.nlp.validators")
+    monkeypatch.delitem(sys.modules, "pramanix.nlp.validators", raising=False)
+    with (
+        patch.dict(sys.modules, {"re2": None}),
+        _warnings.catch_warnings(record=True) as caught,
+    ):
+        _warnings.simplefilter("always")
+        importlib.import_module("pramanix.nlp.validators")
 
     # SecurityWarning is a Python built-in; check by class name to avoid
     # lint tools that don't enumerate all built-in warning categories.
@@ -237,17 +245,15 @@ def test_injection_filter_re2_fallback_emits_security_warning(
         "pramanix.translator.injection_filter",
         raising=False,
     )
-    with patch.dict(sys.modules, {"re2": None}):
-        with _warnings.catch_warnings(record=True) as caught:
-            _warnings.simplefilter("always")
-            importlib.import_module(
-                "pramanix.translator.injection_filter"
-            )
+    with (
+        patch.dict(sys.modules, {"re2": None}),
+        _warnings.catch_warnings(record=True) as caught,
+    ):
+        _warnings.simplefilter("always")
+        importlib.import_module("pramanix.translator.injection_filter")
 
     sec = [w for w in caught if w.category.__name__ == "SecurityWarning"]
-    assert sec, (
-        "Expected SecurityWarning on re2 fallback in injection_filter"
-    )
+    assert sec, "Expected SecurityWarning on re2 fallback in injection_filter"
     assert "re2" in str(sec[0].message).lower()
 
 

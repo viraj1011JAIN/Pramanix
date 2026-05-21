@@ -19,6 +19,7 @@ Verified behaviors:
 - Timing: BLOCK path padded to timing budget (no timing oracle)
 - Raw field values NOT present in BLOCK response body (security)
 """
+
 from __future__ import annotations
 
 import time

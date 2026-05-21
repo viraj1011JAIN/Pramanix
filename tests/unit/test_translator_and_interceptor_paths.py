@@ -61,27 +61,33 @@ class TestIsMusl:
         """sys.platform=linux + musl glob hit → is_musl() returns True (line 32-33)."""
         import pramanix._platform as _p
 
-        with patch("sys.platform", "linux"):
-            with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-                assert _p.is_musl() is True
+        with (
+            patch("sys.platform", "linux"),
+            patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]),
+        ):
+            assert _p.is_musl() is True
 
     def test_linux_no_glob_ctypes_fails_returns_true(self) -> None:
         """sys.platform=linux + empty glob + ctypes.CDLL OSError → True (lines 35-40)."""
         import pramanix._platform as _p
 
-        with patch("sys.platform", "linux"):
-            with patch("glob.glob", return_value=[]):
-                with patch("ctypes.CDLL", side_effect=OSError("not found")):
-                    assert _p.is_musl() is True
+        with (
+            patch("sys.platform", "linux"),
+            patch("glob.glob", return_value=[]),
+            patch("ctypes.CDLL", side_effect=OSError("not found")),
+        ):
+            assert _p.is_musl() is True
 
     def test_linux_no_glob_ctypes_ok_returns_false(self) -> None:
         """sys.platform=linux + empty glob + ctypes.CDLL success → False (line 42)."""
         import pramanix._platform as _p
 
-        with patch("sys.platform", "linux"):
-            with patch("glob.glob", return_value=[]):
-                with patch("ctypes.CDLL", return_value=object()):
-                    assert _p.is_musl() is False
+        with (
+            patch("sys.platform", "linux"),
+            patch("glob.glob", return_value=[]),
+            patch("ctypes.CDLL", return_value=object()),
+        ):
+            assert _p.is_musl() is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -394,7 +400,7 @@ class TestLlamaCppCoverage:
         import importlib
 
         _llamacpp_mod = importlib.import_module("pramanix.translator.llamacpp")
-        LlamaCppTranslator = _llamacpp_mod.LlamaCppTranslator
+        llama_cpp_cls = _llamacpp_mod.LlamaCppTranslator
 
         class _FakeLlm:
             pass
@@ -406,7 +412,7 @@ class TestLlamaCppCoverage:
         _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
         _llamacpp_mod._MODEL_CACHE[cache_key] = fake_llm
 
-        t = LlamaCppTranslator.__new__(LlamaCppTranslator)
+        t = llama_cpp_cls.__new__(llama_cpp_cls)
         t._model_path = fake_path
         t._n_ctx = 4096
         t._n_gpu_layers = 0
@@ -438,13 +444,15 @@ class TestLlamaCppCoverage:
 
         # _inference returns a string; parse_llm_response will raise ExtractionFailureError
         # for bad JSON. For the non-ExtractionFailureError path, patch parse_llm_response
-        with patch(
-            "pramanix.translator.llamacpp.parse_llm_response",
-            side_effect=ValueError("unexpected"),
+        with (
+            patch(
+                "pramanix.translator.llamacpp.parse_llm_response",
+                side_effect=ValueError("unexpected"),
+            ),
+            patch.object(t, "_inference", return_value='{"amount": 1}'),
+            pytest.raises(ExtractionFailureError, match="failed to parse"),
         ):
-            with patch.object(t, "_inference", return_value='{"amount": 1}'):
-                with pytest.raises(ExtractionFailureError, match="failed to parse"):
-                    await t.extract("pay 10", _S)
+            await t.extract("pay 10", _S)
 
     @pytest.mark.asyncio
     async def test_timeout_error_raises_llm_timeout_error(self) -> None:
@@ -463,9 +471,11 @@ class TestLlamaCppCoverage:
         t._max_tokens = 512
         t._llm = None
 
-        with patch.object(t, "_inference", side_effect=TimeoutError("timed out")):
-            with pytest.raises(LLMTimeoutError):
-                await t.extract("pay 10", _S)
+        with (
+            patch.object(t, "_inference", side_effect=TimeoutError("timed out")),
+            pytest.raises(LLMTimeoutError),
+        ):
+            await t.extract("pay 10", _S)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -551,14 +561,16 @@ class TestMistralHttpxImportError:
         # chat.complete_async() is a real coroutine returning a real response shape.
         t._client = _MistralClientStub()
 
-        with patch.dict(sys.modules, {"httpx": None}):
-            with patch(
+        with (
+            patch.dict(sys.modules, {"httpx": None}),
+            patch(
                 "pramanix.translator._json.parse_llm_response",
                 return_value={"amount": 5.0},
-            ):
-                # Should succeed with empty _http_errors — just no httpx retryable
-                result = await t.extract("pay 5", _S)
-                assert result == {"amount": 5.0}
+            ),
+        ):
+            # Should succeed with empty _http_errors — just no httpx retryable
+            result = await t.extract("pay 5", _S)
+            assert result == {"amount": 5.0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -652,7 +664,7 @@ class TestGrpcInterceptorCoverage:
             unary_stream=lambda req, ctx: iter([1, 2, 3]),
         )
 
-        wrapped = interceptor.intercept_service(lambda _: fake_handler, object())
+        interceptor.intercept_service(lambda _: fake_handler, object())
         # The handler._replace() was called — verify it happened
         assert fake_handler.replace_called
 
@@ -860,7 +872,6 @@ class TestAuditSinkCoverage:
         sink._overflow_count = 0
         sink._poll_stop = threading.Event()
 
-        delivery_errors: list = []
         real_produce_calls: list = []
 
         def fake_produce(topic: str, value: bytes, callback: object) -> None:
@@ -913,7 +924,8 @@ class TestAuditSinkCoverage:
         sink._stop_event = threading.Event()
         sink._queue = queue.Queue(maxsize=128)
         _t = threading.Thread(target=lambda: None, daemon=True)
-        _t.start(); _t.join()  # already-finished thread; join() returns immediately
+        _t.start()
+        _t.join()  # already-finished thread; join() returns immediately
         sink._worker = _t
         # Real sync-close client — tracks close() via close_called flag.
         client = _SyncCloseClient()
@@ -931,7 +943,8 @@ class TestAuditSinkCoverage:
         sink._stop_event = threading.Event()
         sink._queue = queue.Queue(maxsize=128)
         _t = threading.Thread(target=lambda: None, daemon=True)
-        _t.start(); _t.join()
+        _t.start()
+        _t.join()
         sink._worker = _t
         # Real client whose close() raises — exception must be swallowed.
         sink._client = _ErrorCloseClient()
@@ -976,7 +989,8 @@ class TestAuditSinkCoverage:
         sink._stop_event = threading.Event()
         sink._queue = queue.Queue(maxsize=128)
         _t = threading.Thread(target=lambda: None, daemon=True)
-        _t.start(); _t.join()
+        _t.start()
+        _t.join()
         sink._worker = _t
         client = _SyncCloseClient()
         sink._api_client = client
@@ -993,7 +1007,8 @@ class TestAuditSinkCoverage:
         sink._stop_event = threading.Event()
         sink._queue = queue.Queue(maxsize=128)
         _t = threading.Thread(target=lambda: None, daemon=True)
-        _t.start(); _t.join()
+        _t.start()
+        _t.join()
         sink._worker = _t
         sink._api_client = _ErrorCloseClient()
         sink.close()  # must not raise
@@ -1381,7 +1396,9 @@ class TestWorkerCoverage:
         """_emergency_shutdown calls executor.shutdown(wait=False) when executor is live."""
         from pramanix.worker import WorkerPool
 
-        pool = WorkerPool(mode="async-thread", max_workers=1, max_decisions_per_worker=10, warmup=False)
+        pool = WorkerPool(
+            mode="async-thread", max_workers=1, max_decisions_per_worker=10, warmup=False
+        )
         pool.spawn()
         executor = pool._executor
         # Call the finalizer callback directly with the live executor.
@@ -1442,7 +1459,6 @@ class TestArchiverCoverage:
         archiver.add("decision-001")
 
         # Force write to fail by making the temp file creation fail
-        with patch("tempfile.mkstemp", side_effect=OSError("disk full")):
-            # Should propagate (not swallowed) since it's in a critical path
-            with pytest.raises(OSError):
-                archiver._archive_segment()
+        # Should propagate (not swallowed) since it's in a critical path
+        with patch("tempfile.mkstemp", side_effect=OSError("disk full")), pytest.raises(OSError):
+            archiver._archive_segment()

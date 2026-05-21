@@ -19,6 +19,7 @@ Public surface
 * :exc:`~pramanix.exceptions.MeshAuthenticationError` — fail-closed exception
   raised on any authentication failure (re-exported for convenience).
 """
+
 from pramanix.exceptions import MeshAuthenticationError
 from pramanix.mesh.authenticator import MeshAuthenticator, SpiffeIdentity
 

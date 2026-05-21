@@ -16,9 +16,9 @@ Gates covered
 
 Also covers Decision.governance_blocked (decision.py 618-621).
 """
+
 from __future__ import annotations
 
-import asyncio
 from decimal import Decimal
 
 import pytest
@@ -38,7 +38,6 @@ from pramanix.privilege.scope import (
     ExecutionScope,
     ToolCapability,
 )
-
 
 # ── Shared policy that always ALLOWs ─────────────────────────────────────────
 
@@ -61,9 +60,7 @@ class _AlwaysAllowPolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.amount) <= E(cls.balance)).named("within_balance")
-        ]
+        return [(E(cls.amount) <= E(cls.balance)).named("within_balance")]
 
 
 _ALLOW_INTENT = {"amount": Decimal("10"), "balance": Decimal("1000")}
@@ -102,9 +99,7 @@ class _GovernancePolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.amount) <= E(cls.balance)).named("within_balance")
-        ]
+        return [(E(cls.amount) <= E(cls.balance)).named("within_balance")]
 
 
 _GOV_INTENT_ALLOW = {"amount": Decimal("10")}
@@ -124,9 +119,7 @@ class _IFCTestPolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [
-            (E(cls.amount) <= E(cls.balance)).named("within_balance")
-        ]
+        return [(E(cls.amount) <= E(cls.balance)).named("within_balance")]
 
 
 _IFC_ALLOW_INTENT = {"amount": Decimal("10"), "balance": Decimal("1000")}
@@ -217,7 +210,10 @@ class TestOversightGate:
     def _make_guard(self, execution_mode: str = "sync") -> tuple[Guard, InMemoryApprovalWorkflow]:
         workflow = InMemoryApprovalWorkflow()
         gov = GovernanceConfig(oversight_workflow=workflow)
-        guard = Guard(_GovernancePolicy, GuardConfig(governance=gov, execution_mode=execution_mode, worker_warmup=False))
+        guard = Guard(
+            _GovernancePolicy,
+            GuardConfig(governance=gov, execution_mode=execution_mode, worker_warmup=False),
+        )
         return guard, workflow
 
     def test_sync_no_request_id_triggers_new_request(self) -> None:
@@ -308,7 +304,10 @@ class TestIFCGate:
         gov = GovernanceConfig(ifc_policy=self._make_strict_policy())
         # Use _IFCTestPolicy (no intent_model) so underscore-prefixed IFC keys
         # are preserved in intent_values and reach the gate.
-        return Guard(_IFCTestPolicy, GuardConfig(governance=gov, execution_mode=execution_mode, worker_warmup=False))
+        return Guard(
+            _IFCTestPolicy,
+            GuardConfig(governance=gov, execution_mode=execution_mode, worker_warmup=False),
+        )
 
     def _ifc_intent(
         self,
@@ -542,7 +541,9 @@ class TestGovernanceConfigValidation:
     def test_execution_scope_without_manifest_raises(self) -> None:
         from pramanix.exceptions import ConfigurationError
 
-        with pytest.raises(ConfigurationError, match="execution_scope requires capability_manifest"):
+        with pytest.raises(
+            ConfigurationError, match="execution_scope requires capability_manifest"
+        ):
             GovernanceConfig(execution_scope=ExecutionScope.WRITE)
 
     def test_all_none_is_valid(self) -> None:

@@ -9,6 +9,7 @@ Requires the ``pramanix[cohere]`` extra (``cohere``, ``tenacity``).
 If the package is not installed, instantiation raises
 :exc:`~pramanix.exceptions.ConfigurationError` with the exact pip command.
 """
+
 from __future__ import annotations
 
 import os
@@ -135,8 +136,7 @@ class CohereTranslator:
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"Cohere model '{self.model}' unreachable after "
-                f"{attempts} attempt(s): {exc}",
+                f"Cohere model '{self.model}' unreachable after " f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
@@ -159,6 +159,7 @@ class CohereTranslator:
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
         import inspect
+
         _close = getattr(self._client, "aclose", None) or getattr(self._client, "close", None)
         if _close is not None:
             result = _close()
@@ -216,7 +217,5 @@ class CohereTranslator:
                 raw = str(response)
 
         if not raw or not raw.strip():
-            raise ExtractionFailureError(
-                f"[{self.model}] Cohere returned an empty response."
-            )
+            raise ExtractionFailureError(f"[{self.model}] Cohere returned an empty response.")
         return raw

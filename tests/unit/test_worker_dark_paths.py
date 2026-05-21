@@ -182,9 +182,7 @@ def _noop() -> None:
     """No-op target that exits immediately — used for dead-process tests."""
 
 
-def _wait_for_processes(
-    executor: ProcessPoolExecutor, timeout: float = 8.0
-) -> dict:
+def _wait_for_processes(executor: ProcessPoolExecutor, timeout: float = 8.0) -> dict:
     """Block until executor._processes is non-empty; return a stable copy.
 
     ProcessPoolExecutor (spawn context) takes up to ~500 ms on Windows to
@@ -274,9 +272,7 @@ class TestDrainExecutor:
         executor = ThreadPoolExecutor(max_workers=1)
         _drain_executor(executor, grace_s=5.0)
 
-    def test_drain_swallows_shutdown_exception(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_drain_swallows_shutdown_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """executor.shutdown() raising is swallowed; exception is debug-logged.
 
         _RaisingShutdownExecutor.shutdown() raises RuntimeError immediately.
@@ -287,9 +283,7 @@ class TestDrainExecutor:
         log_cap = _LogCapture()
         monkeypatch.setattr("pramanix.worker._log", log_cap)
         _drain_executor(executor, grace_s=5.0)  # Must not raise
-        assert log_cap.debug_called, (
-            "executor.shutdown exception must be debug-logged"
-        )
+        assert log_cap.debug_called, "executor.shutdown exception must be debug-logged"
 
     def test_drain_logs_warning_when_grace_period_exceeded(
         self, monkeypatch: pytest.MonkeyPatch
@@ -375,9 +369,7 @@ class TestForceKillProcesses:
         container = types.SimpleNamespace(_processes={proc.pid: proc})
         _force_kill_processes(container)  # type: ignore[arg-type]  # Must not raise
 
-    def test_kill_exception_is_logged_not_raised(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_kill_exception_is_logged_not_raised(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """kill() raising on an alive process is logged as an error, not propagated.
 
         A real multiprocessing.Process is started.  Its kill() method is overridden
@@ -452,9 +444,7 @@ class TestWorkerPoolLifecycle:
         assert pool._executor is exec_before
         pool.shutdown()
 
-    def test_shutdown_swallows_executor_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_shutdown_swallows_executor_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """WorkerPool.shutdown() swallows executor errors and logs them.
 
         pool._executor is replaced with a _RaisingShutdownExecutor (real subclass).
@@ -625,9 +615,7 @@ class TestWorkerPoolRecycle:
         pool.spawn()
         exec_before = pool._executor
 
-        pool._counter = (
-            0  # Already reset — simulates a race where another thread recycled
-        )
+        pool._counter = 0  # Already reset — simulates a race where another thread recycled
         pool._recycle()  # Must be a no-op
 
         assert pool._executor is exec_before
@@ -787,9 +775,7 @@ class TestWorkerSolveSealedAndUnseal:
     def test_unseal_returns_correct_dict_for_valid_envelope(self) -> None:
         from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
-        envelope = _worker_solve_sealed(
-            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
-        )
+        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes)
         result = _unseal_decision(envelope)
         assert "allowed" in result
 
@@ -797,9 +783,7 @@ class TestWorkerSolveSealedAndUnseal:
         """Flipping one character in _t must raise ValueError."""
         from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
-        envelope = _worker_solve_sealed(
-            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
-        )
+        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes)
         # Flip last character of HMAC tag
         bad_tag = envelope["_t"][:-1] + ("a" if envelope["_t"][-1] != "a" else "b")
         tampered = {**envelope, "_t": bad_tag}
@@ -810,9 +794,7 @@ class TestWorkerSolveSealedAndUnseal:
         """Modifying _p while leaving _t intact must raise ValueError."""
         from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
-        envelope = _worker_solve_sealed(
-            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes
-        )
+        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes)
         # Append a byte to the payload (tag now mismatches)
         tampered = {**envelope, "_p": envelope["_p"] + "X"}
         with pytest.raises(ValueError, match="HMAC mismatch"):
@@ -849,7 +831,10 @@ class TestWorkerSolveSealedAndUnseal:
         _worker_mod._RESULT_SEAL_KEY = _EphemeralKey(key_b)
         try:
             envelope = _worker_solve_sealed(
-                _P, {"amount": Decimal("50")}, 5000, key_a  # signed with key_a
+                _P,
+                {"amount": Decimal("50")},
+                5000,
+                key_a,  # signed with key_a
             )
             with pytest.raises(ValueError, match="HMAC mismatch"):
                 _unseal_decision(envelope)  # verified with key_b
@@ -901,7 +886,8 @@ class TestWorkerPoolHmacFailureIntegration:
 
         assert not result.allowed, "Tampered IPC result must never produce an ALLOW decision"
         assert log_cap.error_called, "HMAC seal violation must be logged at ERROR level"
-        assert "integrity" in " ".join(log_cap.errors).lower() or "hmac" in " ".join(
-            log_cap.errors
-        ).lower()
+        assert (
+            "integrity" in " ".join(log_cap.errors).lower()
+            or "hmac" in " ".join(log_cap.errors).lower()
+        )
         pool.shutdown()

@@ -3,6 +3,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for transparent String→Int promotion in transpiler and solver."""
+
 from __future__ import annotations
 
 from pramanix import Guard, GuardConfig
@@ -15,6 +16,7 @@ from pramanix.transpiler import analyze_string_promotions
 
 class RolePolicy(Policy):
     """Policy that uses a String field in equality only — promotable."""
+
     role = Field("role", str, "String")
     amount = Field("amount", float, "Real")
 
@@ -28,6 +30,7 @@ class RolePolicy(Policy):
 
 class RolePolicyWithEq(Policy):
     """Policy that uses String field only via == — promotable."""
+
     status = Field("status", str, "String")
 
     @classmethod
@@ -39,6 +42,7 @@ class RolePolicyWithEq(Policy):
 
 class MixedStringPolicy(Policy):
     """Policy with a String field used in startswith — NOT promotable."""
+
     name = Field("name", str, "String")
 
     @classmethod
@@ -50,6 +54,7 @@ class MixedStringPolicy(Policy):
 
 class TwoStringPolicy(Policy):
     """Two String fields: one promotable, one not."""
+
     role = Field("role", str, "String")
     notes = Field("notes", str, "String")
 

@@ -18,6 +18,7 @@ Design:
   - Lines 253-255: transpile() fails for unrecognised node → {sat: None, unsat: None}
   - Line 266->269: NOT(z3_expr) is unsat (tautology) → unsat_example stays None
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -222,7 +223,6 @@ class TestReferencedFieldsInvariantsRaises:
         assert result == set()
 
     def test_invariants_raises_attribute_error_returns_empty_set(self) -> None:
-
         class _AttribErrPolicy(Policy):
             amount = Field("amount", Decimal, "Real")
 
@@ -296,6 +296,7 @@ class TestBoundaryExamplesTranspileFailure:
 
         class _UnknownNode(NamedTuple):
             """Custom node type the transpiler cannot handle."""
+
             value: int
 
         class _BadTranspilePolicy(Policy):
@@ -334,8 +335,7 @@ class TestBoundaryExamplesTranspileFailure:
         assert len(examples) == 2
         # Bad invariant has None examples
         first_label = next(
-            lbl for lbl, v in examples.items()
-            if v["sat"] is None and v["unsat"] is None
+            lbl for lbl, v in examples.items() if v["sat"] is None and v["unsat"] is None
         )
         assert examples[first_label]["sat"] is None
         # Good invariant has real examples
@@ -358,6 +358,7 @@ class TestBoundaryExamplesTautology:
             def invariants(cls):
                 # (amount >= 0) OR (amount < 0) is always True — a tautology
                 from pramanix.expressions import _BoolOp, _CmpOp, _FieldRef, _Literal
+
                 tautology = _BoolOp(
                     op="or",
                     operands=[
@@ -384,6 +385,7 @@ class TestBoundaryExamplesTautology:
             @classmethod
             def invariants(cls):
                 from pramanix.expressions import _CmpOp, _FieldRef
+
                 self_eq = _CmpOp(
                     op="eq",
                     left=_FieldRef(cls.amount),

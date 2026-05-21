@@ -9,6 +9,7 @@ C-1: z3-solver ships glibc-compiled wheels. Alpine Linux (musl libc) causes
 segfaults and 3-10x slowdowns. Detect musl via /lib/ld-musl-*.so.1 and raise
 ConfigurationError before any solve attempt can be made.
 """
+
 from __future__ import annotations
 
 import glob as _glob

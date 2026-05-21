@@ -10,6 +10,7 @@ Gate condition (from engineering plan):
     # verify_archive on the archived segment must succeed.
     # Root hash of archived segment must match the checkpoint entry in active chain.
 """
+
 from __future__ import annotations
 
 import json
@@ -189,7 +190,9 @@ class TestMerkleArchiverEdgeCases:
         assert result is not None
         assert result.entry_count == 4  # oldest half of 8
 
-    def test_env_var_max_active_entries(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_var_max_active_entries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("PRAMANIX_MERKLE_MAX_ACTIVE_ENTRIES", "5")
         a = MerkleArchiver(base_path=tmp_path)
         assert a._max_active == 5

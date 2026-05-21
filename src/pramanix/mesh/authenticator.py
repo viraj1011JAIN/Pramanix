@@ -1106,7 +1106,7 @@ def _load_public_key_pem(pem: bytes | str) -> Any:
     except Exception as exc:
         raise ValueError(f"Failed to load public key PEM: {exc}") from exc
 
-    if not isinstance(key, (RSAPublicKey, EllipticCurvePublicKey)):
+    if not isinstance(key, RSAPublicKey | EllipticCurvePublicKey):
         raise ValueError(
             f"PEM contains a {type(key).__name__} key. "
             "MeshAuthenticator requires an RSA (RS256) or EC (ES256) public key."

@@ -35,6 +35,7 @@ Usage::
     provider = AwsKmsKeyProvider("arn:aws:secretsmanager:us-east-1:123:secret:pramanix-key")
     signer = PramanixSigner.from_provider(provider)
 """
+
 from __future__ import annotations
 
 import os
@@ -226,9 +227,7 @@ class FileKeyProvider:
     def private_key_pem(self) -> bytes:
         """Read and return the PEM key from the configured file path."""
         if not self._path.exists():
-            raise FileNotFoundError(
-                f"FileKeyProvider: key file not found: {self._path}"
-            )
+            raise FileNotFoundError(f"FileKeyProvider: key file not found: {self._path}")
         return self._path.read_bytes()
 
     def public_key_pem(self) -> bytes:
@@ -298,15 +297,12 @@ class AwsKmsKeyProvider:
             import boto3
         except ImportError as exc:
             raise ImportError(
-                "AwsKmsKeyProvider requires 'boto3'. "
-                "Install it: pip install 'pramanix[aws]'"
+                "AwsKmsKeyProvider requires 'boto3'. " "Install it: pip install 'pramanix[aws]'"
             ) from exc
         self._secret_arn = secret_arn
         self._version_stage = version_stage
         self._explicit_version = version
-        self._client = _client or boto3.client(
-            "secretsmanager", region_name=region_name
-        )
+        self._client = _client or boto3.client("secretsmanager", region_name=region_name)
         # H-12: cache fetched key PEM and version to avoid redundant API calls.
         self._cache_lock = threading.Lock()
         self._cached_pem: bytes | None = None
@@ -431,9 +427,7 @@ class AzureKeyVaultKeyProvider:
 
     def _refresh_cache(self) -> None:
         try:
-            secret = self._client.get_secret(
-                self._secret_name, version=self._secret_version
-            )
+            secret = self._client.get_secret(self._secret_name, version=self._secret_version)
         except Exception as exc:
             raise RuntimeError(
                 f"AzureKeyVaultKeyProvider: failed to fetch secret {self._secret_name!r} "
@@ -543,8 +537,7 @@ class GcpKmsKeyProvider:
 
     def _version_name(self) -> str:
         return (
-            f"projects/{self._project_id}/secrets/{self._secret_id}"
-            f"/versions/{self._version_id}"
+            f"projects/{self._project_id}/secrets/{self._secret_id}" f"/versions/{self._version_id}"
         )
 
     def _cache_valid(self) -> bool:
@@ -753,8 +746,7 @@ def _derive_public_pem(private_pem: bytes) -> bytes:
         )
     except ImportError as exc:
         raise ImportError(
-            "The 'cryptography' package is required. "
-            "Install it: pip install 'pramanix[crypto]'"
+            "The 'cryptography' package is required. " "Install it: pip install 'pramanix[crypto]'"
         ) from exc
 
     key = load_pem_private_key(private_pem, password=None)

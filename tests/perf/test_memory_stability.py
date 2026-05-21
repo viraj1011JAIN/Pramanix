@@ -21,6 +21,7 @@ Run them explicitly::
 The benchmarks require ``psutil`` (``pip install psutil``).  If psutil is
 absent the tests are skipped so CI does not break on minimal environments.
 """
+
 from __future__ import annotations
 
 import asyncio

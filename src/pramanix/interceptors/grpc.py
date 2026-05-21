@@ -28,6 +28,7 @@ Usage::
         ],
     )
 """
+
 from __future__ import annotations
 
 import logging
@@ -154,9 +155,7 @@ class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
             try:
                 first = next(request_iterator)
             except StopIteration:
-                context.abort(
-                    _grpc.StatusCode.INVALID_ARGUMENT, "empty request stream"
-                )
+                context.abort(_grpc.StatusCode.INVALID_ARGUMENT, "empty request stream")
                 return None
             combined = itertools.chain([first], request_iterator)
             if not _check_guard(first, context):
@@ -170,9 +169,7 @@ class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
             try:
                 first = next(request_iterator)
             except StopIteration:
-                context.abort(
-                    _grpc.StatusCode.INVALID_ARGUMENT, "empty request stream"
-                )
+                context.abort(_grpc.StatusCode.INVALID_ARGUMENT, "empty request stream")
                 return
             combined = itertools.chain([first], request_iterator)
             if not _check_guard(first, context):

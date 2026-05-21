@@ -541,9 +541,11 @@ class TestGetCachedJwksKeys:
 
     def test_fetch_failure_clears_flag_and_raises(self):
         auth = self._make_auth()
-        with patch.object(auth, "_fetch_jwks", side_effect=MeshAuthenticationError("fail")):
-            with pytest.raises(MeshAuthenticationError):
-                auth._get_cached_jwks_keys()
+        with (
+            patch.object(auth, "_fetch_jwks", side_effect=MeshAuthenticationError("fail")),
+            pytest.raises(MeshAuthenticationError),
+        ):
+            auth._get_cached_jwks_keys()
         # Flag must be cleared after failure
         assert auth._jwks_fetching is False
 
@@ -573,17 +575,21 @@ class TestFetchJwks:
         auth = self._make_auth()
         import sys
 
-        with patch.dict(sys.modules, {"httpx": None}):
-            with pytest.raises(ImportError, match="httpx"):
-                auth._fetch_jwks()
+        with (
+            patch.dict(sys.modules, {"httpx": None}),
+            pytest.raises(ImportError, match="httpx"),
+        ):
+            auth._fetch_jwks()
 
     def test_timeout_exception_raises_mesh_auth_error(self):
         auth = self._make_auth()
         import httpx
 
-        with patch("httpx.get", side_effect=httpx.TimeoutException("timeout")):
-            with pytest.raises(MeshAuthenticationError, match="timed out"):
-                auth._fetch_jwks()
+        with (
+            patch("httpx.get", side_effect=httpx.TimeoutException("timeout")),
+            pytest.raises(MeshAuthenticationError, match="timed out"),
+        ):
+            auth._fetch_jwks()
 
     def test_http_status_error_raises_mesh_auth_error(self):
         auth = self._make_auth()
@@ -591,47 +597,57 @@ class TestFetchJwks:
 
         mock_resp = MagicMock()
         mock_resp.status_code = 403
-        with patch(
-            "httpx.get",
-            side_effect=httpx.HTTPStatusError("403", request=MagicMock(), response=mock_resp),
+        with (
+            patch(
+                "httpx.get",
+                side_effect=httpx.HTTPStatusError("403", request=MagicMock(), response=mock_resp),
+            ),
+            pytest.raises(MeshAuthenticationError, match="returned HTTP"),
         ):
-            with pytest.raises(MeshAuthenticationError, match="returned HTTP"):
-                auth._fetch_jwks()
+            auth._fetch_jwks()
 
     def test_request_error_raises_mesh_auth_error(self):
         auth = self._make_auth()
         import httpx
 
-        with patch("httpx.get", side_effect=httpx.ConnectError("connection refused")):
-            with pytest.raises(MeshAuthenticationError, match="unreachable"):
-                auth._fetch_jwks()
+        with (
+            patch("httpx.get", side_effect=httpx.ConnectError("connection refused")),
+            pytest.raises(MeshAuthenticationError, match="unreachable"),
+        ):
+            auth._fetch_jwks()
 
     def test_invalid_json_response_raises_mesh_auth_error(self):
         auth = self._make_auth()
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.side_effect = ValueError("not json")
-        with patch("httpx.get", return_value=mock_resp):
-            with pytest.raises(MeshAuthenticationError, match="not valid JSON"):
-                auth._fetch_jwks()
+        with (
+            patch("httpx.get", return_value=mock_resp),
+            pytest.raises(MeshAuthenticationError, match="not valid JSON"),
+        ):
+            auth._fetch_jwks()
 
     def test_missing_keys_field_raises_mesh_auth_error(self):
         auth = self._make_auth()
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {"something_else": []}
-        with patch("httpx.get", return_value=mock_resp):
-            with pytest.raises(MeshAuthenticationError, match="missing"):
-                auth._fetch_jwks()
+        with (
+            patch("httpx.get", return_value=mock_resp),
+            pytest.raises(MeshAuthenticationError, match="missing"),
+        ):
+            auth._fetch_jwks()
 
     def test_empty_keys_array_raises_mesh_auth_error(self):
         auth = self._make_auth()
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
         mock_resp.json.return_value = {"keys": []}
-        with patch("httpx.get", return_value=mock_resp):
-            with pytest.raises(MeshAuthenticationError, match="no keys"):
-                auth._fetch_jwks()
+        with (
+            patch("httpx.get", return_value=mock_resp),
+            pytest.raises(MeshAuthenticationError, match="no keys"),
+        ):
+            auth._fetch_jwks()
 
     def test_successful_fetch_returns_key_list(self, rsa_public_key):
         auth = self._make_auth()
@@ -816,7 +832,7 @@ class TestVerifySignature:
         _verify_signature("RS256", data, sig, rsa_public_key)
 
     def test_rs256_invalid_signature_raises(self, rsa_public_key):
-        _verify_signature.__module__  # access to confirm import
+        _ = _verify_signature.__module__  # access to confirm import
         with pytest.raises(MeshAuthenticationError, match="verification failed"):
             _verify_signature("RS256", b"header.payload", b"\x00" * 256, rsa_public_key)
 
@@ -979,12 +995,14 @@ class TestB64urlDecode:
     def test_invalid_base64url_raises(self):
         # Python's urlsafe_b64decode is lenient with invalid chars; force the
         # except-branch by patching the underlying decoder to raise.
-        with patch(
-            "pramanix.mesh.authenticator.base64.urlsafe_b64decode",
-            side_effect=Exception("simulated decode error"),
+        with (
+            patch(
+                "pramanix.mesh.authenticator.base64.urlsafe_b64decode",
+                side_effect=Exception("simulated decode error"),
+            ),
+            pytest.raises(ValueError),
         ):
-            with pytest.raises(ValueError):
-                _b64url_decode("anything")
+            _b64url_decode("anything")
 
     def test_roundtrip(self):
         for test_bytes in [b"", b"\x00", b"\xff\xfe", b"SPIFFE JWT-SVID"]:

@@ -18,6 +18,7 @@ Real integration tests (Kafka/S3 happy paths) live in
   tests/integration/test_kafka_audit_sink.py
   tests/integration/test_s3_audit_sink.py
 """
+
 from __future__ import annotations
 
 import importlib
@@ -148,15 +149,16 @@ def test_kafka_sink_raises_config_error_without_package() -> None:
     """ConfigurationError when confluent_kafka is not installed."""
     from unittest.mock import patch
 
+    import pramanix.audit_sink as _sink_mod
     from pramanix.exceptions import ConfigurationError
 
-    import pramanix.audit_sink as _sink_mod
     # try/finally guarantees the cleanup reload runs even if the assertion
     # fails mid-test — without it, a patched module stays in sys.modules.
     try:
         with patch.dict(sys.modules, {"confluent_kafka": None}):
             importlib.reload(_sink_mod)
             from pramanix.audit_sink import KafkaAuditSink
+
             with pytest.raises(ConfigurationError, match="confluent-kafka"):
                 KafkaAuditSink(topic="t", producer_conf={})
     finally:
@@ -191,13 +193,14 @@ def test_s3_sink_raises_config_error_without_boto3() -> None:
     """ConfigurationError when boto3 is not installed."""
     from unittest.mock import patch
 
+    import pramanix.audit_sink as _sink_mod
     from pramanix.exceptions import ConfigurationError
 
-    import pramanix.audit_sink as _sink_mod
     try:
         with patch.dict(sys.modules, {"boto3": None}):
             importlib.reload(_sink_mod)
             from pramanix.audit_sink import S3AuditSink
+
             with pytest.raises(ConfigurationError, match="boto3"):
                 S3AuditSink(bucket="b", prefix="")
     finally:
@@ -268,13 +271,14 @@ def test_datadog_sink_raises_config_error_without_package() -> None:
     """ConfigurationError when datadog-api-client is not installed."""
     from unittest.mock import patch
 
+    import pramanix.audit_sink as _sink_mod
     from pramanix.exceptions import ConfigurationError
 
-    import pramanix.audit_sink as _sink_mod
     try:
         with patch.dict(sys.modules, {"datadog_api_client": None}):
             importlib.reload(_sink_mod)
             from pramanix.audit_sink import DatadogAuditSink
+
             with pytest.raises(ConfigurationError, match="datadog-api-client"):
                 DatadogAuditSink(api_key="key")
     finally:

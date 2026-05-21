@@ -16,9 +16,9 @@ Targets:
   integrations/pydantic_ai.py 145-154 guard_tool wrapper invocation
   integrations/langchain.py 141   execute_fn=None → NotImplementedError
 """
+
 from __future__ import annotations
 
-import asyncio
 import sys
 import types
 from decimal import Decimal
@@ -26,23 +26,22 @@ from typing import Any
 
 import pytest
 
-from pramanix.decision import Decision, SolverStatus
+from pramanix.exceptions import ConfigurationError
 from pramanix.expressions import (
     ConstraintExpr,
     E,
-    Field as ExprField,
-    _FieldRef,
-    _PowOp,
-    _ModOp,
-    _ForAllOp,
-    _ExistsOp,
-    _StartsWithOp,
     _ContainsOp,
     _EndsWithOp,
-    _LengthBetweenOp,
-    _RegexMatchOp,
+    _ExistsOp,
+    _FieldRef,
+    _ForAllOp,
+    _ModOp,
+    _PowOp,
+    _StartsWithOp,
 )
-from pramanix.exceptions import ConfigurationError
+from pramanix.expressions import (
+    Field as ExprField,
+)
 from pramanix.helpers.policy_auditor import _collect_field_names
 from pramanix.ifc.enforcer import FlowEnforcer
 from pramanix.ifc.flow_policy import FlowPolicy, FlowRule
@@ -50,7 +49,6 @@ from pramanix.ifc.labels import ClassifiedData, TrustLabel
 from pramanix.lifecycle.diff import _collect_fields
 from pramanix.policy import Policy
 from pramanix.provenance import ProvenanceChain, ProvenanceRecord
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # provenance.py lines 303-308: verify_integrity chain-broken path
@@ -60,7 +58,9 @@ from pramanix.provenance import ProvenanceChain, ProvenanceRecord
 class TestProvenanceChainBroken:
     """ProvenanceChain.verify_integrity when prev_hash is tampered."""
 
-    def _make_record(self, decision_id: str = "dec-1", allowed: bool = True, prev_hash: str = "") -> ProvenanceRecord:
+    def _make_record(
+        self, decision_id: str = "dec-1", allowed: bool = True, prev_hash: str = ""
+    ) -> ProvenanceRecord:
         return ProvenanceRecord(
             decision_id=decision_id,
             policy_hash="sha256:abc",
@@ -255,12 +255,13 @@ class TestSemanticFieldEqualDarkPaths:
 
     def test_optional_field_type_unwrapping(self) -> None:
         """Optional[Decimal] annotation is unwrapped to Decimal (lines 124-127)."""
-        from typing import Optional
+
         from pydantic import BaseModel
+
         from pramanix.translator.redundant import _semantic_field_equal
 
         class _Schema(BaseModel):
-            amount: Optional[Decimal] = None
+            amount: Decimal | None = None
 
         assert _semantic_field_equal("100", "100", schema=_Schema, field_name="amount")
         assert not _semantic_field_equal("100", "200", schema=_Schema, field_name="amount")
@@ -268,6 +269,7 @@ class TestSemanticFieldEqualDarkPaths:
     def test_bool_string_not_in_true_or_false_vals(self) -> None:
         """_norm_bool returns None for unknown string → falls to bool() comparison (144->146)."""
         from pydantic import BaseModel
+
         from pramanix.translator.redundant import _semantic_field_equal
 
         class _Schema(BaseModel):
@@ -280,12 +282,13 @@ class TestSemanticFieldEqualDarkPaths:
 
     def test_union_field_type_not_unwrapped(self) -> None:
         """Union[int, str] has len(non_none) == 2 → skip unwrap → branch 126->128."""
-        from typing import Union
+
         from pydantic import BaseModel
+
         from pramanix.translator.redundant import _semantic_field_equal
 
         class _Schema(BaseModel):
-            value: Union[int, str]
+            value: int | str
 
         # Union[int, str] → non_none = [int, str] → len != 1 → skip annotation = non_none[0]
         # Falls through to field_type = annotation (the raw Union[int, str])
@@ -380,7 +383,9 @@ class TestLangchainExecuteFnNone:
     async def test_arun_with_no_execute_fn_raises(self) -> None:
         """When execute_fn=None and decision is ALLOW, _arun raises NotImplementedError."""
         import json
+
         from pydantic import BaseModel
+
         from pramanix.guard import Guard
         from pramanix.guard_config import GuardConfig
         from pramanix.policy import Policy

@@ -34,7 +34,7 @@ _TEMPERATURE = 0.0
 # support global key configuration (not per-instance clients).
 # threading.Lock (not asyncio.Lock) so it is safe across event-loop boundaries;
 # different pytest tests each run with a fresh event loop.
-import threading as _thr
+import threading as _thr  # noqa: E402
 
 _GEMINI_CONFIGURE_LOCK = _thr.Lock()
 del _thr
@@ -65,6 +65,7 @@ class GeminiTranslator:
         timeout: float = 30.0,
     ) -> None:
         import warnings as _warnings_mod
+
         # Scope the google-generativeai deprecation warning suppression to
         # this constructor only.  The previous module-level filterwarnings
         # polluted the global warning filter for every code in the process
@@ -149,7 +150,6 @@ class GeminiTranslator:
             LLMTimeoutError:        All retry attempts exhausted.
             ConfigurationError:     ``google-generativeai`` not installed.
         """
-        genai = self._genai
 
         try:
             from tenacity import (
@@ -206,7 +206,7 @@ class GeminiTranslator:
             try:
                 import httpx as _httpx
 
-                if isinstance(exc, (_httpx.TransportError, _httpx.TimeoutException)):
+                if isinstance(exc, _httpx.TransportError | _httpx.TimeoutException):
                     raise LLMTimeoutError(
                         f"Gemini model '{self.model}' connection error: {exc}",
                         model=self.model,

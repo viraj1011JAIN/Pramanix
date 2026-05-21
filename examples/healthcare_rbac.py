@@ -16,6 +16,7 @@ Run::
 
     python examples/healthcare_rbac.py
 """
+
 from __future__ import annotations
 
 from pramanix import Field, Guard, GuardConfig, Policy
@@ -59,7 +60,9 @@ def run() -> None:
         intent={"role": ROLE_DOCTOR},
         state={"consent": True, "state_version": "1.0"},
     )
-    print(f"Scenario A (doctor, consent=True):  allowed={decision.allowed} | {decision.status.value}")
+    print(
+        f"Scenario A (doctor, consent=True):  allowed={decision.allowed} | {decision.status.value}"
+    )
     assert decision.allowed, "Expected ALLOW"
 
     # Scenario B: External role (99) → BLOCK
@@ -67,7 +70,9 @@ def run() -> None:
         intent={"role": 99},
         state={"consent": True, "state_version": "1.0"},
     )
-    print(f"Scenario B (external, consent=True): allowed={decision.allowed} | {decision.violated_invariants}")
+    print(
+        f"Scenario B (external, consent=True): allowed={decision.allowed} | {decision.violated_invariants}"
+    )
     assert not decision.allowed
     assert "role_must_be_in_allowed_set" in decision.violated_invariants
 
@@ -76,7 +81,9 @@ def run() -> None:
         intent={"role": ROLE_NURSE},
         state={"consent": False, "state_version": "1.0"},
     )
-    print(f"Scenario C (nurse, consent=False):  allowed={decision.allowed} | {decision.violated_invariants}")
+    print(
+        f"Scenario C (nurse, consent=False):  allowed={decision.allowed} | {decision.violated_invariants}"
+    )
     assert not decision.allowed
     assert "consent_required" in decision.violated_invariants
 

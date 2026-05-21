@@ -12,6 +12,7 @@ interface with in-memory recording.  This covers:
   - _classify_severity() all branches
   - All conditional sections in to_pdf()
 """
+
 from __future__ import annotations
 
 import json
@@ -226,9 +227,17 @@ class TestComplianceReportToJson:
         r = self._make_report(("balance",))
         parsed = json.loads(r.to_json())
         expected = {
-            "decision_id", "decision_hash", "timestamp", "verdict",
-            "severity", "policy_name", "policy_version", "violated_rules",
-            "compliance_rationale", "regulatory_refs", "explanation",
+            "decision_id",
+            "decision_hash",
+            "timestamp",
+            "verdict",
+            "severity",
+            "policy_name",
+            "policy_version",
+            "violated_rules",
+            "compliance_rationale",
+            "regulatory_refs",
+            "explanation",
         }
         assert set(parsed.keys()) == expected
 
@@ -272,9 +281,11 @@ class TestComplianceReportToPdfImportError:
             regulatory_refs=("ref",),
             explanation="blocked",
         )
-        with patch.dict(sys.modules, {"fpdf": None}):  # type: ignore[arg-type]
-            with pytest.raises(ImportError, match="fpdf2"):
-                r.to_pdf()
+        with (
+            patch.dict(sys.modules, {"fpdf": None}),  # type: ignore[arg-type]
+            pytest.raises(ImportError, match="fpdf2"),
+        ):
+            r.to_pdf()
 
 
 # ── ComplianceReport.to_pdf() — full generation (fake fpdf2) ─────────────────

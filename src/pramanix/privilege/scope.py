@@ -23,6 +23,7 @@ Design principles
   actions require an ``approved_by`` evidence reference in the execution context
   unless dual-control is explicitly disabled in the manifest.
 """
+
 from __future__ import annotations
 
 import logging
@@ -73,15 +74,13 @@ class ExecutionScope(IntFlag):
 
     def requires_dual_control(self) -> bool:
         """True for scopes that mandate human approval by default."""
-        return bool(self & (ExecutionScope.FINANCIAL | ExecutionScope.DESTRUCTIVE | ExecutionScope.ADMIN))
+        return bool(
+            self & (ExecutionScope.FINANCIAL | ExecutionScope.DESTRUCTIVE | ExecutionScope.ADMIN)
+        )
 
     def scope_names(self) -> list[str]:
         """Return list of flag names present in this compound scope."""
-        return [
-            s.name
-            for s in ExecutionScope
-            if s != ExecutionScope.NONE and s in self
-        ]
+        return [s.name for s in ExecutionScope if s != ExecutionScope.NONE and s in self]
 
 
 @dataclass(frozen=True)
@@ -163,9 +162,7 @@ class CapabilityManifest:
         *,
         deny_unknown: bool = True,
     ) -> None:
-        self._capabilities: dict[str, ToolCapability] = {
-            cap.tool_name: cap for cap in capabilities
-        }
+        self._capabilities: dict[str, ToolCapability] = {cap.tool_name: cap for cap in capabilities}
         self._deny_unknown = deny_unknown
 
     def get(self, tool_name: str) -> ToolCapability | None:
@@ -272,7 +269,11 @@ class ScopeEnforcer:
             )
 
         # Dual-control check for high-risk scopes.
-        if required.requires_dual_control() and not capability.allows_dual_control_bypass and not context.approved_by:
+        if (
+            required.requires_dual_control()
+            and not capability.allows_dual_control_bypass
+            and not context.approved_by
+        ):
             self._record(tool_name, context, False, "dual-control approval missing")
             _log.warning(
                 "privilege.dual_control_required: tool=%s principal=%s",

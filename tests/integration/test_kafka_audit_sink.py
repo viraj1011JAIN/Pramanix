@@ -16,6 +16,7 @@ What these tests validate that fake infrastructure cannot:
   - Proper flush() behaviour — waits for in-flight messages
   - Delivery error path — broker rejects malformed messages
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,6 @@ from pramanix.audit_sink import KafkaAuditSink
 from pramanix.decision import Decision, SolverStatus
 
 from .conftest import requires_docker
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -90,9 +90,9 @@ def _consume_messages(
     finally:
         consumer.close()
 
-    assert len(messages) >= expected, (
-        f"Expected {expected} messages but got {len(messages)} within {timeout_s}s"
-    )
+    assert (
+        len(messages) >= expected
+    ), f"Expected {expected} messages but got {len(messages)} within {timeout_s}s"
     return messages
 
 
@@ -169,11 +169,6 @@ def test_kafka_sink_delivery_callback_fires(kafka_bootstrap_servers: str) -> Non
         else:
             delivered.append(msg.value().decode())
 
-    conf = {
-        "bootstrap.servers": kafka_bootstrap_servers,
-        "linger.ms": "0",
-        "on_delivery": _on_delivery,
-    }
     # KafkaAuditSink passes on_delivery to producer_conf; we verify via direct
     # confluent_kafka Producer to test the callback contract.
     from confluent_kafka import Producer  # type: ignore[import-untyped]
@@ -199,7 +194,7 @@ def test_kafka_sink_queue_depth_accurate_under_concurrency(
     topic = "pramanix-audit-concurrent"
     conf = {
         "bootstrap.servers": kafka_bootstrap_servers,
-        "linger.ms": "5",   # small linger so messages batch but queue briefly
+        "linger.ms": "5",  # small linger so messages batch but queue briefly
     }
     sink = KafkaAuditSink(topic=topic, producer_conf=conf, max_queue=50)
 
@@ -234,7 +229,7 @@ def test_kafka_sink_flush_blocks_until_delivered(kafka_bootstrap_servers: str) -
     topic = "pramanix-audit-flush"
     conf = {
         "bootstrap.servers": kafka_bootstrap_servers,
-        "linger.ms": "100",   # force batching to exercise flush behaviour
+        "linger.ms": "100",  # force batching to exercise flush behaviour
     }
     sink = KafkaAuditSink(topic=topic, producer_conf=conf)
     count = 5
@@ -296,6 +291,7 @@ def test_kafka_sink_configuration_error_without_package() -> None:
         import importlib
 
         import pramanix.audit_sink as _sink_mod
+
         importlib.reload(_sink_mod)
         try:
             with pytest.raises(ConfigurationError, match="confluent-kafka"):

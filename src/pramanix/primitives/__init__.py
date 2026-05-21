@@ -22,6 +22,7 @@ Or import everything from this module::
 
     from pramanix.primitives import NonNegativeBalance, RoleMustBeIn, ...
 """
+
 from pramanix.primitives.common import FieldMustEqual, NotSuspended, StatusMustBe
 from pramanix.primitives.finance import (
     NonNegativeBalance,

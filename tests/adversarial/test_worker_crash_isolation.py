@@ -22,17 +22,21 @@ Notes:
       Windows and fork on Linux/macOS; behaviour is consistent across platforms
       for exception-based failure.
 """
+
 from __future__ import annotations
 
 import sys
 import time
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import pytest
 
 from pramanix import E, Field, Policy
 from pramanix.decision import Decision
 
+if TYPE_CHECKING:
+    from concurrent.futures import ProcessPoolExecutor
 
 # ── Shared policies ───────────────────────────────────────────────────────────
 
@@ -158,7 +162,6 @@ class TestWorkerCrashIsolation:
         """SIGKILL sent to a worker process must return Decision.error(), not raise."""
         import os
         import signal
-        from concurrent.futures import ProcessPoolExecutor
 
         from pramanix.worker import WorkerPool
 

@@ -26,6 +26,7 @@ Fail-safe behaviour
   with the invariant's label.
 * Both are caught by ``Guard.verify()`` and converted to ``Decision.timeout()``.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -69,11 +70,11 @@ class SolverProtocol(Protocol):
     in tests — no MagicMock, no z3 C-extension patching required.
     """
 
-    def set(self, key: str, value: Any) -> None: ...  # noqa: E704
-    def add(self, *formulas: Any) -> None: ...  # noqa: E704
-    def assert_and_track(self, formula: Any, label: str) -> None: ...  # noqa: E704
+    def set(self, key: str, value: Any) -> None: ...
+    def add(self, *formulas: Any) -> None: ...
+    def assert_and_track(self, formula: Any, label: str) -> None: ...
     def check(self) -> Any: ...  # z3.CheckSatResult or equivalent
-    def unsat_core(self) -> list[Any]: ...  # noqa: E704
+    def unsat_core(self) -> list[Any]: ...
 
 
 # ── Thread-local Z3 context ───────────────────────────────────────────────────
@@ -217,9 +218,7 @@ def _realize_node(node: Any, values: dict[str, Any]) -> Any:
         n = len(actual)
         if n == 0:
             return _Literal(True)  # vacuously true
-        constraints = tuple(
-            node.predicate(af.element_field(i)).node for i in range(n)
-        )
+        constraints = tuple(node.predicate(af.element_field(i)).node for i in range(n))
         return constraints[0] if n == 1 else _BoolOp("and", constraints)
 
     if isinstance(node, _ExistsOp):
@@ -228,9 +227,7 @@ def _realize_node(node: Any, values: dict[str, Any]) -> Any:
         n = len(actual)
         if n == 0:
             return _Literal(False)  # nothing exists in empty array
-        constraints = tuple(
-            node.predicate(af.element_field(i)).node for i in range(n)
-        )
+        constraints = tuple(node.predicate(af.element_field(i)).node for i in range(n))
         return constraints[0] if n == 1 else _BoolOp("or", constraints)
 
     if isinstance(node, _BoolOp):

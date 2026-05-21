@@ -11,6 +11,7 @@ Tests:
 * Decision returned correctly to endpoint
 * state_version present in response
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

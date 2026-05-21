@@ -38,6 +38,7 @@ Run::
 
     python examples/multi_primitive_composition.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -246,12 +247,12 @@ def scenario_five_simultaneous_failures() -> Decision:
     return guard.verify(
         intent=_base_intent(
             cumulative_24h=Decimal("11_000"),  # structuring
-            authorising_role=99,               # wrong HIPAA role
-            affected_accounts=2_000,           # blast radius
+            authorising_role=99,  # wrong HIPAA role
+            affected_accounts=2_000,  # blast radius
         ),
         state=_base_state(
-            balance=Decimal("10_000"),         # insufficient (amount=25000)
-            supplier_flagged=True,             # OFAC hit
+            balance=Decimal("10_000"),  # insufficient (amount=25000)
+            supplier_flagged=True,  # OFAC hit
             payment_circuit_open=False,
             consent_given=True,
             kyc_tier=3,

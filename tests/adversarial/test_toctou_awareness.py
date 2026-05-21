@@ -42,6 +42,7 @@ The host MUST execute database mutations under an optimistic lock:
 
 See ``docs/security.md §T5`` for the full threat model entry.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

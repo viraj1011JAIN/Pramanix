@@ -21,6 +21,7 @@ from pramanix.translator._cache import (
     _InProcessLRUCache,
     _normalize_key,
 )
+
 # ── Tests: _normalize_key ─────────────────────────────────────────────────────
 
 

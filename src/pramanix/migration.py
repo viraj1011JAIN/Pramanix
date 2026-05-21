@@ -18,6 +18,7 @@ Usage::
 
     upgraded_state = v1_to_v2.migrate(old_state_dict)
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -84,9 +85,7 @@ class PolicyMigration:
         """Return to_version as a dotted semver string (e.g. '2.0.0')."""
         return "{}.{}.{}".format(*self.to_version)
 
-    def migrate(
-        self, state: dict[str, Any], *, strict: bool = False
-    ) -> dict[str, Any]:
+    def migrate(self, state: dict[str, Any], *, strict: bool = False) -> dict[str, Any]:
         """Apply this migration to a state dict.
 
         Renames fields, removes deprecated fields, and updates

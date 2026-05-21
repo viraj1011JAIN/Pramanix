@@ -687,9 +687,7 @@ class Decision:
         Use this to distinguish cold-path (Z3 ran) from warm-path (cache hit)
         in monitoring dashboards or performance benchmarks.
         """
-        return (
-            self.metadata.get("_solver_status_tag") == SolverStatus.CACHE_HIT.value
-        )
+        return self.metadata.get("_solver_status_tag") == SolverStatus.CACHE_HIT.value
 
     # ── Deserialisation ────────────────────────────────────────────────────────
 

@@ -14,6 +14,7 @@ Usage:
     if result.valid:
         print(f"VALID: decision {result.decision_id}, allowed={result.allowed}")
 """
+
 from __future__ import annotations
 
 import base64

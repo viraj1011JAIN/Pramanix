@@ -29,6 +29,7 @@ Usage:
     # → {"decision_id": "...", "verdict": "BLOCKED", "severity": "HIGH",
     #    "compliance_rationale": [...], "regulatory_refs": [...]}
 """
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 _log = logging.getLogger(__name__)
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any  # noqa: E402
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
@@ -47,46 +48,47 @@ if TYPE_CHECKING:
 
 _REGULATORY_MAP: dict[str, list[str]] = {
     # FinTech / Banking
-    "sufficient_balance":    ["Basel III: BCBS 189 §3.1 — Minimum liquidity coverage"],
-    "non_negative_balance":  ["Basel III: BCBS 189 §3.1"],
-    "velocity_check":        ["BSA/AML: 31 CFR § 1020.320 — Suspicious Activity Reports"],
-    "anti_structuring":      ["BSA/AML: 31 CFR § 1020.320(a)(2) — Anti-structuring rule"],
-    "wash_sale_detection":   ["IRC § 1091 — Wash sale disallowance rule (30-day window)"],
-    "sanctions_screen":      ["OFAC: 31 CFR § 598 — Prohibition on transactions with SDN list"],
-    "kyc_status":            ["BSA: 31 CFR § 1020.220 — Customer identification program"],
-    "collateral_haircut":    ["Basel III: BCBS 189 — Collateral eligibility and haircuts"],
-    "max_drawdown":          ["SEC: 17 CFR § 240.15c3-1 — Net capital requirements"],
-    "risk_score_limit":      ["Basel II: BCBS 128 §III — Credit risk internal ratings"],
-    "trading_window":        ["SEC: Regulation FD — Material non-public information"],
-    "within_daily_limit":    ["BSA/AML: 31 CFR § 1020.320 — Transaction monitoring"],
-    "single_tx_cap":         ["SOX: 15 U.S.C. § 7241 — Internal financial controls"],
+    "sufficient_balance": ["Basel III: BCBS 189 §3.1 — Minimum liquidity coverage"],
+    "non_negative_balance": ["Basel III: BCBS 189 §3.1"],
+    "velocity_check": ["BSA/AML: 31 CFR § 1020.320 — Suspicious Activity Reports"],
+    "anti_structuring": ["BSA/AML: 31 CFR § 1020.320(a)(2) — Anti-structuring rule"],
+    "wash_sale_detection": ["IRC § 1091 — Wash sale disallowance rule (30-day window)"],
+    "sanctions_screen": ["OFAC: 31 CFR § 598 — Prohibition on transactions with SDN list"],
+    "kyc_status": ["BSA: 31 CFR § 1020.220 — Customer identification program"],
+    "collateral_haircut": ["Basel III: BCBS 189 — Collateral eligibility and haircuts"],
+    "max_drawdown": ["SEC: 17 CFR § 240.15c3-1 — Net capital requirements"],
+    "risk_score_limit": ["Basel II: BCBS 128 §III — Credit risk internal ratings"],
+    "trading_window": ["SEC: Regulation FD — Material non-public information"],
+    "within_daily_limit": ["BSA/AML: 31 CFR § 1020.320 — Transaction monitoring"],
+    "single_tx_cap": ["SOX: 15 U.S.C. § 7241 — Internal financial controls"],
     "acceptable_risk_score": ["Basel II: BCBS 128 §III — Pillar 2 supervisory review"],
-    "positive_amount":       ["SOX: 15 U.S.C. § 7241(a)(4) — Data integrity controls"],
-    "account_not_frozen":    ["BSA: 31 CFR § 1010.830 — Frozen accounts enforcement"],
+    "positive_amount": ["SOX: 15 U.S.C. § 7241(a)(4) — Data integrity controls"],
+    "account_not_frozen": ["BSA: 31 CFR § 1010.830 — Frozen accounts enforcement"],
     # Healthcare / HIPAA
-    "authorized_role":           ["HIPAA: 45 CFR § 164.502(b) — Minimum necessary standard"],
-    "phi_least_privilege":       ["HIPAA: 45 CFR § 164.514(d) — Limited data set requirements"],
-    "patient_consent_required":  ["HIPAA: 45 CFR § 164.508 — Authorization requirements"],
-    "consent_active":            ["HIPAA: 45 CFR § 164.508(c) — Valid authorization elements"],
+    "authorized_role": ["HIPAA: 45 CFR § 164.502(b) — Minimum necessary standard"],
+    "phi_least_privilege": ["HIPAA: 45 CFR § 164.514(d) — Limited data set requirements"],
+    "patient_consent_required": ["HIPAA: 45 CFR § 164.508 — Authorization requirements"],
+    "consent_active": ["HIPAA: 45 CFR § 164.508(c) — Valid authorization elements"],
     "department_match_required": ["HIPAA: 45 CFR § 164.502(b)(1) — Workforce access control"],
-    "dosage_gradient_check":     ["FDA: 21 CFR § 211.68 — Drug dose computation controls"],
-    "pediatric_dose_bound":      ["FDA: 21 CFR § 201.57 — Pediatric dosage maximum limits"],
-    "break_glass_auth":          ["HIPAA: 45 CFR § 164.312(a)(2)(ii) — Emergency access"],
-    "must_be_clinician":         ["HIPAA: 45 CFR § 164.502(b) — Minimum necessary access"],
-    "consent_not_expired":       ["HIPAA: 45 CFR § 164.508(b)(5) — Revocation of authorization"],
+    "dosage_gradient_check": ["FDA: 21 CFR § 211.68 — Drug dose computation controls"],
+    "pediatric_dose_bound": ["FDA: 21 CFR § 201.57 — Pediatric dosage maximum limits"],
+    "break_glass_auth": ["HIPAA: 45 CFR § 164.312(a)(2)(ii) — Emergency access"],
+    "must_be_clinician": ["HIPAA: 45 CFR § 164.502(b) — Minimum necessary access"],
+    "consent_not_expired": ["HIPAA: 45 CFR § 164.508(b)(5) — Revocation of authorization"],
     # Infrastructure / SRE
-    "above_minimum":         ["SRE SLA: Minimum replica count for high availability"],
-    "below_maximum":         ["FinOps: Maximum resource budget constraint"],
+    "above_minimum": ["SRE SLA: Minimum replica count for high availability"],
+    "below_maximum": ["FinOps: Maximum resource budget constraint"],
     "production_ha_minimum": ["SRE: Production HA requires ≥2 replicas"],
-    "blast_radius_check":    ["SRE: Blast radius limit for safe deployment"],
+    "blast_radius_check": ["SRE: Blast radius limit for safe deployment"],
     "circuit_breaker_state": ["SRE: Circuit breaker OPEN — downstream service protection"],
-    "prod_gate_approval":    ["SOX: Change management approval workflow (ITGC)"],
-    "replicas_budget":       ["FinOps: Compute budget constraint"],
-    "cpu_memory_guard":      ["SRE: Resource quota enforcement"],
+    "prod_gate_approval": ["SOX: Change management approval workflow (ITGC)"],
+    "replicas_budget": ["FinOps: Compute budget constraint"],
+    "cpu_memory_guard": ["SRE: Resource quota enforcement"],
 }
 
 
 # ── Severity classification ────────────────────────────────────────────────────
+
 
 def _classify_severity(
     violated_invariants: tuple[str, ...],
@@ -99,13 +101,18 @@ def _classify_severity(
     MEDIUM:              Infrastructure and operational violations
     """
     high_value_rules = {
-        "anti_structuring", "sanctions_screen", "wash_sale_detection",
-        "patient_consent_required", "phi_least_privilege",
+        "anti_structuring",
+        "sanctions_screen",
+        "wash_sale_detection",
+        "patient_consent_required",
+        "phi_least_privilege",
         "pediatric_dose_bound",
     }
     infra_rules = {
-        "blast_radius_check", "circuit_breaker_state",
-        "replicas_budget", "cpu_memory_guard",
+        "blast_radius_check",
+        "circuit_breaker_state",
+        "replicas_budget",
+        "cpu_memory_guard",
     }
 
     amount_str = str(intent_dump.get("amount", "0"))
@@ -149,33 +156,33 @@ class ComplianceReport:
     - SAR (Suspicious Activity Report) documentation
     """
 
-    decision_id:          str
-    decision_hash:        str
-    timestamp:            str
-    verdict:              str           # "ALLOWED" or "BLOCKED"
-    severity:             str           # "CRITICAL_PREVENTION", "HIGH", "MEDIUM"
-    policy_name:          str
-    policy_version:       str
-    violated_rules:       tuple[str, ...]
+    decision_id: str
+    decision_hash: str
+    timestamp: str
+    verdict: str  # "ALLOWED" or "BLOCKED"
+    severity: str  # "CRITICAL_PREVENTION", "HIGH", "MEDIUM"
+    policy_name: str
+    policy_version: str
+    violated_rules: tuple[str, ...]
     compliance_rationale: tuple[str, ...]
-    regulatory_refs:      tuple[str, ...]
-    explanation:          str
+    regulatory_refs: tuple[str, ...]
+    explanation: str
 
     def to_json(self) -> str:
         """Serialize to JSON string suitable for audit log inclusion."""
         return json.dumps(
             {
-                "decision_id":          self.decision_id,
-                "decision_hash":        self.decision_hash,
-                "timestamp":            self.timestamp,
-                "verdict":              self.verdict,
-                "severity":             self.severity,
-                "policy_name":          self.policy_name,
-                "policy_version":       self.policy_version,
-                "violated_rules":       list(self.violated_rules),
+                "decision_id": self.decision_id,
+                "decision_hash": self.decision_hash,
+                "timestamp": self.timestamp,
+                "verdict": self.verdict,
+                "severity": self.severity,
+                "policy_name": self.policy_name,
+                "policy_version": self.policy_version,
+                "violated_rules": list(self.violated_rules),
                 "compliance_rationale": list(self.compliance_rationale),
-                "regulatory_refs":      list(self.regulatory_refs),
-                "explanation":          self.explanation,
+                "regulatory_refs": list(self.regulatory_refs),
+                "explanation": self.explanation,
             },
             indent=2,
             default=str,
@@ -213,8 +220,12 @@ class ComplianceReport:
         # ── Title ────────────────────────────────────────────────────────────
         pdf.set_font("Helvetica", "B", 16)
         pdf.cell(
-            0, 12, "PRAMANIX COMPLIANCE REPORT",
-            new_x="LMARGIN", new_y="NEXT", align="C",
+            0,
+            12,
+            "PRAMANIX COMPLIANCE REPORT",
+            new_x="LMARGIN",
+            new_y="NEXT",
+            align="C",
         )
         pdf.set_line_width(0.5)
         pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
@@ -317,14 +328,14 @@ class ComplianceReporter:
         if not meta and decision.metadata:
             meta = decision.metadata
 
-        policy_name    = meta.get("name") or meta.get("policy") or "UnknownPolicy"
+        policy_name = meta.get("name") or meta.get("policy") or "UnknownPolicy"
         policy_version = meta.get("version") or meta.get("policy_version") or "unknown"
 
         timestamp = ""
         if decision.metadata:
             timestamp = str(decision.metadata.get("timestamp_utc", ""))
 
-        verdict  = "ALLOWED" if decision.allowed else "BLOCKED"
+        verdict = "ALLOWED" if decision.allowed else "BLOCKED"
         violated = tuple(decision.violated_invariants or ())
         intent_dump = decision.intent_dump or {}
 

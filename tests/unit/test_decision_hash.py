@@ -13,6 +13,7 @@ Critical properties verified:
 
 These properties make the audit trail tamper-evident.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -24,6 +25,7 @@ from hypothesis import strategies as st
 from pramanix.decision import Decision, SolverStatus
 
 # ── Helper ────────────────────────────────────────────────────────────────────
+
 
 def _make_decision(
     allowed: bool = True,
@@ -270,9 +272,7 @@ class TestDecisionHashViaGuard:
             @classmethod
             def invariants(cls):
                 return [
-                    ((E(_balance) - E(_amount)) >= Decimal("0"))
-                    .named("sb")
-                    .explain("Insufficient")
+                    ((E(_balance) - E(_amount)) >= Decimal("0")).named("sb").explain("Insufficient")
                 ]
 
         guard = Guard(_P, GuardConfig(execution_mode="sync"))
@@ -296,9 +296,7 @@ class TestDecisionHashViaGuard:
 
             @classmethod
             def invariants(cls):
-                return [
-                    (E(_amount) >= Decimal("0")).named("pos").explain("Positive")
-                ]
+                return [(E(_amount) >= Decimal("0")).named("pos").explain("Positive")]
 
         guard = Guard(_P, GuardConfig(execution_mode="sync"))
         d = guard.verify(

@@ -31,6 +31,7 @@ from pramanix.exceptions import PolicyCompilationError
 from pramanix.expressions import E, Field
 from pramanix.guard import Guard, GuardConfig
 from pramanix.policy import Policy
+
 # ── Shared minimal policy ─────────────────────────────────────────────────────
 
 

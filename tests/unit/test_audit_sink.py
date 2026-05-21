@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase E-4: Tests for AuditSink implementations and GuardConfig integration
 """Verifies audit sinks emit decisions and failures never affect callers."""
+
 from __future__ import annotations
 
 import io

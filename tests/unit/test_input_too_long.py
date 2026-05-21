@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase D-3: Tests for InputTooLongError and sanitise_user_input length enforcement
 """Unit tests verifying that oversized inputs are rejected with InputTooLongError."""
+
 from __future__ import annotations
 
 import pytest
@@ -32,6 +33,7 @@ class TestInputTooLongErrorAttributes:
     def test_is_pramanix_error(self) -> None:
         """InputTooLongError is a PramanixError subclass."""
         from pramanix.exceptions import PramanixError
+
         err = InputTooLongError(actual=1, limit=1, truncated_preview="")
         assert isinstance(err, PramanixError)
 
@@ -111,12 +113,14 @@ class TestGuardConfigMaxInputChars:
     def test_zero_raises_configuration_error(self) -> None:
         """max_input_chars=0 raises ConfigurationError (must be positive)."""
         from pramanix.exceptions import ConfigurationError
+
         with pytest.raises(ConfigurationError):
             GuardConfig(max_input_chars=0)
 
     def test_negative_raises_configuration_error(self) -> None:
         """max_input_chars < 0 raises ConfigurationError."""
         from pramanix.exceptions import ConfigurationError
+
         with pytest.raises(ConfigurationError):
             GuardConfig(max_input_chars=-1)
 

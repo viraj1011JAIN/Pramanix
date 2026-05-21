@@ -7,6 +7,7 @@
 
 All tests use real Policy subclasses — no mocks, no monkeypatching.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -16,14 +17,11 @@ from pydantic import BaseModel
 
 from pramanix.expressions import ConstraintExpr, E, Field
 from pramanix.lifecycle import (
-    FieldChange,
-    InvariantChange,
     PolicyDiff,
     ShadowEvaluator,
     ShadowResult,
 )
 from pramanix.policy import Policy
-
 
 # ── Test policies ─────────────────────────────────────────────────────────────
 
@@ -92,9 +90,7 @@ class PolicyV3(Policy):
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
         return [
-            (E(cls.amount) <= Decimal("500"))
-            .named("hard_cap")
-            .explain("Amount exceeds hard cap"),
+            (E(cls.amount) <= Decimal("500")).named("hard_cap").explain("Amount exceeds hard cap"),
         ]
 
 
@@ -142,7 +138,7 @@ class TestPolicyDiff:
         # Added invariant + added field → breaking because field changed
         # but invariant addition alone is non-breaking
         inv_changes = diff.invariant_changes
-        added_only = all(c.change_type == "added" for c in inv_changes)
+        all(c.change_type == "added" for c in inv_changes)
         # Field addition IS breaking
         assert diff.field_changes  # daily_limit added
 

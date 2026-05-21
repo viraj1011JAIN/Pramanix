@@ -42,6 +42,7 @@ Example::
                 .explain("PHI access requires CLINICIAN or BREAK_GLASS role"),
             ]
 """
+
 from __future__ import annotations
 
 __all__ = ["EnterpriseRole", "HIPAARole"]

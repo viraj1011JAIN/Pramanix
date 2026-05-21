@@ -30,6 +30,7 @@ Usage::
     async def transfer_soft(intent: dict, state: dict) -> dict | Decision:
         return {"status": "ok"}
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -99,6 +100,7 @@ def guard(
     def decorator(fn: Any) -> Any:
         """Wrap fn with guard enforcement, choosing sync or async path automatically."""
         if asyncio.iscoroutinefunction(fn):
+
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 """Run guard.verify_async() before delegating to the original coroutine."""
@@ -124,6 +126,7 @@ def guard(
             return async_wrapper
 
         else:
+
             @functools.wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 """Run guard.verify() before delegating to the original function."""

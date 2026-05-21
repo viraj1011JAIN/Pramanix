@@ -28,6 +28,7 @@ Usage::
     for message in consumer.safe_poll(timeout=1.0):
         process(message)
 """
+
 from __future__ import annotations
 
 import logging

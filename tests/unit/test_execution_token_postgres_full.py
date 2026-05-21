@@ -23,6 +23,7 @@ import pytest
 
 from pramanix.decision import Decision, SolverStatus
 from pramanix.execution_token import ExecutionToken, ExecutionTokenSigner
+
 _SECRET = b"test_secret_key_32_bytes_exact!!"
 
 

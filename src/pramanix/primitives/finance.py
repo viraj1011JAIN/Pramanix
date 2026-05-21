@@ -32,6 +32,7 @@ Example::
                 UnderDailyLimit(cls.amount, cls.daily_limit),
             ]
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

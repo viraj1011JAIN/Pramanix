@@ -3,6 +3,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Tests for SQLiteExecutionTokenVerifier.consume_within (TOCTOU gap closure)."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -63,6 +64,7 @@ def test_consume_within_different_conns_second_fails(signer, verifier) -> None:
     """Two separate connections that share underlying DB — second must fail."""
     import os
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -133,6 +135,7 @@ def test_consume_within_rollback_allows_replay(signer, verifier) -> None:
     """If the caller rolls back, consume_within rollback also undoes token consumption."""
     import os
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:
@@ -160,6 +163,7 @@ def test_consume_within_commit_prevents_replay(signer, verifier) -> None:
     """After a successful commit, the same token must not be accepted again."""
     import os
     import tempfile
+
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
     try:

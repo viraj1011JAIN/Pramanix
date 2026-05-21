@@ -31,6 +31,7 @@ Agreement modes
     but captures extra-field injection attempts where one model includes
     keys the other omits.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -317,8 +318,7 @@ async def extract_with_consensus(
     _blocked, _reason = _filter.is_injection(text)
     if _blocked:
         raise InjectionBlockedError(
-            f"System 1 injection filter blocked input before LLM call. "
-            f"{_reason}"
+            f"System 1 injection filter blocked input before LLM call. " f"{_reason}"
         )
 
     # ── Step 1: Sanitise input ────────────────────────────────────────────────
@@ -405,9 +405,7 @@ async def extract_with_consensus(
     # ── Consensus telemetry ───────────────────────────────────────────────────
     all_checked = set(dump_a.keys()) | set(dump_b.keys())
     if strictness == ConsensusStrictness.STRICT:
-        disagreeing_fields = [
-            k for k in sorted(all_checked) if dump_a.get(k) != dump_b.get(k)
-        ]
+        disagreeing_fields = [k for k in sorted(all_checked) if dump_a.get(k) != dump_b.get(k)]
     else:
         _, disagreeing_fields = _semantic_equal(dump_a, dump_b, intent_schema)
     _agreed_fields = all_checked - set(disagreeing_fields)
@@ -489,9 +487,7 @@ def _enforce_consensus(
         # Catches extra-field injection: if one model emits {"amount": 50, "evil": true}
         # and the other emits {"amount": 50}, they disagree → blocked.
         mismatches: dict[str, tuple[object, object]] = {
-            k: (dump_a.get(k), dump_b.get(k))
-            for k in all_keys
-            if _disagrees(k)
+            k: (dump_a.get(k), dump_b.get(k)) for k in all_keys if _disagrees(k)
         }
         if mismatches:
             field_list = ", ".join(f"'{k}'" for k in mismatches)
@@ -508,9 +504,7 @@ def _enforce_consensus(
         # Every declared field must match.  Equivalent to unanimous for flat
         # Pydantic-validated dicts (extra fields are stripped by model_dump()),
         # but documents the intent that each schema field is load-bearing.
-        mismatches = {
-            k: (dump_a.get(k), dump_b.get(k)) for k in all_keys if _disagrees(k)
-        }
+        mismatches = {k: (dump_a.get(k), dump_b.get(k)) for k in all_keys if _disagrees(k)}
         if mismatches:
             field_list = ", ".join(f"'{k}'" for k in mismatches)
             raise ExtractionMismatchError(

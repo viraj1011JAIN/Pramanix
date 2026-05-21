@@ -25,6 +25,7 @@ Try:
         -H "Content-Type: application/json" \\
         -d '{"amount": 99999.00}'
 """
+
 from __future__ import annotations
 
 from decimal import Decimal
@@ -37,10 +38,10 @@ from pramanix.integrations.fastapi import PramanixMiddleware, pramanix_route
 
 # ── Policy ────────────────────────────────────────────────────────────────────
 
-_amount  = Field("amount",      Decimal, "Real")
-_balance = Field("balance",     Decimal, "Real")
-_daily   = Field("daily_limit", Decimal, "Real")
-_spent   = Field("daily_spent", Decimal, "Real")
+_amount = Field("amount", Decimal, "Real")
+_balance = Field("balance", Decimal, "Real")
+_daily = Field("daily_limit", Decimal, "Real")
+_spent = Field("daily_spent", Decimal, "Real")
 
 
 class TransferPolicy(Policy):
@@ -52,8 +53,8 @@ class TransferPolicy(Policy):
     @classmethod
     def fields(cls) -> dict:
         return {
-            "amount":      _amount,
-            "balance":     _balance,
+            "amount": _amount,
+            "balance": _balance,
             "daily_limit": _daily,
             "daily_spent": _spent,
         }
@@ -62,27 +63,31 @@ class TransferPolicy(Policy):
     def invariants(cls) -> list:
         return [
             (E(_amount) > Decimal("0"))
-                .named("positive_amount")
-                .explain("Transfer amount {amount} must be positive"),
+            .named("positive_amount")
+            .explain("Transfer amount {amount} must be positive"),
             (E(_amount) <= Decimal("50000"))
-                .named("single_tx_cap")
-                .explain("Single transfer capped at 50,000 — got {amount}"),
+            .named("single_tx_cap")
+            .explain("Single transfer capped at 50,000 — got {amount}"),
             ((E(_balance) - E(_amount)) >= Decimal("0"))
-                .named("sufficient_balance")
-                .explain("Insufficient balance {balance} for transfer {amount}"),
+            .named("sufficient_balance")
+            .explain("Insufficient balance {balance} for transfer {amount}"),
             ((E(_spent) + E(_amount)) <= E(_daily))
-                .named("daily_limit")
-                .explain("Daily limit {daily_limit} exceeded: spent {daily_spent} + requested {amount}"),
+            .named("daily_limit")
+            .explain(
+                "Daily limit {daily_limit} exceeded: spent {daily_spent} + requested {amount}"
+            ),
         ]
 
 
 # ── Pydantic intent schema ────────────────────────────────────────────────────
+
 
 class TransferRequest(BaseModel):
     amount: Decimal
 
 
 # ── State loader — would query Redis/DB in production ─────────────────────────
+
 
 async def load_account_state(request: Request) -> dict:
     """Fetch current account state for the authenticated user.
@@ -92,7 +97,7 @@ async def load_account_state(request: Request) -> dict:
     """
     return {
         "state_version": "2.0",
-        "balance":     Decimal("10000.00"),
+        "balance": Decimal("10000.00"),
         "daily_limit": Decimal("5000.00"),
         "daily_spent": Decimal("200.00"),
     }
@@ -117,8 +122,8 @@ app.add_middleware(
         solver_timeout_ms=5_000,
         metrics_enabled=True,
     ),
-    max_body_bytes=65_536,    # 64 KB — reject oversized payloads
-    timing_budget_ms=50.0,    # Pad BLOCK responses — no timing oracle
+    max_body_bytes=65_536,  # 64 KB — reject oversized payloads
+    timing_budget_ms=50.0,  # Pad BLOCK responses — no timing oracle
 )
 
 
@@ -128,9 +133,9 @@ async def transfer(payload: TransferRequest) -> dict:
     amount = payload.amount
     # In production: debit account, create transaction record
     return {
-        "status":  "success",
+        "status": "success",
         "message": f"Transferred ${amount:,.2f}",
-        "amount":  str(amount),
+        "amount": str(amount),
     }
 
 

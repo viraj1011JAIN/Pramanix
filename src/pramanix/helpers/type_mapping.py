@@ -31,6 +31,7 @@ authoring errors surface before any request is ever processed.
 Design note: ``bool`` must be checked **before** ``int`` because ``bool``
 is a subclass of ``int`` in Python.
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

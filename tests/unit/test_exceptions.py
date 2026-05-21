@@ -13,6 +13,7 @@ Coverage targets:
 - StateValidationError: expected, actual attrs, default None values
 - Every exception can be instantiated with a plain message string
 """
+
 from __future__ import annotations
 
 import pytest

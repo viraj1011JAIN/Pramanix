@@ -25,11 +25,12 @@ Environment overrides (skip the container, use an external service):
   VAULT_TOKEN               e.g. "root"
   AWS_ENDPOINT_URL          e.g. "http://localhost:4566"  (LocalStack)
 """
+
 from __future__ import annotations
 
 import os
 import time
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
 
@@ -37,6 +38,7 @@ import pytest
 _DOCKER_AVAILABLE: bool = True
 try:
     import docker  # type: ignore[import-untyped]
+
     _client = docker.from_env()
     _client.ping()
 except Exception:

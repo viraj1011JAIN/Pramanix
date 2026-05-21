@@ -23,10 +23,12 @@ Usage::
         description="Transfer funds between accounts",
     )
 """
+
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import json
 import logging
 import weakref
@@ -144,8 +146,7 @@ class PramanixFunctionTool:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
-                "llama_index is not installed. "
-                "Run: pip install 'pramanix[llamaindex]'"
+                "llama_index is not installed. " "Run: pip install 'pramanix[llamaindex]'"
             )
         self._fn = fn
         self._guard = guard
@@ -164,10 +165,8 @@ class PramanixFunctionTool:
 
     @staticmethod
     def _shutdown_executor(executor: concurrent.futures.ThreadPoolExecutor) -> None:
-        try:
+        with contextlib.suppress(Exception):
             executor.shutdown(wait=False)
-        except Exception:
-            pass
 
     # ── metadata property ────────────────────────────────────────────────────
 
@@ -206,9 +205,7 @@ class PramanixFunctionTool:
 
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
-            intent: dict[str, Any] = self._intent_schema.model_validate(
-                raw
-            ).model_dump()
+            intent: dict[str, Any] = self._intent_schema.model_validate(raw).model_dump()
         except Exception as exc:
             return ToolOutput(
                 content=f"Pramanix: invalid input: {exc}",
@@ -386,8 +383,7 @@ class PramanixQueryEngineTool:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
-                "llama_index is not installed. "
-                "Run: pip install 'pramanix[llamaindex]'"
+                "llama_index is not installed. " "Run: pip install 'pramanix[llamaindex]'"
             )
         self._engine = query_engine
         self._guard = guard
@@ -433,9 +429,7 @@ class PramanixQueryEngineTool:
 
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
-            intent: dict[str, Any] = self._intent_schema.model_validate(
-                raw
-            ).model_dump()
+            intent: dict[str, Any] = self._intent_schema.model_validate(raw).model_dump()
         except Exception as exc:
             return ToolOutput(
                 content=f"Pramanix: invalid input: {exc}",

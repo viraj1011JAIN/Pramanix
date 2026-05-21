@@ -14,6 +14,7 @@ SufficientBalance, VelocityCheck, AntiStructuring, WashSaleDetection,
 CollateralHaircut, MaxDrawdown, SanctionsScreen, KYCTierCheck,
 TradingWindowCheck, MarginRequirement, RiskScoreLimit
 """
+
 from __future__ import annotations
 
 from decimal import Decimal

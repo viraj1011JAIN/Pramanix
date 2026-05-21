@@ -11,6 +11,7 @@ Value format: JSON string with state_version and domain fields
 The caller cannot influence which state is loaded — only the
 verified JWT sub claim determines the Redis key.
 """
+
 from __future__ import annotations
 
 import json

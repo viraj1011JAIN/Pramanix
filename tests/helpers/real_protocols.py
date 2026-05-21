@@ -22,7 +22,7 @@ Design rules
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar
 
 # ── HTTP client close helpers (translator lifecycle) ──────────────────────────
 
@@ -405,7 +405,7 @@ class _RotateSecretRecorder:
     def __init__(self) -> None:
         self.rotate_secret_calls: list[str] = []
 
-    def rotate_secret(self, *, SecretId: str) -> None:
+    def rotate_secret(self, *, SecretId: str) -> None:  # noqa: N803
         self.rotate_secret_calls.append(SecretId)
 
 
@@ -546,9 +546,11 @@ class _PgConn:
 
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         self.execute_calls.append(args)
-        if self._execute_raises is not None:
-            if len(self.execute_calls) > self._execute_raises_after:
-                raise self._execute_raises
+        if (
+            self._execute_raises is not None
+            and len(self.execute_calls) > self._execute_raises_after
+        ):
+            raise self._execute_raises
         return self._execute_return
 
     async def fetchrow(self, *args: Any, **kwargs: Any) -> Any:
@@ -654,7 +656,7 @@ class _EmptyRegistry:
     recovery in ``_register_metrics()`` cannot find the existing metric.
     """
 
-    _names_to_collectors: dict = {}
+    _names_to_collectors: ClassVar[dict] = {}
 
 
 class _BoomRegistry:
@@ -880,7 +882,7 @@ class _AwsSecretsClient:
 
     def __init__(
         self,
-        secret_string: str = "FAKE_PEM",
+        secret_string: str = "FAKE_PEM",  # noqa: S107
         version_id: str | None = None,
         *,
         secret_binary: bytes | None = None,
@@ -901,7 +903,7 @@ class _AwsSecretsClient:
             result["VersionId"] = self._version_id
         return result
 
-    def rotate_secret(self, *, SecretId: str) -> None:
+    def rotate_secret(self, *, SecretId: str) -> None:  # noqa: N803
         self.rotate_secret_calls.append(SecretId)
 
 
@@ -982,11 +984,11 @@ class _GeminiGenaiModule:
         pass
 
     @staticmethod
-    def GenerativeModel(**kw: Any) -> _GeminiModelInstance:
+    def GenerativeModel(**kw: Any) -> _GeminiModelInstance:  # noqa: N802
         return _GeminiModelInstance()
 
     @staticmethod
-    def GenerationConfig(**kw: Any) -> None:
+    def GenerationConfig(**kw: Any) -> None:  # noqa: N802
         return None
 
 
@@ -1050,7 +1052,7 @@ class _GeminiRaisingModelInstance:
 
             raise _gapi_exc.DeadlineExceeded("server down")
         except ImportError:
-            raise Exception("server down")
+            raise Exception("server down") from None
 
 
 class _GeminiRecordingGenaiModule:
@@ -1080,7 +1082,7 @@ class _GeminiRecordingGenaiModule:
     def configure(self, **kw: Any) -> None:
         self.configure_called = True
 
-    def GenerativeModel(self, **kw: Any) -> Any:
+    def GenerativeModel(self, **kw: Any) -> Any:  # noqa: N802
         if self._raising:
             m: Any = _GeminiRaisingModelInstance()
         elif self._sync_only:
@@ -1090,7 +1092,7 @@ class _GeminiRecordingGenaiModule:
         self.last_model = m
         return m
 
-    def GenerationConfig(self, **kw: Any) -> None:
+    def GenerationConfig(self, **kw: Any) -> None:  # noqa: N802
         return None
 
 
@@ -1139,7 +1141,7 @@ class _ConfluentKafkaModule:
     def __init__(self, consumer_instance: Any) -> None:
         self._consumer_instance = consumer_instance
 
-    def Consumer(self, config: Any) -> Any:  # noqa: N802 – mirrors the real API name
+    def Consumer(self, config: Any) -> Any:  # noqa: N802 - mirrors the real API name
         return self._consumer_instance
 
 
@@ -1715,7 +1717,7 @@ class _VaultKvClientMissingField:
 # the minimum import requirements of optional-dependency providers without
 # any auto-attribute magic.
 
-import types as _types_module  # local alias to avoid shadowing the outer namespace
+import types as _types_module  # local alias to avoid shadowing the outer namespace  # noqa: E402
 
 
 class _Boto3ModuleStub(_types_module.ModuleType):

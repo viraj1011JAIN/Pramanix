@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase C-4: Tests for AdaptiveCircuitBreaker.verify_sync()
 """Verifies synchronous circuit breaker interface works from non-async contexts."""
+
 from __future__ import annotations
 
 import asyncio

@@ -36,6 +36,7 @@ Tests in this file cover (per Checklist §7.2 HMAC IPC integrity test):
     • Correct full flow: WorkerPool.submit_solve with SAFE result.
     • Correct full flow: WorkerPool.submit_solve with UNSAFE result.
 """
+
 from __future__ import annotations
 
 import json as _json_mod

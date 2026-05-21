@@ -4,6 +4,7 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 """Secure scoped memory storage for the Pramanix agentic runtime."""
+
 from pramanix.memory.store import (
     MemoryEntry,
     ScopedMemoryPartition,

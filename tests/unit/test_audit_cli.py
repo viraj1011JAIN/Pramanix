@@ -15,6 +15,7 @@ Tests:
 7. JSON output format is correct
 8. Mixed file: valid + tampered → exit 1
 """
+
 from __future__ import annotations
 
 import io
@@ -41,7 +42,9 @@ def _make_audit_record(decision: Decision, signer: PramanixSigner) -> dict:
         "signature": sig,
         "public_key_id": signer.key_id(),
         "allowed": decision.allowed,
-        "status": str(decision.status.value if hasattr(decision.status, "value") else decision.status),
+        "status": str(
+            decision.status.value if hasattr(decision.status, "value") else decision.status
+        ),
         "violated_invariants": list(decision.violated_invariants or []),
         "explanation": decision.explanation or "",
         "policy": str(decision.metadata.get("policy", "") if decision.metadata else ""),

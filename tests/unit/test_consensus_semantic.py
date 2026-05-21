@@ -4,6 +4,7 @@
 # - docs/PROOF_DOSSIER.md
 # Phase D-1: Tests for ConsensusStrictness semantic comparison
 """Unit tests for semantic consensus comparison in RedundantTranslator."""
+
 from __future__ import annotations
 
 import pytest
@@ -51,15 +52,24 @@ class TestSemanticFieldEqual:
 
     def test_string_case_insensitive_agrees(self) -> None:
         """'USD' and 'usd' must agree under SEMANTIC mode (casefold)."""
-        assert _semantic_field_equal("USD", "usd", schema=TransferIntent, field_name="currency") is True
+        assert (
+            _semantic_field_equal("USD", "usd", schema=TransferIntent, field_name="currency")
+            is True
+        )
 
     def test_string_different_values_disagrees(self) -> None:
         """'USD' and 'EUR' must disagree."""
-        assert _semantic_field_equal("USD", "EUR", schema=TransferIntent, field_name="currency") is False
+        assert (
+            _semantic_field_equal("USD", "EUR", schema=TransferIntent, field_name="currency")
+            is False
+        )
 
     def test_string_whitespace_trimmed(self) -> None:
         """'  USD  ' and 'usd' must agree after strip + casefold."""
-        assert _semantic_field_equal("  USD  ", "usd", schema=TransferIntent, field_name="currency") is True
+        assert (
+            _semantic_field_equal("  USD  ", "usd", schema=TransferIntent, field_name="currency")
+            is True
+        )
 
     def test_bool_true_vs_true_agrees(self) -> None:
         """bool True vs True must agree."""
@@ -326,9 +336,9 @@ class TestSemanticFieldEqualBoundaryStrings:
             (str(None), str(None)),
         ]
         for a, b in pairs:
-            assert _semantic_field_equal(a, b) == _semantic_field_equal(b, a), (
-                f"Asymmetry: ({a!r}, {b!r})"
-            )
+            assert _semantic_field_equal(a, b) == _semantic_field_equal(
+                b, a
+            ), f"Asymmetry: ({a!r}, {b!r})"
 
 
 # ── Hypothesis property tests ─────────────────────────────────────────────────

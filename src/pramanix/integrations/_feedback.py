@@ -20,6 +20,7 @@ chose to surface via {field_name} interpolation in .explain().
 Raw values from the intent dict are NEVER appended directly.
 This prevents binary-search policy probing by malicious agents.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
