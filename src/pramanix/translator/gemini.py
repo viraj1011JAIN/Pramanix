@@ -215,6 +215,7 @@ class GeminiTranslator:
             except ImportError:
                 pass
             raise
+        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
 
     async def _single_call(self, *, prompt: str) -> str:
         """Make a single GenerateContent call and return the raw text."""

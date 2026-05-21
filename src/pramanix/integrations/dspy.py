@@ -43,14 +43,24 @@ if TYPE_CHECKING:
 
 __all__ = ["PramanixGuardedModule"]
 
-try:
-    import dspy as _dspy
+_DSPY_AVAILABLE: bool = False
 
-    _DSPY_AVAILABLE = True
-    _ModuleBase: Any = _dspy.Module
-except ImportError:
-    _DSPY_AVAILABLE = False
-    _ModuleBase = object
+if TYPE_CHECKING:
+
+    class _DSPyModuleBase:
+        """Type stand-in for dspy.Module (no dspy stubs available)."""
+
+        def forward(self, **kwargs: Any) -> Any: ...
+
+    _ModuleBase = _DSPyModuleBase
+else:
+    try:
+        import dspy as _dspy
+
+        _ModuleBase = _dspy.Module
+        _DSPY_AVAILABLE = True
+    except ImportError:
+        _ModuleBase = object
 
 
 class _PramanixState:
@@ -76,7 +86,7 @@ class _PramanixState:
         self.inner_module = inner_module
 
 
-class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]
+class PramanixGuardedModule(_ModuleBase):
     """DSPy ``Module`` wrapper with Z3 formal verification gate.
 
     If DSPy is **not** installed the class functions as a plain callable

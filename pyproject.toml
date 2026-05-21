@@ -162,7 +162,6 @@ mypy_path = "src"
 [[tool.mypy.overrides]]
 module = [
     "z3",
-    "z3.*",
     "prometheus_client",
     "prometheus_client.*",
     "opentelemetry.*",
@@ -184,16 +183,12 @@ module = [
     "langchain_core.*",
     "llama_index",
     "llama_index.*",
-    "autogen",
-    "autogen.*",
     "starlette",
     "starlette.*",
     "fastapi",
     "fastapi.*",
     "redis",
     "redis.*",
-    "testcontainers",
-    "testcontainers.*",
 ]
 ignore_missing_imports = true
 
@@ -211,15 +206,18 @@ module = [
     "google.cloud.secretmanager_v1",
     "google.cloud.secretmanager_v1.*",
     "hvac",
-    "hvac.*",
     "confluent_kafka",
     "confluent_kafka.*",
     "datadog_api_client",
     "datadog_api_client.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
     "fpdf",
     "fpdf.*",
     "asyncpg",
-    "asyncpg.*",
     "llama_cpp",
     "llama_cpp.*",
     "cohere",
@@ -227,19 +225,14 @@ module = [
     "mistralai",
     "mistralai.*",
     "dspy",
-    "dspy.*",
     "crewai",
     "crewai.*",
     "haystack",
     "haystack.*",
-    "pydantic_ai",
-    "pydantic_ai.*",
     "semantic_kernel",
     "semantic_kernel.*",
     "grpc",
     "grpc.*",
-    "grpcio",
-    "grpcio.*",
     "sklearn",
     "sklearn.*",
     "google.generativeai",
@@ -248,10 +241,14 @@ module = [
     "google.*",
     "google.api_core",
     "google.api_core.*",
-    "kafka",
-    "kafka.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# audit_sink.py calls datadog_api_client functions that lack type stubs.
+# Suppressing untyped-call check only for this file rather than globally.
+module = ["pramanix.audit_sink"]
+disallow_untyped_calls = false
 
 [tool.ruff]
 line-length = 100
@@ -318,6 +315,8 @@ ignore = [
 # These are documentation-only and do not affect runtime behaviour.
 "src/pramanix/translator/_sanitise.py" = ["RUF002"]
 "src/pramanix/integrations/*.py" = ["TCH"]
+# N818: KafkaException stub must match confluent_kafka's real class name — renaming breaks compatibility.
+"src/pramanix/interceptors/kafka.py" = ["N818"]
 # CLI is a terminal entry point — print() is the intended output mechanism.
 "src/pramanix/cli.py" = ["T20"]
 "tests/integration/test_fastapi_middleware.py" = ["T20"]

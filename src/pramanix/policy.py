@@ -228,7 +228,6 @@ class Policy:
         # evaluation is deferred to the first invariants() call.
         _own_inv: Any = cls.__dict__.get("invariants")
 
-        @classmethod  # type: ignore[misc]
         def _merged(_cls: type) -> list[ConstraintExpr]:
             # Step 1: get the policy's own (non-mixin) invariants.
             if _own_inv is not None:
@@ -292,7 +291,7 @@ class Policy:
 
             return own + extra
 
-        cls.invariants = _merged  # type: ignore[method-assign, assignment]
+        cast(Any, cls).invariants = classmethod(_merged)
 
     # ── Field discovery ───────────────────────────────────────────────────────
 
@@ -548,12 +547,11 @@ class Policy:
         class_name = f"_DynamicPolicy_{schema_hash:08d}"
         _realized_copy = list(realized)
 
-        @classmethod  # type: ignore[misc]
         def _inv_method(_cls: type) -> list[ConstraintExpr]:
             return list(_realized_copy)
 
         namespace: dict[str, Any] = dict(field_instances)
-        namespace["invariants"] = _inv_method
+        namespace["invariants"] = classmethod(_inv_method)
 
         dynamic_cls: type[Policy] = type(class_name, (cls,), namespace)
         _DYNAMIC_POLICY_CACHE[cache_key] = dynamic_cls
@@ -572,7 +570,7 @@ class Policy:
         for klass in cls.__mro__:
             meta = vars(klass).get("Meta")
             if meta is not None:
-                return meta
+                return cast(type, meta)
         return None
 
     @classmethod

@@ -70,14 +70,14 @@ Example::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from pramanix.expressions import E
+from pramanix.expressions import ConstraintExpr, E
 
 if TYPE_CHECKING:
     from decimal import Decimal
 
-    from pramanix.expressions import ConstraintExpr, Field
+    from pramanix.expressions import Field
 
 __all__ = [
     "BreakGlassAuth",
@@ -145,14 +145,15 @@ def ConsentActive(
             expiry date.
         current_epoch:        Request time as a UNIX timestamp literal (int).
     """
-    return (
+    return cast(
+        ConstraintExpr,
         ((E(consent_status) == "ACTIVE") & (E(consent_expiry_epoch) > current_epoch))
         .named("consent_active")
         .explain(
             'PHI disclosure blocked: consent_status="{consent_status}", '
             "consent_expiry_epoch={consent_expiry_epoch} — authorisation absent, "
             "revoked, or expired. (HIPAA 45 CFR § 164.508)"
-        )
+        ),
     )
 
 

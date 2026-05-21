@@ -28,14 +28,14 @@ Example::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from pramanix.expressions import E
+from pramanix.expressions import ConstraintExpr, E
 
 if TYPE_CHECKING:
     from decimal import Decimal
 
-    from pramanix.expressions import ConstraintExpr, Field
+    from pramanix.expressions import Field
 
 __all__ = [
     # Phase 8 SRE primitives
@@ -177,13 +177,14 @@ def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
         circuit_state: Field (str, String) — current circuit breaker state.
             Must be one of ``"CLOSED"``, ``"OPEN"``, or ``"HALF-OPEN"``.
     """
-    return (
+    return cast(
+        ConstraintExpr,
         (E(circuit_state) != "OPEN")
         .named("circuit_breaker_state")
         .explain(
             'Request blocked: circuit_state="{circuit_state}" — circuit breaker '
             "is OPEN. Downstream service is unhealthy — fail fast."
-        )
+        ),
     )
 
 

@@ -70,12 +70,12 @@ Example::
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from pramanix.expressions import E
+from pramanix.expressions import ConstraintExpr, E
 
 if TYPE_CHECKING:
-    from pramanix.expressions import ConstraintExpr, Field
+    from pramanix.expressions import Field
 
 __all__ = [
     "AntiStructuring",
@@ -289,13 +289,14 @@ def SanctionsScreen(counterparty_status: Field) -> ConstraintExpr:
         counterparty_status: Field (str, String) — OFAC screening result.
             Must be one of ``"CLEAR"``, ``"SANCTIONED"``, or ``"REVIEW"``.
     """
-    return (
+    return cast(
+        ConstraintExpr,
         (E(counterparty_status) != "SANCTIONED")
         .named("sanctions_screen")
         .explain(
             'Transaction blocked: counterparty_status="{counterparty_status}" '
             "matches OFAC SDN / sanctions watchlist. (31 CFR § 501.805)"
-        )
+        ),
     )
 
 

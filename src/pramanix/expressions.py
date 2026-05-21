@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 from pramanix.exceptions import PolicyCompilationError
 
@@ -561,7 +561,7 @@ class ExpressionNode:
         """
         return ExpressionNode(_AbsOp(self.node))
 
-    def __pow__(self, exp: Any) -> ExpressionNode:  # type: ignore[override,unused-ignore]
+    def __pow__(self, exp: Any) -> ExpressionNode:
         """Polynomial exponentiation ``E(x) ** n`` where *n* is a literal int 1-4.
 
         The exponent must be a plain Python ``int`` literal known at
@@ -589,7 +589,7 @@ class ExpressionNode:
             )
         return ExpressionNode(_PowOp(base=self.node, exp=exp))
 
-    def __rpow__(self, o: Any) -> ExpressionNode:  # type: ignore[override,unused-ignore]
+    def __rpow__(self, o: Any) -> ExpressionNode:
         """Symbolic base (left-hand side is not an ExpressionNode) — always banned."""
         raise PolicyCompilationError(
             "ExpressionNode does not support reflected ** (i.e. literal ** E(x)). "
@@ -674,7 +674,7 @@ class ExpressionNode:
         work_hour = (hour >= 9) & (hour <= 16)
         # Mon-Fri = day not in {2=Sat, 3=Sun}
         weekday = (day != 2) & (day != 3)
-        return work_hour & weekday
+        return cast(ConstraintExpr, work_hour & weekday)
 
     # ── String operations (Z3 sequence theory) ────────────────────────────────
 
@@ -850,10 +850,10 @@ class ExpressionNode:
     def __lt__(self, o: Any) -> ConstraintExpr:
         return ConstraintExpr(_CmpOp("lt", self.node, self._w(o)))
 
-    def __eq__(self, o: Any) -> ConstraintExpr:  # type: ignore[override]
+    def __eq__(self, o: object) -> Any:
         return ConstraintExpr(_CmpOp("eq", self.node, self._w(o)))
 
-    def __ne__(self, o: Any) -> ConstraintExpr:  # type: ignore[override]
+    def __ne__(self, o: object) -> Any:
         return ConstraintExpr(_CmpOp("ne", self.node, self._w(o)))
 
     def is_true(self) -> ConstraintExpr:

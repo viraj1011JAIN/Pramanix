@@ -91,12 +91,23 @@ class SolverProtocol(Protocol):
 # name in the same context is idempotent, so reusing the context across calls
 # is correct and slightly faster (avoids JIT warm-up on first use per thread).
 _tl_ctx = threading.local()
+# Serialise z3.Context() construction across threads to prevent a Windows
+# access-violation crash.  Z3_set_error_handler (called inside __init__)
+# touches global Z3 state that is not safe for concurrent access.  The lock
+# is held only for the brief allocation; it is released before any solve call.
+_Z3_CTX_CREATE_LOCK = threading.Lock()
 
 
 def _thread_ctx() -> z3.Context:
     """Return the Z3 Context for the current thread, creating it on first call."""
     if not hasattr(_tl_ctx, "ctx"):
-        _tl_ctx.ctx = z3.Context()
+        with _Z3_CTX_CREATE_LOCK:
+            # Re-check inside the lock: another thread may have initialized
+            # this thread-local slot between the outer check and lock acquire.
+            # (threading.local is per-thread, so only the current thread can
+            # set _tl_ctx.ctx — the double-check is defensive but harmless.)
+            if not hasattr(_tl_ctx, "ctx"):
+                _tl_ctx.ctx = z3.Context()
     return _tl_ctx.ctx
 
 

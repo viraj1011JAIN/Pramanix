@@ -44,15 +44,20 @@ __all__ = ["PramanixKafkaConsumer"]
 
 _log = logging.getLogger(__name__)
 
-try:
+_KAFKA_AVAILABLE: bool = False
+
+if TYPE_CHECKING:
     from confluent_kafka import Consumer as _KafkaConsumer
     from confluent_kafka import KafkaException
+else:
+    try:
+        from confluent_kafka import Consumer as _KafkaConsumer
+        from confluent_kafka import KafkaException
 
-    _KAFKA_AVAILABLE = True
-except ImportError:
-    _KAFKA_AVAILABLE = False
-    _KafkaConsumer = object
-    KafkaException = Exception
+        _KAFKA_AVAILABLE = True
+    except ImportError:
+        _KafkaConsumer = object
+        KafkaException = Exception
 
 
 class PramanixKafkaConsumer:

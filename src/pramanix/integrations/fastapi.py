@@ -45,8 +45,8 @@ from pramanix.guard import Guard, GuardConfig
 _log = logging.getLogger(__name__)
 
 
-class JSONResponse:
-    """Fallback stub — replaced by starlette import when available."""
+class _JSONResponseFallback:
+    """Raises RuntimeError when starlette is not installed."""
 
     headers: dict[str, str]
 
@@ -55,23 +55,26 @@ class JSONResponse:
         raise RuntimeError("starlette is not installed")
 
 
-try:
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse, Response  # type: ignore[assignment]
-
-    _STARLETTE_AVAILABLE = True
-    _BaseHTTPMiddleware: type = BaseHTTPMiddleware
-except ImportError:
-    _STARLETTE_AVAILABLE = False
-    _BaseHTTPMiddleware = object
+_STARLETTE_AVAILABLE: bool = False
 
 if TYPE_CHECKING:
-    from starlette.responses import Response
+    from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+    from starlette.responses import JSONResponse, Response
+else:
+    try:
+        from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
+        from starlette.responses import JSONResponse, Response
+
+        _STARLETTE_AVAILABLE = True
+    except ImportError:
+        _BaseHTTPMiddleware = object
+        JSONResponse = _JSONResponseFallback
+        Response = _JSONResponseFallback
 
 __all__ = ["PramanixMiddleware", "pramanix_route"]
 
 
-class PramanixMiddleware(_BaseHTTPMiddleware):  # type: ignore[misc]
+class PramanixMiddleware(_BaseHTTPMiddleware):
     """ASGI middleware that guards every request with a Pramanix policy.
 
     The Guard instance is created once at ``__init__`` time and reused for

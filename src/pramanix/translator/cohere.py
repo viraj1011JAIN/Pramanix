@@ -155,6 +155,7 @@ class CohereTranslator:
             except ImportError:
                 pass
             raise
+        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""

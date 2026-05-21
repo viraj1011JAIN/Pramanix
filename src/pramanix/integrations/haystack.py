@@ -42,13 +42,13 @@ _log = logging.getLogger(__name__)
 
 # M-21: register the class as a Haystack component at definition time,
 # not per-instance in __init__.
+_haystack_component: Any = None
 try:
-    from haystack import component as _haystack_component  # type: ignore[import-untyped]
+    from haystack import component as _haystack_component
 
     _HAYSTACK_AVAILABLE = True
 except ImportError:
     _HAYSTACK_AVAILABLE = False
-    _haystack_component = None
 
 
 class HaystackGuardedComponent:

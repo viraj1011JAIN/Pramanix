@@ -42,23 +42,29 @@ __all__ = ["create_admission_webhook"]
 _log = logging.getLogger(__name__)
 
 # ── optional dependency guard ─────────────────────────────────────────────────
-try:
+class _FastAPIFallback:
+    """Raises ConfigurationError when fastapi is not installed."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        from pramanix.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            "Kubernetes webhook support requires the 'fastapi' package: "
+            "pip install 'pramanix[k8s]'"
+        )
+
+
+_FASTAPI_AVAILABLE: bool = False
+
+if TYPE_CHECKING:
     from fastapi import FastAPI
+else:
+    try:
+        from fastapi import FastAPI
 
-    _FASTAPI_AVAILABLE = True
-except ImportError:
-    _FASTAPI_AVAILABLE = False
-
-    class FastAPI:  # type: ignore[no-redef]
-        """Internal placeholder — raises ConfigurationError at instantiation if fastapi absent."""
-
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            from pramanix.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                "Kubernetes webhook support requires the 'fastapi' package: "
-                "pip install 'pramanix[k8s]'"
-            )
+        _FASTAPI_AVAILABLE = True
+    except ImportError:
+        FastAPI = _FastAPIFallback
 
 
 def create_admission_webhook(

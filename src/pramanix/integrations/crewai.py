@@ -44,13 +44,17 @@ _log = logging.getLogger(__name__)
 _SAFE_FAILURE_PREFIX = "[PRAMANIX_BLOCKED]"
 
 
-try:
-    from crewai.tools import BaseTool as _CrewAIBase
+_CREWAI_AVAILABLE: bool = False
 
-    _CREWAI_AVAILABLE = True
-except ImportError:
-    _CREWAI_AVAILABLE = False
-    _CrewAIBase = object
+if TYPE_CHECKING:
+    from crewai.tools import BaseTool as _CrewAIBase
+else:
+    try:
+        from crewai.tools import BaseTool as _CrewAIBase
+
+        _CREWAI_AVAILABLE = True
+    except ImportError:
+        _CrewAIBase = object
 
 
 class _PramanixState:
@@ -79,7 +83,7 @@ class _PramanixState:
         self.block_message = block_message
 
 
-class PramanixCrewAITool(_CrewAIBase):  # type: ignore[misc]
+class PramanixCrewAITool(_CrewAIBase):
     """CrewAI ``BaseTool`` subclass with Z3 formal verification gate.
 
     When crewai is installed, ``_CrewAIBase`` is ``crewai.tools.BaseTool``

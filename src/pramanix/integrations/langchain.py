@@ -18,47 +18,49 @@ import json
 import logging
 import weakref
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_block_feedback
 
 _log = logging.getLogger(__name__)
 
-try:
+class _BaseToolFallback:
+    """Raises ConfigurationError when langchain-core is not installed."""
+
+    name: str = ""
+    description: str = ""
+
+    def __init__(self, *, name: str = "", description: str = "", **kwargs: Any) -> None:
+        from pramanix.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            "LangChain integration requires 'langchain-core': "
+            "pip install 'pramanix[langchain]'"
+        )
+
+    def _run(  # pragma: no cover
+        self, tool_input: str, **kwargs: Any
+    ) -> str:
+        raise NotImplementedError
+
+    async def _arun(  # pragma: no cover
+        self, tool_input: str, **kwargs: Any
+    ) -> str:
+        raise NotImplementedError
+
+
+_LANGCHAIN_AVAILABLE: bool = False
+
+if TYPE_CHECKING:
     from langchain_core.tools import BaseTool
+else:
+    try:
+        from langchain_core.tools import BaseTool
 
-    _LANGCHAIN_AVAILABLE = True
-except ImportError:
-    _LANGCHAIN_AVAILABLE = False
-
-    class BaseTool:  # type: ignore[no-redef]
-        """Typed placeholder — raises ConfigurationError when langchain absent.
-
-        Mirrors the minimal langchain_core.tools.BaseTool interface so mypy
-        can type-check PramanixGuardedTool without langchain-core installed.
-        """
-
-        name: str = ""
-        description: str = ""
-
-        def __init__(self, *, name: str = "", description: str = "", **kwargs: Any) -> None:
-            from pramanix.exceptions import ConfigurationError
-
-            raise ConfigurationError(
-                "LangChain integration requires 'langchain-core': "
-                "pip install 'pramanix[langchain]'"
-            )
-
-        def _run(  # pragma: no cover
-            self, tool_input: str, **kwargs: Any
-        ) -> str:
-            raise NotImplementedError
-
-        async def _arun(  # pragma: no cover
-            self, tool_input: str, **kwargs: Any
-        ) -> str:
-            raise NotImplementedError
+        _LANGCHAIN_AVAILABLE = True
+    except ImportError:
+        BaseTool = _BaseToolFallback
 
 
 # Build model_config at module level to avoid polluting the class namespace
@@ -146,7 +148,7 @@ class PramanixGuardedTool(BaseTool):
             asyncio.get_running_loop()
             executor = object.__getattribute__(self, "_pramanix_executor")
             future = executor.submit(asyncio.run, self._arun(tool_input, **kwargs))
-            return future.result(timeout=30)
+            return str(future.result(timeout=30))
         except RuntimeError:
             return asyncio.run(self._arun(tool_input, **kwargs))
 

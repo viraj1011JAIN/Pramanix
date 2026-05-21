@@ -81,23 +81,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import types
     from collections.abc import Callable
 
 _log = logging.getLogger(__name__)
 
 # asyncpg is optional — only required for PostgresExecutionTokenVerifier.
-# §6.1 fix: `types` must be a regular runtime import because
-# `_asyncpg: types.ModuleType | None` is a module-level annotation.
-# Placing it under TYPE_CHECKING breaks get_type_hints() and Pydantic v2.
-_asyncpg: types.ModuleType | None
+# try/except with assignment in except (not a class/import definition) avoids no-redef.
 try:
-    import asyncpg as _asyncpg  # type: ignore[import-untyped]
+    import asyncpg as _asyncpg
 except ImportError:
     _asyncpg = None
 
 # Sentinel used in except clauses: empty tuple = catch nothing when asyncpg absent.
-_ASYNCPG_UNIQUE_VIOLATION: type | tuple[type, ...] = (
+_ASYNCPG_UNIQUE_VIOLATION: type[BaseException] | tuple[type[BaseException], ...] = (
     _asyncpg.UniqueViolationError if _asyncpg is not None else ()
 )
 

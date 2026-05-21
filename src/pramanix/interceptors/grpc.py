@@ -43,17 +43,23 @@ __all__ = ["PramanixGrpcInterceptor"]
 
 _log = logging.getLogger(__name__)
 
-try:
+_GRPC_AVAILABLE: bool = False
+
+if TYPE_CHECKING:
     import grpc
 
-    _GRPC_AVAILABLE = True
-    _InterceptorBase: Any = grpc.ServerInterceptor
-except ImportError:
-    _GRPC_AVAILABLE = False
-    _InterceptorBase = object
+    _InterceptorBase = grpc.ServerInterceptor[Any, Any]
+else:
+    try:
+        import grpc
+
+        _InterceptorBase = grpc.ServerInterceptor
+        _GRPC_AVAILABLE = True
+    except ImportError:
+        _InterceptorBase = object
 
 
-class PramanixGrpcInterceptor(_InterceptorBase):  # type: ignore[misc]
+class PramanixGrpcInterceptor(_InterceptorBase):
     """gRPC ``ServerInterceptor`` with Z3 formal verification gate.
 
     If ``grpcio`` is not installed, the class is still importable as a plain

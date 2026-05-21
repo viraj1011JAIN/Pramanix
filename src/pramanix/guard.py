@@ -606,9 +606,7 @@ class Guard:
 
         # ── Step 8: Human oversight gate ──────────────────────────────────────
         if gov.oversight_workflow is not None:
-            from pramanix.oversight.workflow import (
-                OversightRequiredError,
-            )
+            from pramanix.exceptions import OversightRequiredError
 
             _approval_id = str(intent_values.get("oversight_request_id", ""))
             if _approval_id:

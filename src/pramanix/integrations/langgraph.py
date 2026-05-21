@@ -28,7 +28,10 @@ import time
 import uuid
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from prometheus_client import Counter, Histogram
 
 from pydantic import BaseModel
 
@@ -38,6 +41,8 @@ from pramanix.guard_config import GuardConfig
 
 _log = logging.getLogger(__name__)
 
+_NODE_LATENCY_MS: Histogram | None = None
+_NODE_VERDICT_TOTAL: Counter | None = None
 try:
     from prometheus_client import Counter, Histogram
 
@@ -52,8 +57,7 @@ try:
         ["policy", "node", "verdict"],
     )
 except Exception:
-    _NODE_LATENCY_MS = None
-    _NODE_VERDICT_TOTAL = None
+    pass
 
 __all__ = [
     "GuardNodeAdapterProtocol",
@@ -192,6 +196,7 @@ class PramanixGuardNode:
             raise ValueError("on_fail must be 'halt' or 'warn'.")
 
         if guard is None:
+            assert policy is not None
             cfg = GuardConfig(
                 execution_mode="sync",
                 solver_timeout_ms=timeout_ms,
@@ -400,10 +405,7 @@ class PramanixGuardNode:
             if callable(emit_fn):
                 emit_fn(verdict)
         except Exception as exc:
-            _log.warning(
-                "pramanix.langgraph.audit_emit_failed",
-                error=str(exc),
-            )
+            _log.warning("pramanix.langgraph.audit_emit_failed: %s", exc)
 
     def _inject_sidecar(self, *, result: Any, verdict: dict[str, Any]) -> Any:
         if isinstance(result, dict):

@@ -504,7 +504,7 @@ class RS256Signer:
                     f"set {self._ENV_KEY}, or use force_ephemeral=True."
                 )
 
-        _loaded = load_pem_private_key(raw, password=None)  # type: ignore[arg-type]
+        _loaded = load_pem_private_key(raw, password=None)
         if not isinstance(_loaded, RSAPrivateKey):
             raise ValueError("PEM key is not an RSA private key.")
         if _loaded.key_size < 2048:
@@ -711,7 +711,7 @@ class ES256Signer:
                     f"set {self._ENV_KEY}, or use force_ephemeral=True."
                 )
 
-        _loaded = load_pem_private_key(raw, password=None)  # type: ignore[arg-type]
+        _loaded = load_pem_private_key(raw, password=None)
         if not isinstance(_loaded, EllipticCurvePrivateKey):
             raise ValueError("PEM key is not an EC private key.")
         _curve = _loaded.curve

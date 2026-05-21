@@ -33,7 +33,7 @@ import json
 import logging
 import weakref
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.guard import Guard
 from pramanix.integrations._feedback import format_block_feedback
@@ -47,59 +47,61 @@ __all__ = ["PramanixFunctionTool", "PramanixQueryEngineTool"]
 # type-check against ToolMetadata/ToolOutput would silently get the fake.
 # Raise ImportError on import so the dependency requirement is clear.
 
-try:
+# Fallback stubs defined unconditionally so they can be used as assignments
+# in the except block without triggering [no-redef].
+_llama_import_exc: BaseException | None = None
+
+
+class _ToolMetadataFallback:
+    """Raises ImportError when llama-index-core is not installed."""
+
+    def __init__(
+        self,
+        *,
+        name: str = "",
+        description: str = "",
+        **kwargs: Any,
+    ) -> None:
+        raise ImportError(
+            "LlamaIndex integration requires 'llama-index-core': "
+            "pip install 'pramanix[llamaindex]'"
+        ) from _llama_import_exc
+
+
+class _ToolOutputFallback:
+    """Raises ImportError when llama-index-core is not installed."""
+
+    def __init__(
+        self,
+        *,
+        content: str = "",
+        tool_name: str = "",
+        raw_input: dict[str, Any] | None = None,
+        raw_output: dict[str, Any] | None = None,
+        is_error: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        raise ImportError(
+            "LlamaIndex integration requires 'llama-index-core': "
+            "pip install 'pramanix[llamaindex]'"
+        ) from _llama_import_exc
+
+
+_LLAMA_AVAILABLE: bool = False
+
+if TYPE_CHECKING:
     from llama_index.core.tools.types import ToolMetadata, ToolOutput
+else:
+    try:
+        from llama_index.core.tools.types import ToolMetadata, ToolOutput
 
-    _LLAMA_AVAILABLE = True
-except ImportError as _exc:
-    _LLAMA_AVAILABLE = False
-    # Python deletes `except ... as` bindings at block end, so capture it
-    # explicitly as a module-level variable that survives after the block.
-    _llama_import_exc: BaseException = _exc
-
-    # Provide internal-only placeholder types so the rest of this module can
-    # reference ToolMetadata/ToolOutput without llama_index installed.
-    # These are NOT exported and WILL raise at instantiation time.
-    class ToolMetadata:  # type: ignore[no-redef]
-        """Typed placeholder — raises ImportError when llama_index absent.
-
-        Mirrors llama_index.core.tools.types.ToolMetadata so mypy can
-        type-check integrations without llama-index-core installed.
-        """
-
-        def __init__(
-            self,
-            *,
-            name: str = "",
-            description: str = "",
-            **kwargs: Any,
-        ) -> None:
-            raise ImportError(
-                "LlamaIndex integration requires 'llama-index-core': "
-                "pip install 'pramanix[llamaindex]'"
-            ) from _llama_import_exc
-
-    class ToolOutput:  # type: ignore[no-redef]
-        """Typed placeholder — raises ImportError when llama_index absent.
-
-        Mirrors llama_index.core.tools.types.ToolOutput so mypy can
-        type-check integrations without llama-index-core installed.
-        """
-
-        def __init__(
-            self,
-            *,
-            content: str = "",
-            tool_name: str = "",
-            raw_input: dict[str, Any] | None = None,
-            raw_output: dict[str, Any] | None = None,
-            is_error: bool = False,
-            **kwargs: Any,
-        ) -> None:
-            raise ImportError(
-                "LlamaIndex integration requires 'llama-index-core': "
-                "pip install 'pramanix[llamaindex]'"
-            ) from _llama_import_exc
+        _LLAMA_AVAILABLE = True
+    except ImportError as _exc:
+        # Python deletes `except ... as` bindings at block end — capture it so the
+        # fallback constructors can chain the error.
+        _llama_import_exc = _exc
+        ToolMetadata = _ToolMetadataFallback
+        ToolOutput = _ToolOutputFallback
 
 
 # ── PramanixFunctionTool ──────────────────────────────────────────────────────

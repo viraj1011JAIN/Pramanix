@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import sys
 import unicodedata
 import warnings
 from dataclasses import dataclass
@@ -28,11 +29,9 @@ _log = logging.getLogger(__name__)
 
 # SecurityWarning is a built-in in Python 3.12+.  On 3.11 we define a
 # compatible local class so warnings.warn(SecurityWarning) works on both.
-try:
-    SecurityWarning  # — built-in on 3.12+  # noqa: B018
-except NameError:
+if sys.version_info < (3, 12):
 
-    class SecurityWarning(UserWarning):  # type: ignore[no-redef]
+    class SecurityWarning(UserWarning):
         """Security advisory (Python 3.11 compatibility shim)."""
 
 
@@ -41,14 +40,14 @@ except NameError:
 # avoid lookbehind assertions (not supported by RE2).  The phone pattern uses
 # \b (word boundary) instead of the stdlib lookbehind — functionally equivalent
 # for the corpus of natural-language text this module targets.
-_re_engine: Any  # re2 if available, stdlib re as fallback
+_re_engine: Any = re  # stdlib re by default; replaced below if google-re2 is installed
+_RE2_AVAILABLE = False
 try:
-    import re2 as _re_engine  # type: ignore[import-not-found]
+    import re2 as _re2
 
+    _re_engine = _re2
     _RE2_AVAILABLE = True
 except ImportError:
-    _re_engine = re
-    _RE2_AVAILABLE = False
     warnings.warn(
         "pramanix.nlp.validators: google-re2 is not installed — "
         "falling back to stdlib re (ReDoS attack via crafted PII patterns is possible). "
@@ -99,7 +98,7 @@ def _try_detoxify_scorer() -> Any:
     operators can alert before the first request reaches the safety scorer.
     """
     try:
-        from detoxify import Detoxify  # type: ignore[import-not-found]
+        from detoxify import Detoxify
 
         _model = Detoxify("original")
 
@@ -135,7 +134,7 @@ def _try_sentence_transformer() -> Any:
     ``pramanix_nlp_model_available{model="sentence_transformer"}`` gauge to 0.
     """
     try:
-        from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+        from sentence_transformers import SentenceTransformer
 
         model = SentenceTransformer("all-MiniLM-L6-v2")
         g = _get_nlp_gauge()
@@ -165,7 +164,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     norm_b = sum(x * x for x in b) ** 0.5
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
-    return dot / (norm_a * norm_b)
+    return float(dot / (norm_a * norm_b))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

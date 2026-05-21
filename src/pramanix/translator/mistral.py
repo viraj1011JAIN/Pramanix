@@ -13,7 +13,7 @@ If the package is not installed, instantiation raises
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
@@ -52,11 +52,16 @@ class MistralTranslator:
         api_key: str | None = None,
         timeout: float = 30.0,
     ) -> None:
+        _mistral_factory: Any = None
         try:
-            from mistralai.client import Mistral as _Mistral  # v2+
+            from mistralai.client import Mistral  # v2+
+
+            _mistral_factory = Mistral
         except ImportError:
             try:
-                from mistralai import Mistral as _Mistral  # type: ignore[no-redef]  # v1
+                import mistralai as _mistralai_pkg  # v1 top-level
+
+                _mistral_factory = cast(Any, _mistralai_pkg).Mistral
             except ImportError as exc:
                 raise ConfigurationError(
                     "mistralai is required for MistralTranslator. "
@@ -67,7 +72,7 @@ class MistralTranslator:
         self._api_key = api_key or os.environ.get("MISTRAL_API_KEY") or None
         self._timeout = timeout
         # M-14: create the client once; reuse across all calls and retries.
-        self._client: Any = _Mistral(api_key=self._api_key or "")
+        self._client: Any = _mistral_factory(api_key=self._api_key or "")
 
     async def extract(
         self,

@@ -66,7 +66,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -196,7 +196,7 @@ class ASTBuilder:
             decl.name: Field(
                 decl.name,
                 _Z3_TO_PYTHON[decl.z3_type],
-                decl.z3_type.value,  # type: ignore[arg-type]  # Z3TypeEnum.value IS Z3Type
+                decl.z3_type.value,  # Z3TypeEnum.value IS Z3Type
             )
             for decl in schema.fields
         }
@@ -387,9 +387,9 @@ class ASTBuilder:
             case ComparisonOp.LT:
                 return left < right
             case ComparisonOp.EQ:
-                return left == right  # type: ignore[return-value]
+                return cast(ConstraintExpr, left == right)
             case ComparisonOp.NEQ:
-                return left != right  # type: ignore[return-value]
+                return cast(ConstraintExpr, left != right)
             case _:
                 raise PolicyCompilationError(
                     f"Unsupported comparison operator {op!r}. "
@@ -647,6 +647,7 @@ class NaturalPolicyCompiler:
 # We wrap NaturalPolicySchema in a thin shell that delegates to it.
 
 from pydantic import BaseModel as _BaseModel  # noqa: E402  (must be after other imports)
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode  # noqa: E402
 
 
 class _SchemaWrapper(_BaseModel):
@@ -660,5 +661,19 @@ class _SchemaWrapper(_BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     @classmethod
-    def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-        return NaturalPolicySchema.model_json_schema(**kwargs)
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = "#/$defs/{model}",
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        return NaturalPolicySchema.model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode=mode,
+            union_format=union_format,
+        )

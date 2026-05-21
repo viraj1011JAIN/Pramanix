@@ -82,6 +82,11 @@ _FAILED_DISPATCH_PENALTY_MS: float = 9999.0
 _WORKER_WARMUP_FAILURE_COUNTER: Any = None
 _WORKER_WATCHDOG_ERROR_COUNTER: Any = None
 _WORKER_METRICS_LOCK = threading.Lock()
+# Serialise z3.Context() construction across threads. On Windows, concurrent
+# calls to Z3_set_error_handler (invoked inside z3.Context.__init__) trigger a
+# fatal access-violation crash.  Holding this lock for the brief allocation
+# removes the race at negligible cost — it is released before any solve() call.
+_Z3_CTX_CREATE_LOCK = threading.Lock()
 _WORKER_REGISTERED_METRICS: dict[str, Any] = {}
 
 try:
@@ -358,7 +363,8 @@ def _warmup_worker(_solver_factory: Any = None) -> None:
         _wdog = threading.Thread(target=_ppid_watchdog, daemon=True, name="ppid-watchdog")
         _wdog.start()
 
-    ctx = z3.Context()
+    with _Z3_CTX_CREATE_LOCK:
+        ctx = z3.Context()
     try:
         # ── Pattern 1: Real ≥ 0  (most common financial constraint) ──────────
         s = _solver_cls(ctx=ctx)
@@ -817,7 +823,7 @@ class WorkerPool:
                 # can detect any IPC tampering before trusting the decision.
                 # Per-request nonce prevents replay of a previous envelope.
                 _ipc_nonce = _secrets_mod.token_hex(16)
-                future: Future[dict[str, Any]] = self._executor.submit(
+                future: Future[dict[str, Any]] = self.executor.submit(
                     _worker_solve_sealed,
                     policy_cls,
                     values,
@@ -855,7 +861,7 @@ class WorkerPool:
                 # bindings) into the worker thread so trace correlation survives
                 # the thread boundary.
                 _ctx = contextvars.copy_context()
-                future = self._executor.submit(
+                future = self.executor.submit(
                     _ctx.run, _worker_solve, policy_cls, values, timeout_ms, rlimit
                 )
                 try:
@@ -906,7 +912,7 @@ class WorkerPool:
 
     def _run_warmup(self) -> None:
         """Submit ``_warmup_worker`` to every slot.  Best-effort."""
-        futures = [self._executor.submit(_warmup_worker) for _ in range(self.max_workers)]
+        futures = [self.executor.submit(_warmup_worker) for _ in range(self.max_workers)]
         for fut in futures:
             try:
                 fut.result(timeout=30.0)
@@ -988,4 +994,6 @@ class WorkerPool:
     @property
     def executor(self) -> Executor:
         """The underlying :class:`~concurrent.futures.Executor`."""
+        if self._executor is None:
+            raise WorkerError("WorkerPool not spawned — call spawn() first")
         return self._executor

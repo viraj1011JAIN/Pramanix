@@ -1762,7 +1762,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
     else:
         try:
-            import yaml as _yaml  # type: ignore[import-not-found]
+            import yaml as _yaml
 
             bad_file: pathlib.Path | None = None
             bad_error = ""

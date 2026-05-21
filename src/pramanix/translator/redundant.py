@@ -65,7 +65,7 @@ def _raw_strings_agree(a: str, b: str) -> bool:
     Falls back to stripped string equality when either string is not valid JSON.
     """
     try:
-        return json.loads(a) == json.loads(b)
+        return bool(json.loads(a) == json.loads(b))
     except (json.JSONDecodeError, ValueError):
         return a.strip() == b.strip()
 

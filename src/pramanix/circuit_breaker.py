@@ -830,7 +830,7 @@ class RedisDistributedBackend:
         self._prefix = key_prefix
         self._ttl = ttl_seconds
         self._client: Any = redis_client
-        self._clear_tasks: set[asyncio.Future] = set()
+        self._clear_tasks: set[asyncio.Future[Any]] = set()
         # Mutable cell shared with the finalizer so close() can null it out.
         self._client_cell: list[Any] = [redis_client]
         self._finalizer = weakref.finalize(

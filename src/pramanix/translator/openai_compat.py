@@ -135,6 +135,7 @@ class OpenAICompatTranslator:
             raise ExtractionFailureError(
                 f"[{self.model}] OpenAI API error " f"{exc.status_code}: {exc.message}"
             ) from exc
+        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""

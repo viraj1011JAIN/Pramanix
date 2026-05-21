@@ -102,7 +102,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic import Field as _PF  # noqa: N814
@@ -500,7 +500,7 @@ class Condition(BaseModel):
         is_list_rhs: bool = isinstance(rhs_val, list)
 
         if self.op in _MEMBERSHIP_OPERATORS:
-            if not is_list_rhs:
+            if not isinstance(rhs_val, list):
                 raise ValueError(
                     f"Operator {self.op.value!r} requires a list RHS "
                     f"(e.g. LiteralValue(value=[1, 2, 3])); got scalar "
@@ -994,6 +994,7 @@ class PolicyCompiler:
                 )
             return self._compile_membership(cond, lhs_field, lhs_node, label, rhs_val)
 
+        assert not isinstance(rhs_val, list)
         return self._compile_scalar_comparison(cond, lhs_field, lhs_node, label, rhs_val)
 
     def _compile_scalar_comparison(
@@ -1399,7 +1400,7 @@ class PolicyCompiler:
                 return int(scalar)
             # scalar is bool | int | str here (float case returned above);
             # _check_scalar_sort_compat ensures any str is integer-parseable.
-            return int(scalar)  # type: ignore[arg-type]
+            return int(scalar)
 
         if z3_type == "Bool":
             return bool(scalar)
@@ -1439,19 +1440,19 @@ class PolicyCompiler:
         """
         match op:
             case Operator.EQ:
-                return lhs_node == rhs
+                return cast(ConstraintExpr, lhs_node == rhs)
             case Operator.NE:
-                return lhs_node != rhs
+                return cast(ConstraintExpr, lhs_node != rhs)
             # ExpressionNode overloads >, <, >=, <= to return ConstraintExpr
             # (DSL design intent); mypy expects bool but the DSL returns a node.
             case Operator.GT:
-                return lhs_node > rhs  # type: ignore[operator]
+                return lhs_node > rhs
             case Operator.LT:
-                return lhs_node < rhs  # type: ignore[operator]
+                return lhs_node < rhs
             case Operator.GTE:
-                return lhs_node >= rhs  # type: ignore[operator]
+                return lhs_node >= rhs
             case Operator.LTE:
-                return lhs_node <= rhs  # type: ignore[operator]
+                return lhs_node <= rhs
             case Operator.IN | Operator.NOT_IN:
                 raise PolicyCompilationError(
                     f"Operator {op.value!r} must not reach _apply_comparison_op.  "

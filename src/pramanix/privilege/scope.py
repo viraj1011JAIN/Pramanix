@@ -80,7 +80,7 @@ class ExecutionScope(IntFlag):
 
     def scope_names(self) -> list[str]:
         """Return list of flag names present in this compound scope."""
-        return [s.name for s in ExecutionScope if s != ExecutionScope.NONE and s in self]
+        return [s.name for s in ExecutionScope if s != ExecutionScope.NONE and s in self and s.name is not None]
 
 
 @dataclass(frozen=True)
