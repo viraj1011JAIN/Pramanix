@@ -122,8 +122,8 @@ class PramanixKafkaConsumer:
                 "call close() explicitly to release the Kafka consumer cleanly."
             )
             consumer.close()
-        except Exception:
-            pass
+        except Exception as _e:
+            _log.debug("pramanix.kafka: consumer close in __del__ failed: %s", _e)
 
     def safe_poll(
         self,

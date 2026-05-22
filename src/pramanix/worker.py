@@ -723,8 +723,8 @@ class WorkerPool:
                     "calling shutdown(wait=False). "
                     "Call WorkerPool.shutdown() explicitly to avoid this warning."
                 )
-        except Exception:
-            pass
+        except Exception as _e:
+            _log.debug("pramanix.worker: __del__ sys.is_finalizing() check failed: %s", _e)
         with contextlib.suppress(Exception):
             executor.shutdown(wait=False)
 

@@ -49,7 +49,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     (r"<\|begin_of_text\|>", "llama3_bos_token"),
     (r"<\|system\|>", "chatml_system_token"),
     # ── Embedded role escalation ────────────────────────────────────────
-    (r"system\s*:\s*(?=[A-Za-z])", "fake_system_message"),
+    (r"system\s*:\s*[A-Za-z]", "fake_system_message"),
     (
         r'\{\s*["\']role["\']\s*:\s*["\']system["\']',
         "embedded_json_role",
@@ -57,7 +57,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     # ── Persona / capability overrides ─────────────────────────────────
     (r"override\s+safety", "safety_override"),
     (r"pretend\s+you\s+are", "persona_override"),
-    (r"you\s+are\s+now\s+(?!going\s+to|able)", "persona_override"),
+    (r"you\s+are\s+now\s+\w", "persona_override"),
     (
         r"act\s+as\s+(an?\s+)?"
         r"(admin|root|superuser|god|oracle|unrestricted"

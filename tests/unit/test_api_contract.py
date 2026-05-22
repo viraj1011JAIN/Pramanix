@@ -126,10 +126,8 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "StringEnumField",
         # C-5: distributed circuit breaker (v1.0.0)
         "DistributedCircuitBreaker",
-        "InMemoryDistributedBackend",
         # E-4: audit sinks (v1.0.0)
         "AuditSink",
-        "InMemoryAuditSink",
         "StdoutAuditSink",
         # E-3: KMS/HSM key providers (v1.0.0)
         "KeyProvider",
@@ -212,7 +210,6 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "ApprovalRequest",
         "ApprovalStatus",
         "EscalationQueue",
-        "InMemoryApprovalWorkflow",
         "OversightRecord",
         # Memory security (v1.0.0+)
         "MemoryEntry",

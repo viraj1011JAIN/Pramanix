@@ -139,14 +139,29 @@ class PemKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
-        """Always False — PemKeyProvider does not support rotation."""
-        return False
+        """True — generates a new Ed25519 key in-place."""
+        return True
 
     def rotate_key(self) -> None:
-        """Not supported; raises NotImplementedError."""
-        raise NotImplementedError(
-            "PemKeyProvider does not support rotation — supply a new PEM to rotate."
+        """Generate a new Ed25519 key and replace the in-memory PEM.
+
+        The previous key is discarded.  Callers that need the new public key
+        for distribution must call :meth:`public_key_pem` after rotation.
+        """
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
         )
+
+        new_key = Ed25519PrivateKey.generate()
+        self._private_pem = new_key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        )
+        self._public_pem = None
 
 
 class EnvKeyProvider:
@@ -246,15 +261,43 @@ class FileKeyProvider:
 
     @property
     def supports_rotation(self) -> bool:
-        """Always False — replace the file contents to rotate."""
-        return False
+        """True — generates a new Ed25519 key and writes it atomically to disk."""
+        return True
 
     def rotate_key(self) -> None:
-        """Not supported; raises NotImplementedError."""
-        raise NotImplementedError(
-            "FileKeyProvider does not support in-place rotation — "
-            "replace the file contents and create a new FileKeyProvider."
+        """Generate a new Ed25519 key and write it atomically to :attr:`_path`.
+
+        Uses a sibling temp file + ``os.replace()`` so readers never observe
+        a partially-written key file.  The previous key is overwritten.
+        """
+        import tempfile
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
         )
+
+        new_key = Ed25519PrivateKey.generate()
+        new_pem = new_key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        )
+        parent = self._path.parent
+        fd, tmp_path = tempfile.mkstemp(dir=parent, suffix=".pem.tmp")
+        try:
+            os.write(fd, new_pem)
+            os.close(fd)
+            os.replace(tmp_path, self._path)
+        except Exception:
+            os.close(fd)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 # ── Cloud secret-store providers ─────────────────────────────────────────────

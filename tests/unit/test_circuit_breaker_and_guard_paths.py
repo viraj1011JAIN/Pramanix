@@ -298,26 +298,34 @@ class TestCircuitBreakerPrometheusRegistryPaths:
     def test_distributed_cb_register_metrics_already_registered(self) -> None:
         """Same real-prometheus re-registration test for DistributedCircuitBreaker."""
         import pramanix.circuit_breaker as _cb_mod
-        from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
+        from pramanix.circuit_breaker import (
+            CircuitBreakerConfig,
+            DistributedCircuitBreaker,
+            InMemoryDistributedBackend,
+        )
 
         guard = _make_guard()
         config = CircuitBreakerConfig(namespace="prom-real-distributed")
 
         # Warmup: registers pramanix_distributed_circuit_state + …_pressure_events_total
-        DistributedCircuitBreaker(guard, config)
+        DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
 
         with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
-            cb = DistributedCircuitBreaker(guard, config)
+            cb = DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
 
         assert cb._metrics_available is False
 
     def test_distributed_cb_update_prometheus_exception_swallowed(self) -> None:
         """DistributedCircuitBreaker._update_prometheus swallows gauge.labels() exceptions."""
-        from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
+        from pramanix.circuit_breaker import (
+            CircuitBreakerConfig,
+            DistributedCircuitBreaker,
+            InMemoryDistributedBackend,
+        )
 
         guard = _make_guard()
         config = CircuitBreakerConfig(namespace="test-update-prom")
-        cb = DistributedCircuitBreaker(guard, config)
+        cb = DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
 
         if not cb._metrics_available:
             pytest.skip("prometheus_client not set up properly in this test")
@@ -1236,10 +1244,10 @@ class TestAnthropicExtractSuccessPath:
 
 
 class TestKeyProviderSupportsRotation:
-    def test_pem_provider_no_rotation(self) -> None:
+    def test_pem_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import PemKeyProvider
 
-        assert PemKeyProvider(b"FAKE_PEM").supports_rotation is False
+        assert PemKeyProvider(b"FAKE_PEM").supports_rotation is True
 
     def test_env_provider_no_rotation(self) -> None:
         from pramanix.key_provider import EnvKeyProvider
@@ -1249,10 +1257,10 @@ class TestKeyProviderSupportsRotation:
         p._version = "env-1"
         assert p.supports_rotation is False
 
-    def test_file_provider_no_rotation(self, tmp_path) -> None:
+    def test_file_provider_supports_rotation(self, tmp_path) -> None:
         from pramanix.key_provider import FileKeyProvider
 
-        assert FileKeyProvider(tmp_path / "key.pem").supports_rotation is False
+        assert FileKeyProvider(tmp_path / "key.pem").supports_rotation is True
 
     def test_azure_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import AzureKeyVaultKeyProvider

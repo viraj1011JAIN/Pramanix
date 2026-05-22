@@ -20,7 +20,6 @@ import contextlib
 import logging
 import re
 import unicodedata
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,26 +34,31 @@ class SecurityWarning(UserWarning):
 # avoid lookbehind assertions (not supported by RE2).  The phone pattern uses
 # \b (word boundary) instead of the stdlib lookbehind — functionally equivalent
 # for the corpus of natural-language text this module targets.
-_re_engine: Any = re  # stdlib re by default; replaced below if google-re2 is installed
 _RE2_AVAILABLE = False
 try:
     import re2 as _re2
 
-    _re_engine = _re2
+    _re_engine: Any = _re2
     _RE2_AVAILABLE = True
-except ImportError:
-    warnings.warn(
-        "pramanix.nlp.validators: google-re2 is not installed — "
-        "falling back to stdlib re (ReDoS attack via crafted PII patterns is possible). "
-        "Install with: pip install 'pramanix[security]'",
-        SecurityWarning,
-        stacklevel=2,
-    )
-    _log.warning(
-        "pramanix.nlp.validators: google-re2 not installed — "
-        "stdlib re is in use; ReDoS via crafted PII patterns is possible. "
-        "pip install 'pramanix[security]'"
-    )
+except ImportError as _re2_err:
+    raise RuntimeError(
+        "pramanix.nlp.validators: google-re2 is required but not installed. "
+        "ReDoS via crafted PII patterns is a critical security risk without it. "
+        "Install with: pip install 'pramanix[security]'"
+    ) from _re2_err
+
+
+def _re_ci(pattern: str) -> Any:
+    opts = _re_engine.Options()
+    opts.case_sensitive = False
+    return _re_engine.compile(pattern, opts)
+
+
+def _re_ci_ml(pattern: str) -> Any:
+    opts = _re_engine.Options()
+    opts.case_sensitive = False
+    opts.one_line = False
+    return _re_engine.compile(pattern, opts)
 
 # ── ML backend detection (lazy, zero import-time cost) ────────────────────────
 
@@ -80,8 +84,8 @@ def _get_nlp_gauge() -> Any:
                 "1 if the named NLP safety model loaded successfully, 0 if degraded",
                 ["model"],
             )
-        except Exception:
-            pass
+        except Exception as _e:
+            _log.debug("pramanix.nlp.validators: gauge setup failed: %s", _e)
     return _NLP_GAUGE
 
 
@@ -184,18 +188,12 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # Covers Visa (13/16), MC (16), Amex (15), Discover (16), UnionPay (16-19).
     (
         "credit_card",
-        _re_engine.compile(
-            r"\b(?:\d[ -]?){13,19}\b",
-            _re_engine.ASCII if hasattr(_re_engine, "ASCII") else 0,
-        ),
+        _re_engine.compile(r"\b(?:\d[ -]?){13,19}\b"),
     ),
     # Email addresses (RFC 5321 simplified)
     (
         "email",
-        _re_engine.compile(
-            r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",
-            _re_engine.IGNORECASE,
-        ),
+        _re_ci(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
     ),
     # Phone numbers — US/international formats (+1 xxx xxx xxxx, (xxx) xxx-xxxx, etc.)
     # Uses \b (word boundary) instead of (?<!\d)/(?!\d) lookbehind for RE2 compatibility.
@@ -220,7 +218,7 @@ _PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # US passport number (A followed by 8 digits)
     ("passport_us", _re_engine.compile(r"\b[A-Z]\d{8}\b")),
     # UK National Insurance number (XX 99 99 99 X)
-    ("nino_uk", _re_engine.compile(r"\b[A-CEGHJ-PR-TW-Z]{2}\d{6}[ABCD]\b", _re_engine.IGNORECASE)),
+    ("nino_uk", _re_ci(r"\b[A-CEGHJ-PR-TW-Z]{2}\d{6}[ABCD]\b")),
     # Driver's licence — common North American pattern (1-2 letters + 5-14 digits)
     ("drivers_licence", _re_engine.compile(r"\b[A-Z]{1,2}\d{5,14}\b")),
 ]
@@ -499,7 +497,7 @@ class RegexClassifier:
         self._rules: list[tuple[str, re.Pattern[str]]] = []
         for label, pat in rules:
             if isinstance(pat, str):
-                compiled = re.compile(pat, re.IGNORECASE | re.MULTILINE)
+                compiled = _re_ci_ml(pat)
             else:
                 compiled = pat
             self._rules.append((label, compiled))

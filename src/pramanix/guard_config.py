@@ -628,18 +628,12 @@ class GuardConfig:
             warnings.warn(_msg, UserWarning, stacklevel=2)
             _prod_logger.error("pramanix.guard_config.production_advisory: %s", _msg)
         # ── Production safety: no audit sinks configured ──────────────────────
-        # §11.2 fix: PRAMANIX_ALLOW_NO_AUDIT_SINKS escape hatch is now explicitly
-        # documented here and in REQUIRED_INTEGRATIONS.md.  It exists only for
-        # local testing — never set it in production (it disables audit-trail enforcement).
-        if _is_prod and not self.audit_sinks and not _env_bool("ALLOW_NO_AUDIT_SINKS", False):
+        if _is_prod and not self.audit_sinks:
             raise ConfigurationError(
                 "GuardConfig(audit_sinks=()) in production (PRAMANIX_ENV=production): "
                 "no audit sinks configured — decisions are not persisted. A regulated "
                 "deployment without a durable audit trail fails SOC 2 / HIPAA compliance. "
-                "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink). "
-                "To suppress this error in LOCAL TESTING ONLY: "
-                "set PRAMANIX_ALLOW_NO_AUDIT_SINKS=1.  "
-                "Never set this variable in production — it bypasses audit-trail enforcement."
+                "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink)."
             )
         # ── Production safety: resource limits disabled ────────────────────────
         if _is_prod and self.solver_rlimit == 0:

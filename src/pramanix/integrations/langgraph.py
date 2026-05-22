@@ -56,8 +56,8 @@ try:
         "Policy verdict counts for Pramanix LangGraph gate node",
         ["policy", "node", "verdict"],
     )
-except Exception:
-    pass
+except Exception as _e:
+    _log.debug("pramanix.integrations.langgraph: metrics setup failed: %s", _e)
 
 __all__ = [
     "GuardNodeAdapterProtocol",

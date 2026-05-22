@@ -65,8 +65,8 @@ def _inc_parse_failure(rule_name: str) -> None:
     try:
         if _PARSE_FAILURE_COUNTER:
             _PARSE_FAILURE_COUNTER.labels(rule=rule_name).inc()
-    except Exception:
-        pass
+    except Exception as _e:
+        log.debug("pramanix.fast_path: metrics increment failed: %s", _e)
 
 
 # A fast-path rule takes (intent_dict, state_dict) and returns:

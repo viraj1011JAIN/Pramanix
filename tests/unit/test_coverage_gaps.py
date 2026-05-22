@@ -1162,9 +1162,17 @@ class TestCircuitBreakerPrometheusEarlyReturn:
         cb._increment_pressure_metric()  # line 361 — early return
 
     def test_distributed_update_prometheus_early_return(self) -> None:
-        from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
+        from pramanix.circuit_breaker import (
+            CircuitBreakerConfig,
+            DistributedCircuitBreaker,
+            InMemoryDistributedBackend,
+        )
 
-        dcb = DistributedCircuitBreaker(guard=make_allow_guard(), config=CircuitBreakerConfig())
+        dcb = DistributedCircuitBreaker(
+            guard=make_allow_guard(),
+            config=CircuitBreakerConfig(),
+            backend=InMemoryDistributedBackend(),
+        )
         dcb._metrics_available = False
         dcb._update_prometheus()  # line 626 — early return
 

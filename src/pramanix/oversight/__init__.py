@@ -10,7 +10,7 @@ from pramanix.oversight.workflow import (
     ApprovalRequest,
     ApprovalStatus,
     EscalationQueue,
-    InMemoryApprovalWorkflow,
+    InMemoryApprovalWorkflow,  # kept importable for tests; not in __all__
     OversightRecord,
 )
 
@@ -19,6 +19,5 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalStatus",
     "EscalationQueue",
-    "InMemoryApprovalWorkflow",
     "OversightRecord",
 ]

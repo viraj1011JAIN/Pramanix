@@ -1022,12 +1022,16 @@ class TestAuditSinkCoverage:
 
 
 class TestKeyProviderCoverage:
-    def test_pem_key_provider_rotate_raises(self) -> None:
+    def test_pem_key_provider_rotate_works(self) -> None:
         from pramanix.key_provider import PemKeyProvider
 
-        p = PemKeyProvider(b"fake-pem-bytes", version="v1")
-        with pytest.raises(NotImplementedError, match="rotation"):
-            p.rotate_key()
+        initial_pem = b"placeholder-pem"
+        p = PemKeyProvider(initial_pem, version="v1")
+        assert p.supports_rotation is True
+        p.rotate_key()
+        new_pem = p.private_key_pem()
+        assert new_pem != initial_pem
+        assert new_pem.startswith(b"-----BEGIN PRIVATE KEY-----")
 
     def test_env_key_provider_rotate_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from pramanix.key_provider import EnvKeyProvider
@@ -1037,16 +1041,19 @@ class TestKeyProviderCoverage:
         with pytest.raises(NotImplementedError, match="rotation"):
             p.rotate_key()
 
-    def test_file_key_provider_rotate_raises(self, tmp_path: object) -> None:
+    def test_file_key_provider_rotate_works(self, tmp_path: object) -> None:
         import pathlib
 
         from pramanix.key_provider import FileKeyProvider
 
         f = pathlib.Path(str(tmp_path)) / "key.pem"
-        f.write_bytes(b"fake-pem")
+        f.write_bytes(b"placeholder-pem")
         p = FileKeyProvider(f)
-        with pytest.raises(NotImplementedError, match="rotation"):
-            p.rotate_key()
+        assert p.supports_rotation is True
+        p.rotate_key()
+        new_pem = f.read_bytes()
+        assert new_pem != b"placeholder-pem"
+        assert new_pem.startswith(b"-----BEGIN PRIVATE KEY-----")
 
     def test_file_key_provider_version_oserror(self) -> None:
         from pramanix.key_provider import FileKeyProvider

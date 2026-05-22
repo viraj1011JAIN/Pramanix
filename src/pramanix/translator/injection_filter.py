@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import logging
 import re
-import warnings
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -50,32 +49,26 @@ class SecurityWarning(UserWarning):
 __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 
 # ── RE2 engine (linear-time, ReDoS-immune) ────────────────────────────────────
-# google-re2 is a drop-in replacement for stdlib re but uses Google's RE2 engine
-# which guarantees O(n) matching time regardless of input.  This eliminates the
-# ReDoS attack surface entirely.  Install via: pip install 'pramanix[security]'
-#
-# If unavailable, stdlib re is used with a WARNING.  The injection patterns in
-# this file use only basic regex features compatible with both engines.
-_re_engine: Any = re  # stdlib re by default; replaced below if google-re2 is installed
+# google-re2 guarantees O(n) matching; required — module raises RuntimeError at
+# load time if absent.  Install via: pip install 'pramanix[security]'
 _RE2_AVAILABLE = False
 try:
     import re2 as _re2
 
-    _re_engine = _re2
+    _re_engine: Any = _re2
     _RE2_AVAILABLE = True
-except ImportError:
-    warnings.warn(
-        "pramanix.translator.injection_filter: google-re2 is not installed — "
-        "falling back to stdlib re (ReDoS attack via crafted injection patterns is possible). "
-        "Install with: pip install 'pramanix[security]'",
-        SecurityWarning,
-        stacklevel=2,
-    )
-    _log.warning(
-        "pramanix.translator.injection_filter: google-re2 not installed — "
-        "stdlib re is in use; ReDoS via crafted injection patterns is possible. "
-        "pip install 'pramanix[security]'"
-    )
+except ImportError as _re2_err:
+    raise RuntimeError(
+        "pramanix.translator.injection_filter: google-re2 is required but not installed. "
+        "ReDoS via crafted injection patterns is a critical security risk without it. "
+        "Install with: pip install 'pramanix[security]'"
+    ) from _re2_err
+
+
+def _re_ci(pattern: str) -> Any:
+    opts = _re_engine.Options()
+    opts.case_sensitive = False
+    return _re_engine.compile(pattern, opts)
 
 
 # ── Injection pattern registry ─────────────────────────────────────────
@@ -93,22 +86,14 @@ except ImportError:
 #
 from pramanix.translator._injection_patterns import INJECTION_PATTERNS  # noqa: E402
 
-if not _RE2_AVAILABLE:
-    _log.warning(
-        "pramanix.injection_filter: google-re2 not installed — "
-        "stdlib re is in use; ReDoS via crafted input is possible under sustained load. "
-        "pip install 'pramanix[security]' to eliminate this risk."
-    )
-
 # Combined alternation compiled once at import time.
-_COMBINED_RE: re.Pattern[str] = _re_engine.compile(
+_COMBINED_RE: re.Pattern[str] = _re_ci(
     "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS),
-    _re_engine.IGNORECASE,
 )
 
 # Individual patterns compiled for reason attribution (on a hit only).
 _INDIVIDUAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (_re_engine.compile(pat, _re_engine.IGNORECASE), label) for pat, label in INJECTION_PATTERNS
+    (_re_ci(pat), label) for pat, label in INJECTION_PATTERNS
 ]
 
 

@@ -60,20 +60,25 @@ class TestAuditSinksProductionError:
         with pytest.raises(ConfigurationError, match="S3AuditSink|KafkaAuditSink"):
             GuardConfig()
 
-    def test_bypass_env_var_suppresses_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_bypass_env_var_removed_still_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PRAMANIX_ALLOW_NO_AUDIT_SINKS bypass was removed in Phase 1 hardening.
+
+        Setting the env var must NOT suppress the ConfigurationError — there
+        is no escape hatch; the only remedy is to provide real audit_sinks.
+        """
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "1")
-        # Must not raise — bypass is active.
-        cfg = GuardConfig()
-        assert cfg.audit_sinks == ()
+        with pytest.raises(ConfigurationError, match="audit_sinks"):
+            GuardConfig()
 
-    def test_bypass_env_var_true_word_suppresses_error(
+    def test_bypass_env_var_true_word_also_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """PRAMANIX_ALLOW_NO_AUDIT_SINKS=true also no longer suppresses the error."""
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.setenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", "true")
-        cfg = GuardConfig()
-        assert cfg.audit_sinks == ()
+        with pytest.raises(ConfigurationError, match="audit_sinks"):
+            GuardConfig()
 
     def test_non_production_env_no_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "staging")
@@ -89,12 +94,12 @@ class TestAuditSinksProductionError:
         assert cfg.audit_sinks == ()
 
     def test_real_sink_in_production_no_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.audit_sink import InMemoryAuditSink
+        from pramanix.audit_sink import StdoutAuditSink
 
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.delenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", raising=False)
-        # A real sink satisfies the requirement — no error.
-        cfg = GuardConfig(audit_sinks=(InMemoryAuditSink(),))
+        # A real production sink satisfies the requirement — no error.
+        cfg = GuardConfig(audit_sinks=(StdoutAuditSink(),))
         assert len(cfg.audit_sinks) == 1
 
     def test_error_type_is_configuration_error_not_warning(

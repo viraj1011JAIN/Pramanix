@@ -115,6 +115,14 @@ class InMemoryAuditSink:
     """
 
     def __init__(self) -> None:
+        import warnings as _w
+        _w.warn(
+            "InMemoryAuditSink is for testing only — all decisions are lost on "
+            "process restart. Use a persistent AuditSink (KafkaAuditSink, "
+            "S3AuditSink, SplunkHecAuditSink, DatadogAuditSink) in production.",
+            UserWarning,
+            stacklevel=2,
+        )
         self._lock = threading.Lock()
         self._decisions: list[Decision] = []
 

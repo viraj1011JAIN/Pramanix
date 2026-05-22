@@ -402,7 +402,11 @@ class TestCircuitBreakerPrometheusImportError:
     def test_distributed_cb_prometheus_import_error_sets_metrics_unavailable(self) -> None:
         """DistributedCircuitBreaker._register_metrics: prometheus ImportError → metrics_available=False."""
         from pramanix import E, Field, Guard, GuardConfig, Policy
-        from pramanix.circuit_breaker import CircuitBreakerConfig, DistributedCircuitBreaker
+        from pramanix.circuit_breaker import (
+            CircuitBreakerConfig,
+            DistributedCircuitBreaker,
+            InMemoryDistributedBackend,
+        )
 
         _amount = Field("amount", Decimal, "Real")
 
@@ -422,7 +426,7 @@ class TestCircuitBreakerPrometheusImportError:
         config = CircuitBreakerConfig(namespace="import-err-test-distributed")
 
         with patch.dict(sys.modules, {"prometheus_client": None}):
-            cb = DistributedCircuitBreaker(guard, config)
+            cb = DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
 
         assert cb._metrics_available is False
 

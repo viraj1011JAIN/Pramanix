@@ -483,6 +483,14 @@ class InMemoryApprovalWorkflow:
         max_records: int = 100_000,
         max_decisions: int = 100_000,
     ) -> None:
+        import warnings as _w
+        _w.warn(
+            "InMemoryApprovalWorkflow is for testing only — all approval records "
+            "are lost on process restart and are not shared across processes. "
+            "Replace with a persistent workflow backend in production.",
+            UserWarning,
+            stacklevel=2,
+        )
         # Per-instance key: generate fresh entropy for each workflow instance so
         # that test suites importing this module across multiple pytest workers or
         # via importlib.reload() each get an isolated key.  Callers that need

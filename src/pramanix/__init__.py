@@ -32,7 +32,7 @@ __stability__: dict[str, str] = {
     "fast_path": "beta",  # fast-path cache (GuardConfig.fast_path_enabled)
     "ifc": "beta",  # information-flow control (TrustLabel, FlowPolicy, FlowEnforcer)
     "privilege": "beta",  # privilege separation (ExecutionScope, ScopeEnforcer)
-    "oversight": "beta",  # human oversight (InMemoryApprovalWorkflow, EscalationQueue)
+    "oversight": "beta",  # human oversight (EscalationQueue, persistent workflow backends)
     "memory": "beta",  # secure scoped memory (SecureMemoryStore, ScopedMemoryPartition)
     "lifecycle": "beta",  # policy lifecycle (PolicyDiff, ShadowEvaluator)
     "provenance": "beta",  # chain-of-custody (ProvenanceRecord, ProvenanceChain)
@@ -51,7 +51,6 @@ from pramanix.audit import (
 from pramanix.audit_sink import (
     AuditSink,
     DatadogAuditSink,
-    InMemoryAuditSink,
     KafkaAuditSink,
     S3AuditSink,
     SplunkHecAuditSink,
@@ -61,7 +60,6 @@ from pramanix.circuit_breaker import (
     AdaptiveCircuitBreaker,
     CircuitBreakerConfig,
     DistributedCircuitBreaker,
-    InMemoryDistributedBackend,
     RedisDistributedBackend,
 )
 from pramanix.compiler import (
@@ -207,7 +205,6 @@ from pramanix.oversight import (
     ApprovalRequest,
     ApprovalStatus,
     EscalationQueue,
-    InMemoryApprovalWorkflow,
     OversightRecord,
 )
 from pramanix.policy import Policy, invariant_mixin, model_dump_z3
@@ -316,10 +313,9 @@ __all__ = [
     "HaystackGuardedComponent",
     # Identity claims
     "IdentityClaims",
-    "InMemoryAuditSink",
-    # Oversight workflow
-    "InMemoryApprovalWorkflow",
-    "InMemoryDistributedBackend",
+    # InMemoryAuditSink / InMemoryApprovalWorkflow / InMemoryDistributedBackend removed
+    # from public API — test-only; import from pramanix.audit_sink /
+    # pramanix.oversight.workflow / pramanix.circuit_breaker directly in test code.
     "InjectionBlockedError",
     # D-4: Injection scorer
     "InjectionScorer",

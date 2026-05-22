@@ -81,8 +81,8 @@ def _inc_sync_failure_counter() -> None:
     try:
         if _CB_SYNC_FAILURE_COUNTER is not None:
             _CB_SYNC_FAILURE_COUNTER.inc()
-    except Exception:
-        pass
+    except Exception as _e:
+        log.debug("pramanix.circuit_breaker: metrics increment failed: %s", _e)
 
 
 def _prom_register(factory: Any, name: str, description: str, labelnames: list[str]) -> Any:
@@ -487,6 +487,16 @@ class InMemoryDistributedBackend:
     _store: ClassVar[dict[str, _DistributedState]] = {}
     _lock: ClassVar[Any] = _threading.Lock()
 
+    def __init__(self) -> None:
+        import warnings as _w
+        _w.warn(
+            "InMemoryDistributedBackend is for testing only — state is lost on "
+            "process restart and not shared across processes. Use "
+            "RedisDistributedBackend in production.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     @classmethod
     async def get_state(cls, namespace: str) -> _DistributedState:
         """Fetch the current circuit state from the distributed store."""
@@ -560,7 +570,14 @@ class DistributedCircuitBreaker:
     ) -> None:
         self._guard = guard
         self._config = config or CircuitBreakerConfig()
-        self._backend = backend or InMemoryDistributedBackend()
+        if backend is None:
+            from pramanix.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "DistributedCircuitBreaker requires an explicit backend. "
+                "Pass backend=RedisDistributedBackend(...) for production, "
+                "or backend=InMemoryDistributedBackend() in test code."
+            )
+        self._backend = backend
         self._local_state = CircuitState.CLOSED
         self._local_failure_count = 0
         self._last_transition = time.monotonic()
@@ -760,8 +777,8 @@ class DistributedCircuitBreaker:
                     namespace=self._config.namespace,
                     state=s.value,
                 ).set(1 if self._local_state == s else 0)
-        except Exception:
-            pass
+        except Exception as _e:
+            log.debug("pramanix.circuit_breaker: state gauge update failed: %s", _e)
 
 
 # ── C-5: Redis distributed backend ───────────────────────────────────────────
@@ -1253,8 +1270,8 @@ class TranslatorCircuitBreaker:
                                     model=self.model, outcome="failed"
                                 ).inc()
                             self._calls_counter.labels(model=self.model, outcome="failure").inc()
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            log.debug("pramanix.translator_cb: metrics increment failed: %s", _e)
             raise
         except Exception:
             async with self._lock:
@@ -1281,8 +1298,8 @@ class TranslatorCircuitBreaker:
                         if is_probe:
                             self._probes_counter.labels(model=self.model, outcome="succeeded").inc()
                         self._calls_counter.labels(model=self.model, outcome="success").inc()
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        log.debug("pramanix.translator_cb: metrics increment failed: %s", _e)
             return result
 
     def reset(self) -> None:

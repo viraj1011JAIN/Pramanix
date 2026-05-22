@@ -248,8 +248,8 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
         if _FIELD_SEEN_COUNTER:
             for _f in field_names:
                 _FIELD_SEEN_COUNTER.labels(policy=policy_name, field=_f).inc()
-    except Exception:
-        pass
+    except Exception as _e:
+        log.debug("pramanix.guard: metrics increment failed: %s", _e)
 
 
 # ── _CBWrappedTranslator ──────────────────────────────────────────────────────
