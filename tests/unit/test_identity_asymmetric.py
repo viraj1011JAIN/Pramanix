@@ -108,11 +108,16 @@ def _make_rs256_token(payload: dict, private_key) -> str:
 
 
 def _make_es256_token(payload: dict, private_key) -> str:
+    from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+
     header_b64 = _b64url(json.dumps({"alg": "ES256", "typ": "JWT"}).encode())
     payload_b64 = _b64url(json.dumps(payload).encode())
     signing_input = f"{header_b64}.{payload_b64}".encode()
-    sig = private_key.sign(signing_input, ECDSA(hashes.SHA256()))
-    return f"{header_b64}.{payload_b64}.{_b64url(sig)}"
+    # cryptography produces DER; JWT ES256 requires raw R||S (RFC 7515 §A.3)
+    sig_der = private_key.sign(signing_input, ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(sig_der)
+    sig_raw = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return f"{header_b64}.{payload_b64}.{_b64url(sig_raw)}"
 
 
 def _valid_payload(sub: str = "user-asymmetric", exp_offset: int = 3600) -> dict:

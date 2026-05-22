@@ -286,14 +286,22 @@ class JWTIdentityLinker:
             from cryptography.exceptions import InvalidSignature
             from cryptography.hazmat.primitives import hashes
             from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
+            from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
         except ImportError as exc:
             raise ImportError(
                 "ES256 requires the 'cryptography' package: pip install pramanix[crypto]"
             ) from exc
 
-        sig = self._b64url_decode(sig_b64)
+        # JWT ES256 signatures are raw R||S (64 bytes, RFC 7515 §A.3).
+        # cryptography's verify() expects DER-encoded ECDSA, so convert.
+        sig_raw = self._b64url_decode(sig_b64)
+        if len(sig_raw) != 64:
+            raise JWTVerificationError("JWT ES256 signature must be 64 bytes (R||S)")
+        r = int.from_bytes(sig_raw[:32], "big")
+        s = int.from_bytes(sig_raw[32:], "big")
+        sig_der = encode_dss_signature(r, s)
         try:
-            self._public_key.verify(sig, signing_input, ECDSA(hashes.SHA256()))
+            self._public_key.verify(sig_der, signing_input, ECDSA(hashes.SHA256()))
         except InvalidSignature as exc:
             raise JWTVerificationError("JWT ES256 signature verification failed") from exc
 

@@ -910,14 +910,6 @@ class RedisDistributedBackend:
         except (ValueError, KeyError):
             return _DistributedState()
 
-    # Severity ordering for conservative circuit-state merge.
-    # Higher value = more severe.  Incoming state only escalates, never downgrades.
-    _STATE_SEVERITY: ClassVar[dict[str, int]] = {
-        CircuitState.CLOSED.value: 0,
-        CircuitState.HALF_OPEN.value: 1,
-        CircuitState.OPEN.value: 2,
-        CircuitState.ISOLATED.value: 3,
-    }
     # Maximum number of WATCH/MULTI/EXEC retry attempts before giving up.
     _MERGE_MAX_RETRIES = 3
 
@@ -972,8 +964,8 @@ class RedisDistributedBackend:
                             current = _DistributedState()
 
                         # Conservative merge
-                        cur_sev = self._STATE_SEVERITY.get(current.circuit_state, 0)
-                        new_sev = self._STATE_SEVERITY.get(state.circuit_state, 0)
+                        cur_sev = self._SEVERITY.get(current.circuit_state, 0)
+                        new_sev = self._SEVERITY.get(state.circuit_state, 0)
                         merged = _DistributedState(
                             circuit_state=(
                                 state.circuit_state if new_sev >= cur_sev else current.circuit_state

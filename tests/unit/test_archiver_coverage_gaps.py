@@ -301,6 +301,8 @@ class TestEncryptedArchiveWriter:
         # Each call uses a fresh 96-bit random nonce → ciphertext must differ
         assert enc1 != enc2
 
+
+class TestInjectionConfidenceScoreAmountField:
     def test_amount_field_custom_key_in_injection_score(self) -> None:
         """Paired test: injection_confidence_score with non-default amount_field."""
         from pramanix.translator._sanitise import injection_confidence_score

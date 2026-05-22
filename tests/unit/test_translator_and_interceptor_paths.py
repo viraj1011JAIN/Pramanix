@@ -17,6 +17,7 @@ Targets (all files that were below 96%):
 
 from __future__ import annotations
 
+import pathlib
 import sys
 import threading
 from unittest.mock import patch  # kept only for input-injector uses (glob, ctypes)
@@ -387,7 +388,7 @@ class TestCohereTranslatorCoverage:
 
 
 class TestLlamaCppCoverage:
-    def test_get_llm_loads_from_cache(self, tmp_path: pytest.fixture) -> None:  # type: ignore[type-arg]
+    def test_get_llm_loads_from_cache(self, tmp_path: pathlib.Path) -> None:
         """_get_llm() returns the cached model without calling Llama().
 
         Uses importlib.import_module to get a single canonical module reference —

@@ -231,8 +231,8 @@ def test_score_is_zero_for_fully_benign_input() -> None:
 # ── Bounds stress test: worst-case simultaneous signals ──────────────────────
 
 
-def test_all_signals_simultaneously_capped_at_1_0() -> None:
-    """All signals fire at once: result must be exactly 1.0 (not > 1.0)."""
+def test_four_signals_simultaneously_capped_at_1_0() -> None:
+    """Four signals fire at once: result must be exactly 1.0 (not > 1.0)."""
     user_input = "AAAAAAAAAAAAAAAAAAAAAA"  # 22 chars → +0.2 high-entropy
     extracted_intent = {
         "amount": {},  # dict → Decimal raises → +0.4
