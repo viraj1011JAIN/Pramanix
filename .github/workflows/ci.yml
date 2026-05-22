@@ -2,14 +2,15 @@
 # Pramanix Iron Gate CI Pipeline — v0.7
 #
 # Job execution order (dependency chain — fail-fast at each gate):
-#   sast → alpine-ban → lint-typecheck → test → coverage → wheel-smoke → trivy → license-scan
+#   sast → alpine-ban → lint-typecheck → test → { coverage, integration } → wheel-smoke → extras-smoke → trivy → license-scan
 #
 # Security rationale:
 #   SAST first: reject known-CVE deps before ANY test code runs.
 #   Alpine ban second: reject musl builds before compilation/install.
 #   Lint/type third: reject broken code before spending compute on tests.
 #   Tests fourth: full adversarial + property suite, ordered unit→integ→prop→adv.
-#   Coverage fifth: enforce 95% floor; fail PRs that drop > 0.5%.
+#   Coverage fifth: enforce 98% floor; fail PRs that drop > 0.5%.
+#   Integration fifth (parallel): real testcontainer infra — Redis, Kafka, Postgres, Vault.
 #   Wheel-smoke sixth: build wheel + sdist and install into a clean venv — catches
 #     missing manifest files and accidentally-optional runtime deps before PyPI publish.
 #   Trivy seventh: container image CVE scan — fail on CRITICAL/HIGH.
@@ -328,7 +329,6 @@ jobs:
       - name: "Step 5/5 — Perf benchmarks (PR: non-slow only)"
         if: github.ref != 'refs/heads/main' && github.event_name == 'pull_request'
         run: pytest tests/perf/ -m "not slow" --tb=short
-        continue-on-error: true
 
       - name: Generate coverage report (Python 3.13 only)
         if: matrix.python-version == '3.13'
@@ -351,10 +351,10 @@ jobs:
 
   # ──────────────────────────────────────────────────────────────────────────
   # JOB 5 — Coverage Gate
-  # Enforces ≥95% branch coverage and Codecov delta < -0.5%.
+  # Enforces ≥98% branch coverage and Codecov delta < -0.5%.
   # ──────────────────────────────────────────────────────────────────────────
   coverage:
-    name: "Coverage gate (≥95%, delta ≤-0.5%)"
+    name: "Coverage gate (≥98%, delta ≤-0.5%)"
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -372,8 +372,8 @@ jobs:
         with:
           name: coverage-report
 
-      - name: Enforce coverage threshold (≥95%)
-        run: coverage report --fail-under=95
+      - name: Enforce coverage threshold (≥98%)
+        run: coverage report --fail-under=98
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
@@ -537,7 +537,7 @@ jobs:
   wheel-smoke:
     name: "Wheel install smoke (clean venv)"
     runs-on: ubuntu-latest
-    needs: coverage
+    needs: [coverage, integration]
     steps:
       - uses: actions/checkout@v4
 
@@ -781,13 +781,12 @@ jobs:
   # LlamaCpp with a GGUF model) are env-gated: they are skipped automatically
   # when the corresponding environment variables are absent.
   #
-  # This job runs on every push/PR (not schedule) and does NOT gate the main
-  # test job — it is advisory for contributor PRs but required before merge.
+  # This job runs on every push/PR and is a strict blocker: wheel-smoke,
+  # extras-smoke, trivy, and license-scan all require integration to pass.
   # ──────────────────────────────────────────────────────────────────────────
   integration:
     name: "Integration tests (real infra — testcontainers)"
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule'
     needs: test
 
     steps:

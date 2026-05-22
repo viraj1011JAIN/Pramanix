@@ -131,8 +131,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     # Pramanix production defaults
     PRAMANIX_EXECUTION_MODE="async-thread" \
     PRAMANIX_WORKER_WARMUP="true" \
-    PRAMANIX_LOG_LEVEL="INFO" \
-    PRAMANIX_TRANSLATOR_ENABLED="false"
+    PRAMANIX_LOG_LEVEL="INFO"
 
 # ── Health check ──────────────────────────────────────────────────────────────
 # Verifies the pramanix package imports cleanly every 30s
