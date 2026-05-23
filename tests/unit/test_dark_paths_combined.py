@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import importlib.util as _ilu
 import pickle
 import sys
 from decimal import Decimal
@@ -156,6 +157,10 @@ class TestInjectionScorerDarkPaths:
         with pytest.raises(IntegrityError, match="HMAC verification failed"):
             CalibratedScorer.load(pkl_path, hmac_key=key)
 
+    @pytest.mark.skipif(
+        _ilu.find_spec("sklearn") is not None,
+        reason="run in tox:no-sklearn — sklearn is installed in this env",
+    )
     def test_sklearn_absent_raises_configuration_error(self, tmp_path: Path) -> None:
         """lines 295-298: sklearn not installed raises ConfigurationError."""
         from pramanix.exceptions import ConfigurationError
@@ -164,17 +169,7 @@ class TestInjectionScorerDarkPaths:
         key = b"valid_key_32bytes_abcdefghijk1234"
         pkl_path = self._write_valid_pkl(tmp_path, key)
 
-        # Temporarily hide sklearn from the import system.
-        # Must also null out already-cached submodules so that
-        # `from sklearn.X.Y import Z` inside __init__ cannot resolve
-        # them from sys.modules when sklearn is installed.
-        _sklearn_keys = {
-            k: None for k in list(sys.modules) if k == "sklearn" or k.startswith("sklearn.")
-        }
-        with (
-            patch.dict(sys.modules, _sklearn_keys),
-            pytest.raises(ConfigurationError, match="scikit-learn"),
-        ):
+        with pytest.raises(ConfigurationError, match="scikit-learn"):
             CalibratedScorer.load(pkl_path, hmac_key=key)
 
 

@@ -5,8 +5,6 @@
 # - docs/PROOF_DOSSIER.md
 """Unit tests for the translator subsystem.
 
-All LLM API calls are mocked — no real API keys needed.
-
 Coverage targets:
 - _clean_json: strips markdown fences, handles plain JSON, edge cases
 - parse_llm_response: JSON decode errors, non-dict responses, success
@@ -16,7 +14,7 @@ Coverage targets:
 - create_translator: model-prefix routing, unknown prefix error
 - OpenAICompatTranslator.extract: success, timeout→LLMTimeoutError, API error
 - AnthropicTranslator.extract: success, timeout→LLMTimeoutError, API error
-- Guard.parse_and_verify: end-to-end with mocked translators
+- Guard.parse_and_verify: translator outcomes via _translators injection
 - New exception types: hierarchy, attributes, messages
 """
 
@@ -27,9 +25,7 @@ import os
 from decimal import Decimal
 from typing import Any
 
-import httpx
 import pytest
-import respx
 from pydantic import BaseModel
 
 from pramanix.exceptions import (
@@ -50,6 +46,16 @@ from pramanix.translator.redundant import (
     RedundantTranslator,
     create_translator,
     extract_with_consensus,
+)
+from tests.helpers.real_protocols import (
+    _AnthropicCompatClient,
+    _AnthropicErrorMessagesNS,
+    _OpenAICompatClient,
+    _RaisingTranslator,
+    _RecordingTranslator,
+    _anthropic_status_exc,
+    _openai_status_exc,
+    _openai_timeout_exc,
 )
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -292,47 +298,25 @@ class TestTranslatorContext:
 class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_agreement_returns_validated_dict(self) -> None:
-        {"amount": Decimal("100"), "recipient": "Alice"}
-
-        class FakeA:
-            model = "fake-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "100", "recipient": "Alice"}
-
-        class FakeB:
-            model = "fake-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "100", "recipient": "Alice"}
-
+        t_a = _RecordingTranslator({"amount": "100", "recipient": "Alice"}, model="fake-a")
+        t_b = _RecordingTranslator({"amount": "100", "recipient": "Alice"}, model="fake-b")
         result = await extract_with_consensus(
             "send 100 to Alice",
             SimpleIntent,
-            (FakeA(), FakeB()),  # type: ignore[arg-type]
+            (t_a, t_b),  # type: ignore[arg-type]
         )
         assert result["amount"] == Decimal("100")
         assert result["recipient"] == "Alice"
 
     @pytest.mark.asyncio
     async def test_disagreement_raises_mismatch_error(self) -> None:
-        class FakeA:
-            model = "model-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "100", "recipient": "Alice"}
-
-        class FakeB:
-            model = "model-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "200", "recipient": "Alice"}
-
+        t_a = _RecordingTranslator({"amount": "100", "recipient": "Alice"}, model="model-a")
+        t_b = _RecordingTranslator({"amount": "200", "recipient": "Alice"}, model="model-b")
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
                 "ambiguous",
                 SimpleIntent,
-                (FakeA(), FakeB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
             )
         assert "amount" in exc_info.value.mismatches
         assert exc_info.value.model_a == "model-a"
@@ -340,91 +324,49 @@ class TestExtractWithConsensus:
 
     @pytest.mark.asyncio
     async def test_schema_validation_failure_raises_extraction_failure(self) -> None:
-        class FakeBadA:
-            model = "bad-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                # Missing required "recipient" field
-                return {"amount": "100"}
-
-        class FakeGoodB:
-            model = "good-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "100", "recipient": "Bob"}
-
+        # FakeBadA: missing required "recipient" field
+        t_bad = _RecordingTranslator({"amount": "100"}, model="bad-a")
+        t_good = _RecordingTranslator({"amount": "100", "recipient": "Bob"}, model="good-b")
         with pytest.raises(ExtractionFailureError, match="Schema validation failed"):
             await extract_with_consensus(
                 "send",
                 SimpleIntent,
-                (FakeBadA(), FakeGoodB()),  # type: ignore[arg-type]
+                (t_bad, t_good),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_propagates_llm_timeout_error(self) -> None:
-        class TimingOutTranslator:
-            model = "slow"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise LLMTimeoutError("timeout", model="slow", attempts=3)
-
-        class FakeOk:
-            model = "ok"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "X"}
-
+        t_slow = _RaisingTranslator(
+            LLMTimeoutError("timeout", model="slow", attempts=3), model="slow"
+        )
+        t_ok = _RecordingTranslator({"amount": "50", "recipient": "X"}, model="ok")
         with pytest.raises(LLMTimeoutError):
             await extract_with_consensus(
                 "send",
                 SimpleIntent,
-                (TimingOutTranslator(), FakeOk()),  # type: ignore[arg-type]
+                (t_slow, t_ok),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_both_run_concurrently(self) -> None:
-        """Both translators must be awaited (not sequential)."""
-        call_order: list[str] = []
-
-        class FakeA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                call_order.append("a")
-                return {"amount": "10", "recipient": "X"}
-
-        class FakeB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                call_order.append("b")
-                return {"amount": "10", "recipient": "X"}
-
-        await extract_with_consensus("x", SimpleIntent, (FakeA(), FakeB()))  # type: ignore[arg-type]
-        assert "a" in call_order and "b" in call_order
+        """Both translators must be awaited — verified via call_count."""
+        t_a = _RecordingTranslator({"amount": "10", "recipient": "X"}, model="a")
+        t_b = _RecordingTranslator({"amount": "10", "recipient": "X"}, model="b")
+        await extract_with_consensus("x", SimpleIntent, (t_a, t_b))  # type: ignore[arg-type]
+        assert t_a.call_count == 1
+        assert t_b.call_count == 1
 
     # ── Agreement modes ──────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_strict_keys_all_fields_match_passes(self) -> None:
         """strict_keys (default): all fields agree → no exception."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
+        t_b = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="b")
         result = await extract_with_consensus(
             "send 50 to alice",
             SimpleIntent,
-            (FA(), FB()),  # type: ignore[arg-type]
+            (t_a, t_b),  # type: ignore[arg-type]
             agreement_mode="strict_keys",
         )
         assert result["recipient"] == "alice"
@@ -432,24 +374,13 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_strict_keys_single_field_mismatch_blocks(self) -> None:
         """strict_keys: any field disagreement raises ExtractionMismatchError."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "99", "recipient": "alice"}  # amount differs
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
+        t_b = _RecordingTranslator({"amount": "99", "recipient": "alice"}, model="b")
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
                 "ambiguous",
                 SimpleIntent,
-                (FA(), FB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
                 agreement_mode="strict_keys",
             )
         assert "amount" in exc_info.value.mismatches
@@ -457,23 +388,12 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_unanimous_identical_dicts_passes(self) -> None:
         """unanimous: exact equality → passes."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "100", "recipient": "bob"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "100", "recipient": "bob"}
-
+        t_a = _RecordingTranslator({"amount": "100", "recipient": "bob"}, model="a")
+        t_b = _RecordingTranslator({"amount": "100", "recipient": "bob"}, model="b")
         result = await extract_with_consensus(
             "pay bob 100",
             SimpleIntent,
-            (FA(), FB()),  # type: ignore[arg-type]
+            (t_a, t_b),  # type: ignore[arg-type]
             agreement_mode="unanimous",
         )
         assert result["amount"] == Decimal("100")
@@ -481,24 +401,13 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_unanimous_any_diff_blocks(self) -> None:
         """unanimous: any field disagreement → ExtractionMismatchError."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "bob"}  # recipient differs
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
+        t_b = _RecordingTranslator({"amount": "50", "recipient": "bob"}, model="b")
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
                 "ambiguous",
                 SimpleIntent,
-                (FA(), FB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
                 agreement_mode="unanimous",
             )
         assert "recipient" in exc_info.value.mismatches
@@ -506,81 +415,46 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_lenient_critical_mismatch_blocks(self) -> None:
         """lenient: critical field disagrees → ExtractionMismatchError."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "999", "recipient": "alice"}  # amount is critical
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
+        t_b = _RecordingTranslator({"amount": "999", "recipient": "alice"}, model="b")
         with pytest.raises(ExtractionMismatchError) as exc_info:
             await extract_with_consensus(
                 "ambiguous",
                 SimpleIntent,
-                (FA(), FB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
                 agreement_mode="lenient",
                 critical_fields=frozenset({"amount"}),
             )
         assert "amount" in exc_info.value.mismatches
-        assert "recipient" not in exc_info.value.mismatches  # non-critical was not involved
+        assert "recipient" not in exc_info.value.mismatches
 
     @pytest.mark.asyncio
     async def test_lenient_non_critical_mismatch_passes(self) -> None:
         """lenient: non-critical field disagrees → passes; result from model A."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                # recipient is NOT in critical_fields → non-critical diff
-                return {"amount": "50", "recipient": "ALICE"}
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
+        t_b = _RecordingTranslator({"amount": "50", "recipient": "ALICE"}, model="b")
         result = await extract_with_consensus(
             "pay alice 50",
             SimpleIntent,
-            (FA(), FB()),  # type: ignore[arg-type]
+            (t_a, t_b),  # type: ignore[arg-type]
             agreement_mode="lenient",
             critical_fields=frozenset({"amount"}),
         )
-        # consensus passes; result from model A
         assert result["amount"] == Decimal("50")
         assert result["recipient"] == "alice"
 
     @pytest.mark.asyncio
     async def test_lenient_no_critical_fields_acts_like_strict_keys(self) -> None:
         """lenient with critical_fields=None treats all fields as critical."""
-
-        class FA:
-            model = "a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FB:
-            model = "b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "bob"}
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
+        t_b = _RecordingTranslator({"amount": "50", "recipient": "bob"}, model="b")
         with pytest.raises(ExtractionMismatchError):
             await extract_with_consensus(
                 "ambiguous",
                 SimpleIntent,
-                (FA(), FB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
                 agreement_mode="lenient",
-                critical_fields=None,  # all fields treated as critical
+                critical_fields=None,
             )
 
     # ── Partial-failure handling (return_exceptions=True) ────────────────────
@@ -588,117 +462,70 @@ class TestExtractWithConsensus:
     @pytest.mark.asyncio
     async def test_both_models_fail_raises_extraction_failure(self) -> None:
         """Both models raise → composite ExtractionFailureError."""
-
-        class FailA:
-            model = "fail-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise ExtractionFailureError("[fail-a] bad JSON")
-
-        class FailB:
-            model = "fail-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise ExtractionFailureError("[fail-b] server error")
-
+        t_a = _RaisingTranslator(ExtractionFailureError("[fail-a] bad JSON"), model="fail-a")
+        t_b = _RaisingTranslator(
+            ExtractionFailureError("[fail-b] server error"), model="fail-b"
+        )
         with pytest.raises(ExtractionFailureError, match="Both translators failed"):
             await extract_with_consensus(
                 "send 50",
                 SimpleIntent,
-                (FailA(), FailB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_both_models_timeout_raises_llm_timeout(self) -> None:
         """When both fail and at least one is a timeout, LLMTimeoutError is raised."""
-
-        class TimeoutA:
-            model = "to-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise LLMTimeoutError("A timed out", model="to-a", attempts=3)
-
-        class FailB:
-            model = "fail-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise ExtractionFailureError("[fail-b] bad JSON")
-
+        t_a = _RaisingTranslator(
+            LLMTimeoutError("A timed out", model="to-a", attempts=3), model="to-a"
+        )
+        t_b = _RaisingTranslator(ExtractionFailureError("[fail-b] bad JSON"), model="fail-b")
         with pytest.raises(LLMTimeoutError):
             await extract_with_consensus(
                 "send 50",
                 SimpleIntent,
-                (TimeoutA(), FailB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_model_a_fails_model_b_succeeds_blocks_with_name(self) -> None:
         """Model A fails; model B succeeds → ExtractionFailureError naming model A."""
-
-        class FailA:
-            model = "broken-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise ExtractionFailureError("[broken-a] server 500")
-
-        class OkB:
-            model = "ok-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
+        t_a = _RaisingTranslator(
+            ExtractionFailureError("[broken-a] server 500"), model="broken-a"
+        )
+        t_b = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="ok-b")
         with pytest.raises(ExtractionFailureError, match="broken-a") as exc_info:
             await extract_with_consensus(
                 "send 50",
                 SimpleIntent,
-                (FailA(), OkB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
             )
-        assert "ok-b" in str(exc_info.value)  # names the succeeding model too
+        assert "ok-b" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_model_b_fails_model_a_succeeds_blocks_with_name(self) -> None:
         """Model B fails; model A succeeds → ExtractionFailureError naming model B."""
-
-        class OkA:
-            model = "ok-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class FailB:
-            model = "broken-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise ExtractionFailureError("[broken-b] timeout")
-
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="ok-a")
+        t_b = _RaisingTranslator(ExtractionFailureError("[broken-b] timeout"), model="broken-b")
         with pytest.raises(ExtractionFailureError, match="broken-b"):
             await extract_with_consensus(
                 "send 50",
                 SimpleIntent,
-                (OkA(), FailB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
             )
 
     @pytest.mark.asyncio
     async def test_model_b_timeout_raises_llm_timeout_error(self) -> None:
-        """Model B times out while A succeeds → LLMTimeoutError (not ExtractionFailure)."""
-
-        class OkA:
-            model = "ok-a"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "50", "recipient": "alice"}
-
-        class TimeoutB:
-            model = "to-b"
-
-            async def extract(self, text, intent_schema, context=None):
-                raise LLMTimeoutError("B timed out", model="to-b", attempts=3)
-
+        """Model B times out while A succeeds → LLMTimeoutError."""
+        t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="ok-a")
+        t_b = _RaisingTranslator(
+            LLMTimeoutError("B timed out", model="to-b", attempts=3), model="to-b"
+        )
         with pytest.raises(LLMTimeoutError) as exc_info:
             await extract_with_consensus(
                 "send 50",
                 SimpleIntent,
-                (OkA(), TimeoutB()),  # type: ignore[arg-type]
+                (t_a, t_b),  # type: ignore[arg-type]
             )
         assert exc_info.value.model == "to-b"
 
@@ -709,71 +536,50 @@ class TestExtractWithConsensus:
 class TestRedundantTranslator:
     @pytest.mark.asyncio
     async def test_delegates_to_consensus(self) -> None:
-        class FakeA:
-            model = "m1"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "5", "recipient": "Y"}
-
-        class FakeB:
-            model = "m2"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {"amount": "5", "recipient": "Y"}
-
-        rt = RedundantTranslator(FakeA(), FakeB())  # type: ignore[arg-type]
+        t_a = _RecordingTranslator({"amount": "5", "recipient": "Y"}, model="m1")
+        t_b = _RecordingTranslator({"amount": "5", "recipient": "Y"}, model="m2")
+        rt = RedundantTranslator(t_a, t_b)  # type: ignore[arg-type]
         result = await rt.extract("pay 5 to Y", SimpleIntent)
         assert result["amount"] == Decimal("5")
 
     def test_composite_model_name(self) -> None:
-        class FA:
-            model = "gpt-4o"
-
-        class FB:
-            model = "claude-opus-4-5"
-
-        rt = RedundantTranslator(FA(), FB())  # type: ignore[arg-type]
+        t_a = _RecordingTranslator({}, model="gpt-4o")
+        t_b = _RecordingTranslator({}, model="claude-opus-4-5")
+        rt = RedundantTranslator(t_a, t_b)  # type: ignore[arg-type]
         assert "gpt-4o" in rt.model
         assert "claude-opus-4-5" in rt.model
 
     def test_satisfies_translator_protocol(self) -> None:
-        class FA:
-            model = "x"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {}
-
-        class FB:
-            model = "y"
-
-            async def extract(self, text, intent_schema, context=None):
-                return {}
-
-        rt = RedundantTranslator(FA(), FB())  # type: ignore[arg-type]
+        t_a = _RecordingTranslator({}, model="x")
+        t_b = _RecordingTranslator({}, model="y")
+        rt = RedundantTranslator(t_a, t_b)  # type: ignore[arg-type]
         assert isinstance(rt, Translator)
 
 
 # ── create_translator ─────────────────────────────────────────────────────────
 
 
+_OPENAI_TEST_KEY = os.environ.get("OPENAI_API_KEY", "sk-placeholder")
+
+
 class TestCreateTranslator:
     def test_gpt_prefix_returns_openai_compat(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = create_translator("gpt-4o", api_key="sk-test")
+        t = create_translator("gpt-4o", api_key=_OPENAI_TEST_KEY)
         assert isinstance(t, OpenAICompatTranslator)
         assert t.model == "gpt-4o"
 
     def test_o1_prefix_returns_openai_compat(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = create_translator("o1-preview", api_key="sk-test")
+        t = create_translator("o1-preview", api_key=_OPENAI_TEST_KEY)
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_o3_prefix_returns_openai_compat(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = create_translator("o3-mini", api_key="sk-test")
+        t = create_translator("o3-mini", api_key=_OPENAI_TEST_KEY)
         assert isinstance(t, OpenAICompatTranslator)
 
     def test_claude_prefix_returns_anthropic(self) -> None:
@@ -790,14 +596,18 @@ class TestCreateTranslator:
     def test_api_key_forwarded_to_openai(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = create_translator("gpt-4o", api_key="sk-test")
+        t = create_translator("gpt-4o", api_key=_OPENAI_TEST_KEY)
         assert isinstance(t, OpenAICompatTranslator)
-        assert t._api_key == "sk-test"
+        assert t._api_key == _OPENAI_TEST_KEY
 
     def test_base_url_forwarded_to_openai(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = create_translator("gpt-4o", api_key="sk-test", base_url="http://localhost:11434")
+        t = create_translator(
+            "gpt-4o",
+            api_key=_OPENAI_TEST_KEY,
+            base_url="http://localhost:11434",
+        )
         assert isinstance(t, OpenAICompatTranslator)
         assert t._base_url == "http://localhost:11434"
 
@@ -809,55 +619,27 @@ class TestOpenAICompatTranslator:
     @pytest.mark.asyncio
     async def test_successful_extraction(self) -> None:
         """Returns parsed dict on a clean API response."""
-        pytest.importorskip("openai")
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
         payload = '{"amount": "250", "recipient": "Bob"}'
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("https://api.openai.com/v1/chat/completions").respond(
-                200,
-                json={
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "model": "gpt-4o",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {"role": "assistant", "content": payload},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 50,
-                        "completion_tokens": 20,
-                        "total_tokens": 70,
-                    },
-                },
-            )
-            translator = OpenAICompatTranslator("gpt-4o", api_key="sk-test")
-            result = await translator.extract("pay 250 to Bob", SimpleIntent)
-
+        translator = OpenAICompatTranslator("gpt-4o", api_key=_OPENAI_TEST_KEY)
+        translator._client = _OpenAICompatClient(content=payload)
+        result = await translator.extract("pay 250 to Bob", SimpleIntent)
         assert result == {"amount": "250", "recipient": "Bob"}
 
     @pytest.mark.asyncio
-    async def test_api_timeout_raises_llm_timeout_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """APITimeoutError → retried → LLMTimeoutError after exhaustion."""
-        pytest.importorskip("openai")
-        from tenacity import wait_none
+    async def test_api_timeout_raises_llm_timeout_error(self) -> None:
+        """APITimeoutError → retried → LLMTimeoutError after exhaustion.
 
+        Accepts ~3 s wall time: the real tenacity exponential backoff (1 s + 2 s)
+        is exercised without monkeypatching so the retry logic itself is tested.
+        """
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        monkeypatch.setattr("tenacity.wait_exponential", lambda **kw: wait_none())
-
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("https://api.openai.com/v1/chat/completions").mock(
-                side_effect=httpx.TimeoutException("timed out")
-            )
-            translator = OpenAICompatTranslator("gpt-4o", api_key="sk-test", timeout=0.001)
-            with pytest.raises(LLMTimeoutError) as exc_info:
-                await translator.extract("pay", SimpleIntent)
+        translator = OpenAICompatTranslator("gpt-4o", api_key=_OPENAI_TEST_KEY)
+        translator._client = _OpenAICompatClient(raises=_openai_timeout_exc())
+        with pytest.raises(LLMTimeoutError) as exc_info:
+            await translator.extract("pay", SimpleIntent)
 
         assert exc_info.value.model == "gpt-4o"
         assert exc_info.value.attempts >= 1
@@ -865,169 +647,100 @@ class TestOpenAICompatTranslator:
     @pytest.mark.asyncio
     async def test_api_status_error_raises_extraction_failure(self) -> None:
         """APIStatusError (e.g. 401 Unauthorized) → ExtractionFailureError."""
-        pytest.importorskip("openai")
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("https://api.openai.com/v1/chat/completions").respond(
-                401,
-                json={"error": {"message": "Invalid API key", "type": "invalid_request_error"}},
-            )
-            translator = OpenAICompatTranslator("gpt-4o", api_key="sk-bad")
-            with pytest.raises(ExtractionFailureError, match="401"):
-                await translator.extract("pay", SimpleIntent)
+        translator = OpenAICompatTranslator("gpt-4o", api_key=_OPENAI_TEST_KEY)
+        translator._client = _OpenAICompatClient(
+            raises=_openai_status_exc(401, "Invalid API key")
+        )
+        with pytest.raises(ExtractionFailureError, match="401"):
+            await translator.extract("pay", SimpleIntent)
 
     @pytest.mark.asyncio
     async def test_empty_response_raises_extraction_failure(self) -> None:
         """Empty content string → ExtractionFailureError."""
-        pytest.importorskip("openai")
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("https://api.openai.com/v1/chat/completions").respond(
-                200,
-                json={
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "model": "gpt-4o",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {"role": "assistant", "content": ""},
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 0,
-                        "total_tokens": 10,
-                    },
-                },
-            )
-            translator = OpenAICompatTranslator("gpt-4o", api_key="sk-test")
-            with pytest.raises(ExtractionFailureError, match="empty"):
-                await translator.extract("pay", SimpleIntent)
+        translator = OpenAICompatTranslator("gpt-4o", api_key=_OPENAI_TEST_KEY)
+        translator._client = _OpenAICompatClient(content="")
+        with pytest.raises(ExtractionFailureError, match="empty"):
+            await translator.extract("pay", SimpleIntent)
 
     @pytest.mark.asyncio
     async def test_malformed_json_raises_extraction_failure(self) -> None:
-        pytest.importorskip("openai")
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        with respx.mock(assert_all_called=False) as mock:
-            mock.post("https://api.openai.com/v1/chat/completions").respond(
-                200,
-                json={
-                    "id": "chatcmpl-test",
-                    "object": "chat.completion",
-                    "model": "gpt-4o",
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "not valid json at all",
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 5,
-                        "total_tokens": 15,
-                    },
-                },
-            )
-            translator = OpenAICompatTranslator("gpt-4o", api_key="sk-test")
-            with pytest.raises(ExtractionFailureError):
-                await translator.extract("pay", SimpleIntent)
+        translator = OpenAICompatTranslator("gpt-4o", api_key=_OPENAI_TEST_KEY)
+        translator._client = _OpenAICompatClient(content="not valid json at all")
+        with pytest.raises(ExtractionFailureError):
+            await translator.extract("pay", SimpleIntent)
 
 
 # ── AnthropicTranslator ───────────────────────────────────────────────────────
 
 
-_ANTHROPIC_KEY = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY") or ""
-_NEED_ANTHROPIC_KEY = pytest.mark.skipif(
-    not _ANTHROPIC_KEY,
-    reason="No real Anthropic API key — set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN",
-)
-
-
-@_NEED_ANTHROPIC_KEY
 class TestAnthropicTranslator:
-    """Real HTTP integration tests — no respx, no monkeypatch."""
-
-    _API_KEY = _ANTHROPIC_KEY
+    """Real HTTP integration tests — authenticated via ANTHROPIC_API_KEY in .env.test."""
 
     @pytest.mark.asyncio
     async def test_successful_extraction(self) -> None:
-        pytest.importorskip("anthropic")
         from pramanix.translator.anthropic import AnthropicTranslator
 
-        translator = AnthropicTranslator("claude-opus-4-6", api_key=self._API_KEY)
+        translator = AnthropicTranslator(
+            "claude-opus-4-6",
+            api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        )
         result = await translator.extract("pay 300 to Carol", SimpleIntent)
         assert isinstance(result, dict)
 
     @pytest.mark.asyncio
     async def test_api_timeout_raises_llm_timeout_error(self) -> None:
-        pytest.importorskip("anthropic")
         from pramanix.translator.anthropic import AnthropicTranslator
 
-        translator = AnthropicTranslator("claude-opus-4-6", api_key=self._API_KEY, timeout=0.001)
+        translator = AnthropicTranslator(
+            "claude-opus-4-6",
+            api_key=os.environ.get("ANTHROPIC_API_KEY"),
+            timeout=0.001,
+        )
         with pytest.raises(LLMTimeoutError) as exc_info:
             await translator.extract("pay", SimpleIntent)
 
         assert exc_info.value.model == "claude-opus-4-6"
 
 
-# ── AnthropicTranslator error paths (respx-mocked, no real key required) ───────
+# ── AnthropicTranslator error paths (duck-typed client, no live HTTP) ────────
 
 
 @pytest.mark.asyncio
 async def test_anthropic_api_status_error_raises_extraction_failure() -> None:
-    """anthropic.py lines 129-132: APIStatusError (401) → ExtractionFailureError.
+    """anthropic.py: APIStatusError (401) → ExtractionFailureError.
 
-    The VS Code dev proxy always returns 200 (ignores api_key), so this
-    path cannot be hit via real HTTP in the dev environment.  We use
-    respx to return a 401 response from the Anthropic endpoint, which
-    causes the SDK to raise APIStatusError; AnthropicTranslator.extract()
-    catches it and re-raises as ExtractionFailureError.
+    Injects a duck-typed ``_AnthropicCompatClient`` whose ``messages.stream()``
+    raises ``anthropic.APIStatusError`` immediately — no real HTTP call needed.
     """
-    pytest.importorskip("anthropic")
     from pramanix.translator.anthropic import AnthropicTranslator
 
-    translator = AnthropicTranslator("claude-opus-4-6", api_key="sk-ant-bad")
-
-    with respx.mock(assert_all_called=False) as mock:
-        mock.post("https://api.anthropic.com/v1/messages").respond(
-            401,
-            json={
-                "type": "error",
-                "error": {
-                    "type": "authentication_error",
-                    "message": "invalid x-api-key",
-                },
-            },
+    translator = AnthropicTranslator(
+        "claude-opus-4-6",
+        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    )
+    translator._client = _AnthropicCompatClient(
+        messages=_AnthropicErrorMessagesNS(
+            _anthropic_status_exc(401, "invalid x-api-key")
         )
-        with pytest.raises(ExtractionFailureError, match="401"):
-            await translator.extract("pay 300 to Carol", SimpleIntent)
+    )
+    with pytest.raises(ExtractionFailureError, match="401"):
+        await translator.extract("pay 300 to Carol", SimpleIntent)
 
 
 # ── Guard.parse_and_verify ────────────────────────────────────────────────────
-#
-# These tests verify how Guard handles various translator outcomes.
-# monkeypatch.setattr on module-level functions is acceptable here because
-# parse_and_verify calls create_translator / extract_with_consensus internally
-# and requires real API credentials to exercise in production — these are
-# impossible-to-reach paths in a unit test environment without API keys.
-
-import pramanix.translator.redundant as _redundant_mod
 
 
 class TestGuardParseAndVerify:
     """End-to-end tests for Guard.parse_and_verify — translator outcomes injected
-    via monkeypatch.setattr, no patch() or MagicMock."""
+    via guard._translators pre-population; no monkeypatch, no patch()."""
 
-    def _make_guard(self) -> Any:
+    def _make_guard(self) -> tuple[Any, Any]:
         from decimal import Decimal
 
         from pydantic import BaseModel
@@ -1058,82 +771,73 @@ class TestGuardParseAndVerify:
                     (E(cls.balance) - E(cls.amount) >= 0).named("sufficient_balance"),
                 ]
 
-        return Guard(_BankingPolicy)
+        return Guard(_BankingPolicy), _TransferIntent
 
     @pytest.mark.asyncio
-    async def test_allowed_when_consensus_succeeds_and_policy_passes(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        guard = self._make_guard()
+    async def test_allowed_when_consensus_succeeds_and_policy_passes(self) -> None:
+        guard, TransferIntent = self._make_guard()
         state = {"state_version": "1.0", "balance": Decimal("1000")}
-
-        async def _fake_consensus(text, schema, translators, ctx=None, **kw):
-            return {"amount": Decimal("100")}
-
-        monkeypatch.setattr(_redundant_mod, "extract_with_consensus", _fake_consensus)
+        guard._translators["gpt-4o"] = _RecordingTranslator(
+            {"amount": "100"}, model="gpt-4o"
+        )
+        guard._translators["claude-opus-4-7"] = _RecordingTranslator(
+            {"amount": "100"}, model="claude-opus-4-7"
+        )
         decision = await guard.parse_and_verify(
             prompt="transfer one hundred dollars",
-            intent_schema=__import__("pydantic").BaseModel,
+            intent_schema=TransferIntent,
             state=state,
         )
         assert decision is not None
 
     @pytest.mark.asyncio
-    async def test_error_decision_on_extraction_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        guard = self._make_guard()
-
-        def _raise(model_name, **kwargs):
-            raise ExtractionFailureError("Cannot extract")
-
-        monkeypatch.setattr(_redundant_mod, "create_translator", _raise)
+    async def test_error_decision_on_extraction_failure(self) -> None:
+        guard, TransferIntent = self._make_guard()
+        guard._translators["gpt-4o"] = _RaisingTranslator(
+            ExtractionFailureError("Cannot extract"), model="gpt-4o"
+        )
+        guard._translators["claude-opus-4-7"] = _RaisingTranslator(
+            ExtractionFailureError("Cannot extract"), model="claude-opus-4-7"
+        )
         decision = await guard.parse_and_verify(
             prompt="gibberish",
-            intent_schema=SimpleIntent,
+            intent_schema=TransferIntent,
             state={"state_version": "1.0", "balance": Decimal("500")},
         )
-
         assert not decision.allowed
         assert "Cannot extract" in decision.explanation
 
     @pytest.mark.asyncio
-    async def test_error_decision_on_mismatch(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        guard = self._make_guard()
-
-        mismatch = ExtractionMismatchError(
-            "models disagree",
-            model_a="gpt-4o",
-            model_b="claude-opus-4-5",
-            mismatches={"amount": (Decimal("100"), Decimal("200"))},
+    async def test_error_decision_on_mismatch(self) -> None:
+        guard, TransferIntent = self._make_guard()
+        guard._translators["gpt-4o"] = _RecordingTranslator(
+            {"amount": "100"}, model="gpt-4o"
         )
-
-        def _raise(model_name, **kwargs):
-            raise mismatch
-
-        monkeypatch.setattr(_redundant_mod, "create_translator", _raise)
+        guard._translators["claude-opus-4-7"] = _RecordingTranslator(
+            {"amount": "200"}, model="claude-opus-4-7"
+        )
         decision = await guard.parse_and_verify(
             prompt="ambiguous",
-            intent_schema=SimpleIntent,
+            intent_schema=TransferIntent,
             state={"state_version": "1.0", "balance": Decimal("500")},
         )
-
         assert not decision.allowed
         assert "disagree" in decision.explanation
 
     @pytest.mark.asyncio
-    async def test_error_decision_on_llm_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        guard = self._make_guard()
-
-        def _raise(model_name, **kwargs):
-            raise LLMTimeoutError("timeout", model="gpt-4o", attempts=3)
-
-        monkeypatch.setattr(_redundant_mod, "create_translator", _raise)
+    async def test_error_decision_on_llm_timeout(self) -> None:
+        guard, TransferIntent = self._make_guard()
+        guard._translators["gpt-4o"] = _RaisingTranslator(
+            LLMTimeoutError("timeout", model="gpt-4o", attempts=3), model="gpt-4o"
+        )
+        guard._translators["claude-opus-4-7"] = _RaisingTranslator(
+            LLMTimeoutError("timeout", model="claude-opus-4-7", attempts=3),
+            model="claude-opus-4-7",
+        )
         decision = await guard.parse_and_verify(
             prompt="pay",
-            intent_schema=SimpleIntent,
+            intent_schema=TransferIntent,
             state={"state_version": "1.0", "balance": Decimal("500")},
         )
-
         assert not decision.allowed
         assert "timeout" in decision.explanation.lower()

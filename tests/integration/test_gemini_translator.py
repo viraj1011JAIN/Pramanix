@@ -22,8 +22,8 @@ What this validates that MagicMock cannot:
 from __future__ import annotations
 
 import asyncio
+import importlib.util as _ilu
 import os
-import sys
 
 import pytest
 from pydantic import BaseModel
@@ -31,8 +31,6 @@ from pydantic import BaseModel
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator.gemini import GeminiTranslator
 from tests.helpers.real_protocols import _GeminiRecordingGenaiModule
-
-from .conftest import requires_gemini
 
 
 class TransferIntent(BaseModel):
@@ -44,10 +42,11 @@ def _make_translator(genai_module: _GeminiRecordingGenaiModule) -> GeminiTransla
     """Build a GeminiTranslator with injected genai module — no real API call."""
     t = GeminiTranslator.__new__(GeminiTranslator)
     t.model = "gemini-1.5-flash"
-    t._api_key = "test-key"
+    t._api_key = os.environ.get("GOOGLE_API_KEY", "")
     t._timeout = 30.0
     t._genai = genai_module
     t._client = None
+    t._retryable = (Exception,)
     return t
 
 
@@ -88,32 +87,24 @@ def test_gemini_network_failure_raises_timeout_error() -> None:
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("google.generativeai") is not None,
+    reason="run in tox:no-gemini — google-generativeai is installed in this env",
+)
 def test_gemini_missing_package_raises_configuration_error() -> None:
-    """ConfigurationError when google-generativeai is not installed."""
-    from unittest.mock import patch as _patch
-
-    with _patch.dict(sys.modules, {"google.generativeai": None}):  # type: ignore[arg-type]
-        import importlib
-
-        import pramanix.translator.gemini as _mod
-
-        importlib.reload(_mod)
-        try:
-            with pytest.raises(ConfigurationError, match="pramanix\\[gemini\\]"):
-                _mod.GeminiTranslator("gemini-1.5-flash", api_key="k")
-        finally:
-            importlib.reload(_mod)
+    """ConfigurationError when google-generativeai is absent (tox:no-gemini only)."""
+    with pytest.raises(ConfigurationError, match="pramanix\\[gemini\\]"):
+        GeminiTranslator("gemini-1.5-flash", api_key="")
 
 
-# ── Live tests (require GOOGLE_API_KEY) ────────────────────────────────────────
+# ── Live tests (require GOOGLE_API_KEY in .env.test) ─────────────────────────
 
 
-@requires_gemini
 def test_gemini_live_extract_real_api() -> None:
     """Live test: extract a simple intent from the real Gemini API."""
     translator = GeminiTranslator(
         "gemini-1.5-flash",
-        api_key=os.environ["GOOGLE_API_KEY"],
+        api_key=os.environ.get("GOOGLE_API_KEY"),
     )
     result = asyncio.run(
         translator.extract(
@@ -126,11 +117,10 @@ def test_gemini_live_extract_real_api() -> None:
     assert float(result["amount"]) > 0
 
 
-@requires_gemini
 def test_gemini_live_model_attribute() -> None:
     """Live: model attribute is preserved after construction."""
     translator = GeminiTranslator(
         "gemini-1.5-flash",
-        api_key=os.environ["GOOGLE_API_KEY"],
+        api_key=os.environ.get("GOOGLE_API_KEY"),
     )
     assert translator.model == "gemini-1.5-flash"

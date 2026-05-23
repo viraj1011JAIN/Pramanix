@@ -3,9 +3,7 @@
 """LLM consensus integration test — Issue #3.
 
 Tests the dual-model consensus pathway (``extract_with_consensus``) with
-a real OpenAI API call.  These tests are skipped unless ``OPENAI_API_KEY``
-is set in the environment, so they run in CI only when the secret is
-configured and are safe to skip in environments without API access.
+a real OpenAI API call, authenticated via OPENAI_API_KEY in .env.test.
 
 What this validates beyond unit tests:
 - Real HTTP round-trip to the OpenAI v1 chat completions endpoint.
@@ -14,23 +12,14 @@ What this validates beyond unit tests:
 - Injection gate: a malicious prompt is blocked end-to-end.
 
 To run locally:
-    export OPENAI_API_KEY=<your-key>
+    # Set OPENAI_API_KEY in .env.test (auto-loaded by tests/conftest.py)
     pytest tests/integration/test_llm_consensus.py -v
 """
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from pydantic import BaseModel
-
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("OPENAI_API_KEY"),
-    reason="OPENAI_API_KEY not set — skipping live LLM consensus tests",
-)
-
-openai = pytest.importorskip("openai", reason="pramanix[openai] not installed")
 
 from pramanix.exceptions import ExtractionMismatchError, InjectionBlockedError
 from pramanix.translator.openai_compat import OpenAICompatTranslator

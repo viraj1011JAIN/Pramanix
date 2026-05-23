@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util as _ilu
 import sys
 from decimal import Decimal
 from unittest.mock import patch
@@ -946,35 +947,25 @@ class TestVerifyAsyncEdgeCases:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("orjson") is not None,
+    reason="run in tox:no-orjson — orjson is installed in this env",
+)
 def test_decision_canonical_bytes_json_fallback() -> None:
-    """decision.py lines 58-63: stdlib-json fallback when orjson is absent.
-
-    Reloads pramanix.decision with sys.modules["orjson"] = None so the
-    except ImportError branch executes.
-
-    Isolation note: Python's IMPORT_FROM bytecode binds submodule names via
-    the parent package attribute (pramanix.decision), not via sys.modules.
-    importlib.import_module() sets that attribute to the fresh module; we must
-    restore it manually so later tests that do `import pramanix.decision` see
-    the original module, not the orjson-free reload.
-    """
+    """decision.py: stdlib-json fallback when orjson is absent."""
     import pramanix as _pramanix_pkg
 
     orig_decision_attr = getattr(_pramanix_pkg, "decision", None)
     orig_decision_mod = sys.modules.get("pramanix.decision")
     try:
-        with patch.dict(sys.modules, {"orjson": None}):
-            sys.modules.pop("pramanix.decision", None)
-            fresh = importlib.import_module("pramanix.decision")
-            result = fresh._canonical_bytes({"b": 2, "a": 1})
+        sys.modules.pop("pramanix.decision", None)
+        fresh = importlib.import_module("pramanix.decision")
+        result = fresh._canonical_bytes({"b": 2, "a": 1})
     finally:
-        # Restore parent-package attribute so `import pramanix.decision` returns
-        # the original module even though importlib set the attribute to <fresh>.
         if orig_decision_attr is not None:
             _pramanix_pkg.decision = orig_decision_attr  # type: ignore[attr-defined]
         elif hasattr(_pramanix_pkg, "decision"):
             delattr(_pramanix_pkg, "decision")
-        # Also restore sys.modules entry in case patch.dict did not (Python quirk)
         if orig_decision_mod is not None:
             sys.modules["pramanix.decision"] = orig_decision_mod
         elif "pramanix.decision" in sys.modules:
@@ -987,30 +978,25 @@ def test_decision_canonical_bytes_json_fallback() -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("boto3") is not None
+    or _ilu.find_spec("hvac") is not None
+    or _ilu.find_spec("cryptography") is not None,
+    reason="run in tox:no-cloud-sdks — cloud SDKs are installed in this env",
+)
 class TestKeyProviderImportErrors:
-    """Cover ImportError handlers for optional cloud-KMS dependencies.
-
-    Each provider lazily imports its SDK inside __init__ so the package is
-    importable without the extra installed.  Patching sys.modules simulates
-    the missing dep without uninstalling anything.
-    """
+    """Cover ImportError handlers when cloud-KMS dependencies are absent."""
 
     def test_aws_kms_requires_boto3(self) -> None:
         from pramanix.key_provider import AwsKmsKeyProvider
 
-        with (
-            patch.dict(sys.modules, {"boto3": None}),
-            pytest.raises(ImportError, match="AwsKmsKeyProvider requires 'boto3'"),
-        ):
+        with pytest.raises(ImportError, match="AwsKmsKeyProvider requires 'boto3'"):
             AwsKmsKeyProvider(secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k")
 
     def test_azure_kv_requires_azure_libs(self) -> None:
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        with (
-            patch.dict(sys.modules, {"azure.identity": None}),
-            pytest.raises(ImportError, match="AzureKeyVaultKeyProvider requires"),
-        ):
+        with pytest.raises(ImportError, match="AzureKeyVaultKeyProvider requires"):
             AzureKeyVaultKeyProvider(
                 vault_url="https://test.vault.azure.net",
                 secret_name="my-key",
@@ -1019,10 +1005,7 @@ class TestKeyProviderImportErrors:
     def test_vault_requires_hvac(self) -> None:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        with (
-            patch.dict(sys.modules, {"hvac": None}),
-            pytest.raises(ImportError, match="HashiCorpVaultKeyProvider requires 'hvac'"),
-        ):
+        with pytest.raises(ImportError, match="HashiCorpVaultKeyProvider requires 'hvac'"):
             HashiCorpVaultKeyProvider(
                 url="https://vault.example.com:8200",
                 secret_path="pramanix/key",
@@ -1031,10 +1014,7 @@ class TestKeyProviderImportErrors:
     def test_derive_public_pem_requires_cryptography(self) -> None:
         from pramanix.key_provider import _derive_public_pem
 
-        with (
-            patch.dict(sys.modules, {"cryptography.hazmat.primitives.serialization": None}),
-            pytest.raises(ImportError, match="'cryptography' package is required"),
-        ):
+        with pytest.raises(ImportError, match="'cryptography' package is required"):
             _derive_public_pem(b"dummy-pem")
 
 
@@ -1054,14 +1034,10 @@ class TestKeyProviderRefreshCacheErrors:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         real_client = _AwsSecretsClientError()
-        # boto3 is an optional dep; stub it so the constructor import succeeds
-        # even when pramanix[aws] is not installed.  The real client is never
-        # used because _client is injected directly.
-        with patch.dict(sys.modules, {"boto3": _Boto3ModuleStub()}):
-            provider = AwsKmsKeyProvider(
-                secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k",
-                _client=real_client,
-            )
+        provider = AwsKmsKeyProvider(
+            secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k",
+            _client=real_client,
+        )
         with pytest.raises(RuntimeError, match="AwsKmsKeyProvider: failed to fetch secret"):
             provider.private_key_pem()
 
@@ -1069,20 +1045,11 @@ class TestKeyProviderRefreshCacheErrors:
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
         real_client = _AzureSecretClientError()
-        with patch.dict(
-            sys.modules,
-            {
-                "azure": _AzureModuleStub(),
-                "azure.identity": _AzureIdentityModuleStub(),
-                "azure.keyvault": _AzureKVModuleStub(),
-                "azure.keyvault.secrets": _AzureKVSecretsModuleStub(),
-            },
-        ):
-            provider = AzureKeyVaultKeyProvider(
-                vault_url="https://test.vault.azure.net",
-                secret_name="my-key",
-                _client=real_client,
-            )
+        provider = AzureKeyVaultKeyProvider(
+            vault_url="https://test.vault.azure.net",
+            secret_name="my-key",
+            _client=real_client,
+        )
         with pytest.raises(RuntimeError, match="AzureKeyVaultKeyProvider: failed to fetch"):
             provider.private_key_pem()
 
@@ -1090,19 +1057,11 @@ class TestKeyProviderRefreshCacheErrors:
         from pramanix.key_provider import GcpKmsKeyProvider
 
         real_client = _GcpSecretClientError()
-        with patch.dict(
-            sys.modules,
-            {
-                "google": _GcpModuleStub(),
-                "google.cloud": _GcpCloudModuleStub(),
-                "google.cloud.secretmanager": _GcpSecretManagerModuleStub(),
-            },
-        ):
-            provider = GcpKmsKeyProvider(
-                project_id="my-project",
-                secret_id="my-secret",
-                _client=real_client,
-            )
+        provider = GcpKmsKeyProvider(
+            project_id="my-project",
+            secret_id="my-secret",
+            _client=real_client,
+        )
         with pytest.raises(RuntimeError, match="GcpKmsKeyProvider: failed to fetch"):
             provider.private_key_pem()
 
@@ -1110,12 +1069,11 @@ class TestKeyProviderRefreshCacheErrors:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         real_client = _VaultKvClientError()
-        with patch.dict(sys.modules, {"hvac": _HvacModuleStub()}):
-            provider = HashiCorpVaultKeyProvider(
-                url="https://vault.example.com:8200",
-                secret_path="pramanix/key",
-                _client=real_client,
-            )
+        provider = HashiCorpVaultKeyProvider(
+            url="https://vault.example.com:8200",
+            secret_path="pramanix/key",
+            _client=real_client,
+        )
         with pytest.raises(RuntimeError, match="HashiCorpVaultKeyProvider: failed to read"):
             provider.private_key_pem()
 
@@ -1124,13 +1082,12 @@ class TestKeyProviderRefreshCacheErrors:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         real_client = _VaultKvClientMissingField()
-        with patch.dict(sys.modules, {"hvac": _HvacModuleStub()}):
-            provider = HashiCorpVaultKeyProvider(
-                url="https://vault.example.com:8200",
-                secret_path="pramanix/key",
-                field="private_key_pem",
-                _client=real_client,
-            )
+        provider = HashiCorpVaultKeyProvider(
+            url="https://vault.example.com:8200",
+            secret_path="pramanix/key",
+            field="private_key_pem",
+            _client=real_client,
+        )
         with pytest.raises(ConfigurationError, match="field 'private_key_pem' not found"):
             provider.private_key_pem()
 
@@ -1218,6 +1175,10 @@ class _AlwaysWatchErrorClient:
 
 
 class TestCircuitBreakerRedisEdgeCases:
+    @pytest.mark.skipif(
+        _ilu.find_spec("redis") is not None,
+        reason="run in tox:no-redis — redis is installed in this env",
+    )
     @pytest.mark.asyncio
     async def test_set_state_redis_exceptions_import_fallback(self, redis_url: str) -> None:
         """Lines 789-792: WatchError = Exception fallback when redis.exceptions absent."""
@@ -1233,11 +1194,10 @@ class TestCircuitBreakerRedisEdgeCases:
         backend._client = aioredis.from_url(redis_url, decode_responses=True)
         backend._prefix = "pramanix:cb:import_fallback:"
 
-        with patch.dict(sys.modules, {"redis.exceptions": None}):
-            await backend.set_state(
-                "ns_import_fallback",
-                _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=2),
-            )
+        await backend.set_state(
+            "ns_import_fallback",
+            _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=2),
+        )
 
         result = await backend.get_state("ns_import_fallback")
         assert result.circuit_state == CircuitState.OPEN.value
@@ -1366,28 +1326,18 @@ class TestOversightWorkflowGaps:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("anthropic") is not None or _ilu.find_spec("tenacity") is not None,
+    reason="run in tox:no-anthropic-no-tenacity — anthropic/tenacity installed in this env",
+)
 class TestAnthropicTranslatorImportErrors:
-    """Cover ImportError handler paths in anthropic.py.
-
-    lines 50-51: `import anthropic` inside __init__ raises ImportError when
-    the anthropic package is absent → re-raise with install hint.
-
-    lines 94-95: `from tenacity import ...` inside extract() raises when
-    tenacity is absent → re-raise with install hint.
-
-    Implementation note: patch.dict(sys.modules, ...) calls _clear_dict which
-    wipes ALL of sys.modules on exit, disrupting coverage tracking for later
-    tests.  We use targeted key-level saves/restores to avoid this.
-    """
+    """Cover ImportError handler paths in anthropic.py when packages are absent."""
 
     def test_missing_anthropic_raises_import_error(self) -> None:
         """Lines 50-51: anthropic package absent → ImportError at construction."""
         from pramanix.translator.anthropic import AnthropicTranslator
 
-        with (
-            patch.dict(sys.modules, {"anthropic": None}),
-            pytest.raises(ImportError, match="anthropic package"),
-        ):
+        with pytest.raises(ImportError, match="anthropic package"):
             AnthropicTranslator("claude-opus-4-6", api_key="test")
 
     @pytest.mark.asyncio
@@ -1396,10 +1346,7 @@ class TestAnthropicTranslatorImportErrors:
         from pramanix.translator.anthropic import AnthropicTranslator
 
         t = AnthropicTranslator("claude-opus-4-6", api_key="test")
-        with (
-            patch.dict(sys.modules, {"tenacity": None}),
-            pytest.raises(ImportError, match="tenacity"),
-        ):
+        with pytest.raises(ImportError, match="tenacity"):
             await t.extract("hello", {"type": "object", "properties": {}})
 
 

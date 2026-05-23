@@ -222,6 +222,7 @@ class KafkaAuditSink:
         producer_conf: dict[str, Any],
         *,
         max_queue_size: int = 10_000,
+        _producer: Any = None,
     ) -> None:
         try:
             from confluent_kafka import Producer
@@ -234,7 +235,7 @@ class KafkaAuditSink:
             ) from exc
 
         self._topic = topic
-        self._producer: Any = Producer(producer_conf)
+        self._producer: Any = _producer if _producer is not None else Producer(producer_conf)
         self._max_queue = max_queue_size
         # H-08: protect _queue_depth with a lock — incremented in the emit
         # thread and decremented in the Kafka delivery-callback thread.

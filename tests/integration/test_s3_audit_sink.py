@@ -16,6 +16,7 @@ These tests validate behaviour that boto3 fakes cannot replicate:
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import json
 from typing import Any
 
@@ -217,21 +218,13 @@ def test_s3_sink_content_type_is_json(localstack_endpoint: str) -> None:
 
 
 @requires_docker
+@pytest.mark.skipif(
+    _ilu.find_spec("boto3") is not None,
+    reason="run in tox:no-boto3 — boto3 is installed in this env",
+)
 def test_s3_sink_configuration_error_without_boto3() -> None:
     """ConfigurationError when boto3 is not installed."""
-    import sys
-    from unittest.mock import patch
-
     from pramanix.exceptions import ConfigurationError
 
-    with patch.dict(sys.modules, {"boto3": None}):  # type: ignore[arg-type]
-        import importlib
-
-        import pramanix.audit_sink as _sink_mod
-
-        importlib.reload(_sink_mod)
-        try:
-            with pytest.raises(ConfigurationError, match="boto3"):
-                _sink_mod.S3AuditSink(bucket="b", prefix="p/")
-        finally:
-            importlib.reload(_sink_mod)
+    with pytest.raises(ConfigurationError, match="boto3"):
+        S3AuditSink(bucket="b", prefix="p/")

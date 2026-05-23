@@ -151,24 +151,13 @@ class TestCreateTranslator:
             create_translator("llama3.2")  # no recognized prefix
 
     def test_gemini_prefix_routes_to_gemini_translator(self) -> None:
-        """'gemini-*' models must route to GeminiTranslator, not raise.
-
-        This is a routing-only test — we stub google.generativeai in sys.modules
-        so the assertion is valid regardless of whether the [gemini] extra is
-        installed in the active Python environment.
-        """
-        import sys
-        import types
-        from unittest.mock import patch
+        """'gemini-*' models must route to GeminiTranslator, not raise."""
+        import os
 
         from pramanix.translator.gemini import GeminiTranslator
         from pramanix.translator.redundant import create_translator
 
-        # Minimal stub: only the attribute accessed by GeminiTranslator.__init__
-        fake_genai = types.ModuleType("google.generativeai")
-        fake_genai.Client = None  # type: ignore[attr-defined]
-        with patch.dict(sys.modules, {"google.generativeai": fake_genai}):
-            t = create_translator("gemini-1.5-pro", api_key="test-key")
+        t = create_translator("gemini-1.5-pro", api_key=os.environ.get("GOOGLE_API_KEY", "k"))
         assert isinstance(t, GeminiTranslator)
 
     def test_text_prefix_routes_to_openai_compat(self) -> None:

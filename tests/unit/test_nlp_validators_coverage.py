@@ -19,8 +19,8 @@ ImportError branch (the same pattern used in test_audit_sink_full_coverage.py).
 
 from __future__ import annotations
 
-import sys
-from unittest.mock import patch
+import importlib.util as _ilu
+import logging
 
 import pytest
 
@@ -52,20 +52,10 @@ def _gauge_value(model_label: str) -> float | None:
 def test_try_detoxify_scorer_failure_returns_none_and_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When detoxify import fails, _try_detoxify_scorer returns None and emits WARNING.
-
-    The WARNING must reference toxicity scoring being DISABLED so operators
-    can act on it.  The function must never raise — callers treat None as
-    'degraded mode, use keyword fallback'.
-    """
-    import logging
-
+    """When detoxify import fails, _try_detoxify_scorer returns None and emits WARNING."""
     import pramanix.nlp.validators as _nlp_mod
 
-    with (
-        patch.dict(sys.modules, {"detoxify": None}),
-        caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"),
-    ):
+    with caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"):
         result = _nlp_mod._try_detoxify_scorer()
 
     assert result is None, "_try_detoxify_scorer must return None on import failure"
@@ -76,16 +66,12 @@ def test_try_detoxify_scorer_failure_returns_none_and_warns(
 
 
 def test_try_detoxify_scorer_failure_sets_gauge_to_zero() -> None:
-    """On failure, _try_detoxify_scorer sets pramanix_nlp_model_available{model='detoxify'} to 0.
-
-    Only asserted when prometheus_client is installed — skipped otherwise.
-    """
+    """On failure, _try_detoxify_scorer sets pramanix_nlp_model_available{model='detoxify'} to 0."""
     pytest.importorskip("prometheus_client")
 
     import pramanix.nlp.validators as _nlp_mod
 
-    with patch.dict(sys.modules, {"detoxify": None}):
-        _nlp_mod._try_detoxify_scorer()
+    _nlp_mod._try_detoxify_scorer()
 
     value = _gauge_value("detoxify")
     if value is not None:
@@ -130,18 +116,10 @@ def test_try_detoxify_scorer_success_sets_gauge_to_one() -> None:
 def test_try_sentence_transformer_failure_returns_none_and_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When sentence_transformers import fails, returns None and emits WARNING.
-
-    The WARNING must reference semantic injection detection being DISABLED.
-    """
-    import logging
-
+    """When sentence_transformers import fails, returns None and emits WARNING."""
     import pramanix.nlp.validators as _nlp_mod
 
-    with (
-        patch.dict(sys.modules, {"sentence_transformers": None}),
-        caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"),
-    ):
+    with caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"):
         result = _nlp_mod._try_sentence_transformer()
 
     assert result is None, "_try_sentence_transformer must return None on import failure"
@@ -157,8 +135,7 @@ def test_try_sentence_transformer_failure_sets_gauge_to_zero() -> None:
 
     import pramanix.nlp.validators as _nlp_mod
 
-    with patch.dict(sys.modules, {"sentence_transformers": None}):
-        _nlp_mod._try_sentence_transformer()
+    _nlp_mod._try_sentence_transformer()
 
     value = _gauge_value("sentence_transformer")
     if value is not None:
@@ -241,6 +218,10 @@ def test_injection_filter_re2_is_enforced() -> None:
 # ── _get_nlp_gauge: resilience when prometheus_client absent ───────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("prometheus_client") is not None,
+    reason="run in tox:no-prometheus-client — prometheus_client is installed in this env",
+)
 def test_get_nlp_gauge_returns_none_when_prometheus_absent() -> None:
     """_get_nlp_gauge returns None gracefully when prometheus_client is not installed."""
     import pramanix.nlp.validators as _nlp_mod
@@ -248,10 +229,7 @@ def test_get_nlp_gauge_returns_none_when_prometheus_absent() -> None:
     original = _nlp_mod._NLP_GAUGE
     _nlp_mod._NLP_GAUGE = None
     try:
-        with patch.dict(sys.modules, {"prometheus_client": None}):
-            gauge = _nlp_mod._get_nlp_gauge()
-        # Either None (can't create) or the cached pre-existing gauge.
-        # Either way must not raise.
-        assert gauge is None or gauge is not None  # just checks no exception
+        gauge = _nlp_mod._get_nlp_gauge()
+        assert gauge is None
     finally:
         _nlp_mod._NLP_GAUGE = original

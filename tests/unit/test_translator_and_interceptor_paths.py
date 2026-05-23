@@ -17,6 +17,7 @@ Targets (all files that were below 96%):
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import pathlib
 import sys
 import threading
@@ -542,6 +543,10 @@ class TestGeminiTranslatorCoverage:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("httpx") is not None,
+    reason="run in tox:no-httpx — httpx is installed in this env",
+)
 class TestMistralHttpxImportError:
     @pytest.mark.asyncio
     async def test_httpx_not_installed_gives_empty_retryable(
@@ -557,19 +562,12 @@ class TestMistralHttpxImportError:
             amount: float
 
         t = MistralTranslator("mistral-small-latest", api_key="key")
-
-        # Real Mistral client stub — no AsyncMock, no MagicMock.
-        # chat.complete_async() is a real coroutine returning a real response shape.
         t._client = _MistralClientStub()
 
-        with (
-            patch.dict(sys.modules, {"httpx": None}),
-            patch(
-                "pramanix.translator._json.parse_llm_response",
-                return_value={"amount": 5.0},
-            ),
+        with patch(
+            "pramanix.translator._json.parse_llm_response",
+            return_value={"amount": 5.0},
         ):
-            # Should succeed with empty _http_errors — just no httpx retryable
             result = await t.extract("pay 5", _S)
             assert result == {"amount": 5.0}
 
@@ -621,14 +619,17 @@ class TestGrpcInterceptorCoverage:
             state_provider=lambda: {},
         )
 
+    @pytest.mark.skipif(
+        _ilu.find_spec("grpc") is not None,
+        reason="run in tox:no-grpc — grpc is installed in this env",
+    )
     def test_grpc_not_available_sets_object_base(self) -> None:
         """When grpc is absent, _InterceptorBase = object."""
-        with patch.dict(sys.modules, {"grpc": None}):
-            if "pramanix.interceptors.grpc" in sys.modules:
-                del sys.modules["pramanix.interceptors.grpc"]
-            import pramanix.interceptors.grpc as _grpc_mod
+        if "pramanix.interceptors.grpc" in sys.modules:
+            del sys.modules["pramanix.interceptors.grpc"]
+        import pramanix.interceptors.grpc as _grpc_mod
 
-            assert _grpc_mod._GRPC_AVAILABLE is False
+        assert _grpc_mod._GRPC_AVAILABLE is False
 
     def test_intercept_service_none_handler(self) -> None:
         interceptor = self._make_allow_interceptor()
@@ -752,13 +753,16 @@ class TestGrpcInterceptorCoverage:
 
 
 class TestKafkaConsumerCoverage:
+    @pytest.mark.skipif(
+        _ilu.find_spec("confluent_kafka") is not None,
+        reason="run in tox:no-confluent-kafka — confluent_kafka is installed in this env",
+    )
     def test_kafka_not_available_sets_flag(self) -> None:
-        with patch.dict(sys.modules, {"confluent_kafka": None}):
-            if "pramanix.interceptors.kafka" in sys.modules:
-                del sys.modules["pramanix.interceptors.kafka"]
-            import pramanix.interceptors.kafka as _kafka_mod
+        if "pramanix.interceptors.kafka" in sys.modules:
+            del sys.modules["pramanix.interceptors.kafka"]
+        import pramanix.interceptors.kafka as _kafka_mod
 
-            assert _kafka_mod._KAFKA_AVAILABLE is False
+        assert _kafka_mod._KAFKA_AVAILABLE is False
 
     def _make_consumer(self) -> object:
         """Return a PramanixKafkaConsumer with real Guard and real consumer."""

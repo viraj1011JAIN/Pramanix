@@ -2,8 +2,6 @@
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
 import logging
-import sys
-from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +11,6 @@ from pramanix.policy import Policy
 from pramanix.transpiler import analyze_string_promotions
 from pramanix.worker import WorkerPool
 from tests.helpers.real_protocols import (
-    _KafkaAuditModule,
     _KafkaAuditProducer,
     _RaisingSubmitExecutor,
 )
@@ -74,31 +71,29 @@ def test_kafka_audit_sink_delivery_err(caplog):
     from pramanix.decision import Decision
 
     producer = _KafkaAuditProducer()
-    kafka_mod = _KafkaAuditModule(producer)
 
-    with patch.dict(sys.modules, {"confluent_kafka": kafka_mod}):  # type: ignore[arg-type]
-        sink = KafkaAuditSink("test_topic", {"bootstrap.servers": "localhost"})
+    sink = KafkaAuditSink("test_topic", {"bootstrap.servers": "localhost"}, _producer=producer)
 
-        # Stop the background poll thread so it doesn't interfere
+    # Stop the background poll thread so it doesn't interfere
+    sink._poll_stop.set()
+    sink._poll_thread.join(timeout=2.0)
+
+    # Emit a decision so produce() is called and the callback is registered
+    with caplog.at_level(logging.ERROR, logger="pramanix.audit_sink"):
+        sink.emit(Decision.safe())
+        assert producer._last_callback is not None
+        producer._last_callback(Exception("delivery failed"), None)
+    assert "delivery error" in caplog.text
+    assert "delivery failed" in caplog.text
+
+    # Test _background_poll exception path — reset stop event for the direct call
+    sink._poll_stop.clear()
+
+    def _poll_se() -> None:
         sink._poll_stop.set()
-        sink._poll_thread.join(timeout=2.0)
+        raise Exception("poll error")
 
-        # Emit a decision so produce() is called and the callback is registered
-        with caplog.at_level(logging.ERROR, logger="pramanix.audit_sink"):
-            sink.emit(Decision.safe())
-            assert producer._last_callback is not None
-            producer._last_callback(Exception("delivery failed"), None)
-        assert "delivery error" in caplog.text
-        assert "delivery failed" in caplog.text
-
-        # Test _background_poll exception path — reset stop event for the direct call
-        sink._poll_stop.clear()
-
-        def _poll_se() -> None:
-            sink._poll_stop.set()
-            raise Exception("poll error")
-
-        producer._poll_side_effect = _poll_se
-        with caplog.at_level(logging.WARNING, logger="pramanix.audit_sink"):
-            sink._background_poll()
-        assert "poll error" in caplog.text
+    producer._poll_side_effect = _poll_se
+    with caplog.at_level(logging.WARNING, logger="pramanix.audit_sink"):
+        sink._background_poll()
+    assert "poll error" in caplog.text

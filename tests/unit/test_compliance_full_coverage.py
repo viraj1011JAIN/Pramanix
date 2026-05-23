@@ -15,8 +15,8 @@ interface with in-memory recording.  This covers:
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import json
-import sys
 from typing import Any
 
 import pytest
@@ -28,88 +28,7 @@ from pramanix.helpers.compliance import (
     _classify_severity,
 )
 
-# ── Proper fake fpdf2 module (NOT a mock) ─────────────────────────────────────
-
-
-class _FakePDF:
-    """In-memory FPDF implementation that records all operations.
-
-    Implements every method called by ComplianceReport.to_pdf() so the
-    method executes real code paths without requiring fpdf2 to be installed.
-    """
-
-    def __init__(self) -> None:
-        self.l_margin: float = 10.0
-        self.r_margin: float = 10.0
-        self.w: float = 210.0
-        self._y: float = 10.0
-        self._text_buffer: list[str] = []
-
-    def set_auto_page_break(self, auto: bool = True, margin: float = 15.0) -> None:
-        pass
-
-    def add_page(self) -> None:
-        pass
-
-    def set_font(self, family: str, style: str = "", size: int = 10) -> None:
-        pass
-
-    def set_fill_color(self, r: int, g: int, b: int) -> None:
-        pass
-
-    def set_line_width(self, width: float) -> None:
-        pass
-
-    def get_y(self) -> float:
-        return self._y
-
-    def line(self, x1: float, y1: float, x2: float, y2: float) -> None:
-        pass
-
-    def ln(self, h: float = 10.0) -> None:
-        self._y += h
-
-    def cell(
-        self,
-        w: float,
-        h: float = 10.0,
-        text: str = "",
-        new_x: str = "RIGHT",
-        new_y: str = "LAST",
-        fill: bool = False,
-        align: str = "L",
-    ) -> None:
-        if text:
-            self._text_buffer.append(text)
-
-    def multi_cell(
-        self,
-        w: float,
-        h: float,
-        text: str = "",
-        new_x: str = "LMARGIN",
-        new_y: str = "NEXT",
-    ) -> None:
-        if text:
-            self._text_buffer.append(text)
-
-    def output(self) -> bytearray:
-        return bytearray(b"%PDF-1.4 (fake pramanix pdf)")
-
-
-class _FakeFPDFModule:
-    """Drop-in replacement for the ``fpdf`` package."""
-
-    FPDF = _FakePDF
-
-
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture()
-def fake_fpdf(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Inject fake fpdf2 into sys.modules for the duration of the test."""
-    monkeypatch.setitem(sys.modules, "fpdf", _FakeFPDFModule())  # type: ignore[arg-type]
 
 
 def _block(
@@ -257,17 +176,13 @@ class TestComplianceReportToJson:
 # ── ComplianceReport.to_pdf() — ImportError path ─────────────────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("fpdf") is not None,
+    reason="run in tox:no-fpdf — fpdf/fpdf2 is installed in this env",
+)
 class TestComplianceReportToPdfImportError:
     def test_to_pdf_raises_import_error_without_fpdf2(self) -> None:
-        """to_pdf() raises ImportError with install hint when fpdf2 absent.
-
-        fpdf may already be cached in sys.modules from a previous test, so
-        builtins.__import__ patching is insufficient.  Shadow the module at
-        the sys.modules level — Python's import machinery checks sys.modules
-        first and raises ImportError when it finds None.
-        """
-        from unittest.mock import patch
-
+        """to_pdf() raises ImportError with install hint when fpdf2 absent."""
         r = ComplianceReport(
             decision_id="d",
             decision_hash="h",
@@ -281,17 +196,17 @@ class TestComplianceReportToPdfImportError:
             regulatory_refs=("ref",),
             explanation="blocked",
         )
-        with (
-            patch.dict(sys.modules, {"fpdf": None}),  # type: ignore[arg-type]
-            pytest.raises(ImportError, match="fpdf2"),
-        ):
+        with pytest.raises(ImportError, match="fpdf2"):
             r.to_pdf()
 
 
 # ── ComplianceReport.to_pdf() — full generation (fake fpdf2) ─────────────────
 
 
-@pytest.mark.usefixtures("fake_fpdf")
+@pytest.mark.skipif(
+    _ilu.find_spec("fpdf") is None,
+    reason="requires fpdf2 — install pramanix[pdf]",
+)
 class TestComplianceReportToPdfGeneration:
     def _report(
         self,

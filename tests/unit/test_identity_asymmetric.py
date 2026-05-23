@@ -23,10 +23,9 @@ Properties verified:
 from __future__ import annotations
 
 import base64
+import importlib.util as _ilu
 import json
-import sys
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -336,14 +335,12 @@ class TestES256Linker:
 # ── ImportError coverage (cryptography package absent) ────────────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("cryptography") is not None,
+    reason="run in tox:no-cryptography — cryptography is installed in this env",
+)
 class TestCryptographyImportErrors:
-    """Cover ImportError handler paths in linker.py.
-
-    Uses sys.modules patching to simulate 'cryptography' being absent at the
-    point where the import is attempted, without actually uninstalling the package.
-    Exercises lines 269-272 (_verify_rs256), 285-288 (_verify_es256), and
-    311-315 (_load_and_validate_public_key).
-    """
+    """Cover ImportError handler paths in linker.py when cryptography is absent."""
 
     def test_verify_rs256_raises_on_missing_cryptography(self, rsa_key_pair) -> None:
         private_key, public_pem = rsa_key_pair
@@ -352,10 +349,7 @@ class TestCryptographyImportErrors:
             public_key_pem=public_pem,
             algorithm=JWTAlgorithm.RS256,
         )
-        with (
-            patch.dict(sys.modules, {"cryptography.exceptions": None}),
-            pytest.raises(ImportError, match="RS256 requires the 'cryptography' package"),
-        ):
+        with pytest.raises(ImportError, match="RS256 requires the 'cryptography' package"):
             linker._verify_rs256(b"header.payload", "AAAA")
 
     def test_verify_es256_raises_on_missing_cryptography(self, ec_key_pair) -> None:
@@ -365,20 +359,11 @@ class TestCryptographyImportErrors:
             public_key_pem=public_pem,
             algorithm=JWTAlgorithm.ES256,
         )
-        with (
-            patch.dict(sys.modules, {"cryptography.exceptions": None}),
-            pytest.raises(ImportError, match="ES256 requires the 'cryptography' package"),
-        ):
+        with pytest.raises(ImportError, match="ES256 requires the 'cryptography' package"):
             linker._verify_es256(b"header.payload", "AAAA")
 
     def test_load_and_validate_raises_on_missing_cryptography(self) -> None:
-        with (
-            patch.dict(
-                sys.modules,
-                {"cryptography.hazmat.primitives.serialization": None},
-            ),
-            pytest.raises(ImportError, match="requires the 'cryptography' package"),
-        ):
+        with pytest.raises(ImportError, match="requires the 'cryptography' package"):
             JWTIdentityLinker._load_and_validate_public_key(
                 JWTAlgorithm.RS256,
                 b"-----BEGIN PUBLIC KEY-----\ndummy\n-----END PUBLIC KEY-----\n",

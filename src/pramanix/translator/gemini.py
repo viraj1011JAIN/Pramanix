@@ -129,6 +129,17 @@ class GeminiTranslator:
         else:
             self._client = None
 
+        try:
+            import google.api_core.exceptions as _gapi_exc
+
+            self._retryable: tuple[type[Exception], ...] = (
+                _gapi_exc.DeadlineExceeded,
+                _gapi_exc.ServiceUnavailable,
+                _gapi_exc.InternalServerError,
+            )
+        except ImportError:
+            self._retryable = (Exception,)
+
     async def extract(
         self,
         text: str,
@@ -167,26 +178,12 @@ class GeminiTranslator:
         system_prompt = build_system_prompt(intent_schema)
         full_prompt = f"{system_prompt}\n\nUser input:\n{text}"
 
-        # google-generativeai raises google.api_core.exceptions.DeadlineExceeded
-        # and google.api_core.exceptions.ServiceUnavailable for transient errors.
-        # We catch the generic Exception base from google.api_core for robustness.
-        try:
-            import google.api_core.exceptions as _gapi_exc
-
-            _retryable: tuple[type[Exception], ...] = (
-                _gapi_exc.DeadlineExceeded,
-                _gapi_exc.ServiceUnavailable,
-                _gapi_exc.InternalServerError,
-            )
-        except ImportError:
-            _retryable = (Exception,)
-
         attempts = 0
         try:
             async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=1, max=10),
                 stop=stop_after_attempt(3),
-                retry=retry_if_exception_type(_retryable),
+                retry=retry_if_exception_type(self._retryable),
                 reraise=True,
             ):
                 with attempt:
@@ -194,7 +191,7 @@ class GeminiTranslator:
                     raw = await self._single_call(prompt=full_prompt)
                     return parse_llm_response(raw, model_name=self.model)
 
-        except _retryable as exc:
+        except self._retryable as exc:
             raise LLMTimeoutError(
                 f"Gemini model '{self.model}' unreachable after {attempts} attempt(s): {exc}",
                 model=self.model,

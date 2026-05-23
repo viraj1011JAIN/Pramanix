@@ -21,10 +21,9 @@ Real integration tests (Kafka/S3 happy paths) live in
 
 from __future__ import annotations
 
-import importlib
+import importlib.util as _ilu
 import io
 import json
-import sys
 from typing import Any
 
 import pytest
@@ -145,24 +144,17 @@ def test_increment_overflow_metric_calls_inc_when_counter_set() -> None:
 # ── KafkaAuditSink: no fake broker, no sys.modules injection ─────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("confluent_kafka") is not None,
+    reason="run in tox:no-confluent-kafka — confluent_kafka is installed in this env",
+)
 def test_kafka_sink_raises_config_error_without_package() -> None:
     """ConfigurationError when confluent_kafka is not installed."""
-    from unittest.mock import patch
-
-    import pramanix.audit_sink as _sink_mod
+    from pramanix.audit_sink import KafkaAuditSink
     from pramanix.exceptions import ConfigurationError
 
-    # try/finally guarantees the cleanup reload runs even if the assertion
-    # fails mid-test — without it, a patched module stays in sys.modules.
-    try:
-        with patch.dict(sys.modules, {"confluent_kafka": None}):
-            importlib.reload(_sink_mod)
-            from pramanix.audit_sink import KafkaAuditSink
-
-            with pytest.raises(ConfigurationError, match="confluent-kafka"):
-                KafkaAuditSink(topic="t", producer_conf={})
-    finally:
-        importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    with pytest.raises(ConfigurationError, match="confluent-kafka"):
+        KafkaAuditSink(topic="t", producer_conf={})
 
 
 def test_kafka_sink_queue_overflow_drops_decision() -> None:
@@ -189,22 +181,17 @@ def test_kafka_sink_queue_overflow_drops_decision() -> None:
 # ── S3AuditSink: no fake boto3, no sys.modules injection ─────────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("boto3") is not None,
+    reason="run in tox:no-boto3 — boto3 is installed in this env",
+)
 def test_s3_sink_raises_config_error_without_boto3() -> None:
     """ConfigurationError when boto3 is not installed."""
-    from unittest.mock import patch
-
-    import pramanix.audit_sink as _sink_mod
+    from pramanix.audit_sink import S3AuditSink
     from pramanix.exceptions import ConfigurationError
 
-    try:
-        with patch.dict(sys.modules, {"boto3": None}):
-            importlib.reload(_sink_mod)
-            from pramanix.audit_sink import S3AuditSink
-
-            with pytest.raises(ConfigurationError, match="boto3"):
-                S3AuditSink(bucket="b", prefix="")
-    finally:
-        importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    with pytest.raises(ConfigurationError, match="boto3"):
+        S3AuditSink(bucket="b", prefix="")
 
 
 def test_s3_sink_upload_failure_is_swallowed() -> None:
@@ -267,22 +254,17 @@ def test_splunk_sink_bare_token_gets_prefixed() -> None:
 # ── DatadogAuditSink: ConfigurationError + emit does not raise ────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("datadog_api_client") is not None,
+    reason="run in tox:no-datadog-api-client — datadog_api_client is installed in this env",
+)
 def test_datadog_sink_raises_config_error_without_package() -> None:
     """ConfigurationError when datadog-api-client is not installed."""
-    from unittest.mock import patch
-
-    import pramanix.audit_sink as _sink_mod
+    from pramanix.audit_sink import DatadogAuditSink
     from pramanix.exceptions import ConfigurationError
 
-    try:
-        with patch.dict(sys.modules, {"datadog_api_client": None}):
-            importlib.reload(_sink_mod)
-            from pramanix.audit_sink import DatadogAuditSink
-
-            with pytest.raises(ConfigurationError, match="datadog-api-client"):
-                DatadogAuditSink(api_key="key")
-    finally:
-        importlib.reload(importlib.import_module("pramanix.audit_sink"))
+    with pytest.raises(ConfigurationError, match="datadog-api-client"):
+        DatadogAuditSink(api_key="key")
 
 
 def test_datadog_sink_emit_does_not_raise() -> None:

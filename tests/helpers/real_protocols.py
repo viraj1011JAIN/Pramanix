@@ -500,6 +500,90 @@ class _MistralClientStub:
             self.chat = _MistralChatApi(response_text)
 
 
+class _MistralRaisingChatApi:
+    """Mistral ``chat`` namespace whose ``complete_async()`` always raises.
+
+    Replaces ``respx.mock(side_effect=...)`` for error-path tests in
+    ``MistralTranslator``.  Raises ``exc`` immediately — no HTTP involved.
+    """
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def complete_async(self, **kw: Any) -> Any:
+        raise self._exc
+
+
+class _MistralRaisingClientStub:
+    """Mistral client duck-type that raises on every ``complete_async()`` call.
+
+    Inject via ``t._client = _MistralRaisingClientStub(exc)`` after constructing
+    the real ``MistralTranslator`` so the constructor path is exercised.
+    """
+
+    def __init__(self, exc: Exception) -> None:
+        self.chat = _MistralRaisingChatApi(exc)
+
+
+# ── Cohere API client helpers ─────────────────────────────────────────────────
+
+
+class _CohereClientStub:
+    """cohere.AsyncClientV2 duck-type for ``CohereTranslator`` path tests.
+
+    ``chat()`` is a real coroutine returning a v5-shaped response namespace.
+    Pass ``raises=`` to simulate network/SDK failures.
+    Inject via ``t._client = _CohereClientStub(response_text)`` after
+    constructing the real ``CohereTranslator``.
+    """
+
+    def __init__(
+        self,
+        response_text: str = '{"amount": 5}',
+        *,
+        raises: Exception | None = None,
+    ) -> None:
+        import types as _t
+
+        self._raises = raises
+        content = _t.SimpleNamespace(text=response_text)
+        msg = _t.SimpleNamespace(content=[content])
+        self._response = _t.SimpleNamespace(message=msg)
+
+    async def chat(self, **kw: Any) -> Any:
+        if self._raises is not None:
+            raise self._raises
+        return self._response
+
+    async def aclose(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+
+class _CohereNoMessageClientStub:
+    """cohere client duck-type whose response has ``text`` but no ``message``.
+
+    Exercises the ``response.message → AttributeError → response.text`` fallback
+    path in ``CohereTranslator._single_call()`` without live HTTP.
+    """
+
+    def __init__(self, text: str = '{"amount": 5}') -> None:
+        import types as _t
+
+        self._response = _t.SimpleNamespace(text=text)
+
+    async def chat(self, **kw: Any) -> Any:
+        return self._response
+
+    async def aclose(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+
 # ── Async context manager helper ─────────────────────────────────────────────
 
 
@@ -789,6 +873,68 @@ class _SyncScanRedis:
         return result
 
 
+# ── OpenAI-compat client helpers ─────────────────────────────────────────────
+
+
+class _OpenAICompatCompletions:
+    """``client.chat.completions`` namespace duck-type for OpenAICompatTranslator.
+
+    ``create()`` is a real coroutine that returns a SimpleNamespace mimicking
+    ``openai.ChatCompletion``.  Pass ``raises=`` to simulate network failures.
+    """
+
+    def __init__(
+        self,
+        content: str = '{"amount": 100}',
+        *,
+        raises: Exception | None = None,
+    ) -> None:
+        import types as _t
+
+        self._raises = raises
+        msg = _t.SimpleNamespace(content=content)
+        choice = _t.SimpleNamespace(message=msg, finish_reason="stop")
+        self._response = _t.SimpleNamespace(choices=[choice], model="gpt-4o")
+
+    async def create(self, **kw: Any) -> Any:
+        if self._raises is not None:
+            raise self._raises
+        return self._response
+
+
+class _OpenAICompatChat:
+    def __init__(
+        self,
+        content: str = '{"amount": 100}',
+        *,
+        raises: Exception | None = None,
+    ) -> None:
+        self.completions = _OpenAICompatCompletions(content, raises=raises)
+
+
+class _OpenAICompatClient:
+    """``openai.AsyncOpenAI`` duck-type for ``OpenAICompatTranslator`` path tests.
+
+    Replaces ``respx.mock`` transport interception — all method bodies are real.
+    Inject via ``translator._client = _OpenAICompatClient(content)`` after
+    constructing the real translator so the constructor validation path runs.
+    """
+
+    def __init__(
+        self,
+        content: str = '{"amount": 100}',
+        *,
+        raises: Exception | None = None,
+    ) -> None:
+        self.chat = _OpenAICompatChat(content, raises=raises)
+
+    async def close(self) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+
 # ── Anthropic stream helpers ──────────────────────────────────────────────────
 
 
@@ -847,6 +993,55 @@ class _AnthropicErrorMessagesNS:
 
     def stream(self, **kwargs: Any) -> _AnthropicRaisingStream:
         return _AnthropicRaisingStream(self._exc)
+
+
+class _AnthropicCompatClient:
+    """``anthropic.AsyncAnthropic`` duck-type for ``AnthropicTranslator`` tests.
+
+    Inject via ``translator._client = _AnthropicCompatClient(messages=...)``
+    after constructing the real translator.  ``close()`` is a coroutine so
+    ``await self._client.close()`` in ``aclose()`` works.
+    """
+
+    def __init__(self, *, messages: Any) -> None:
+        self.messages = messages
+
+    async def close(self) -> None:
+        pass
+
+
+def _openai_timeout_exc() -> Any:
+    """Construct ``openai.APITimeoutError`` for injection into ``_OpenAICompatClient``."""
+    import httpx
+    import openai
+
+    return openai.APITimeoutError(
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    )
+
+
+def _openai_status_exc(status_code: int, message: str = "API error") -> Any:
+    """Construct ``openai.APIStatusError`` for injection into ``_OpenAICompatClient``."""
+    import httpx
+    import openai
+
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+    )
+    return openai.APIStatusError(message, response=response, body=None)
+
+
+def _anthropic_status_exc(status_code: int, message: str = "API error") -> Any:
+    """Construct ``anthropic.APIStatusError`` for injection into ``_AnthropicCompatClient``."""
+    import anthropic
+    import httpx
+
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+    )
+    return anthropic.APIStatusError(message, response=response, body=None)
 
 
 # ── Datadog logs API helper ───────────────────────────────────────────────────
@@ -1622,6 +1817,84 @@ class _LlamaCppModule:
         return self._llm
 
 
+class _LlamaCppLlmRaises:
+    """llama_cpp.Llama duck-type whose ``create_chat_completion()`` always raises.
+
+    Replaces inline ``_BrokenLlama`` classes in test files.  ``RuntimeError``
+    is the production error text checked by ``ExtractionFailureError`` tests.
+    """
+
+    def create_chat_completion(
+        self,
+        messages: Any,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+    ) -> dict:
+        raise RuntimeError("model crashed")
+
+
+class _LlamaCppLlmTimeout:
+    """llama_cpp.Llama duck-type whose ``create_chat_completion()`` raises TimeoutError.
+
+    Replaces inline ``_TimeoutLlama`` classes.  ``LlamaCppTranslator`` catches
+    ``TimeoutError`` and re-raises as ``LLMTimeoutError``.
+    """
+
+    def create_chat_completion(
+        self,
+        messages: Any,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+    ) -> dict:
+        raise TimeoutError("timed out")
+
+
+class _LlamaCppLlmRecording(_LlamaCppLlm):
+    """llama_cpp.Llama duck-type that records the ``messages`` argument.
+
+    Useful for asserting that ``context.extra_context`` was appended to the
+    user message without needing ``assert_called_with`` (a MagicMock API).
+    """
+
+    def __init__(self, response_text: str = '{"amount": 50}') -> None:
+        super().__init__(response_text)
+        self.last_messages: list = []
+
+    def create_chat_completion(
+        self,
+        messages: Any,
+        max_tokens: int = 512,
+        temperature: float = 0.0,
+    ) -> dict:
+        self.last_messages = list(messages)
+        return super().create_chat_completion(messages, max_tokens, temperature)
+
+
+# ── Minimal Policy stub ───────────────────────────────────────────────────────
+
+
+class EmptyPolicy:
+    """Minimal Policy-protocol object with no invariants.
+
+    Replaces inline ``DummyPolicy(Policy)`` definitions in test files.
+    The real ``WorkerPool.submit_solve()`` accepts any object whose
+    ``invariants()`` returns an empty list — Z3 trivially returns SAT.
+
+    Not a mock: ``invariants()`` has a real body returning an empty list.
+    """
+
+    class Meta:
+        version = "0.0"
+
+    @classmethod
+    def fields(cls) -> dict[str, Any]:
+        return {}
+
+    @classmethod
+    def invariants(cls) -> list[Any]:
+        return []
+
+
 # ── Error-raising cloud SDK clients ──────────────────────────────────────────
 # These replace MagicMock() clients in TestKeyProviderRefreshCacheErrors.
 # Each class raises the same exception the real SDK would raise on network
@@ -1902,13 +2175,14 @@ class _RecordingTranslator:
 
     Usage::
 
-        translator = _RecordingTranslator({"amount_lte_50k": True, ...})
+        translator = _RecordingTranslator({"amount_lte_50k": True, ...}, model="test")
         policy = await NaturalLanguagePolicy.build(translator, ...)
         assert translator.call_count == 1
     """
 
-    def __init__(self, response: dict) -> None:
+    def __init__(self, response: dict, *, model: str = "recording-translator") -> None:
         self._response = response
+        self.model: str = model
         self.call_count: int = 0
         self.last_prompt: str | None = None
         self.last_schema: object = None
@@ -1928,6 +2202,25 @@ class _RecordingTranslator:
         self.last_prompt = text or prompt
         self.last_schema = intent_schema or schema
         return self._response
+
+    async def aclose(self) -> None:
+        pass
+
+
+class _RaisingTranslator:
+    """Real async translator duck-type whose ``extract()`` always raises.
+
+    Used in consensus tests that must propagate ``LLMTimeoutError`` or other
+    exceptions raised by one of the translators.  Not a mock — ``extract()``
+    has a real body that raises the stored exception.
+    """
+
+    def __init__(self, exc: Exception, *, model: str = "raising-translator") -> None:
+        self._exc = exc
+        self.model: str = model
+
+    async def extract(self, *args: Any, **kwargs: Any) -> dict:
+        raise self._exc
 
     async def aclose(self) -> None:
         pass

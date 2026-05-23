@@ -25,6 +25,7 @@ Files covered here (gaps not already covered by other test suites):
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import sys
 from decimal import Decimal
 from unittest.mock import patch
@@ -299,10 +300,12 @@ class TestInvariantASTCacheInitSubclass:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("pydantic") is not None,
+    reason="run in tox:no-pydantic — pydantic is installed in this env",
+)
 class TestNestedFieldPydanticImportError:
-    def test_getattr_raises_import_error_when_pydantic_absent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_getattr_raises_import_error_when_pydantic_absent(self) -> None:
         """NestedField.__getattr__ raises ImportError when pydantic is not available."""
         from pramanix.expressions import NestedField
 
@@ -310,16 +313,10 @@ class TestNestedFieldPydanticImportError:
             pass
 
         nf = NestedField("account", _FakeModel)
-
-        # Setting sys.modules["pydantic"] = None makes 'from pydantic import X' raise ImportError.
-        monkeypatch.setitem(sys.modules, "pydantic", None)  # type: ignore[arg-type]
-
         with pytest.raises(ImportError, match="pydantic"):
             _ = nf.some_field
 
-    def test_getattr_error_message_contains_install_hint(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_getattr_error_message_contains_install_hint(self) -> None:
         """The ImportError message guides the developer to install pydantic."""
         from pramanix.expressions import NestedField
 
@@ -327,11 +324,8 @@ class TestNestedFieldPydanticImportError:
             pass
 
         nf = NestedField("account", _FakeModel)
-        monkeypatch.setitem(sys.modules, "pydantic", None)  # type: ignore[arg-type]
-
         with pytest.raises(ImportError) as exc_info:
             _ = nf.some_field
-
         assert "pip install pydantic" in str(exc_info.value)
 
 
@@ -340,17 +334,17 @@ class TestNestedFieldPydanticImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("pydantic") is not None,
+    reason="run in tox:no-pydantic — pydantic is installed in this env",
+)
 class TestModelDumpZ3PydanticImportError:
-    def test_raises_import_error_when_pydantic_absent(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_raises_import_error_when_pydantic_absent(self) -> None:
         """model_dump_z3 raises ImportError when pydantic is not importable."""
         from pramanix.policy import model_dump_z3
 
         class _NotAModel:
             pass
-
-        monkeypatch.setitem(sys.modules, "pydantic", None)  # type: ignore[arg-type]
 
         with pytest.raises(ImportError, match="pydantic"):
             model_dump_z3(_NotAModel())  # type: ignore[arg-type]
@@ -371,6 +365,10 @@ class TestModelDumpZ3PydanticImportError:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("prometheus_client") is not None,
+    reason="run in tox:no-prometheus-client — prometheus_client is installed in this env",
+)
 class TestCircuitBreakerPrometheusImportError:
     def test_adaptive_cb_prometheus_import_error_sets_metrics_unavailable(self) -> None:
         """AdaptiveCircuitBreaker._register_metrics: prometheus ImportError → metrics_available=False."""
@@ -394,9 +392,7 @@ class TestCircuitBreakerPrometheusImportError:
         guard = Guard(_P, GuardConfig(execution_mode="sync"))
         config = CircuitBreakerConfig(namespace="import-err-test-adaptive")
 
-        with patch.dict(sys.modules, {"prometheus_client": None}):
-            cb = AdaptiveCircuitBreaker(guard, config)
-
+        cb = AdaptiveCircuitBreaker(guard, config)
         assert cb._metrics_available is False
 
     def test_distributed_cb_prometheus_import_error_sets_metrics_unavailable(self) -> None:
@@ -425,9 +421,7 @@ class TestCircuitBreakerPrometheusImportError:
         guard = Guard(_P, GuardConfig(execution_mode="sync"))
         config = CircuitBreakerConfig(namespace="import-err-test-distributed")
 
-        with patch.dict(sys.modules, {"prometheus_client": None}):
-            cb = DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
-
+        cb = DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
         assert cb._metrics_available is False
 
 
@@ -468,8 +462,7 @@ def _load_guard_config_fresh(private_name: str, *, block_otel: bool, block_prom:
 
     sys.modules[private_name] = fresh
     try:
-        with patch.dict(sys.modules, overrides):
-            spec.loader.exec_module(fresh)  # type: ignore[union-attr]
+        spec.loader.exec_module(fresh)  # type: ignore[union-attr]
     except Exception:
         sys.modules.pop(private_name, None)
         raise
@@ -477,6 +470,10 @@ def _load_guard_config_fresh(private_name: str, *, block_otel: bool, block_prom:
     return fresh
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("opentelemetry") is not None or _ilu.find_spec("prometheus_client") is not None,
+    reason="run in tox:no-otel-no-prometheus — otel/prometheus installed in this env",
+)
 class TestGuardConfigImportErrorBranches:
     def test_span_returns_nullcontext_when_otel_absent(self) -> None:
         """guard_config._span() returns contextlib.nullcontext() when opentelemetry is absent."""

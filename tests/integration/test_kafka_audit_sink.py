@@ -19,6 +19,7 @@ What these tests validate that fake infrastructure cannot:
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import json
 import threading
 import time
@@ -275,26 +276,13 @@ def test_kafka_sink_handles_oversized_message_gracefully(
     # The delivery callback should have logged the error without raising
 
 
-@requires_docker
+@pytest.mark.skipif(
+    _ilu.find_spec("confluent_kafka") is not None,
+    reason="run in tox:no-confluent-kafka — confluent_kafka is installed in this env",
+)
 def test_kafka_sink_configuration_error_without_package() -> None:
-    """ConfigurationError when confluent_kafka is not installed.
-
-    This test exercises the ImportError path using patch.dict, which is the
-    standard testing pattern for "package not installed" — NOT a fake producer.
-    """
-    import sys
-    from unittest.mock import patch
-
+    """ConfigurationError when confluent_kafka is not installed."""
     from pramanix.exceptions import ConfigurationError
 
-    with patch.dict(sys.modules, {"confluent_kafka": None}):  # type: ignore[arg-type]
-        import importlib
-
-        import pramanix.audit_sink as _sink_mod
-
-        importlib.reload(_sink_mod)
-        try:
-            with pytest.raises(ConfigurationError, match="confluent-kafka"):
-                _sink_mod.KafkaAuditSink(topic="t", producer_conf={})
-        finally:
-            importlib.reload(_sink_mod)
+    with pytest.raises(ConfigurationError, match="confluent-kafka"):
+        KafkaAuditSink(topic="t", producer_conf={})

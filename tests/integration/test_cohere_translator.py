@@ -21,6 +21,7 @@ What this validates that MagicMock cannot:
 from __future__ import annotations
 
 import asyncio
+import importlib.util as _ilu
 import json
 
 import httpx
@@ -202,24 +203,15 @@ def test_cohere_aclose_releases_client() -> None:
     asyncio.run(_close())  # must not raise
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("cohere") is not None,
+    reason="run in tox:no-cohere — cohere is installed in this env",
+)
 def test_cohere_missing_package_raises_configuration_error() -> None:
-    """ConfigurationError is raised at instantiation when cohere is absent.
-
-    CohereTranslator uses a lazy ``import cohere`` inside ``__init__``, so the
-    module can be imported normally.  We simulate the absent package by
-    inserting ``None`` into sys.modules for the duration of the test — Python
-    treats that as a deliberate block and raises ImportError on the inner
-    import, which the constructor converts to ConfigurationError.
-    """
-    import sys
-    from unittest.mock import patch
-
+    """ConfigurationError is raised at instantiation when cohere is absent."""
     from pramanix.translator.cohere import CohereTranslator
 
-    with (
-        patch.dict(sys.modules, {"cohere": None}),  # type: ignore[arg-type]
-        pytest.raises(ConfigurationError, match="pramanix\\[cohere\\]"),
-    ):
+    with pytest.raises(ConfigurationError, match="pramanix\\[cohere\\]"):
         CohereTranslator("command-r", api_key="k")
 
 

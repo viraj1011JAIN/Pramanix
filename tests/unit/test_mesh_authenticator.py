@@ -16,6 +16,8 @@ import base64
 import json
 import time
 from typing import Any
+import importlib.util as _ilu
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -571,14 +573,13 @@ class TestFetchJwks:
             audience="spiffe://prod.example",
         )
 
+    @pytest.mark.skipif(
+        _ilu.find_spec("httpx") is not None,
+        reason="run in tox:no-httpx — httpx is installed in this env",
+    )
     def test_httpx_not_installed_raises_import_error(self):
         auth = self._make_auth()
-        import sys
-
-        with (
-            patch.dict(sys.modules, {"httpx": None}),
-            pytest.raises(ImportError, match="httpx"),
-        ):
+        with pytest.raises(ImportError, match="httpx"):
             auth._fetch_jwks()
 
     def test_timeout_exception_raises_mesh_auth_error(self):

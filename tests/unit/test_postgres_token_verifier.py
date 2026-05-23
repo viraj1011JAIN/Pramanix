@@ -6,9 +6,8 @@
 
 from __future__ import annotations
 
-import sys
+import importlib.util as _ilu
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -37,19 +36,18 @@ def _allowed_decision() -> Decision:
 # ── Import guard ─────────────────────────────────────────────────────────────
 
 
-def test_postgres_verifier_raises_config_error_without_asyncpg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setitem(sys.modules, "asyncpg", None)
-    if "pramanix.execution_token" in sys.modules:
-        del sys.modules["pramanix.execution_token"]
-    with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[postgres\\]'"):
-        from pramanix.execution_token import PostgresExecutionTokenVerifier
+@pytest.mark.skipif(
+    _ilu.find_spec("asyncpg") is not None,
+    reason="run in tox:no-asyncpg — asyncpg is installed in this env",
+)
+def test_postgres_verifier_raises_config_error_without_asyncpg() -> None:
+    from pramanix.execution_token import PostgresExecutionTokenVerifier
 
+    with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[postgres\\]'"):
         PostgresExecutionTokenVerifier(_SECRET, _DSN)
 
 
-# ── Mocked asyncpg tests ──────────────────────────────────────────────────────
+# ── Pool-injection tests (no real Postgres connection) ────────────────────────
 
 
 class _ConnStub:
@@ -73,60 +71,29 @@ class _PoolStub:
         pass
 
 
-class _UniqueViolationError(Exception):
-    pass
-
-
-async def _create_pool(dsn: str, *, min_size: int, max_size: int) -> _PoolStub:
-    return _PoolStub()
-
-
-def _make_mock_asyncpg() -> object:
-    """Build a duck-typed asyncpg module stub without using AsyncMock."""
-    return type(
-        "asyncpg",
-        (),
-        {
-            "create_pool": _create_pool,
-            "UniqueViolationError": _UniqueViolationError,
-        },
-    )
-
-
-def test_postgres_verifier_init(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_postgres_verifier_init() -> None:
     """PostgresExecutionTokenVerifier stores secret as self._key."""
-    mock_pkg = _make_mock_asyncpg()
+    from pramanix.execution_token import PostgresExecutionTokenVerifier
 
-    with patch.dict(sys.modules, {"asyncpg": mock_pkg}):
-        if "pramanix.execution_token" in sys.modules:
-            del sys.modules["pramanix.execution_token"]
-        from pramanix.execution_token import PostgresExecutionTokenVerifier
-
-        v = PostgresExecutionTokenVerifier(_SECRET, _DSN)
-        assert v._key == _SECRET
+    v = PostgresExecutionTokenVerifier(_SECRET, _DSN, _pool=_PoolStub())
+    assert v._key == _SECRET
 
 
-def test_postgres_verifier_consume_bad_signature(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_postgres_verifier_consume_bad_signature() -> None:
     """Tokens with invalid HMAC signatures are rejected without DB access."""
-    mock_pkg = _make_mock_asyncpg()
+    from pramanix.execution_token import PostgresExecutionTokenVerifier
 
-    with patch.dict(sys.modules, {"asyncpg": mock_pkg}):
-        if "pramanix.execution_token" in sys.modules:
-            del sys.modules["pramanix.execution_token"]
-        from pramanix.execution_token import PostgresExecutionTokenVerifier
-
-        token = ExecutionToken(
-            decision_id="test-decision-id",
-            allowed=True,
-            intent_dump={},
-            policy_hash=None,
-            expires_at=time.time() + 300,
-            token_id="test-token-id",
-            signature="incorrect_hmac_signature",
-        )
-        v = PostgresExecutionTokenVerifier(_SECRET, _DSN)
-        result = v.consume(token)
-    assert result is False
+    token = ExecutionToken(
+        decision_id="test-decision-id",
+        allowed=True,
+        intent_dump={},
+        policy_hash=None,
+        expires_at=time.time() + 300,
+        token_id="test-token-id",
+        signature="incorrect_hmac_signature",
+    )
+    v = PostgresExecutionTokenVerifier(_SECRET, _DSN, _pool=_PoolStub())
+    assert v.consume(token) is False
 
 
 def test_postgres_verifier_single_use_with_sqlite() -> None:
@@ -143,19 +110,13 @@ def test_postgres_verifier_single_use_with_sqlite() -> None:
     assert verifier.consume(token, expected_state_version="v1") is False
 
 
-def test_postgres_verifier_expired_token_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_postgres_verifier_expired_token_rejected() -> None:
     """Tokens with a past expires_at are rejected before DB access."""
-    mock_pkg = _make_mock_asyncpg()
+    from pramanix.execution_token import PostgresExecutionTokenVerifier
 
-    with patch.dict(sys.modules, {"asyncpg": mock_pkg}):
-        if "pramanix.execution_token" in sys.modules:
-            del sys.modules["pramanix.execution_token"]
-        from pramanix.execution_token import PostgresExecutionTokenVerifier
+    signer = ExecutionTokenSigner(secret_key=_SECRET, ttl_seconds=-100.0)
+    decision = _allowed_decision()
+    token = signer.mint(decision)  # expires_at already in the past
 
-        signer = ExecutionTokenSigner(secret_key=_SECRET, ttl_seconds=-100.0)
-        decision = _allowed_decision()
-        token = signer.mint(decision)  # expires_at already in the past
-
-        v = PostgresExecutionTokenVerifier(_SECRET, _DSN)
-        result = v.consume(token)
-    assert result is False
+    v = PostgresExecutionTokenVerifier(_SECRET, _DSN, _pool=_PoolStub())
+    assert v.consume(token) is False

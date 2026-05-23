@@ -997,6 +997,8 @@ class PostgresExecutionTokenVerifier:
         secret_key: bytes,
         dsn: str,
         key_prefix: str = "pramanix:token:",
+        *,
+        _pool: Any = None,
     ) -> None:
         import asyncio
         import threading
@@ -1015,20 +1017,25 @@ class PostgresExecutionTokenVerifier:
         self._dsn = dsn
         self._prefix = key_prefix  # for API symmetry only
 
-        # H-11 + M-18: one dedicated event loop thread owns the asyncpg pool.
-        # All _run() calls use run_coroutine_threadsafe — zero unbounded threads,
-        # no deprecated asyncio.get_event_loop() usage.
-        self._loop = asyncio.new_event_loop()
-        self._loop_thread = threading.Thread(
-            target=self._loop.run_forever,
-            daemon=True,
-            name="pramanix-postgres",
-        )
-        self._loop_thread.start()
-        # Create pool during __init__; fail-fast if Postgres is unreachable.
-        self._pool: Any = asyncio.run_coroutine_threadsafe(self._init_pool(), self._loop).result(
-            timeout=30.0
-        )
+        if _pool is not None:
+            self._loop = None
+            self._loop_thread = None
+            self._pool: Any = _pool
+        else:
+            # H-11 + M-18: one dedicated event loop thread owns the asyncpg pool.
+            # All _run() calls use run_coroutine_threadsafe — zero unbounded threads,
+            # no deprecated asyncio.get_event_loop() usage.
+            self._loop = asyncio.new_event_loop()
+            self._loop_thread = threading.Thread(
+                target=self._loop.run_forever,
+                daemon=True,
+                name="pramanix-postgres",
+            )
+            self._loop_thread.start()
+            # Create pool during __init__; fail-fast if Postgres is unreachable.
+            self._pool = asyncio.run_coroutine_threadsafe(self._init_pool(), self._loop).result(
+                timeout=30.0
+            )
 
     async def _init_pool(self) -> Any:
         """Create the asyncpg connection pool and ensure the schema exists."""
@@ -1047,15 +1054,20 @@ class PostgresExecutionTokenVerifier:
 
         Uses run_coroutine_threadsafe — one bounded background thread, no
         nested loops, no deprecated asyncio.get_event_loop() calls.
+        Falls back to asyncio.run() when called in test mode (_loop is None).
         """
         import asyncio
 
+        if self._loop is None:
+            return asyncio.run(coro)
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def close(self) -> None:
         """Close the connection pool and stop the background event loop."""
         import asyncio
 
+        if self._loop is None:
+            return
         try:
             asyncio.run_coroutine_threadsafe(self._pool.close(), self._loop).result(timeout=10.0)
         except Exception as exc:
