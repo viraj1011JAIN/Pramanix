@@ -125,9 +125,13 @@ Locations where test doubles return fixed scalars, bypassing real computation:
 - **`tests/helpers/real_protocols.py` lines 1721–1830** — 9 module-stub classes (`_Boto3ModuleStub`, `_AzureModuleStub`, `_AzureIdentityModuleStub`, `_AzureKVModuleStub`, `_AzureKVSecretsModuleStub`, `_GcpModuleStub`, `_GcpCloudModuleStub`, `_GcpSecretManagerModuleStub`, `_GeminiGenaiModuleStub`) — have real method logic but still replace real cloud SDKs; cannot reproduce real transport errors, authentication challenges, or quota limits. ⚠️ PARTIALLY CLEARED.
 - **`tests/helpers/real_protocols.py` line 1821** — `_HvacModuleStub` — HashiCorp Vault client replaced with a stub that stores secrets in a dict.
 
-#### re2 fallback (duplicated across two files)
-- **`src/pramanix/nlp/validators.py` lines 36–39** — `import re2 as _re_engine` falls back to `_re_engine = re`; stdlib `re` and Google's `re2` have different catastrophic-backtracking behaviours; a policy that passes `re2` may exhibit ReDoS vulnerability under `re`.
-- **`src/pramanix/translator/injection_filter.py` lines 54–57** — identical `re2` → `re` fallback; same ReDoS risk.
+#### re2 fallback — FULLY FIXED (2026-05-21)
+
+Both files now raise `RuntimeError` at import when `google-re2` is absent — no stdlib `re` fallback occurs:
+- **`src/pramanix/nlp/validators.py` lines 43–48** — `RuntimeError: "pramanix.nlp.validators: google-re2 is required but not installed. ReDoS via crafted PII patterns is a critical security risk without it."`
+- **`src/pramanix/translator/injection_filter.py` lines 60–65** — identical hard-failure pattern; import refuses to complete.
+
+The ReDoS-via-fallback risk is closed. Residual risk: `google-re2` must be present in the deployment environment (enforced via `pip install 'pramanix[security]'`).
 
 ### 2.2 Fake Containers & Ephemeral Environments
 
@@ -220,27 +224,25 @@ These require dedicated tox environments before removal. ❌ OPEN.
 
 **Remaining gap**: Blueprint specified `__hash__ = None` (unhashable). Current implementation chose identity-based hashing — a deliberate deviation. A node accidentally placed in a set will not crash — it will be deduplicated by identity, which may silently allow duplicate constraint nodes in collections. Blueprint and implementation must be reconciled.
 
-### 4.4 ⚠️ PARTIALLY FIXED: re2/stdlib `re` Silent Fallback Creates Security Inconsistency
+### 4.4 ✅ FULLY FIXED: re2 Hard Failure on Missing Dependency
 
 **Files**: `src/pramanix/nlp/validators.py`; `src/pramanix/translator/injection_filter.py`
 
-`SecurityWarning` is emitted at both fallback sites when `re2` is absent. Python 3.13 `NameError` on `SecurityWarning` was fully fixed (2026-05-21) — both files now define `SecurityWarning` unconditionally.
+Both modules now raise `RuntimeError` at import time if `google-re2` is absent — no stdlib `re` fallback path exists. The `SecurityWarning` approach was superseded by a hard import-time failure (fixed 2026-05-21, verified 2026-05-23 via source read at `nlp/validators.py:43–48` and `translator/injection_filter.py:60–65`).
 
-**Remaining gap**: The fallback to `stdlib re` still occurs — the system does not refuse to start or hard-fail when `re2` is absent. No test verifies that the fallback injection-filter patterns are ReDoS-free under `re`. The `SecurityWarning` is the only runtime signal.
-
-**Risk**: ReDoS attack vector on injection filtering when `re2` is absent; `SecurityWarning` emitted but the vulnerable path is still taken.
+**Status**: ReDoS risk via fallback is fully closed. No open action required. Residual operational requirement: `google-re2` (C-extension) must be present in the deployment image — enforced by `pramanix[security]` extra.
 
 ### 4.5 Broad `except Exception: pass` Swallowing in Production Source — Open Items
 
 The following locations remain unfixed (all fully-fixed locations have been removed from this list):
 
 - **`src/pramanix/circuit_breaker.py` line 692** — bare `except Exception: pass` in a circuit-breaker cleanup path; no log, no metric, no re-raise. Cleanup errors are fully invisible to operators. ❌ OPEN.
-- **`src/pramanix/worker.py` lines 331, 441** — 2× `except Exception: pass` around Prometheus counter increments; Prometheus errors in the worker subsystem silently absorbed. ❌ OPEN.
+- **`src/pramanix/worker.py` lines 331, 441** — ✅ FIXED (2026-05-20): both now log at ERROR with `exc_info=True` and increment a Prometheus counter via `contextlib.suppress`. Verified at `worker.py:327–334` and `worker.py:441–448`.
 - **`src/pramanix/worker.py` lines 721, 725** — 2× `except Exception: pass` inside `WorkerPool.__del__()` GC finalizer. Architecturally acceptable but even the attempt to log is swallowed. ❌ OPEN (acceptable GC-path design choice).
 - **`src/pramanix/interceptors/kafka.py` line 120** — `except Exception: pass` in Kafka consumer GC finalizer. ❌ OPEN (acceptable design).
 - **`src/pramanix/integrations/llamaindex.py` line 143** — `except Exception: pass` in `PramanixFunctionTool._shutdown_executor()` GC path. ❌ OPEN (acceptable design).
 - **`src/pramanix/guard_config.py` line 246** — bare `pass` class body in an empty override guard subclass. Structural dead code; no runtime consequence. ❌ OPEN (cosmetic).
-- **`src/pramanix/guard.py` line 250** — `_emit_field_seen_metric()` `except Exception: pass` — silently swallows all Prometheus errors for `pramanix_field_seen_total` counter. See §4.9. ❌ OPEN.
+- **`src/pramanix/guard.py` line 250** — ✅ FIXED (2026-05-20): `_emit_field_seen_metric()` now logs at DEBUG on exception (`log.debug("pramanix.guard: metrics increment failed: %s", _e)`). Verified at `guard.py:251–252`. See §4.9.
 
 ### 4.6 `# pragma: no cover` Hiding Real Runtime Paths in Production Source
 
@@ -271,23 +273,18 @@ All 4 `except Exception: return None` paths now call `_inc_parse_failure(_rule_n
 
 **Risk**: Sanitizer's most security-relevant inputs (empty, single-char, injection-prefix, overlong) are not property-tested. Regression on empty/whitespace handling would not be caught by Hypothesis.
 
-### 4.9 `guard.py` — `_emit_field_seen_metric()` Silent Swallow
+### 4.9 ✅ FIXED: `guard.py` — `_emit_field_seen_metric()` No Longer Silent
 
-**File**: `src/pramanix/guard.py` **Line ~250** — Identified in 2026-05-20 audit; not yet fixed.
+**File**: `src/pramanix/guard.py` **Lines 251–252** — Fixed 2026-05-20; verified 2026-05-23 via source read.
 
 ```python
-def _emit_field_seen_metric(field_name: str) -> None:
-    try:
-        _FIELD_SEEN_COUNTER.labels(field=field_name).inc()
-    except Exception:
-        pass
+except Exception as _e:
+    log.debug("pramanix.guard: metrics increment failed: %s", _e)
 ```
 
-This is **distinct from the already-fixed `_emit_translator_metric()` at line 186**. If `prometheus_client` raises (label-cardinality explosion, registry collision, threading race), the failure is silently discarded with no log entry.
+The bare `pass` was replaced with a `DEBUG`-level log entry. If `prometheus_client` raises (label-cardinality explosion, registry collision, threading race), the failure is now recorded in the debug log.
 
-**Consequence**: `pramanix_field_seen_total` silently stops counting; field-coverage dashboards show 0 without any operator alert.
-
-**Action**: Replace `except Exception: pass` with `except Exception as _exc: _log.warning("pramanix field_seen metric emit failed: %s", type(_exc).__name__, exc_info=_exc)`.
+**Remaining nuance**: Log level is DEBUG, not WARNING. A silent counter failure will not trigger an operator alert in default log configurations. An operator running at INFO+ will still not see this. If the intent is operator alertability, escalate to WARNING. Current state is a functional improvement but not fully observable in production log levels. ⚠️ LOW — acceptable as-is unless field-coverage dashboards are on-call critical.
 
 ---
 
@@ -315,7 +312,7 @@ Concrete actions for all remaining flaws, prioritised highest-risk first.
 
 10. **Close `hypothesis.assume()` exclusions in `test_sanitise_properties.py`** — Remove `assume(len(s) >= 10)`, `assume(len(s) <= 512)`, `assume(len(s) > 0)`, and `assume(s.strip())` from 7 sites; add explicit edge-case tests for empty, single-char, injection-prefix, boundary-length, and whitespace inputs. ❌ OPEN.
 
-11. **Add WARNING log to `_emit_field_seen_metric()` failure path in `guard.py`** — Line ~250: replace `except Exception: pass` with `except Exception as _exc: _log.warning("pramanix field_seen metric emit failed: %s", type(_exc).__name__, exc_info=_exc)`. See §4.9. ❌ OPEN.
+11. **Escalate `_emit_field_seen_metric()` failure log level from DEBUG to WARNING in `guard.py`** — Line ~250: current fix logs at DEBUG; escalate to WARNING so prometheus failures surface at default log configurations. See §4.9. ⚠️ LOW (functional fix applied; observability improvement only).
 
 ---
 

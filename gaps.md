@@ -260,29 +260,31 @@ These classes live in **`src/pramanix/`**. All are exported in `pramanix.__all__
 
 - Comment: *"Intended for testing."*
 - Stores decisions in a Python `list`. No durable write, no cross-process visibility.
-- **Exported in `__all__`** as `"InMemoryAuditSink"` (line 319 of `__init__.py`).
-- **Gap (HIGH):** If accidentally configured in production, audit records are lost on process
-  restart with **no error, no warning**.
+- **Removed from `__all__`** (`__init__.py:316-318`): *"removed from public API — test-only"*.
+- Emits `UserWarning` on construction (`audit_sink.py:117-125`): warns about process-restart data loss.
+- **Remaining gap (MEDIUM):** Still directly importable via `from pramanix.audit_sink import InMemoryAuditSink`.
+  The `__all__` barrier only blocks `from pramanix import *`. No `ConfigurationError` when used in
+  `PRAMANIX_ENV=production`. The `UserWarning` is the only runtime signal.
 
 ### `InMemoryDistributedBackend` — `src/pramanix/circuit_breaker.py` line 475
 
 - Comment: *"Single-process simulation (testing)"*.
-- Module-level `dict` masquerading as a distributed state backend.
-- `DistributedCircuitBreaker.__init__` defaults to it:
-  ```python
-  self._backend = backend or InMemoryDistributedBackend()   # line 563
-  ```
-- **Exported in `__all__`** as `"InMemoryDistributedBackend"` (line 64 of `__init__.py`).
-- **Gap (HIGH):** Production callers who omit `backend=` silently get an in-memory fake
-  with **no cross-process state sharing and no runtime warning emitted**.
+- Emits `UserWarning` on construction (`circuit_breaker.py:491-498`): *"state is lost on process restart"*.
+- `DistributedCircuitBreaker.__init__` **now raises `ConfigurationError`** if no backend provided
+  (`circuit_breaker.py:573-579`). Callers must explicitly pass `backend=InMemoryDistributedBackend()`
+  in test code or `backend=RedisDistributedBackend(...)` in production.
+- **Removed from `__all__`** (`__init__.py:316-318`).
+- **Remaining gap (LOW):** Still directly importable; `UserWarning` is the only signal against
+  production use. No `ConfigurationError` on `PRAMANIX_ENV=production`.
 
 ### `InMemoryApprovalWorkflow` — `src/pramanix/oversight/workflow.py` line 443
 
 - Docstring: *"Synchronous in-memory approval workflow for single-process deployments."*
 - All approved/rejected decisions are backed by a Python `dict`.
-- **Exported in `__all__`** as `"InMemoryApprovalWorkflow"` (line 321 of `__init__.py`).
-- **Gap (HIGH):** In a multi-process or HA deployment, decisions vanish on restart.
-  No guard prevents production use; the docstring warning is the only barrier.
+- Emits `UserWarning` on construction (`oversight/workflow.py:486-493`): *"all approval records
+  are lost on process restart and are not shared across processes"*.
+- **Removed from `__all__`** (`__init__.py:316-318`).
+- **Remaining gap (LOW):** Same pattern as above — directly importable; `UserWarning` only guard.
 
 ### `InMemoryExecutionTokenVerifier` — `src/pramanix/execution_token.py` line 439
 
@@ -653,16 +655,14 @@ these handlers fires — the caller and operator have no way to know an error oc
 
 | File | Line | Method | Risk |
 |------|------|--------|------|
-| `src/pramanix/key_provider.py` | 147 | `PemKeyProvider.rotate_key()` | **HIGH** — key rotation crashes at runtime |
-| `src/pramanix/key_provider.py` | 200 | `FileKeyProvider.rotate_key()` | **HIGH** — key rotation crashes at runtime |
-| `src/pramanix/key_provider.py` | 254 | `AwsKmsKeyProvider.rotate_key()` | **HIGH** — key rotation crashes at runtime |
 | `src/pramanix/policy.py` | 368 | `Policy.invariants()` | Intended abstract — subclasses must override |
 | `src/pramanix/integrations/langchain.py` | 45 | `_BaseToolFallback._run()` | Fallback stub; `# pragma: no cover` |
 | `src/pramanix/integrations/langchain.py` | 50 | `_BaseToolFallback._arun()` | Fallback stub; `# pragma: no cover` |
 
-The three `rotate_key()` cases are most critical: they exist on concrete, fully-operational
-provider classes. Any automated key-rotation pipeline calling `.rotate_key()` will crash
-with `NotImplementedError` at runtime with no warning in advance.
+**Note:** `rotate_key()` in `PemKeyProvider`, `FileKeyProvider`, and `AwsKmsKeyProvider` is
+**fully implemented** as of the current codebase (`key_provider.py:145-164, 267-300, 407-415`).
+Only `EnvKeyProvider.rotate_key()` raises `NotImplementedError`, which is correct as its
+`supports_rotation` property returns `False`.
 
 ---
 
@@ -687,13 +687,9 @@ this is real Z3, the warmup uses **hardcoded trivially-satisfied constraints** r
 a representative sample from the actual deployed policy. A policy with large invariants
 or non-linear arithmetic will still experience a JIT spike on the first real request.
 
-### `src/pramanix/guard_config.py` — `PRAMANIX_ALLOW_NO_AUDIT_SINKS` escape hatch (line 634)
-
-Setting `PRAMANIX_ALLOW_NO_AUDIT_SINKS=1` **disables the production audit-trail enforcement
-entirely**. This env var bypasses the `ConfigurationError` that would otherwise prevent a
-production deployment without any `AuditSink`. Any developer who sets this flag in a
-`.env` file or CI environment can silently ship a production deployment without audit
-persistence.
+**Note:** `PRAMANIX_ALLOW_NO_AUDIT_SINKS` has been **removed from the codebase** — grep
+confirms no match anywhere in `src/pramanix/`. The audit-trail enforcement bypass
+is closed.
 
 ---
 
@@ -721,13 +717,6 @@ by `if _decisions_total is not None`, which silently drops all metrics.
 
 **Gap:** A production deployment that forgot to install `pramanix[metrics]` emits **no
 metrics and no warning** unless `GuardConfig(metrics_enabled=True)` is explicitly set.
-
-### NLP Validators — RE2 Fallback (`src/pramanix/nlp/validators.py` lines 40–57)
-
-When `google-re2` is absent, PII detection falls back to Python's stdlib `re` which is
-**vulnerable to ReDoS attacks** via crafted PII patterns. The `SecurityWarning` is emitted
-at module import time — this may be suppressed by `PYTHONWARNINGS=ignore` in production
-containers.
 
 ### ToxicityScorer — Detoxify Fallback (`src/pramanix/nlp/validators.py` line 428)
 
@@ -800,7 +789,7 @@ silently**.
 | 4 | `monkeypatch.setattr` replacing real functions | 80+ occurrences (46 files) | Medium |
 | 5 | `sys.platform` fabricated via `patch` | 4 occurrences (1 file) | Medium |
 | 6 | `monkeypatch.setenv` / `delenv` simulating environment | 30+ occurrences | Low–Medium |
-| 7 | In-memory fakes in `src/` exported in `__all__` | 4 classes | **HIGH** |
+| 7 | In-memory fakes directly importable; all emit `UserWarning` but no hard `ConfigurationError` | 3 classes | Medium |
 | 8 | Integration stubs (LangChain, LlamaIndex, DSPy, LangGraph) | 4 integrations | **HIGH** |
 | 9 | `# pragma: no cover` escape hatches in `src/` | 3 lines | Low |
 | 10 | `pyproject.toml` `exclude_lines` bare-ellipsis rule | 1 rule | Low |
@@ -820,15 +809,13 @@ silently**.
 | 24 | Secrets scan excludes `tests/` entirely | 1 CI step | Medium |
 | 25 | `fail_under = 98` in `pyproject.toml` overridden to `95%` by CI | 1 conflict | Medium |
 | 26 | Bare `pass` in exception handlers (swallowed failures) | 23 locations in `src/` | Medium |
-| 27 | `NotImplementedError` stubs in concrete providers | 3 methods | **HIGH** |
-| 28 | Slur list placeholder — no content | 1 location | Medium |
-| 29 | Worker warmup uses trivial constraints, not real policy | 1 location | Low |
-| 30 | `PRAMANIX_ALLOW_NO_AUDIT_SINKS` bypass env var | 1 location | **HIGH** |
-| 31 | OTel `nullcontext` no-op fallback — silent | 1 module | Medium |
-| 32 | Prometheus `None` metric no-op fallback — silent | 4 metrics | Medium |
-| 33 | RE2 → stdlib `re` fallback (ReDoS risk) | 1 module | **HIGH** |
-| 34 | ToxicityScorer → keyword-density fallback (evasion risk) | 1 class | Medium |
-| 35 | SemanticSimilarityGuard → Jaccard fallback (evasion risk) | 1 class | Medium |
+| 27 | `NotImplementedError` stubs: `Policy.invariants()`, 2× `_BaseToolFallback` stubs | 3 stubs | Low–Medium |
+| 28 | Slur list placeholder — zero slur stems in `_DEFAULT_TOXIC_WORDS` | 1 location | Medium |
+| 29 | Worker warmup uses hardcoded Z3 patterns, not policy-sampled | 1 location | Low |
+| 30 | OTel `nullcontext` no-op fallback — silent when `opentelemetry` absent | 1 module | Medium |
+| 31 | Prometheus `None` metric no-op fallback — silent when `prometheus-client` absent | 4 metrics | Medium |
+| 32 | ToxicityScorer → keyword-density fallback when `detoxify` absent (evasion risk) | 1 class | Medium |
+| 33 | SemanticSimilarityGuard → Jaccard fallback when `sentence-transformers` absent | 1 class | Medium |
 | 36 | `psutil` skip in memory stability perf tests | 1 decorator | Low |
 | 37 | Adversarial fail-safe tests induce crashes via monkeypatch, not real crashes | 15 occurrences | Medium |
 
@@ -836,38 +823,23 @@ silently**.
 
 ## Highest-Priority Gaps (Ranked)
 
-1. **`PRAMANIX_ALLOW_NO_AUDIT_SINKS=1` disables audit-trail enforcement completely**
-   (`src/pramanix/guard_config.py:634`). A developer who sets this in `.env` for local
-   testing can accidentally ship a production deployment without durable audit records.
-
-2. **`DistributedCircuitBreaker` silently defaults to `InMemoryDistributedBackend`**
-   (`src/pramanix/circuit_breaker.py:563`). No warning emitted. Cross-process state sharing
-   is silently broken for any caller who omits `backend=`.
-
-3. **`rotate_key()` raises `NotImplementedError`** in all three concrete KMS providers
-   (`src/pramanix/key_provider.py:147, 200, 254`). Any automated key-rotation pipeline
-   will crash at runtime with no advance notice.
-
-4. **RE2 → stdlib `re` fallback is a ReDoS vector**
-   (`src/pramanix/nlp/validators.py:40–57`). If `google-re2` is absent, adversarially
-   crafted PII patterns can cause catastrophic backtracking in the PII detector.
-
-5. **LangChain, LlamaIndex, DSPy, LangGraph integrations** tested only with absent-package
+1. **LangChain, LlamaIndex, DSPy, LangGraph integrations** tested only with absent-package
    stubs or duck-types. No real end-to-end agent pipeline is exercised anywhere.
 
-6. **Live LLM consensus tests, Gemini integration, and LlamaCPP tests are always skipped
-   in CI** because the required API keys and model files are not configured as GitHub
-   Secrets. These tests only run in developer environments where the credentials exist.
+2. **Live LLM consensus tests, Gemini integration, and LlamaCPP tests are always skipped
+   in CI** — required API keys and model files are not in GitHub Secrets. Only
+   `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN` are present.
 
-7. **The `integration:` CI job does not gate the merge pipeline.** A broken integration
+3. **The `integration:` CI job does not gate the merge pipeline.** A broken integration
    test can be merged without blocking `wheel-smoke`, `trivy`, or `license-scan`.
 
-8. **`InMemoryAuditSink`, `InMemoryDistributedBackend`, `InMemoryApprovalWorkflow` exported
-   in `pramanix.__all__`** — no barrier prevents accidental production use; data is lost
-   on process restart without any error.
+4. **`InMemoryAuditSink`, `InMemoryDistributedBackend`, `InMemoryApprovalWorkflow`** —
+   removed from `__all__` and each emits `UserWarning` on construction. Remaining gap:
+   still directly importable from their modules; no `ConfigurationError` if
+   `PRAMANIX_ENV=production`.
 
-9. **23 bare `pass` exception handlers** in `src/` suppress all failure information with
-   no log output, making production debugging impossible.
+5. **23 bare `pass` / silent exception handlers** in `src/` suppress failure information
+   with no or only DEBUG-level log output, making production debugging difficult.
 
-10. **`fail_under = 98` in `pyproject.toml` is overridden to `95%` by CI**, meaning 3%
-    of uncovered production paths could go undetected across all PRs.
+6. **`fail_under = 98` in `pyproject.toml` is overridden to `95%` by CI**, meaning 3%
+   of uncovered production paths could go undetected across all PRs.
