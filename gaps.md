@@ -1,4 +1,4 @@
-# Pramanix — Non-Real Integration Gaps Report (v4 — Open Items Only)
+# Pramanix — Non-Real Integration Gaps Report (v5 — Open Items Only)
 
 **Scope:** Every Python source file, test file, CI/CD workflow file, Dockerfile, and
 configuration file in the repository was examined for: stubs, mocks, `MagicMock`,
@@ -11,8 +11,8 @@ CI soft-fail gates, coverage exclusion rules, and any other place where the **re
 is not used**.
 
 **Note:** Fully-fixed items have been removed. This document contains only open (❌) and
-partially-fixed (⚠️) gaps. For the historical record of what was fixed in Phase 3
-(2026-05-22–23), see git log for commit `cb1f0c3`.
+partially-fixed (⚠️) gaps. For Phase 3 fixes (2026-05-22–23) see git log for `cb1f0c3`.
+Cross-verified against: **4534 passed, 215 skipped, 50 warnings in 692.83s — coverage 100%** (2026-05-25).
 
 ---
 
@@ -154,7 +154,7 @@ Fallback class assigned to `BaseTool` when `langchain-core` is absent:
 ```python
 BaseTool = _BaseToolFallback   # line 63
 ```
-`_run` and `_arun` raise `NotImplementedError` and are marked `# pragma: no cover`.
+`_run` and `_arun` raise `ConfigurationError`; no `# pragma: no cover`. ✅ FIXED 2026-05-25.
 
 **Gap (HIGH):** The real LangChain agent pipeline (real LLM → real tool call → real Guard →
 real execution) is **never tested end-to-end** in any test.
@@ -181,13 +181,12 @@ never tested.
 
 ## 9. `# pragma: no cover` — Code Excluded from Coverage Measurement
 
-Only 3 lines in `src/` (confirmed by exhaustive grep):
+✅ FIXED 2026-05-25 — Zero `# pragma: no cover` directives remain in `src/pramanix/`. All three previously documented instances were removed and are now exercised by tests:
 
-| File | Line | Method | Risk |
-|------|------|--------|------|
-| `src/pramanix/integrations/langchain.py` | 42 | `_BaseToolFallback._run()` | Fallback stub; never exercised |
-| `src/pramanix/integrations/langchain.py` | 47 | `_BaseToolFallback._arun()` | Same |
-| `src/pramanix/mesh/authenticator.py` | 922 | `raise MeshAuthenticationError(…)` | Defensive unreachable branch |
+| File | Lines | Fix |
+|------|-------|-----|
+| `src/pramanix/integrations/langchain.py` | 42, 47 | `_BaseToolFallback._run/_arun` raise `ConfigurationError`; covered by tests ✅ |
+| `src/pramanix/mesh/authenticator.py` | 922 | `raise MeshAuthenticationError(…)` covered by tests ✅ |
 
 ### `pyproject.toml` coverage exclusion rules (lines 390–395)
 
@@ -401,12 +400,13 @@ with a real crypto library.
 
 | Line | Step | Gap |
 |------|------|-----|
-| 331 | *"Perf benchmarks (PR: non-slow only)"* | Benchmark failures **do not block PRs** |
-| 419 | *Upload Trivy SARIF report* | Trivy SARIF upload never blocks the build |
+| 331 | *"Perf benchmarks (PR: non-slow only)"* | ✅ FIXED 2026-05-25 — `continue-on-error` removed; benchmark failures now fatal |
+| 419 | *Upload Trivy SARIF report* | Trivy SARIF upload failure is acceptable by design; not a test gate |
+| 800 | *`ollama-live` job* | `continue-on-error: true` intentional — Ollama live LLM tests are informational only; remove flag to make a strict gate |
 
 ### `PRAMANIX_TRANSLATOR_ENABLED=false` in Both Dockerfiles
 
-Both `Dockerfile.dev` (line 117) and `Dockerfile.production` (line 135) bake in:
+Both `Dockerfile.dev` (line 116) and `Dockerfile.production` (line 134) bake in:
 ```
 PRAMANIX_TRANSLATOR_ENABLED="false"
 ```
@@ -423,12 +423,11 @@ No `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `COHERE_API_KEY`, `AZURE_*`, or
 - `tests/integration/test_gemini_translator.py` live tests — always skipped in CI
 - `tests/integration/test_llamacpp_translator.py` — always skipped in CI
 
-### Integration Job Is Advisory, Not Blocking
+### Integration Job Is Now a Blocking Gate ✅ FIXED 2026-05-25
 
-The `integration:` job in `ci.yml` (line 787) runs `if: github.event_name != 'schedule'`
-and declares `needs: test` but is **not listed in any subsequent job's `needs:`**. This
-means the integration job result does not block the `coverage → wheel-smoke → extras-smoke
-→ trivy → license-scan` gate chain. A broken integration test can pass merge.
+The `integration:` job previously was advisory-only. As of 2026-05-25, `wheel-smoke`
+declares `needs: [coverage, integration]` (ci.yml line 540). A failing integration test
+now blocks `wheel-smoke → extras-smoke → trivy → license-scan`. The gap is closed.
 
 ### Secrets Scan Excludes `tests/` Entirely
 
@@ -449,8 +448,7 @@ credential scanner.
 | File | Line | Method | Risk |
 |------|------|--------|------|
 | `src/pramanix/policy.py` | 368 | `Policy.invariants()` | Intended abstract — subclasses must override |
-| `src/pramanix/integrations/langchain.py` | 45 | `_BaseToolFallback._run()` | Fallback stub; `# pragma: no cover` |
-| `src/pramanix/integrations/langchain.py` | 50 | `_BaseToolFallback._arun()` | Fallback stub; `# pragma: no cover` |
+| `src/pramanix/integrations/langchain.py` | 42–48 | `_BaseToolFallback._run/_arun()` | ✅ FIXED 2026-05-25 — raise `ConfigurationError`; `# pragma: no cover` removed; covered by tests |
 
 **Note:** `rotate_key()` in `PemKeyProvider`, `FileKeyProvider`, and `AwsKmsKeyProvider` is
 **fully implemented** as of the current codebase (`key_provider.py:145-164, 267-300, 407-415`).
@@ -576,12 +574,12 @@ silently**.
 
 | # | Category | Count | Severity |
 |---|----------|-------|---------|
-| 3 | `patch.dict(sys.modules, …)` hiding real packages | ~21 remaining (9 files) | Medium |
+| 3 | `patch.dict(sys.modules, …)` hiding real packages | ~16 remaining (4 files) | Medium |
 | 4 | `monkeypatch.setattr` replacing real functions | 80+ occurrences (46 files) | Medium |
 | 5 | `sys.platform` fabricated via `monkeypatch` | 4 occurrences (1 file) | Medium |
 | 6 | `monkeypatch.setenv` / `delenv` simulating environment | 30+ occurrences | Low–Medium |
 | 8 | Integration stubs (LangChain, LlamaIndex, DSPy, LangGraph) | 4 integrations | **HIGH** |
-| 9 | `# pragma: no cover` escape hatches in `src/` | 3 lines | Low |
+| 9 | `# pragma: no cover` escape hatches in `src/` | ✅ FIXED 2026-05-25 — 0 lines remain | Low |
 | 10 | `pyproject.toml` `exclude_lines` bare-ellipsis rule | 1 rule | Low |
 | 11 | `# noqa` suppressions in `src/` | 3 lines | Low |
 | 12 | `respx` HTTP transport mocking | All LLM backend + Cohere tests | Medium |
@@ -592,11 +590,11 @@ silently**.
 | 18 | Fake / placeholder API keys | 10+ occurrences | Low |
 | 19 | `pytest.importorskip` / skip decorators silencing tests | 15 conditions | Medium |
 | 20 | Live API keys absent from GitHub Secrets → CI always skips | 3 integration test files | **HIGH** |
-| 21 | `continue-on-error: true` on PR benchmark gate | 1 occurrence | Medium |
+| 21 | `continue-on-error: true` on `ollama-live` non-blocking gate (intentional) | 1 occurrence | Low |
 | 22 | `PRAMANIX_TRANSLATOR_ENABLED=false` baked into both Dockerfiles | 2 Dockerfiles | Medium |
-| 23 | `integration:` job not gating the merge chain | 1 job | **HIGH** |
+| 23 | `integration:` job not gating the merge chain | ✅ FIXED 2026-05-25 — `wheel-smoke` now requires `integration` | ~~HIGH~~ |
 | 24 | Secrets scan excludes `tests/` entirely | 1 CI step | Medium |
-| 27 | `NotImplementedError` stubs: `Policy.invariants()`, 2× `_BaseToolFallback` stubs | 3 stubs | Low–Medium |
+| 27 | `NotImplementedError` stub: `Policy.invariants()` (intentional abstract method) | 1 stub | Low |
 | 28 | Slur list placeholder — zero slur stems in `_DEFAULT_TOXIC_WORDS` | 1 location | Medium |
 | 29 | Worker warmup uses hardcoded Z3 patterns, not policy-sampled | 1 location | Low |
 | 30 | OTel `nullcontext` no-op fallback — silent when `opentelemetry` absent | 1 module | Medium |
@@ -617,5 +615,4 @@ silently**.
    in CI** — required API keys and model files are not in GitHub Secrets. Only
    `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN` are present.
 
-3. **The `integration:` CI job does not gate the merge pipeline.** A broken integration
-   test can be merged without blocking `wheel-smoke`, `trivy`, or `license-scan`.
+3. ✅ FIXED 2026-05-25 — **The `integration:` CI job now gates the merge pipeline.** `wheel-smoke` requires `integration` to pass before proceeding.

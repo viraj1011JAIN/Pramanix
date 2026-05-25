@@ -168,16 +168,19 @@ The ReDoS-via-fallback risk is closed. Residual risk: `google-re2` must be prese
 - `pydantic.warnings.PydanticDeprecatedSince20` — Cohere SDK V1 API deprecation swallowed.
 - `(?s).*google.generativeai.*:FutureWarning` — Google SDK self-deprecation warning swallowed globally.
 - `coroutine 'AsyncClient.aclose' was never awaited:RuntimeWarning` — leaked async client coroutines silenced; potential resource leak masked.
-- `InMemoryExecutionTokenVerifier:UserWarning` — production-safety warning silenced for tests.
 - `GuardConfig:UserWarning` — `PRAMANIX_ENV=production` advisory silenced for tests.
 - `urllib3.*doesn't match a supported version` — version mismatch swallowed.
+- `chardet.*doesn't match a supported version` — chardet/charset_normalizer version mismatch swallowed.
+- `Non-linear arithmetic detected:UserWarning` — Z3 non-linear arithmetic advisory silenced; emitted when constraints fall outside the decidable linear fragment.
+
+**Not suppressed (50 warnings per full test run as of 2026-05-25):** `InMemoryAuditSink:UserWarning` (×12), `InMemoryApprovalWorkflow:UserWarning` (×19), `InMemoryExecutionTokenVerifier:UserWarning` (×10), `InMemoryDistributedBackend:UserWarning` (×3) — intentionally visible production-safety advisories. `RequestsDependencyWarning` (×1, pre-collection) — urllib3/chardet version mismatch in `requests/__init__.py`, not captured by pytest filterwarnings.
 
 ---
 
 ### 3.2 Ignored & Skipped Tests
 
 #### `pytest.mark.skipif` conditional skips
-- **`tests/unit/conftest.py` line 28** — `requires_docker = pytest.mark.skipif(not _DOCKER_AVAILABLE, ...)` — entire Docker-backed test battery skipped when Docker is absent; 84 tests reported as skipped in the baseline run.
+- **`tests/unit/conftest.py` line 28** — `requires_docker = pytest.mark.skipif(not _DOCKER_AVAILABLE, ...)` — entire Docker-backed test battery skipped when Docker is absent; **215 tests skipped in the 2026-05-25 baseline** (129 unit Docker skips + 86 integration/adversarial skips) out of 4748 collected; 50 UserWarnings surface per run (see §3.1).
 
 #### `pytest.importorskip` skips (dependencies absent = silent skip)
 - **`tests/unit/conftest.py` line 42** — `pytest.importorskip("testcontainers")`
@@ -185,8 +188,8 @@ The ReDoS-via-fallback risk is closed. Residual risk: `google-re2` must be prese
 - **`tests/integration/conftest.py`** — each of the 6 container fixtures calls `pytest.importorskip`; any absent package silently drops the entire integration suite.
 - **All 37 optional-dependency extras** — each `pytest.importorskip` guarding `asyncpg`, `confluent_kafka`, `cohere`, `anthropic`, `google-generativeai`, `mistralai`, `hvac`, `boto3`, `azure-keyvault-secrets`, `sentence-transformers`, `detoxify`, `re2`, `redis`, `prometheus_client`, `opentelemetry` etc. results in silent test elision; the CI matrix does not enumerate all combinations.
 
-#### `hypothesis` health suppression (⚠️ PARTIALLY OPEN)
-- **`tests/unit/test_sanitise_properties.py` lines 96, 126, 157, 241, 253, 265, 277** — 7× `suppress_health_check=[HealthCheck.too_slow]` remain with no benchmark justification comment; slow strategies may indicate unacceptable latency being hidden.
+#### `hypothesis` health suppression ✅ FIXED 2026-05-25
+- **`tests/unit/test_sanitise_properties.py`** — all `suppress_health_check=[HealthCheck.too_slow]` removed; replaced with deterministic bounded strategies and explicit edge-case tests (see §4.8).
 
 ---
 
@@ -239,13 +242,15 @@ Current `src/pramanix/**` no longer contains `except Exception: pass` handlers.
 GC/finalizer paths now use explicit logging and/or `contextlib.suppress(Exception)`
 where failure is non-fatal by design.
 
-### 4.6 `# pragma: no cover` Hiding Real Runtime Paths in Production Source
+### 4.6 ✅ FULLY FIXED 2026-05-25: `# pragma: no cover` Eliminated from Production Source
 
-- **`src/pramanix/execution_token.py` line 92** — `except ImportError:  # pragma: no cover` — asyncpg-absent path never tested; C-extension ABI mismatch silently degrades `PostgresExecutionTokenVerifier`.
-- **`src/pramanix/execution_token.py` line 966** — `if _asyncpg is None:  # pragma: no cover` — the `RuntimeError` guard when asyncpg is missing is excluded from coverage.
-- **`src/pramanix/mesh/authenticator.py` line 885** — `except ImportError as exc:  # pragma: no cover` — JWT library import failure path hidden.
-- **`src/pramanix/mesh/authenticator.py` line 906** — `except ImportError as exc:  # pragma: no cover` — second JWT library import failure path hidden.
-- **`src/pramanix/mesh/authenticator.py` line 922** — `raise MeshAuthenticationError(  # pragma: no cover` — error construction site excluded; error message text never verified by tests.
+All five `# pragma: no cover` instances previously documented have been removed and the
+corresponding paths are now exercised by tests:
+
+- `src/pramanix/execution_token.py` lines 92, 966 — asyncpg ImportError and RuntimeError guard paths covered.
+- `src/pramanix/mesh/authenticator.py` lines 885, 906, 922 — JWT ImportError and error-construction paths covered.
+
+Confirmed via exhaustive grep: **zero `# pragma: no cover` directives remain in `src/pramanix/`** (2026-05-25).
 
 ### 4.7 ⚠️ PARTIALLY FIXED: `fast_path.py` — Fail-Open-to-Z3 on Malformed Numeric Input
 
@@ -291,9 +296,9 @@ Concrete actions for all remaining flaws, prioritised highest-risk first.
 
 3. **Resolve `ExpressionNode.__hash__` blueprint deviation** — ✅ FIXED (`ExpressionNode.__hash__ = None`).
 
-4. **Test asyncpg and JWT ImportError paths** — Remove `# pragma: no cover` from `execution_token.py` lines 92–93, 966 and `mesh/authenticator.py` lines 885, 906, 922; inject missing-package conditions via `monkeypatch.setitem(sys.modules, "asyncpg", None)`. ❌ OPEN.
+4. **Test asyncpg and JWT ImportError paths** — ✅ FIXED 2026-05-25. All `# pragma: no cover` directives removed from `execution_token.py` and `mesh/authenticator.py`; ImportError and RuntimeError guard paths now exercised at 100% branch coverage.
 
-5. **Harden integration fallback base classes** — ⚠️ PARTIAL. `integrations/langchain.py` fallback `_run/_arun` now raise `ConfigurationError` (no `NotImplementedError` stub path). `llamaindex` already raises import-time guidance through fallback constructors. Protocol typing follow-up remains optional.
+5. **Harden integration fallback base classes** — ✅ FIXED 2026-05-25. `integrations/langchain.py` `_BaseToolFallback._run/_arun` raise `ConfigurationError`; `# pragma: no cover` removed; methods covered by tests. `llamaindex` raises import-time guidance through fallback constructors. Protocol typing follow-up optional (low-priority).
 
 6. **Add `suppress_health_check` justification comments** — ✅ FIXED by removing suppressions and replacing with deterministic bounded strategies and explicit edge-case tests.
 
@@ -362,7 +367,7 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 | Area | Pramanix | LC | LG | NeMo | GrAI | LlIdx | Open Gap | Priority |
 |------|----------|----|----|------|------|-------|----------|----------|
 | **Reliability** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | Remaining gap: no concurrent-mutation integration test for `_lock` after the `cached_property` fix (§5 item 9); no hyperscale battle-tested production deployment | Medium |
-| **Test isolation** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 5 files outside Phase 3 scope retain `monkeypatch.setitem(sys.modules)` (see §4.2); require dedicated tox environments | Medium |
+| **Test isolation** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ✅ FIXED 2026-05-25: all 5 out-of-scope `monkeypatch.setitem(sys.modules)` files eradicated; no `sys.modules` injection outside the 4 remaining open files in `gaps.md §3` | Medium |
 
 ---
 
@@ -388,7 +393,7 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 
 ### 6.7 Open Gaps Scorecard
 
-**Last updated**: 2026-05-23. Only rows with remaining open or partially-open gaps are listed.
+**Last updated**: 2026-05-25. Only rows with remaining open or partially-open gaps are listed.
 
 | # | Area | Pramanix vs Best Competitor | Severity | Status | Minimum Action to Close Gap |
 |---|------|-----------------------------|----------|--------|-----------------------------|
@@ -397,7 +402,7 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 | 3 | Real LLM adversarial validation | Stub CI tests vs NeMo production-tested rails | 🟠 High | 🔴 Open | Add CI integration tests with real (or containerised) LLM endpoints for consensus and injection detection; remove Layer 4 stub dependency |
 | 4 | Orchestration depth | Single-action gate vs LangGraph graph-native workflows | 🟠 High | 🔴 Open | Define and publish a public AgentOrchestrationAdapter protocol; document Pramanix-as-gate pattern for LangGraph state nodes |
 | 5 | Developer UX / Policy authoring | Z3-knowledge required vs no-code schema in GrAI | 🟠 High | 🔴 Open | Add policy linter with plain-English error messages; add interactive YAML policy validator to CLI |
-| 6 | Test isolation | 5 files still use `monkeypatch.setitem(sys.modules)` | 🟡 Medium | ⚠️ Partial | Eradicate remaining 5 out-of-scope files with dedicated tox environments (see §4.2) |
+| 6 | Test isolation | All 5 out-of-scope `sys.modules` injection files eradicated | 🟡 Medium | ✅ Fixed 2026-05-25 | Zero `sys.modules` injection outside the 4 open files in `gaps.md §3`; no further tox isolation required for this category |
 | 7 | Benchmark freshness | v0.8.0 consumer laptop vs current hardware | 🟡 Medium | 🔴 Open | Re-run all benchmarks on v1.0.0 on server-class hardware (8-core, 32 GB RAM); publish in PROOF_DOSSIER.md |
 | 8 | fast_path fail-open | 4× `return None` to Z3 | 🟡 Medium | ⚠️ Partial | Counter and WARNING added; fast-path still returns `None` (fail-open by design). Either document as accepted risk or add malformed-input block decision at `Guard.verify()` boundary |
 | 9 | Policy correctness assurance | No intent-verification vs formal proof | 🟡 Medium | 🔴 Open | Add a policy simulation/dry-run mode that shows which intents would be allowed/denied with example data |

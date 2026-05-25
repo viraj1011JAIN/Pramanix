@@ -718,11 +718,19 @@ class WorkerPool:
             return
         try:
             if not _sys.is_finalizing():
-                _log.warning(
-                    "WorkerPool GC'd without explicit shutdown() — "
-                    "calling shutdown(wait=False). "
-                    "Call WorkerPool.shutdown() explicitly to avoid this warning."
-                )
+                # During interpreter shutdown, logging handlers may be torn down
+                # before finalizers run. Suppress internal logging traceback
+                # noise while still attempting to emit the warning.
+                _prev_raise_exceptions = logging.raiseExceptions
+                logging.raiseExceptions = False
+                try:
+                    _log.warning(
+                        "WorkerPool GC'd without explicit shutdown() — "
+                        "calling shutdown(wait=False). "
+                        "Call WorkerPool.shutdown() explicitly to avoid this warning."
+                    )
+                finally:
+                    logging.raiseExceptions = _prev_raise_exceptions
         except Exception as _e:
             _log.debug("pramanix.worker: __del__ sys.is_finalizing() check failed: %s", _e)
         with contextlib.suppress(Exception):
