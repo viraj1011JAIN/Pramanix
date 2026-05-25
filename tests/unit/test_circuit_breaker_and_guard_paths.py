@@ -23,7 +23,6 @@ import time
 import types
 from decimal import Decimal
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -288,10 +287,15 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         # in real prometheus AND in _REGISTERED_METRICS.  Idempotent if already done.
         AdaptiveCircuitBreaker(guard, config)
 
-        # Clear only our module-level cache.  Real prometheus still has the metrics.
+        # Save + clear the module-level cache.  Real prometheus still has the metrics.
         # Next creation tries Counter/Gauge → real ValueError → returns None → False.
-        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
+        saved = dict(_cb_mod._REGISTERED_METRICS)
+        _cb_mod._REGISTERED_METRICS.clear()
+        try:
             cb = AdaptiveCircuitBreaker(guard, config)
+        finally:
+            _cb_mod._REGISTERED_METRICS.clear()
+            _cb_mod._REGISTERED_METRICS.update(saved)
 
         assert cb._metrics_available is False
 
@@ -310,8 +314,13 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         # Warmup: registers pramanix_distributed_circuit_state + …_pressure_events_total
         DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
 
-        with patch.dict(_cb_mod._REGISTERED_METRICS, {}, clear=True):
+        saved = dict(_cb_mod._REGISTERED_METRICS)
+        _cb_mod._REGISTERED_METRICS.clear()
+        try:
             cb = DistributedCircuitBreaker(guard, config, backend=InMemoryDistributedBackend())
+        finally:
+            _cb_mod._REGISTERED_METRICS.clear()
+            _cb_mod._REGISTERED_METRICS.update(saved)
 
         assert cb._metrics_available is False
 
@@ -531,18 +540,21 @@ class TestCryptoSigningFailureCounter:
         from pramanix.decision import Decision, SolverStatus
 
         signer = PramanixSigner(force_ephemeral=True)
-        verifier = PramanixVerifier(public_key_pem=signer.public_key_pem())
 
-        with patch.object(verifier, "verify", side_effect=RuntimeError("boom")):
-            decision = Decision(
-                allowed=True,
-                status=SolverStatus.SAFE,
-                violated_invariants=(),
-                explanation="",
-                decision_hash="abc",
-                signature="sig",
-            )
-            result = verifier.verify_decision(decision)
+        class _BoomVerifier(PramanixVerifier):
+            def verify(self, *args: Any, **kwargs: Any) -> bool:
+                raise RuntimeError("boom")
+
+        verifier = _BoomVerifier(public_key_pem=signer.public_key_pem())
+        decision = Decision(
+            allowed=True,
+            status=SolverStatus.SAFE,
+            violated_invariants=(),
+            explanation="",
+            decision_hash="abc",
+            signature="sig",
+        )
+        result = verifier.verify_decision(decision)
         assert result is False
 
 
@@ -794,12 +806,15 @@ class TestGrpcWrappedHandlerCalls:
 
 def _make_postgres_verifier(pool: Any) -> Any:
     """Build a PostgresExecutionTokenVerifier without a real DB connection."""
+    import time as _time
+
     from pramanix.execution_token import PostgresExecutionTokenVerifier
 
     verifier = PostgresExecutionTokenVerifier.__new__(PostgresExecutionTokenVerifier)
     verifier._key = b"secret-key-min16"
     verifier._dsn = "postgresql://localhost/test"
     verifier._prefix = "pramanix:token:"
+    verifier._clock = _time.time
     verifier._pool = pool
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True, name="test-pg-loop")
@@ -1039,6 +1054,8 @@ class TestGuardVerifyAsyncPaths:
 
     def test_verify_redact_violations_hides_internal_error(self) -> None:
         """With redact_violations=True, internal error details are hidden from caller."""
+        import z3
+
         from pramanix import E, Field, Guard, GuardConfig, Policy
 
         _amount = Field("amount", Decimal, "Real")
@@ -1055,13 +1072,34 @@ class TestGuardVerifyAsyncPaths:
             def invariants(cls):
                 return [(E(_amount) >= Decimal("0")).named("pos").explain("positive")]
 
-        guard = Guard(_P, GuardConfig(execution_mode="sync", redact_violations=True))
+        class _ErrorSolver:
+            def set(self, *a: Any, **kw: Any) -> None:
+                pass
 
-        with patch("pramanix.guard.solve", side_effect=RuntimeError("secret internal detail")):
-            d = guard.verify(
-                intent={"amount": Decimal("100")},
-                state={"state_version": "1.0"},
-            )
+            def add(self, *a: Any) -> None:
+                pass
+
+            def assert_and_track(self, *a: Any) -> None:
+                pass
+
+            def check(self) -> z3.CheckSatResult:
+                raise RuntimeError("secret internal detail")
+
+            def reset(self) -> None:
+                pass
+
+        guard = Guard(
+            _P,
+            GuardConfig(
+                execution_mode="sync",
+                redact_violations=True,
+                solver_factory=lambda _ctx: _ErrorSolver(),
+            ),
+        )
+        d = guard.verify(
+            intent={"amount": Decimal("100")},
+            state={"state_version": "1.0"},
+        )
 
         assert not d.allowed
         assert d.status.value == "error"
@@ -1070,8 +1108,9 @@ class TestGuardVerifyAsyncPaths:
 
     def test_verify_timeout_triggers_metric(self) -> None:
         """SolverTimeoutError is recorded in the timeout metric branch."""
+        import z3
+
         from pramanix import E, Field, Guard, GuardConfig, Policy
-        from pramanix.exceptions import SolverTimeoutError
 
         _amount = Field("amount", Decimal, "Real")
 
@@ -1087,15 +1126,34 @@ class TestGuardVerifyAsyncPaths:
             def invariants(cls):
                 return [(E(_amount) >= Decimal("0")).named("pos").explain("positive")]
 
-        guard = Guard(_P, GuardConfig(execution_mode="sync", metrics_enabled=True))
+        class _TimeoutSolver:
+            def set(self, *a: Any, **kw: Any) -> None:
+                pass
 
-        with patch(
-            "pramanix.guard.solve", side_effect=SolverTimeoutError(label="pos", timeout_ms=100)
-        ):
-            d = guard.verify(
-                intent={"amount": Decimal("100")},
-                state={"state_version": "1.0"},
-            )
+            def add(self, *a: Any) -> None:
+                pass
+
+            def assert_and_track(self, *a: Any) -> None:
+                pass
+
+            def check(self) -> z3.CheckSatResult:
+                return z3.unknown
+
+            def reset(self) -> None:
+                pass
+
+        guard = Guard(
+            _P,
+            GuardConfig(
+                execution_mode="sync",
+                metrics_enabled=True,
+                solver_factory=lambda _ctx: _TimeoutSolver(),
+            ),
+        )
+        d = guard.verify(
+            intent={"amount": Decimal("100")},
+            state={"state_version": "1.0"},
+        )
 
         assert not d.allowed
         from pramanix.decision import SolverStatus
@@ -1160,7 +1218,9 @@ class TestEmitTranslatorMetric:
 
 
 class TestArchiverSegmentWriteFailure:
-    def test_archive_segment_write_failure_cleans_up_tmp(self, tmp_path) -> None:
+    def test_archive_segment_write_failure_cleans_up_tmp(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """_archive_segment: write failure removes the tmp file and re-raises."""
         import os
 
@@ -1181,7 +1241,8 @@ class TestArchiverSegmentWriteFailure:
             fh.write = _boom
             return fh
 
-        with patch("os.fdopen", side_effect=_failing_fdopen), contextlib.suppress(OSError):
+        monkeypatch.setattr(os, "fdopen", _failing_fdopen)
+        with contextlib.suppress(OSError):
             archiver._archive_segment()
 
         # No partial tmp files should remain

@@ -777,6 +777,82 @@ jobs:
   # LocalStack/S3).  GitHub-hosted ubuntu-latest runners have Docker
   # pre-installed, so testcontainers works without any additional setup.
   #
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB — Ollama live LLM tests (non-blocking)
+  #
+  # Spins up the official Ollama Docker image as a service container, pulls
+  # tinyllama (637 MB, fast CPU inference), and runs translator/ollama.py
+  # integration tests.
+  #
+  # This job is NON-BLOCKING: it does not gate wheel-smoke or release — it
+  # proves the OllamaTranslator works against a real open-source LLM in CI
+  # without requiring a paid cloud API key.
+  #
+  # The job is triggered on push to main and on any PR that touches the
+  # translator/ directory.
+  # ──────────────────────────────────────────────────────────────────────────
+  ollama-live:
+    name: "Ollama live LLM tests (tinyllama)"
+    runs-on: ubuntu-latest
+    needs: test
+    # Non-blocking: failures are allowed — this is an informational gate only.
+    # Remove `continue-on-error: true` to make it a strict gate.
+    continue-on-error: true
+
+    services:
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - 11434:11434
+        options: >-
+          --health-cmd "curl -sf http://localhost:11434/api/tags"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 30s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install poetry and project deps
+        run: |
+          pip install poetry
+          poetry config virtualenvs.create false
+          poetry install --extras translator
+
+      - name: Pull tinyllama model into the Ollama service container
+        run: |
+          curl -sf http://localhost:11434/api/tags || (echo "Ollama not ready" && exit 1)
+          curl -X POST http://localhost:11434/api/pull \
+            -H "Content-Type: application/json" \
+            -d '{"name":"tinyllama","stream":false}' \
+            --max-time 300
+        timeout-minutes: 10
+
+      - name: Run Ollama integration tests
+        env:
+          PYTHONPATH: src
+          OLLAMA_BASE_URL: "http://localhost:11434"
+          PRAMANIX_TEST_OLLAMA: "1"
+          PRAMANIX_TEST_OLLAMA_MODEL: "tinyllama"
+        run: |
+          pytest tests/integration/test_ollama_translator.py -v \
+            --timeout=120 \
+            --tb=short \
+            2>&1 | tee ollama-results.txt
+        shell: bash
+
+      - name: Upload Ollama test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-test-results
+          path: ollama-results.txt
+
   # Tests that require live cloud accounts (Azure KeyVault, Gemini, Cohere,
   # LlamaCpp with a GGUF model) are env-gated: they are skipped automatically
   # when the corresponding environment variables are absent.

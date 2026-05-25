@@ -5,7 +5,7 @@
 Covers MeshAuthenticator (all public methods) and all module-level helper
 functions.  JWT tokens are constructed manually (base64url + cryptography sign)
 so no external JWT library is required.  JWKS HTTP fetches are tested using
-unittest.mock.patch on httpx.get to avoid network calls.
+monkeypatch.setattr on httpx.get to avoid network calls.
 
 Scope: all 235 missing statements from the coverage gap report.
 """
@@ -13,12 +13,10 @@ Scope: all 235 missing statements from the coverage gap report.
 from __future__ import annotations
 
 import base64
+import importlib.util as _ilu
 import json
 import time
 from typing import Any
-import importlib.util as _ilu
-
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -533,20 +531,22 @@ class TestGetCachedJwksKeys:
         result = auth._get_cached_jwks_keys()
         assert result == [rsa_jwk]
 
-    def test_stale_cache_triggers_fetch(self, rsa_public_key):
+    def test_stale_cache_triggers_fetch(self, rsa_public_key, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
         rsa_jwk = _rsa_to_jwk(rsa_public_key)
-        # Patch _fetch_jwks to return the key without HTTP
-        with patch.object(auth, "_fetch_jwks", return_value=[rsa_jwk]):
-            result = auth._get_cached_jwks_keys()
+        # Replace _fetch_jwks to return the key without HTTP
+        monkeypatch.setattr(auth, "_fetch_jwks", lambda: [rsa_jwk])
+        result = auth._get_cached_jwks_keys()
         assert result == [rsa_jwk]
 
-    def test_fetch_failure_clears_flag_and_raises(self):
+    def test_fetch_failure_clears_flag_and_raises(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
-        with (
-            patch.object(auth, "_fetch_jwks", side_effect=MeshAuthenticationError("fail")),
-            pytest.raises(MeshAuthenticationError),
-        ):
+
+        def _raise_fail():
+            raise MeshAuthenticationError("fail")
+
+        monkeypatch.setattr(auth, "_fetch_jwks", _raise_fail)
+        with pytest.raises(MeshAuthenticationError):
             auth._get_cached_jwks_keys()
         # Flag must be cleared after failure
         assert auth._jwks_fetching is False
@@ -582,82 +582,88 @@ class TestFetchJwks:
         with pytest.raises(ImportError, match="httpx"):
             auth._fetch_jwks()
 
-    def test_timeout_exception_raises_mesh_auth_error(self):
+    def test_timeout_exception_raises_mesh_auth_error(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
         import httpx
 
-        with (
-            patch("httpx.get", side_effect=httpx.TimeoutException("timeout")),
-            pytest.raises(MeshAuthenticationError, match="timed out"),
-        ):
+        def _raise_timeout(*a, **kw):
+            raise httpx.TimeoutException("timeout")
+
+        monkeypatch.setattr(httpx, "get", _raise_timeout)
+        with pytest.raises(MeshAuthenticationError, match="timed out"):
             auth._fetch_jwks()
 
-    def test_http_status_error_raises_mesh_auth_error(self):
+    def test_http_status_error_raises_mesh_auth_error(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
         import httpx
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        with (
-            patch(
-                "httpx.get",
-                side_effect=httpx.HTTPStatusError("403", request=MagicMock(), response=mock_resp),
-            ),
-            pytest.raises(MeshAuthenticationError, match="returned HTTP"),
-        ):
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(403, request=req)
+
+        def _raise_status(*a, **kw):
+            raise httpx.HTTPStatusError("403", request=req, response=resp)
+
+        monkeypatch.setattr(httpx, "get", _raise_status)
+        with pytest.raises(MeshAuthenticationError, match="returned HTTP"):
             auth._fetch_jwks()
 
-    def test_request_error_raises_mesh_auth_error(self):
+    def test_request_error_raises_mesh_auth_error(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
         import httpx
 
-        with (
-            patch("httpx.get", side_effect=httpx.ConnectError("connection refused")),
-            pytest.raises(MeshAuthenticationError, match="unreachable"),
-        ):
+        def _raise_connect(*a, **kw):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(httpx, "get", _raise_connect)
+        with pytest.raises(MeshAuthenticationError, match="unreachable"):
             auth._fetch_jwks()
 
-    def test_invalid_json_response_raises_mesh_auth_error(self):
+    def test_invalid_json_response_raises_mesh_auth_error(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.side_effect = ValueError("not json")
-        with (
-            patch("httpx.get", return_value=mock_resp),
-            pytest.raises(MeshAuthenticationError, match="not valid JSON"),
-        ):
+        import httpx
+
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(
+            200,
+            content=b"not valid json",
+            headers={"content-type": "application/json"},
+            request=req,
+        )
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: resp)
+        with pytest.raises(MeshAuthenticationError, match="not valid JSON"):
             auth._fetch_jwks()
 
-    def test_missing_keys_field_raises_mesh_auth_error(self):
+    def test_missing_keys_field_raises_mesh_auth_error(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {"something_else": []}
-        with (
-            patch("httpx.get", return_value=mock_resp),
-            pytest.raises(MeshAuthenticationError, match="missing"),
-        ):
+        import httpx
+
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(200, json={"something_else": []}, request=req)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: resp)
+        with pytest.raises(MeshAuthenticationError, match="missing"):
             auth._fetch_jwks()
 
-    def test_empty_keys_array_raises_mesh_auth_error(self):
+    def test_empty_keys_array_raises_mesh_auth_error(self, monkeypatch: pytest.MonkeyPatch):
         auth = self._make_auth()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {"keys": []}
-        with (
-            patch("httpx.get", return_value=mock_resp),
-            pytest.raises(MeshAuthenticationError, match="no keys"),
-        ):
+        import httpx
+
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(200, json={"keys": []}, request=req)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: resp)
+        with pytest.raises(MeshAuthenticationError, match="no keys"):
             auth._fetch_jwks()
 
-    def test_successful_fetch_returns_key_list(self, rsa_public_key):
+    def test_successful_fetch_returns_key_list(
+        self, rsa_public_key, monkeypatch: pytest.MonkeyPatch
+    ):
         auth = self._make_auth()
         rsa_jwk = _rsa_to_jwk(rsa_public_key)
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {"keys": [rsa_jwk]}
-        with patch("httpx.get", return_value=mock_resp):
-            result = auth._fetch_jwks()
+        import httpx
+
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(200, json={"keys": [rsa_jwk]}, request=req)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: resp)
+        result = auth._fetch_jwks()
         assert result == [rsa_jwk]
 
     def test_jwks_uri_none_invariant_raises(self):
@@ -849,6 +855,24 @@ class TestVerifySignature:
         with pytest.raises(MeshAuthenticationError, match="verification failed"):
             _verify_signature("ES256", b"header.payload", b"\x00" * 64, ec_public_key)
 
+    def test_unhandled_algorithm_raises_mesh_authentication_error(self, rsa_public_key):
+        """The else-branch defence-in-depth guard must raise MeshAuthenticationError.
+
+        This branch is reached when an unsupported algorithm bypasses the
+        whitelist check in verify_svid() and lands directly in _verify_signature().
+        It must never silently succeed — it must raise a MeshAuthenticationError
+        with reason="disallowed_algorithm".
+        """
+        with pytest.raises(MeshAuthenticationError, match="unhandled algorithm") as exc_info:
+            _verify_signature(
+                "HS256",  # not RS256 or ES256 — triggers the else branch
+                b"header.payload",
+                b"\x00" * 32,
+                rsa_public_key,
+                token_preview="test_token",
+            )
+        assert exc_info.value.reason == "disallowed_algorithm"
+
 
 # ── _select_jwk ───────────────────────────────────────────────────────────────
 
@@ -993,16 +1017,16 @@ class TestB64urlDecode:
         # Let's verify with a known case
         assert _b64url_decode("aGk") == b"hi"
 
-    def test_invalid_base64url_raises(self):
+    def test_invalid_base64url_raises(self, monkeypatch: pytest.MonkeyPatch):
         # Python's urlsafe_b64decode is lenient with invalid chars; force the
         # except-branch by patching the underlying decoder to raise.
-        with (
-            patch(
-                "pramanix.mesh.authenticator.base64.urlsafe_b64decode",
-                side_effect=Exception("simulated decode error"),
-            ),
-            pytest.raises(ValueError),
-        ):
+        import base64 as _base64
+
+        def _raise(*a, **kw):
+            raise Exception("simulated decode error")
+
+        monkeypatch.setattr(_base64, "urlsafe_b64decode", _raise)
+        with pytest.raises(ValueError):
             _b64url_decode("anything")
 
     def test_roundtrip(self):
@@ -1017,33 +1041,39 @@ class TestB64urlDecode:
 class TestJwksEndToEnd:
     """Verify that the full JWKS path works when cache is cold."""
 
-    def test_cold_jwks_cache_fetches_and_verifies(self, rsa_private_key, rsa_public_key):
+    def test_cold_jwks_cache_fetches_and_verifies(
+        self, rsa_private_key, rsa_public_key, monkeypatch: pytest.MonkeyPatch
+    ):
+        import httpx
+
         auth = MeshAuthenticator(
             jwks_uri="https://jwks.example/jwks",
             audience="spiffe://prod.example",
         )
         rsa_jwk = _rsa_to_jwk(rsa_public_key, kid="rsa-1")
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {"keys": [rsa_jwk]}
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(200, json={"keys": [rsa_jwk]}, request=req)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: resp)
 
         token = _make_jwt(_valid_payload(), rsa_private_key, kid="rsa-1")
-        with patch("httpx.get", return_value=mock_resp):
-            identity = auth.verify_svid(token)
+        identity = auth.verify_svid(token)
         assert identity.uri == "spiffe://prod.example/payments-agent"
 
-    def test_ec_jwks_end_to_end(self, ec_private_key, ec_public_key):
+    def test_ec_jwks_end_to_end(
+        self, ec_private_key, ec_public_key, monkeypatch: pytest.MonkeyPatch
+    ):
+        import httpx
+
         auth = MeshAuthenticator(
             jwks_uri="https://jwks.example/jwks",
             audience="spiffe://prod.example",
             algorithms={"ES256"},
         )
         ec_jwk = _ec_to_jwk(ec_public_key, kid="ec-1")
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {"keys": [ec_jwk]}
+        req = httpx.Request("GET", "https://jwks.example/jwks")
+        resp = httpx.Response(200, json={"keys": [ec_jwk]}, request=req)
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: resp)
 
         token = _make_jwt(_valid_payload(), ec_private_key, alg="ES256", kid="ec-1")
-        with patch("httpx.get", return_value=mock_resp):
-            identity = auth.verify_svid(token)
+        identity = auth.verify_svid(token)
         assert identity.trust_domain == "prod.example"

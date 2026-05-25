@@ -63,10 +63,12 @@ class TestPemKeyProvider:
         provider = PemKeyProvider(test_pem, version="v2")
         assert provider.key_version() == "v2"
 
-    def test_rotate_raises(self, test_pem: bytes) -> None:
+    def test_rotate_generates_new_key(self, test_pem: bytes) -> None:
         provider = PemKeyProvider(test_pem)
-        with pytest.raises(NotImplementedError):
-            provider.rotate_key()
+        assert provider.supports_rotation is True
+        original_pem = provider.private_key_pem()
+        provider.rotate_key()
+        assert provider.private_key_pem() != original_pem
 
     def test_satisfies_protocol(self, test_pem: bytes) -> None:
         provider = PemKeyProvider(test_pem)
@@ -149,10 +151,13 @@ class TestFileKeyProvider:
         version = provider.key_version()
         assert version.startswith("file-mtime-")
 
-    def test_rotate_raises(self, tmp_path: Path) -> None:
-        provider = FileKeyProvider(tmp_path / "any.pem")
-        with pytest.raises(NotImplementedError):
-            provider.rotate_key()
+    def test_rotate_writes_new_key_to_disk(self, test_pem: bytes, tmp_path: Path) -> None:
+        key_file = tmp_path / "rotate_test.pem"
+        key_file.write_bytes(test_pem)
+        provider = FileKeyProvider(key_file)
+        assert provider.supports_rotation is True
+        provider.rotate_key()
+        assert key_file.read_bytes() != test_pem
 
     def test_satisfies_protocol(self, tmp_path: Path) -> None:
         provider = FileKeyProvider(tmp_path / "any.pem")

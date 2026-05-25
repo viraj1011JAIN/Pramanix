@@ -727,7 +727,7 @@ class SQLiteExecutionTokenVerifier:
             cur = self._conn.cursor()
             cur.execute(
                 "SELECT COUNT(*) FROM consumed_tokens WHERE expires_at >= ?",
-                (time.time(),),
+                (self._clock(),),
             )
             row = cur.fetchone()
             return row[0] if row else 0
@@ -736,7 +736,9 @@ class SQLiteExecutionTokenVerifier:
         """Force eviction of expired entries.  Returns the count removed."""
         with self._lock:
             cur = self._conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM consumed_tokens WHERE expires_at < ?", (time.time(),))
+            cur.execute(
+                "SELECT COUNT(*) FROM consumed_tokens WHERE expires_at < ?", (self._clock(),)
+            )
             row = cur.fetchone()
             count = row[0] if row else 0
             self._evict_expired()
@@ -826,6 +828,8 @@ class RedisExecutionTokenVerifier:
         secret_key: bytes,
         redis_client: Any,
         key_prefix: str = "pramanix:token:",
+        *,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         if len(secret_key) < 16:
             raise ValueError("secret_key must be at least 16 bytes.")
@@ -837,6 +841,7 @@ class RedisExecutionTokenVerifier:
         self._key = secret_key
         self._redis = redis_client
         self._prefix = key_prefix
+        self._clock = clock
 
     def consume(
         self,
@@ -893,7 +898,7 @@ class RedisExecutionTokenVerifier:
         # Fail-safe: Redis errors return False (deny) rather than propagating,
         # but are always logged so operators can distinguish "already consumed"
         # from "Redis connectivity lost".
-        remaining_s = max(1, int(token.expires_at - time.time()))
+        remaining_s = max(1, int(token.expires_at - self._clock()))
         redis_key = f"{self._prefix}{token.token_id}"
         try:
             result = self._redis.set(redis_key, "1", nx=True, ex=remaining_s)
@@ -998,6 +1003,7 @@ class PostgresExecutionTokenVerifier:
         dsn: str,
         key_prefix: str = "pramanix:token:",
         *,
+        clock: Callable[[], float] = time.time,
         _pool: Any = None,
     ) -> None:
         import asyncio
@@ -1016,6 +1022,7 @@ class PostgresExecutionTokenVerifier:
         self._key = secret_key
         self._dsn = dsn
         self._prefix = key_prefix  # for API symmetry only
+        self._clock = clock
 
         if _pool is not None:
             self._loop = None
@@ -1154,7 +1161,7 @@ class PostgresExecutionTokenVerifier:
         async with self._pool.acquire() as conn:
             result = await conn.execute(
                 "DELETE FROM consumed_tokens WHERE expires_at < $1",
-                time.time(),
+                self._clock(),
             )
             # asyncpg returns "DELETE N" as a string.
             parts = result.split()
@@ -1172,7 +1179,7 @@ class PostgresExecutionTokenVerifier:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT COUNT(*) AS n FROM consumed_tokens WHERE expires_at >= $1",
-                time.time(),
+                self._clock(),
             )
             return row["n"] if row else 0
 

@@ -76,9 +76,9 @@ class TestRawStringsAgree:
 
 
 class TestCreateTranslatorRouting:
-    def test_gemini_prefix_routing(self, monkeypatch):
+    def test_gemini_prefix_routing(self, monkeypatch: pytest.MonkeyPatch):
         """create_translator with 'gemini:...' should instantiate GeminiTranslator."""
-        from unittest.mock import patch
+        import sys
 
         from tests.helpers.real_protocols import _GeminiGenaiModule
 
@@ -91,19 +91,15 @@ class TestCreateTranslatorRouting:
 
         import pramanix.translator.gemini as gem_mod
 
-        original_cls = gem_mod.GeminiTranslator
-        gem_mod.GeminiTranslator = _RecordingGeminiTranslator  # type: ignore[assignment]
-        try:
-            with patch.dict("sys.modules", {"google.generativeai": _GeminiGenaiModule()}):
-                create_translator("gemini:gemini-1.5-flash", api_key="key")
-            assert len(_RecordingGeminiTranslator.instances) == 1
-        finally:
-            gem_mod.GeminiTranslator = original_cls
+        monkeypatch.setitem(sys.modules, "google.generativeai", _GeminiGenaiModule())
+        monkeypatch.setattr(gem_mod, "GeminiTranslator", _RecordingGeminiTranslator)
+        create_translator("gemini:gemini-1.5-flash", api_key="key")
+        assert len(_RecordingGeminiTranslator.instances) == 1
 
-    def test_cohere_prefix_routing(self, monkeypatch):
+    def test_cohere_prefix_routing(self, monkeypatch: pytest.MonkeyPatch):
         """create_translator with 'cohere:...' should instantiate CohereTranslator."""
+        import sys
         import types
-        from unittest.mock import patch
 
         class _RecordingCohereTranslator:
             instances: ClassVar[list] = []
@@ -114,15 +110,11 @@ class TestCreateTranslatorRouting:
 
         import pramanix.translator.cohere as coh_mod
 
-        original_cls = coh_mod.CohereTranslator
-        coh_mod.CohereTranslator = _RecordingCohereTranslator  # type: ignore[assignment]
-        try:
-            fake_cohere = types.SimpleNamespace(Client=object, AsyncClient=object)
-            with patch.dict("sys.modules", {"cohere": fake_cohere}):
-                create_translator("cohere:command-r", api_key="key")
-            assert len(_RecordingCohereTranslator.instances) == 1
-        finally:
-            coh_mod.CohereTranslator = original_cls
+        fake_cohere = types.SimpleNamespace(Client=object, AsyncClient=object)
+        monkeypatch.setitem(sys.modules, "cohere", fake_cohere)
+        monkeypatch.setattr(coh_mod, "CohereTranslator", _RecordingCohereTranslator)
+        create_translator("cohere:command-r", api_key="key")
+        assert len(_RecordingCohereTranslator.instances) == 1
 
     def test_unknown_prefix_raises(self):
         from pramanix.exceptions import ExtractionFailureError

@@ -115,7 +115,18 @@ class InMemoryAuditSink:
     """
 
     def __init__(self) -> None:
+        import os as _os
         import warnings as _w
+
+        if _os.environ.get("PRAMANIX_ENV", "").lower() == "production":
+            from pramanix.exceptions import ConfigurationError as _CE
+
+            raise _CE(
+                "InMemoryAuditSink is not permitted when PRAMANIX_ENV=production. "
+                "All decisions would be lost on process restart. "
+                "Configure a persistent AuditSink: KafkaAuditSink, S3AuditSink, "
+                "SplunkHecAuditSink, or DatadogAuditSink."
+            )
         _w.warn(
             "InMemoryAuditSink is for testing only — all decisions are lost on "
             "process restart. Use a persistent AuditSink (KafkaAuditSink, "

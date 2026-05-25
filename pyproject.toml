@@ -8,6 +8,7 @@ version = "1.0.0"
 description = "Deterministic neuro-symbolic guardrails for autonomous AI agents"
 authors = ["Viraj Jain <viraj@pramanix.dev>"]
 license = "AGPL-3.0-only"
+# Commercial license available — see LICENSE-COMMERCIAL and https://pramanix.dev/enterprise
 readme = "README.md"
 homepage = "https://github.com/viraj1011JAIN/Pramanix"
 repository = "https://github.com/viraj1011JAIN/Pramanix"
@@ -20,6 +21,7 @@ classifiers = [
     "Topic :: Security",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "License :: OSI Approved :: GNU Affero General Public License v3",
+    "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -32,6 +34,7 @@ packages = [{include = "pramanix", from = "src"}]
 "Bug Tracker" = "https://github.com/viraj1011JAIN/Pramanix/issues"
 "Documentation" = "https://github.com/viraj1011JAIN/Pramanix"
 "Changelog" = "https://github.com/viraj1011JAIN/Pramanix/blob/main/CHANGELOG.md"
+"Commercial License" = "https://pramanix.dev/enterprise"
 
 [tool.poetry.scripts]
 pramanix = "pramanix.cli:main"

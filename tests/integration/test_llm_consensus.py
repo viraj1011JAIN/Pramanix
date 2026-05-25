@@ -25,6 +25,8 @@ from pramanix.exceptions import ExtractionMismatchError, InjectionBlockedError
 from pramanix.translator.openai_compat import OpenAICompatTranslator
 from pramanix.translator.redundant import extract_with_consensus
 
+from .conftest import requires_openai
+
 # ── Intent schemas ────────────────────────────────────────────────────────────
 
 
@@ -53,6 +55,7 @@ def openai_translators():
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
+@requires_openai
 class TestLLMConsensusLive:
     """Live tests against the OpenAI API.  Skipped without OPENAI_API_KEY."""
 

@@ -31,8 +31,7 @@ from tests.helpers.real_protocols import (
 
 def test_haystack_import_no_haystack(monkeypatch: pytest.MonkeyPatch) -> None:
     """HaystackGuardedComponent can be imported even without haystack-ai."""
-    if "pramanix.integrations.haystack" in sys.modules:
-        del sys.modules["pramanix.integrations.haystack"]
+    monkeypatch.delitem(sys.modules, "pramanix.integrations.haystack", raising=False)
     monkeypatch.setitem(sys.modules, "haystack", None)
     # Should not raise ConfigurationError — Haystack registration is graceful
     from pramanix.integrations.haystack import HaystackGuardedComponent  # noqa: F401

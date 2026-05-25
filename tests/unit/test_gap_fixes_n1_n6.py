@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import warnings
-from unittest.mock import patch
 
 import pytest
 
@@ -248,23 +247,26 @@ class TestN5MetricsWarning:
 
             GuardConfig(metrics_enabled=False)
 
-    def test_warning_when_metrics_enabled_and_prometheus_absent(self) -> None:
+    def test_warning_when_metrics_enabled_and_prometheus_absent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """GuardConfig(metrics_enabled=True) must emit UserWarning when
         prometheus_client is not importable."""
         import pramanix.guard_config as _gc
 
-        with (
-            patch.object(_gc, "_PROM_AVAILABLE", False),
-            pytest.warns(UserWarning, match="prometheus_client"),
-        ):
+        monkeypatch.setattr(_gc, "_PROM_AVAILABLE", False)
+        with pytest.warns(UserWarning, match="prometheus_client"):
             _gc.GuardConfig(metrics_enabled=True)
 
-    def test_no_warning_when_prometheus_available(self) -> None:
+    def test_no_warning_when_prometheus_available(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When prometheus_client IS available, no UserWarning should be emitted
         even with metrics_enabled=True."""
         import pramanix.guard_config as _gc
 
-        with patch.object(_gc, "_PROM_AVAILABLE", True), warnings.catch_warnings():
+        monkeypatch.setattr(_gc, "_PROM_AVAILABLE", True)
+        with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             # Must not raise
             _gc.GuardConfig(metrics_enabled=True)

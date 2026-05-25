@@ -76,13 +76,23 @@ def _inc_sync_failure_counter() -> None:
                         "(non-zero indicates split-brain risk)",
                         [],
                     )
-                except Exception:
+                except Exception as _prom_exc:
+                    log.warning(
+                        "pramanix.circuit_breaker: failed to register "
+                        "pramanix_circuit_breaker_state_sync_failure_total — "
+                        "split-brain metrics will be unavailable: %s",
+                        _prom_exc,
+                    )
                     return
     try:
         if _CB_SYNC_FAILURE_COUNTER is not None:
             _CB_SYNC_FAILURE_COUNTER.inc()
     except Exception as _e:
-        log.debug("pramanix.circuit_breaker: metrics increment failed: %s", _e)
+        log.warning(
+            "pramanix.circuit_breaker: metrics increment failed — "
+            "split-brain counter may be stale: %s",
+            _e,
+        )
 
 
 def _prom_register(factory: Any, name: str, description: str, labelnames: list[str]) -> Any:
@@ -350,6 +360,12 @@ class AdaptiveCircuitBreaker:
                     log.error("Circuit breaker probe failed: HALF_OPEN → OPEN")
             return
 
+        # Solve started in CLOSED but state transitioned before we could record —
+        # another concurrent task already tripped the breaker. Discard this result
+        # to prevent in-flight solves from double-counting open episodes.
+        if self._state != CircuitState.CLOSED:
+            return
+
         if solve_ms > threshold:
             self._consecutive_pressure += 1
             self._increment_pressure_metric()
@@ -488,7 +504,18 @@ class InMemoryDistributedBackend:
     _lock: ClassVar[Any] = _threading.Lock()
 
     def __init__(self) -> None:
+        import os as _os
         import warnings as _w
+
+        if _os.environ.get("PRAMANIX_ENV", "").lower() == "production":
+            from pramanix.exceptions import ConfigurationError as _CE
+
+            raise _CE(
+                "InMemoryDistributedBackend is not permitted when "
+                "PRAMANIX_ENV=production. State is not shared across processes "
+                "and is lost on restart. Use RedisDistributedBackend for "
+                "production circuit-breaker state coordination."
+            )
         _w.warn(
             "InMemoryDistributedBackend is for testing only — state is lost on "
             "process restart and not shared across processes. Use "
@@ -572,6 +599,7 @@ class DistributedCircuitBreaker:
         self._config = config or CircuitBreakerConfig()
         if backend is None:
             from pramanix.exceptions import ConfigurationError
+
             raise ConfigurationError(
                 "DistributedCircuitBreaker requires an explicit backend. "
                 "Pass backend=RedisDistributedBackend(...) for production, "

@@ -497,7 +497,11 @@ class ExpressionNode:
     """
 
     __slots__ = ("node",)
-    __hash__ = object.__hash__
+    # __hash__ = None enforces the docstring contract: ExpressionNode must not
+    # be placed in sets or used as dict keys (see class note above).  With
+    # object.__hash__ the code would not crash but would silently deduplicate
+    # nodes by object identity, masking duplicate constraints in policy lists.
+    __hash__ = None  # type: ignore[assignment]
 
     def __init__(self, node: Any) -> None:
         self.node = node

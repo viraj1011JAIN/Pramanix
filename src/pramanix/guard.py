@@ -242,14 +242,27 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
                         "declared policy fields to audit coverage",
                         ["policy", "field"],
                     )
-                except Exception:
+                except Exception as _reg_exc:
                     _FIELD_SEEN_COUNTER = False
+                    log.warning(
+                        "pramanix.guard: failed to register pramanix_policy_field_seen_total "
+                        "— field-coverage metrics will be unavailable (%s: %s). "
+                        "Check prometheus_client registry health.",
+                        type(_reg_exc).__name__,
+                        _reg_exc,
+                    )
     try:
         if _FIELD_SEEN_COUNTER:
             for _f in field_names:
                 _FIELD_SEEN_COUNTER.labels(policy=policy_name, field=_f).inc()
     except Exception as _e:
-        log.debug("pramanix.guard: metrics increment failed: %s", _e)
+        log.warning(
+            "pramanix.guard: metrics increment failed — field-coverage counters may be "
+            "inconsistent (%s: %s). Check prometheus_client and counter state.",
+            type(_e).__name__,
+            _e,
+            exc_info=_e,
+        )
 
 
 # ── _CBWrappedTranslator ──────────────────────────────────────────────────────
@@ -969,6 +982,8 @@ class Guard:
                     values,
                     self._config.solver_timeout_ms,
                     self._config.solver_rlimit,
+                    self._config.solver_factory,
+                    self._config.clock,
                 )
 
                 # ── Step 6: Build Decision ────────────────────────────────────────

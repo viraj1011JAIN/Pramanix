@@ -358,8 +358,45 @@ _DEFAULT_TOXIC_WORDS: frozenset[str] = frozenset(
         "suicide",
         "self-harm",
         "overdose",
-        # Slurs (placeholder stems — extend via extra_words in production)
-        # Intentionally limited here to avoid reproducing a comprehensive slur list.
+        # Racial / ethnic slurs — common derogatory stems
+        # This list covers the most-flagged categories in content moderation
+        # research (Fortuna & Nunes 2018; Davidson et al. 2017).  It is NOT
+        # exhaustive; operators MUST extend via extra_words for their domain.
+        # Stems are chosen to match the root form across inflections.
+        "nigger",
+        "nigga",
+        "chink",
+        "spic",
+        "wetback",
+        "kike",
+        "gook",
+        "zipperhead",
+        "coon",
+        "beaner",
+        "cracker",
+        "honky",
+        "redskin",
+        "towelhead",
+        "raghead",
+        "camel jockey",
+        # Homophobic / transphobic slurs
+        "faggot",
+        "fag",
+        "dyke",
+        "tranny",
+        "shemale",
+        "homo",
+        # Ableist slurs
+        "retard",
+        "spastic",
+        "cripple",
+        # Religious / national slurs
+        "infidel",
+        "kafir",
+        "jap",
+        "kraut",
+        "frog",
+        "limey",
     }
 )
 

@@ -475,10 +475,9 @@ class TestExtractWithConsensus:
         assert result["recipient"] == "Alice"
         assert result["approved"] is True  # model A wins on non-critical
 
-    def test_injection_scorer_path_custom_module(self):
+    def test_injection_scorer_path_custom_module(self, monkeypatch: pytest.MonkeyPatch):
         """Lines 294-304: injection_scorer_path is a registered entry-point name."""
         import importlib.metadata as _meta
-        from unittest.mock import patch
 
         def _benign_scorer(text, extracted, warnings):
             return 0.0
@@ -487,15 +486,15 @@ class TestExtractWithConsensus:
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
-        with patch.object(_meta, "entry_points", return_value=[fake_ep]):
-            result = self._run(
-                extract_with_consensus(
-                    "Pay Alice 100",
-                    _Transfer,
-                    (ta, tb),
-                    injection_scorer_path="benign_scorer",
-                )
+        monkeypatch.setattr(_meta, "entry_points", lambda **kw: [fake_ep])
+        result = self._run(
+            extract_with_consensus(
+                "Pay Alice 100",
+                _Transfer,
+                (ta, tb),
+                injection_scorer_path="benign_scorer",
             )
+        )
         assert result["recipient"] == "Alice"
 
     def test_injection_scorer_path_invalid_raises(self):
@@ -552,10 +551,9 @@ class TestExtractWithConsensus:
         )
         assert result["recipient"] == "Alice"
 
-    def test_injection_scorer_high_confidence_blocks(self):
+    def test_injection_scorer_high_confidence_blocks(self, monkeypatch: pytest.MonkeyPatch):
         """Line 429: injection scorer entry-point returns 1.0 → InjectionBlockedError."""
         import importlib.metadata as _meta
-        from unittest.mock import patch
 
         def _adversarial_scorer(text, extracted, warnings):
             return 1.0
@@ -564,10 +562,8 @@ class TestExtractWithConsensus:
 
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice"})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice"})
-        with (
-            patch.object(_meta, "entry_points", return_value=[fake_ep]),
-            pytest.raises(InjectionBlockedError),
-        ):
+        monkeypatch.setattr(_meta, "entry_points", lambda **kw: [fake_ep])
+        with pytest.raises(InjectionBlockedError):
             self._run(
                 extract_with_consensus(
                     "Pay Alice 100",

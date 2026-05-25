@@ -32,6 +32,8 @@ from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMT
 from pramanix.translator.gemini import GeminiTranslator
 from tests.helpers.real_protocols import _GeminiRecordingGenaiModule
 
+from .conftest import requires_gemini
+
 
 class TransferIntent(BaseModel):
     amount: float
@@ -100,6 +102,7 @@ def test_gemini_missing_package_raises_configuration_error() -> None:
 # ── Live tests (require GOOGLE_API_KEY in .env.test) ─────────────────────────
 
 
+@requires_gemini
 def test_gemini_live_extract_real_api() -> None:
     """Live test: extract a simple intent from the real Gemini API."""
     translator = GeminiTranslator(
@@ -117,6 +120,7 @@ def test_gemini_live_extract_real_api() -> None:
     assert float(result["amount"]) > 0
 
 
+@requires_gemini
 def test_gemini_live_model_attribute() -> None:
     """Live: model attribute is preserved after construction."""
     translator = GeminiTranslator(

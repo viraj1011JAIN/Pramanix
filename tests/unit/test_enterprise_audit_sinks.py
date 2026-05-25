@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sys
 import types
-from unittest.mock import patch
 
 import pytest
 
@@ -199,9 +198,16 @@ def test_splunk_sink_accepts_bare_token() -> None:
 
 
 def test_splunk_sink_failure_does_not_propagate() -> None:
-    with patch("urllib.request.urlopen", side_effect=Exception("network error")):
+    import httpx
+    import respx
+
+    with respx.mock(base_url="http://splunk:8088"):
+        respx.post("http://splunk:8088/services/collector").mock(
+            side_effect=httpx.ConnectError("network error")
+        )
         sink = SplunkHecAuditSink("http://splunk:8088/services/collector", "tok")
         sink.emit(_make_decision())  # must not raise
+        sink.close()
 
 
 # ── DatadogAuditSink ──────────────────────────────────────────────────────────
@@ -215,7 +221,7 @@ def test_datadog_sink_raises_config_error_without_package(
         DatadogAuditSink("dd-api-key")
 
 
-def test_datadog_sink_records_sends_log() -> None:
+def test_datadog_sink_records_sends_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """emit() calls logs_api.submit_log with a real HTTPLog payload."""
     import queue
     import threading
@@ -226,34 +232,32 @@ def test_datadog_sink_records_sends_log() -> None:
     fake_log_mod = types.SimpleNamespace(HTTPLog=_DatadogHTTPLog)
     fake_log_item_mod = types.SimpleNamespace(HTTPLogItem=_DatadogHTTPLogItem)
 
-    with patch.dict(
-        sys.modules,
-        {
-            "datadog_api_client.v2.model.http_log": fake_log_mod,
-            "datadog_api_client.v2.model.http_log_item": fake_log_item_mod,
-        },
-    ):
-        logs_api = _CapturingLogsApi()
-        sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._service = "pramanix"
-        sink._source = "pramanix-audit"
-        sink._tags = ""
-        sink._max_queue = 500
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-        sink._logs_api = logs_api
-        # Start a real background worker so emit() can be processed.
-        sink._queue: queue.Queue = queue.Queue(maxsize=500)
-        sink._stop_event = threading.Event()
-        sink._worker = threading.Thread(
-            target=sink._send_loop, daemon=True, name="pramanix-dd-test"
-        )
-        sink._worker.start()
+    monkeypatch.setitem(sys.modules, "datadog_api_client.v2.model.http_log", fake_log_mod)
+    monkeypatch.setitem(
+        sys.modules, "datadog_api_client.v2.model.http_log_item", fake_log_item_mod
+    )
 
-        sink.emit(_make_decision())
-        # Drain queue INSIDE patch.dict context so _send_loop can import the
-        # patched Datadog model modules before sys.modules is restored.
-        sink.close()
+    logs_api = _CapturingLogsApi()
+    sink = DatadogAuditSink.__new__(DatadogAuditSink)
+    sink._service = "pramanix"
+    sink._source = "pramanix-audit"
+    sink._tags = ""
+    sink._max_queue = 500
+    sink._queue_lock = threading.Lock()
+    sink._overflow_count = 0
+    sink._logs_api = logs_api
+    # Start a real background worker so emit() can be processed.
+    sink._queue: queue.Queue = queue.Queue(maxsize=500)
+    sink._stop_event = threading.Event()
+    sink._worker = threading.Thread(
+        target=sink._send_loop, daemon=True, name="pramanix-dd-test"
+    )
+    sink._worker.start()
+
+    sink.emit(_make_decision())
+    # Drain the queue before monkeypatch restores sys.modules so _send_loop
+    # can import the injected Datadog model modules before teardown.
+    sink.close()
 
     assert len(logs_api.submit_log_calls) == 1
     payload = logs_api.submit_log_calls[0]
@@ -416,7 +420,9 @@ def test_datadog_sink_overflow_drops_silently() -> None:
     assert sink._overflow_count == 1
 
 
-def test_datadog_sink_close_swallows_api_client_error() -> None:
+def test_datadog_sink_close_swallows_api_client_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """close() joins the worker and swallows api_client.close() failures."""
     import queue as _queue
     import threading
@@ -425,34 +431,31 @@ def test_datadog_sink_close_swallows_api_client_error() -> None:
     fake_log_mod = _types.SimpleNamespace(HTTPLog=_DatadogHTTPLog)
     fake_log_item_mod = _types.SimpleNamespace(HTTPLogItem=_DatadogHTTPLogItem)
 
-    with patch.dict(
-        sys.modules,
-        {
-            "datadog_api_client.v2.model.http_log": fake_log_mod,
-            "datadog_api_client.v2.model.http_log_item": fake_log_item_mod,
-        },
-    ):
-        logs_api = _CapturingLogsApi()
+    monkeypatch.setitem(sys.modules, "datadog_api_client.v2.model.http_log", fake_log_mod)
+    monkeypatch.setitem(
+        sys.modules, "datadog_api_client.v2.model.http_log_item", fake_log_item_mod
+    )
+    logs_api = _CapturingLogsApi()
 
-        class _BrokenApiClient:
-            def close(self) -> None:
-                raise RuntimeError("connection reset")
+    class _BrokenApiClient:
+        def close(self) -> None:
+            raise RuntimeError("connection reset")
 
-        sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._service = "svc"
-        sink._source = "src"
-        sink._tags = ""
-        sink._max_queue = 500
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-        sink._logs_api = logs_api
-        sink._api_client = _BrokenApiClient()
-        sink._queue: _queue.Queue = _queue.Queue(maxsize=500)
-        sink._stop_event = threading.Event()
-        sink._worker = threading.Thread(
-            target=sink._send_loop, daemon=True, name="pramanix-dd-close-err-test"
-        )
-        sink._worker.start()
+    sink = DatadogAuditSink.__new__(DatadogAuditSink)
+    sink._service = "svc"
+    sink._source = "src"
+    sink._tags = ""
+    sink._max_queue = 500
+    sink._queue_lock = threading.Lock()
+    sink._overflow_count = 0
+    sink._logs_api = logs_api
+    sink._api_client = _BrokenApiClient()
+    sink._queue: _queue.Queue = _queue.Queue(maxsize=500)
+    sink._stop_event = threading.Event()
+    sink._worker = threading.Thread(
+        target=sink._send_loop, daemon=True, name="pramanix-dd-close-err-test"
+    )
+    sink._worker.start()
 
-        # close() must NOT propagate the RuntimeError from _api_client.close()
-        sink.close()
+    # close() must NOT propagate the RuntimeError from _api_client.close()
+    sink.close()

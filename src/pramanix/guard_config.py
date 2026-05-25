@@ -35,7 +35,10 @@ from pramanix.exceptions import ConfigurationError
 from pramanix.resolvers import resolver_registry
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pramanix.crypto import PramanixSigner
+    from pramanix.solver import SolverProtocol
 
 __all__ = ["GovernanceConfig", "GuardConfig", "Path"]
 
@@ -511,6 +514,46 @@ class GuardConfig:
     Default: ``None`` (secure memory not configured).
     """
 
+    solver_factory: "Callable[[Any], SolverProtocol] | None" = field(default=None)
+    """Optional factory for the Z3 solver — enables test isolation without
+    patching the z3 C-extension (Law 3).
+
+    The callable receives one argument: the active ``z3.Context`` (or ``None``
+    for the thread-local default) and must return an object satisfying
+    :class:`~pramanix.solver.SolverProtocol` (``set``, ``add``,
+    ``assert_and_track``, ``check``, ``unsat_core``).
+
+    When ``None`` (default), ``z3.Solver(ctx=ctx)`` is used directly.
+
+    Example — inject an always-SAT stub in tests::
+
+        from tests.helpers.solver_stubs import AlwaysSATStub
+        config = GuardConfig(solver_factory=lambda ctx: AlwaysSATStub())
+        guard = Guard(policy, config)
+
+    SECURITY: Never set this in production deployments.  The factory
+    completely replaces formal Z3 verification.  Guard raises
+    ``ConfigurationError`` if ``PRAMANIX_ENV=production`` and a non-None
+    ``solver_factory`` is supplied.
+    """
+
+    clock: "Callable[[], float] | None" = field(default=None)
+    """Optional clock injection for ``E.now()`` time-policy expressions.
+
+    The callable must return the current Unix timestamp as a float (same
+    contract as ``time.time()``).  Injecting a deterministic clock makes
+    time-window, TTL, and scheduled-access invariants fully testable without
+    ``time.sleep()`` or ``monkeypatch.setattr``.
+
+    When ``None`` (default), the transpiler uses ``time.time()`` directly.
+
+    Example — freeze time in a test::
+
+        import time
+        _frozen = time.time()
+        config = GuardConfig(clock=lambda: _frozen)
+    """
+
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
             raise ConfigurationError(
@@ -669,3 +712,11 @@ class GuardConfig:
             )
             warnings.warn(_msg, UserWarning, stacklevel=2)
             _prod_logger.error("pramanix.guard_config.production_advisory: %s", _msg)
+        # ── solver_factory / clock not allowed in production ──────────────────
+        if _is_prod and self.solver_factory is not None:
+            raise ConfigurationError(
+                "GuardConfig(solver_factory=...) is not permitted when "
+                "PRAMANIX_ENV=production. A custom solver factory replaces "
+                "formal Z3 verification entirely — this is only safe in tests. "
+                "Remove solver_factory from your production GuardConfig."
+            )

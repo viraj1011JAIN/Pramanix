@@ -11,8 +11,6 @@ import importlib
 import json
 import sys
 import types
-from unittest.mock import patch
-
 import pytest
 
 from pramanix.cli import main
@@ -253,15 +251,17 @@ class TestDoctorZ3Check:
         assert checks["z3-solver"]["level"] == "ERROR"
         assert data["passed"] is False
 
-    def test_z3_functional_failure_reports_error(self, capsys: pytest.CaptureFixture) -> None:
+    def test_z3_functional_failure_reports_error(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Simulate z3 Solver returning 'unknown' (not 'sat')."""
         import z3 as _z3
 
-        with patch.object(_z3.Solver, "check", return_value=_z3.unknown):
-            _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
-            data = json.loads(stdout)
-            checks = {c["name"]: c for c in data["checks"]}
-            assert checks["z3-solver"]["level"] == "ERROR"
+        monkeypatch.setattr(_z3.Solver, "check", lambda self: _z3.unknown)
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["z3-solver"]["level"] == "ERROR"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -281,12 +281,14 @@ class TestDoctorRedisCheck:
         except ImportError:
             pytest.skip("redis not installed")
 
-        with patch("redis.from_url", return_value=_PingFailRedisClient()):
-            _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
-            data = json.loads(stdout)
-            checks = {c["name"]: c for c in data["checks"]}
-            assert "redis-ping" in checks
-            assert checks["redis-ping"]["level"] == "ERROR"
+        import redis as _redis_mod
+
+        monkeypatch.setattr(_redis_mod, "from_url", lambda url, **kw: _PingFailRedisClient())
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert "redis-ping" in checks
+        assert checks["redis-ping"]["level"] == "ERROR"
 
     def test_redis_reachable_reports_ok(
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -298,11 +300,13 @@ class TestDoctorRedisCheck:
         except ImportError:
             pytest.skip("redis not installed")
 
-        with patch("redis.from_url", return_value=_PingOkRedisClient()):
-            _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
-            data = json.loads(stdout)
-            checks = {c["name"]: c for c in data["checks"]}
-            assert checks["redis-ping"]["level"] == "OK"
+        import redis as _redis_mod
+
+        monkeypatch.setattr(_redis_mod, "from_url", lambda url, **kw: _PingOkRedisClient())
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["redis-ping"]["level"] == "OK"
 
     def test_no_redis_check_when_url_not_set(
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
@@ -377,8 +381,8 @@ class TestDoctorProductionProfile:
                 return None
             return real_find_spec(name, *args, **kwargs)
 
-        with patch.object(importlib.util, "find_spec", side_effect=_patched_find_spec):
-            _exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        monkeypatch.setattr(importlib.util, "find_spec", _patched_find_spec)
+        _exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
 
         data = json.loads(stdout)
         assert data["profile"] == "production"
@@ -414,8 +418,8 @@ class TestDoctorProductionProfile:
                 return None
             return real_find_spec(name, *args, **kwargs)
 
-        with patch.object(importlib.util, "find_spec", side_effect=_patched_find_spec):
-            exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        monkeypatch.setattr(importlib.util, "find_spec", _patched_find_spec)
+        exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
 
         data = json.loads(stdout)
         checks = {c["name"]: c for c in data["checks"]}
@@ -453,8 +457,8 @@ class TestDoctorProductionProfile:
                 return None
             return real_find_spec(name, *args, **kwargs)
 
-        with patch.object(importlib.util, "find_spec", side_effect=_patched_find_spec):
-            exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        monkeypatch.setattr(importlib.util, "find_spec", _patched_find_spec)
+        exit_code, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
 
         data = json.loads(stdout)
         checks = {c["name"]: c for c in data["checks"]}

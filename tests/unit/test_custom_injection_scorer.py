@@ -106,7 +106,6 @@ class TestExtractWithConsensusCustomScorer:
     ) -> None:
         """A scorer registered in the entry-point group is loaded and called."""
         import importlib.metadata as _meta
-        from unittest.mock import patch
 
         from tests.helpers.real_protocols import _FakeEntryPoint
 
@@ -115,11 +114,11 @@ class TestExtractWithConsensusCustomScorer:
 
         fake_ep = _FakeEntryPoint("test_scorer", _scorer)
 
-        with patch.object(_meta, "entry_points", return_value=[fake_ep]):
-            eps = _meta.entry_points(group="pramanix.injection_scorers")
-            ep = next((e for e in eps if e.name == "test_scorer"), None)
-            assert ep is not None
-            fn = ep.load()
-            result = fn("user text", {"amount": "100"}, [])
+        monkeypatch.setattr(_meta, "entry_points", lambda **kw: [fake_ep])
+        eps = _meta.entry_points(group="pramanix.injection_scorers")
+        ep = next((e for e in eps if e.name == "test_scorer"), None)
+        assert ep is not None
+        fn = ep.load()
+        result = fn("user text", {"amount": "100"}, [])
 
         assert result == 0.1

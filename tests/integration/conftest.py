@@ -211,11 +211,39 @@ def azure_keyvault_url() -> str:
     return url
 
 
+# ── OpenAI (live-gated) ───────────────────────────────────────────────────────
+
+requires_openai = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason=(
+        "OPENAI_API_KEY not set — OpenAI live tests skipped. "
+        "These tests MUST pass before any release that touches "
+        "translator/redundant.py or translator/openai_compat.py."
+    ),
+)
+
 # ── Gemini (live-gated) ───────────────────────────────────────────────────────
 
 requires_gemini = pytest.mark.skipif(
     not os.environ.get("GOOGLE_API_KEY"),
-    reason="GOOGLE_API_KEY not set — Gemini live tests skipped",
+    reason=(
+        "GOOGLE_API_KEY not set — Gemini live tests skipped. "
+        "These tests MUST pass before any release that touches "
+        "translator/gemini.py."
+    ),
+)
+
+# ── Ollama (local server required) ───────────────────────────────────────────
+
+requires_ollama = pytest.mark.skipif(
+    not os.environ.get("OLLAMA_BASE_URL") and not os.environ.get("PRAMANIX_TEST_OLLAMA"),
+    reason=(
+        "Ollama live tests require a running Ollama server. "
+        "Set OLLAMA_BASE_URL (e.g. 'http://localhost:11434') or "
+        "PRAMANIX_TEST_OLLAMA=1 to enable. "
+        "These tests MUST pass before any release that touches "
+        "translator/ollama.py."
+    ),
 )
 
 # ── LlamaCpp (real GGUF file required) ────────────────────────────────────────
@@ -224,6 +252,8 @@ requires_llamacpp = pytest.mark.skipif(
     not os.environ.get("PRAMANIX_TEST_GGUF_PATH"),
     reason=(
         "PRAMANIX_TEST_GGUF_PATH not set — "
-        "set to a local .gguf file path to enable llamacpp integration tests"
+        "set to a local .gguf file path to enable llamacpp integration tests. "
+        "These tests MUST pass before any release that touches "
+        "translator/llamacpp.py."
     ),
 )

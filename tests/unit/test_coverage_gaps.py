@@ -20,8 +20,6 @@ import importlib
 import importlib.util as _ilu
 import sys
 from decimal import Decimal
-from unittest.mock import patch
-
 import pytest
 
 import pramanix.guard as _guard_mod
@@ -1409,23 +1407,18 @@ def test_gemini_no_api_key_client_is_none(monkeypatch: pytest.MonkeyPatch) -> No
     # the package installed.  The real genai client is never built because
     # api_key resolves to None (no env var, no argument).
     _genai_stub = _GeminiGenaiModuleStub()
-    with patch.dict(
-        sys.modules,
-        {
-            "google": _GcpModuleStub(),
-            "google.protobuf": _GoogleProtobufModuleStub(),
-            "google.generativeai": _genai_stub,
-        },
-    ):
-        # Force re-import since gemini module may be cached with a bad state.
-        import importlib
+    monkeypatch.setitem(sys.modules, "google", _GcpModuleStub())
+    monkeypatch.setitem(sys.modules, "google.protobuf", _GoogleProtobufModuleStub())
+    monkeypatch.setitem(sys.modules, "google.generativeai", _genai_stub)
+    # Force re-import since gemini module may be cached with a bad state.
+    import importlib
 
-        import pramanix.translator.gemini as _gem_mod
+    import pramanix.translator.gemini as _gem_mod
 
-        importlib.reload(_gem_mod)
-        from pramanix.translator.gemini import GeminiTranslator
+    importlib.reload(_gem_mod)
+    from pramanix.translator.gemini import GeminiTranslator
 
-        t = GeminiTranslator("gemini-pro")
+    t = GeminiTranslator("gemini-pro")
     assert t._client is None
 
 

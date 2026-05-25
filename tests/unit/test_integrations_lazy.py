@@ -40,13 +40,6 @@ def _stub_module(name: str) -> types.ModuleType:
     return stub
 
 
-def _reload_integrations_init() -> types.ModuleType:
-    """Force a fresh import of pramanix.integrations to re-run __getattr__."""
-    mod_name = "pramanix.integrations"
-    if mod_name in sys.modules:
-        del sys.modules[mod_name]
-    return importlib.import_module(mod_name)
-
 
 class TestIntegrationsLazyImports:
     """Each test exercises one branch of integrations/__init__.__getattr__."""

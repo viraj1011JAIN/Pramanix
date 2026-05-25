@@ -228,15 +228,16 @@ class TestBooleanCombinators:
 
 
 class TestExpressionNodeHash:
-    def test_two_distinct_nodes_can_be_in_set(self) -> None:
+    def test_two_distinct_nodes_are_unhashable(self) -> None:
         n1 = E(_balance)
         n2 = E(_amount)
-        s = {n1, n2}
-        assert len(s) == 2
+        with pytest.raises(TypeError, match="unhashable"):
+            {n1, n2}
 
     def test_same_node_identity(self) -> None:
         n = E(_balance)
-        assert hash(n) == hash(n)
+        with pytest.raises(TypeError, match="unhashable"):
+            hash(n)
 
 
 # ── __bool__ trap — ExpressionNode ────────────────────────────────────────────

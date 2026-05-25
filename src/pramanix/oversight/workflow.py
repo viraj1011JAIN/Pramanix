@@ -483,7 +483,19 @@ class InMemoryApprovalWorkflow:
         max_records: int = 100_000,
         max_decisions: int = 100_000,
     ) -> None:
+        import os as _os
         import warnings as _w
+
+        if _os.environ.get("PRAMANIX_ENV", "").lower() == "production":
+            from pramanix.exceptions import ConfigurationError as _CE
+
+            raise _CE(
+                "InMemoryApprovalWorkflow is not permitted when "
+                "PRAMANIX_ENV=production. All oversight records would be lost "
+                "on process restart. Replace with a persistent workflow backend "
+                "(database + notification system) following the ApprovalWorkflow "
+                "protocol."
+            )
         _w.warn(
             "InMemoryApprovalWorkflow is for testing only — all approval records "
             "are lost on process restart and are not shared across processes. "

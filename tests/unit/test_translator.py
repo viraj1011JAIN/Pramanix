@@ -679,6 +679,10 @@ class TestOpenAICompatTranslator:
 # ── AnthropicTranslator ───────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"),
+    reason="ANTHROPIC_API_KEY not set — real HTTP tests skipped",
+)
 class TestAnthropicTranslator:
     """Real HTTP integration tests — authenticated via ANTHROPIC_API_KEY in .env.test."""
 

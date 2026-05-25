@@ -228,6 +228,31 @@ class PramanixGuardNode:
             return _awrapper
 
         def _swrapper(state: Any, *args: Any, **kwargs: Any) -> Any:
+            # asyncio.run() raises RuntimeError when called from inside a running
+            # event loop (FastAPI, Jupyter, pytest-asyncio, any ASGI framework).
+            # Detect this case and dispatch to a fresh thread with its own event
+            # loop so that sync LangGraph nodes work correctly in async hosts.
+            try:
+                asyncio.get_running_loop()
+                _in_async_host = True
+            except RuntimeError:
+                _in_async_host = False
+
+            if _in_async_host:
+                import concurrent.futures as _cf
+
+                with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+                    return _pool.submit(
+                        lambda: asyncio.run(
+                            self._run(
+                                node_fn=fn,
+                                state=state,
+                                args=args,
+                                kwargs=kwargs,
+                            )
+                        )
+                    ).result()
+
             return asyncio.run(
                 self._run(
                     node_fn=fn,

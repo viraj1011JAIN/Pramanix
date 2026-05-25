@@ -28,8 +28,6 @@ from __future__ import annotations
 import importlib.util as _ilu
 import sys
 from decimal import Decimal
-from unittest.mock import patch
-
 import pytest
 import z3
 
@@ -73,11 +71,11 @@ class TestSolverAttributeViolationsZ3Unknown:
             def reset(self) -> None:
                 pass
 
-        with (
-            patch.object(z3, "Solver", return_value=_UnknownSolver()),
-            pytest.raises(SolverTimeoutError) as exc_info,
-        ):
-            _attribute_violations([inv], bindings, timeout_ms=100, ctx=ctx)
+        with pytest.raises(SolverTimeoutError) as exc_info:
+            _attribute_violations(
+                [inv], bindings, timeout_ms=100, ctx=ctx,
+                solver_factory=lambda _ctx: _UnknownSolver(),
+            )
 
         assert exc_info.value.label == "pos"
         assert exc_info.value.timeout_ms == 100
@@ -110,11 +108,11 @@ class TestSolverAttributeViolationsZ3Unknown:
             def reset(self) -> None:
                 pass
 
-        with (
-            patch.object(z3, "Solver", return_value=_UnknownSolver()),
-            pytest.raises(SolverTimeoutError) as exc_info,
-        ):
-            _fast_check([inv], bindings, timeout_ms=50, ctx=ctx)
+        with pytest.raises(SolverTimeoutError) as exc_info:
+            _fast_check(
+                [inv], bindings, timeout_ms=50, ctx=ctx,
+                solver_factory=lambda _ctx: _UnknownSolver(),
+            )
 
         assert exc_info.value.label == "<all-invariants>"
 
@@ -213,11 +211,14 @@ class TestSecureMemoryStorePartitionGuards:
         from pramanix.ifc.labels import TrustLabel
         from pramanix.memory.store import SecureMemoryStore
 
-        store = SecureMemoryStore()
-        with (
-            patch.object(store, "get_partition", return_value=None),
-            pytest.raises(RuntimeError, match="bug in the store"),
-        ):
+        class _NullPartitionStore(SecureMemoryStore):
+            def get_partition(
+                self, tenant_id: str, workflow_id: str, *, create: bool = True
+            ) -> None:
+                return None
+
+        store = _NullPartitionStore()
+        with pytest.raises(RuntimeError, match="bug in the store"):
             store.write(
                 "t1",
                 "w1",

@@ -23,8 +23,6 @@ import pickle
 import sys
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 
 from pramanix.decision import Decision, SolverStatus, _build_decision_canonical

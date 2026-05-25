@@ -21,8 +21,6 @@ import importlib.util as _ilu
 import pathlib
 import sys
 import threading
-from unittest.mock import patch  # kept only for input-injector uses (glob, ctypes)
-
 import pytest
 
 from tests.helpers.real_protocols import (
@@ -56,40 +54,39 @@ class TestIsMusl:
         """Non-Linux sys.platform short-circuits immediately — returns False."""
         import pramanix._platform as _p
 
-        with patch("sys.platform", "win32"):
-            assert _p.is_musl() is False
+        assert _p.is_musl(_platform_str="win32") is False
 
     def test_linux_glob_found_returns_true(self) -> None:
         """sys.platform=linux + musl glob hit → is_musl() returns True (line 32-33)."""
         import pramanix._platform as _p
 
-        with (
-            patch("sys.platform", "linux"),
-            patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]),
-        ):
-            assert _p.is_musl() is True
+        assert _p.is_musl(
+            _platform_str="linux",
+            _glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"],
+        ) is True
 
     def test_linux_no_glob_ctypes_fails_returns_true(self) -> None:
         """sys.platform=linux + empty glob + ctypes.CDLL OSError → True (lines 35-40)."""
         import pramanix._platform as _p
 
-        with (
-            patch("sys.platform", "linux"),
-            patch("glob.glob", return_value=[]),
-            patch("ctypes.CDLL", side_effect=OSError("not found")),
-        ):
-            assert _p.is_musl() is True
+        def _fail_cdll(path):
+            raise OSError("not found")
+
+        assert _p.is_musl(
+            _platform_str="linux",
+            _glob_fn=lambda *a: [],
+            _cdll_fn=_fail_cdll,
+        ) is True
 
     def test_linux_no_glob_ctypes_ok_returns_false(self) -> None:
         """sys.platform=linux + empty glob + ctypes.CDLL success → False (line 42)."""
         import pramanix._platform as _p
 
-        with (
-            patch("sys.platform", "linux"),
-            patch("glob.glob", return_value=[]),
-            patch("ctypes.CDLL", return_value=object()),
-        ):
-            assert _p.is_musl() is False
+        assert _p.is_musl(
+            _platform_str="linux",
+            _glob_fn=lambda *a: [],
+            _cdll_fn=lambda path: None,
+        ) is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -427,10 +424,13 @@ class TestLlamaCppCoverage:
         _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
 
     @pytest.mark.asyncio
-    async def test_non_extraction_parse_exception_wrapped(self) -> None:
+    async def test_non_extraction_parse_exception_wrapped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Non-ExtractionFailureError from parse_llm_response is wrapped."""
         from pydantic import BaseModel
 
+        import pramanix.translator.llamacpp as _llama_mod
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.llamacpp import LlamaCppTranslator
 
@@ -444,16 +444,15 @@ class TestLlamaCppCoverage:
         t._max_tokens = 512
         t._llm = None
 
-        # _inference returns a string; parse_llm_response will raise ExtractionFailureError
-        # for bad JSON. For the non-ExtractionFailureError path, patch parse_llm_response
-        with (
-            patch(
-                "pramanix.translator.llamacpp.parse_llm_response",
-                side_effect=ValueError("unexpected"),
-            ),
-            patch.object(t, "_inference", return_value='{"amount": 1}'),
-            pytest.raises(ExtractionFailureError, match="failed to parse"),
-        ):
+        # Direct instance override — no patch.object needed
+        t._inference = lambda *a, **kw: '{"amount": 1}'  # type: ignore[method-assign]
+
+        def _raise_parse(*a, **kw):
+            raise ValueError("unexpected")
+
+        monkeypatch.setattr(_llama_mod, "parse_llm_response", _raise_parse)
+
+        with pytest.raises(ExtractionFailureError, match="failed to parse"):
             await t.extract("pay 10", _S)
 
     @pytest.mark.asyncio
@@ -473,10 +472,12 @@ class TestLlamaCppCoverage:
         t._max_tokens = 512
         t._llm = None
 
-        with (
-            patch.object(t, "_inference", side_effect=TimeoutError("timed out")),
-            pytest.raises(LLMTimeoutError),
-        ):
+        def _raise_timeout(*a, **kw):
+            raise TimeoutError("timed out")
+
+        t._inference = _raise_timeout  # type: ignore[method-assign]
+
+        with pytest.raises(LLMTimeoutError):
             await t.extract("pay 10", _S)
 
 
@@ -556,6 +557,7 @@ class TestMistralHttpxImportError:
         pytest.importorskip("mistralai")
         from pydantic import BaseModel
 
+        import pramanix.translator._json as _json_mod
         from pramanix.translator.mistral import MistralTranslator
 
         class _S(BaseModel):
@@ -564,12 +566,9 @@ class TestMistralHttpxImportError:
         t = MistralTranslator("mistral-small-latest", api_key="key")
         t._client = _MistralClientStub()
 
-        with patch(
-            "pramanix.translator._json.parse_llm_response",
-            return_value={"amount": 5.0},
-        ):
-            result = await t.extract("pay 5", _S)
-            assert result == {"amount": 5.0}
+        monkeypatch.setattr(_json_mod, "parse_llm_response", lambda *a, **kw: {"amount": 5.0})
+        result = await t.extract("pay 5", _S)
+        assert result == {"amount": 5.0}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -578,29 +577,26 @@ class TestMistralHttpxImportError:
 
 
 class TestInjectionFilterException:
-    def test_exception_in_filter_blocks_fail_closed(self) -> None:
+    def test_exception_in_filter_blocks_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import pramanix.translator.injection_filter as _filter_mod
         from pramanix.translator.injection_filter import InjectionFilter
 
+        class _RaisingPattern:
+            @staticmethod
+            def search(text):
+                raise RuntimeError("regex crash")
+
+        monkeypatch.setattr(_filter_mod, "_COMBINED_RE", _RaisingPattern())
         f = InjectionFilter()
 
         # InjectionFilter.is_injection() is fail-closed: any unexpected
         # exception returns (True, ...) — blocking the input as a precaution
         # rather than allowing potentially adversarial input through.
-        with patch(
-            "pramanix.translator.injection_filter._COMBINED_RE",
-            new_callable=lambda: type(
-                "_FakePat",
-                (),
-                {
-                    "search": staticmethod(
-                        lambda t: (_ for _ in ()).throw(RuntimeError("regex crash"))
-                    )
-                },
-            ),
-        ):
-            detected, reason = f.is_injection("some text")
-            assert detected is True  # fail-closed: block on unexpected error
-            assert reason  # reason string is populated
+        detected, reason = f.is_injection("some text")
+        assert detected is True  # fail-closed: block on unexpected error
+        assert reason  # reason string is populated
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1397,12 +1393,19 @@ class TestGuardCoverage:
 
 
 class TestWorkerCoverage:
-    def test_warmup_worker_exception_swallowed(self) -> None:
+    def test_warmup_worker_exception_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Z3 warmup failure logs but does not propagate."""
+        import z3
+
         from pramanix.worker import _warmup_worker
 
-        with patch("z3.Solver", side_effect=RuntimeError("z3 unavailable")):
-            _warmup_worker()  # must not raise
+        def _raise():
+            raise RuntimeError("z3 unavailable")
+
+        monkeypatch.setattr(z3, "Solver", _raise)
+        _warmup_worker()  # must not raise
 
     def test_worker_pool_del_with_alive_calls_shutdown(self) -> None:
         """_emergency_shutdown calls executor.shutdown(wait=False) when executor is live."""
@@ -1460,8 +1463,11 @@ class TestArchiverCoverage:
         result = archiver.verify_archive(archive_file)
         assert result is False
 
-    def test_archive_segment_write_failure_raises(self, tmp_path: object) -> None:
+    def test_archive_segment_write_failure_raises(
+        self, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import pathlib
+        import tempfile
 
         from pramanix.audit.archiver import MerkleArchiver
 
@@ -1470,7 +1476,9 @@ class TestArchiverCoverage:
         # Add some entries to archive
         archiver.add("decision-001")
 
-        # Force write to fail by making the temp file creation fail
-        # Should propagate (not swallowed) since it's in a critical path
-        with patch("tempfile.mkstemp", side_effect=OSError("disk full")), pytest.raises(OSError):
+        def _raise_disk_full(*a, **kw):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(tempfile, "mkstemp", _raise_disk_full)
+        with pytest.raises(OSError):
             archiver._archive_segment()

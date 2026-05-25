@@ -319,6 +319,8 @@ def _fast_check(
     ctx: z3.Context | None = None,
     rlimit: int = 0,
     promotions: dict[str, dict[str, int]] | None = None,
+    solver_factory: Any | None = None,
+    clock: Any | None = None,
 ) -> z3.CheckSatResult:
     """Run all invariants in a single solver; return the raw Z3 result.
 
@@ -326,24 +328,27 @@ def _fast_check(
     The result is used only to decide whether to proceed to the attribution path.
 
     Args:
-        ctx:      Optional Z3 context for thread-safety.
-        rlimit:   Z3 resource limit (elementary operations).  ``0`` = disabled.
-                  When exceeded, Z3 returns ``unknown`` which is treated as
-                  a timeout and converted to ``Decision.timeout()`` (BLOCK).
-                  Prevents logic-bomb and non-linear expression DoS.
+        ctx:            Optional Z3 context for thread-safety.
+        rlimit:         Z3 resource limit (elementary operations).  ``0`` = disabled.
+                        When exceeded, Z3 returns ``unknown`` which is treated as
+                        a timeout and converted to ``Decision.timeout()`` (BLOCK).
+                        Prevents logic-bomb and non-linear expression DoS.
+        solver_factory: Optional callable ``(ctx) -> SolverProtocol``.  When set,
+                        replaces ``z3.Solver(ctx=ctx)`` — used for test injection
+                        without patching the Z3 C-extension.
 
     Raises:
         SolverTimeoutError: If Z3 returns ``unknown`` (timeout or resource
             limit exceeded) on the shared solver.
     """
-    s = z3.Solver(ctx=ctx)
+    s = solver_factory(ctx) if solver_factory is not None else z3.Solver(ctx=ctx)
     s.set("timeout", timeout_ms)
     if rlimit > 0:
         s.set("rlimit", rlimit)
     for z3v, z3val in bindings:
         s.add(_z3_eq(z3v, z3val))
     for inv in invariants:
-        s.add(transpile(inv.node, ctx, promotions))
+        s.add(transpile(inv.node, ctx, promotions, clock))
     with _span("pramanix.z3_solve"):
         result = s.check()
     s.reset()  # explicit Z3 native memory release (more reliable than del + GC)
@@ -362,6 +367,8 @@ def _attribute_violations(
     ctx: z3.Context | None = None,
     rlimit: int = 0,
     promotions: dict[str, dict[str, int]] | None = None,
+    solver_factory: Any | None = None,
+    clock: Any | None = None,
 ) -> list[ConstraintExpr]:
     """Determine exactly which invariants are violated.
 
@@ -370,8 +377,9 @@ def _attribute_violations(
     with certainty — no minimal-core ambiguity.
 
     Args:
-        ctx:    Optional Z3 context for thread-safety.
-        rlimit: Z3 resource limit per-invariant solver.  ``0`` = disabled.
+        ctx:            Optional Z3 context for thread-safety.
+        rlimit:         Z3 resource limit per-invariant solver.  ``0`` = disabled.
+        solver_factory: Optional callable ``(ctx) -> SolverProtocol``.
 
     Raises:
         InvariantLabelError: If an invariant reached this path without a label
@@ -386,13 +394,13 @@ def _attribute_violations(
                 "An invariant without a label reached the solver. "
                 "Call Policy.validate() before Guard.verify()."
             )
-        s = z3.Solver(ctx=ctx)
+        s = solver_factory(ctx) if solver_factory is not None else z3.Solver(ctx=ctx)
         s.set("timeout", timeout_ms)
         if rlimit > 0:
             s.set("rlimit", rlimit)
         for z3v, z3val in bindings:
             s.add(_z3_eq(z3v, z3val))
-        s.assert_and_track(transpile(inv.node, ctx, promotions), z3.Bool(label, ctx))
+        s.assert_and_track(transpile(inv.node, ctx, promotions, clock), z3.Bool(label, ctx))
         with _span("pramanix.z3_solve"):
             result = s.check()
         s.reset()  # explicit Z3 native memory release (more reliable than del + GC)
@@ -411,6 +419,8 @@ def solve(
     values: dict[str, Any],
     timeout_ms: int,
     rlimit: int = 0,
+    solver_factory: Any | None = None,
+    clock: Any | None = None,
 ) -> _SolveResult:
     """Verify that *values* satisfy all *invariants*.
 
@@ -457,7 +467,9 @@ def solve(
     bindings = _build_bindings(all_fields, values, ctx, promotions)
 
     # ── Phase 1: fast path ────────────────────────────────────────────────────
-    fast_result = _fast_check(invariants, bindings, timeout_ms, ctx, rlimit, promotions)
+    fast_result = _fast_check(
+        invariants, bindings, timeout_ms, ctx, rlimit, promotions, solver_factory, clock
+    )
 
     if fast_result == z3.sat:
         return _SolveResult(
@@ -467,7 +479,9 @@ def solve(
         )
 
     # ── Phase 2: attribution path (only reached on unsat) ─────────────────────
-    violated = _attribute_violations(invariants, bindings, timeout_ms, ctx, rlimit, promotions)
+    violated = _attribute_violations(
+        invariants, bindings, timeout_ms, ctx, rlimit, promotions, solver_factory, clock
+    )
 
     return _SolveResult(
         sat=False,

@@ -15,7 +15,11 @@ from __future__ import annotations
 import glob as _glob
 
 
-def is_musl() -> bool:
+def is_musl(
+    _glob_fn=None,
+    _platform_str: str | None = None,
+    _cdll_fn=None,
+) -> bool:
     """Return ``True`` if the current process is running on musl libc.
 
     Uses two complementary heuristics so both detection paths are consistent
@@ -27,28 +31,41 @@ def is_musl() -> bool:
 
     Returns ``False`` on non-Linux systems or when either check is
     inconclusive.
+
+    Args:
+        _glob_fn:      Callable replacing ``glob.glob`` — injectable for tests.
+        _platform_str: Platform string replacing ``sys.platform`` — injectable.
+        _cdll_fn:      Callable replacing ``ctypes.CDLL`` — injectable for tests.
     """
     import sys
 
-    if sys.platform != "linux":
+    platform = _platform_str if _platform_str is not None else sys.platform
+    if platform != "linux":
         return False
 
-    if _glob.glob("/lib/ld-musl-*.so.1"):
+    glob_fn = _glob_fn if _glob_fn is not None else _glob.glob
+    if glob_fn("/lib/ld-musl-*.so.1"):
         return True
 
     try:
         import ctypes
 
-        ctypes.CDLL("libc.so.6")
+        cdll = _cdll_fn if _cdll_fn is not None else ctypes.CDLL
+        cdll("libc.so.6")
     except OSError:
         return True
 
     return False
 
 
-def _check_musl() -> None:
-    """Raise ConfigurationError if running on musl libc (Alpine Linux)."""
-    musl_loaders = _glob.glob("/lib/ld-musl-*.so.1")
+def _check_musl(_glob_fn=None) -> None:
+    """Raise ConfigurationError if running on musl libc (Alpine Linux).
+
+    Args:
+        _glob_fn: Callable replacing ``glob.glob`` — injectable for tests.
+    """
+    glob_fn = _glob_fn if _glob_fn is not None else _glob.glob
+    musl_loaders = glob_fn("/lib/ld-musl-*.so.1")
     if musl_loaders:
         from pramanix.exceptions import ConfigurationError
 
@@ -63,14 +80,17 @@ def _check_musl() -> None:
         )
 
 
-def check_platform() -> None:
+def check_platform(_glob_fn=None) -> None:
     """Run all platform compatibility checks.
 
     Called once at Guard import time. Individual checks are no-ops on
     compatible platforms so the overhead is negligible (single glob call).
+
+    Args:
+        _glob_fn: Callable replacing ``glob.glob`` — injectable for tests.
     """
     import os
 
     if os.environ.get("PRAMANIX_SKIP_MUSL_CHECK") == "1":
         return
-    _check_musl()
+    _check_musl(_glob_fn=_glob_fn)

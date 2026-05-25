@@ -26,7 +26,6 @@ import sys
 import textwrap
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
@@ -571,15 +570,20 @@ class TestCircuitBreakerPrometheusMetricsLookup:
         # Must not raise
         breaker._update_prometheus()
 
-    def test_init_prometheus_swallows_import_error(self) -> None:
+    def test_init_prometheus_swallows_import_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Lines 329->exit (331): exception during prometheus setup → _metrics_available = False."""
+        import prometheus_client
+
         breaker = self._make_breaker("prom_import_err")
         # Force metrics unavailable state
         breaker._metrics_available = False
         # If the method doesn't exist, this is a no-op (metrics were never initialized)
         if hasattr(breaker, "_init_prometheus"):
-            with patch("prometheus_client.REGISTRY", side_effect=AttributeError("no registry")):
-                breaker._init_prometheus()  # Should not raise
+            # Replace real REGISTRY with an object whose access raises AttributeError
+            monkeypatch.setattr(prometheus_client, "REGISTRY", None)
+            breaker._init_prometheus()  # Should not raise
         # Either way, _metrics_available should be False or True (no exception)
         assert isinstance(breaker._metrics_available, bool)
 
@@ -869,7 +873,9 @@ class TestSchemaExportImportException:
 class TestCalibrateInjectionFitErrors:
     """Lines 872-874, 886-888: CalibratedScorer fit/save exception paths."""
 
-    def test_fit_raises_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_fit_raises_exits_1(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Lines 872-874: scorer.fit() raises → code 1."""
         pytest.importorskip("pramanix.translator.injection_scorer")
         rows = [
@@ -880,25 +886,29 @@ class TestCalibrateInjectionFitErrors:
         dataset.write_text("".join(rows))
         output = tmp_path / "scorer.pkl"
 
-        with patch(
-            "pramanix.translator.injection_scorer.CalibratedScorer.fit",
-            side_effect=RuntimeError("fit broken"),
-        ):
-            code, _, stderr = _run_cli(
-                [
-                    "calibrate-injection",
-                    "--dataset",
-                    str(dataset),
-                    "--output",
-                    str(output),
-                    "--min-examples",
-                    "200",
-                ],
-                capsys,
-            )
+        import pramanix.translator.injection_scorer as _inj_mod
+
+        def _raise_fit(self, *args, **kwargs):
+            raise RuntimeError("fit broken")
+
+        monkeypatch.setattr(_inj_mod.CalibratedScorer, "fit", _raise_fit)
+        code, _, stderr = _run_cli(
+            [
+                "calibrate-injection",
+                "--dataset",
+                str(dataset),
+                "--output",
+                str(output),
+                "--min-examples",
+                "200",
+            ],
+            capsys,
+        )
         assert code == 1
 
-    def test_save_raises_exits_1(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_save_raises_exits_1(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Lines 886-888: scorer.save() raises → code 1."""
         pytest.importorskip("pramanix.translator.injection_scorer")
         rows = [
@@ -909,22 +919,24 @@ class TestCalibrateInjectionFitErrors:
         dataset.write_text("".join(rows))
         output = tmp_path / "scorer.pkl"
 
-        with patch(
-            "pramanix.translator.injection_scorer.CalibratedScorer.save",
-            side_effect=OSError("disk full"),
-        ):
-            code, _, stderr = _run_cli(
-                [
-                    "calibrate-injection",
-                    "--dataset",
-                    str(dataset),
-                    "--output",
-                    str(output),
-                    "--min-examples",
-                    "200",
-                ],
-                capsys,
-            )
+        import pramanix.translator.injection_scorer as _inj_mod
+
+        def _raise_save(self, *args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_inj_mod.CalibratedScorer, "save", _raise_save)
+        code, _, stderr = _run_cli(
+            [
+                "calibrate-injection",
+                "--dataset",
+                str(dataset),
+                "--output",
+                str(output),
+                "--min-examples",
+                "200",
+            ],
+            capsys,
+        )
         assert code == 1
 
 
@@ -985,8 +997,9 @@ class TestDoctorSubcommandBranches:
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lines 994-995: z3.Solver().check() returns non-sat → ERROR check."""
-        monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
         import z3
+
+        monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
 
         class MockSolver:
             def add(self, *args, **kwargs):
@@ -995,10 +1008,8 @@ class TestDoctorSubcommandBranches:
             def check(self):
                 return z3.unsat
 
-        mock_solver = MockSolver()
-
-        with patch.object(z3, "Solver", return_value=mock_solver):
-            code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        monkeypatch.setattr(z3, "Solver", lambda: MockSolver())
+        code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
         z3_check = next((c for c in data["checks"] if c["name"] == "z3-solver"), None)
         assert z3_check is not None
@@ -1028,8 +1039,8 @@ class TestDoctorSubcommandBranches:
 
         monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
         # Return 4 bytes for pointer → 32-bit
-        with patch.object(struct, "calcsize", return_value=4):
-            code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        monkeypatch.setattr(struct, "calcsize", lambda fmt: 4)
+        code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
         bits_check = next((c for c in data["checks"] if c["name"] == "platform-bits"), None)
         assert bits_check is not None
@@ -1168,7 +1179,9 @@ class TestMistralParseNonExtractionError:
     """mistral.py lines 147-148: parse_llm_response raises non-ExtractionFailureError."""
 
     @pytest.mark.asyncio
-    async def test_unexpected_parse_exception_wrapped_as_extraction_failure(self) -> None:
+    async def test_unexpected_parse_exception_wrapped_as_extraction_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         pytest.importorskip("mistralai")
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.mistral import MistralTranslator
@@ -1179,18 +1192,19 @@ class TestMistralParseNonExtractionError:
         t._timeout = 30.0
 
         # _single_call returns raw text; parse_llm_response raises a non-ExtractionFailureError.
-        # patch() is the only way to inject a ValueError from a function that normally only
-        # raises ExtractionFailureError — this tests the defensive except-Exception wrapper.
+        # monkeypatch injects a ValueError from a function that normally only raises
+        # ExtractionFailureError — this tests the defensive except-Exception wrapper.
         async def _fake_single_call(*, system_prompt: str, user_content: str) -> str:
             return "raw text"
 
         t._single_call = _fake_single_call  # type: ignore[method-assign]
 
-        with (
-            patch(
-                "pramanix.translator.mistral.parse_llm_response",
-                side_effect=ValueError("unexpected parse error"),
-            ),
-            pytest.raises(ExtractionFailureError, match="failed to parse"),
-        ):
+        import pramanix.translator.mistral as _mist_mod
+
+        def _raise_parse(*args, **kwargs):
+            raise ValueError("unexpected parse error")
+
+        monkeypatch.setattr(_mist_mod, "parse_llm_response", _raise_parse)
+
+        with pytest.raises(ExtractionFailureError, match="failed to parse"):
             await t.extract("pay Z 10", _Pay)

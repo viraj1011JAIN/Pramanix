@@ -243,7 +243,9 @@ class TestPPIDWatchdog:
         """_ppid_watchdog must be importable from worker module."""
         from pramanix.worker import _ppid_watchdog  # noqa: F401 — import test
 
-    def test_warmup_starts_watchdog_daemon_thread(self):
+    def test_warmup_starts_watchdog_daemon_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """ppid-watchdog starts in subprocess workers but NOT in the main process.
 
         The watchdog guards against orphaned worker *processes* — it is
@@ -252,21 +254,21 @@ class TestPPIDWatchdog:
         behaviour by patching multiprocessing.current_process() so _warmup_worker
         thinks it is running inside a subprocess.
         """
+        import multiprocessing
         import threading
-        from unittest.mock import patch
 
         from pramanix.worker import _warmup_worker
         from tests.helpers.real_protocols import _FakeWorkerProcess
 
         fake_proc = _FakeWorkerProcess()
+        monkeypatch.setattr(multiprocessing, "current_process", lambda: fake_proc)
 
         started_event = threading.Event()
         warmup_error: list[Exception] = []
 
         def run_warmup():
             try:
-                with patch("multiprocessing.current_process", return_value=fake_proc):
-                    _warmup_worker()
+                _warmup_worker()
                 started_event.set()
             except Exception as exc:
                 warmup_error.append(exc)

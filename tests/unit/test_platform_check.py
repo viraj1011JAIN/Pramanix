@@ -13,8 +13,6 @@ Gate condition (from engineering plan):
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 from pramanix.exceptions import ConfigurationError
@@ -23,65 +21,57 @@ from pramanix.exceptions import ConfigurationError
 class TestMuslDetection:
     def test_no_error_on_non_musl_platform(self) -> None:
         """check_platform() is a no-op when no musl loader exists."""
-        with patch("glob.glob", return_value=[]):
-            from pramanix._platform import _check_musl
+        from pramanix._platform import _check_musl
 
-            _check_musl()  # must not raise
+        _check_musl(_glob_fn=lambda *a: [])  # must not raise
 
     def test_raises_on_musl_loader_present(self) -> None:
         """ConfigurationError when /lib/ld-musl-x86_64.so.1 is found."""
-        with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-            from pramanix._platform import _check_musl
+        from pramanix._platform import _check_musl
 
-            with pytest.raises(ConfigurationError, match="musl libc"):
-                _check_musl()
+        with pytest.raises(ConfigurationError, match="musl libc"):
+            _check_musl(_glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"])
 
     def test_error_message_contains_loader_path(self) -> None:
         loader = "/lib/ld-musl-aarch64.so.1"
-        with patch("glob.glob", return_value=[loader]):
-            from pramanix._platform import _check_musl
+        from pramanix._platform import _check_musl
 
-            with pytest.raises(ConfigurationError, match="ld-musl-aarch64"):
-                _check_musl()
+        with pytest.raises(ConfigurationError, match="ld-musl-aarch64"):
+            _check_musl(_glob_fn=lambda *a: [loader])
 
     def test_error_message_suggests_debian_image(self) -> None:
-        with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-            from pramanix._platform import _check_musl
+        from pramanix._platform import _check_musl
 
-            with pytest.raises(ConfigurationError, match="slim-bookworm"):
-                _check_musl()
+        with pytest.raises(ConfigurationError, match="slim-bookworm"):
+            _check_musl(_glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"])
 
     def test_error_message_mentions_skip_env_var(self) -> None:
-        with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-            from pramanix._platform import _check_musl
+        from pramanix._platform import _check_musl
 
-            with pytest.raises(ConfigurationError, match="PRAMANIX_SKIP_MUSL_CHECK"):
-                _check_musl()
+        with pytest.raises(ConfigurationError, match="PRAMANIX_SKIP_MUSL_CHECK"):
+            _check_musl(_glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"])
 
 
 class TestSkipMuslCheck:
     def test_skip_env_var_bypasses_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SKIP_MUSL_CHECK", "1")
-        with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-            from pramanix._platform import check_platform
+        from pramanix._platform import check_platform
 
-            check_platform()  # must not raise
+        check_platform(_glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"])  # must not raise
 
     def test_skip_env_var_zero_does_not_bypass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_SKIP_MUSL_CHECK", "0")
-        with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-            from pramanix._platform import check_platform
+        from pramanix._platform import check_platform
 
-            with pytest.raises(ConfigurationError, match="musl libc"):
-                check_platform()
+        with pytest.raises(ConfigurationError, match="musl libc"):
+            check_platform(_glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"])
 
     def test_skip_env_var_absent_does_not_bypass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("PRAMANIX_SKIP_MUSL_CHECK", raising=False)
-        with patch("glob.glob", return_value=["/lib/ld-musl-x86_64.so.1"]):
-            from pramanix._platform import check_platform
+        from pramanix._platform import check_platform
 
-            with pytest.raises(ConfigurationError, match="musl libc"):
-                check_platform()
+        with pytest.raises(ConfigurationError, match="musl libc"):
+            check_platform(_glob_fn=lambda *a: ["/lib/ld-musl-x86_64.so.1"])
 
 
 class TestPlatformCheckIntegration:
@@ -97,8 +87,7 @@ class TestPlatformCheckIntegration:
 
     def test_multiple_musl_loaders_uses_first(self) -> None:
         loaders = ["/lib/ld-musl-x86_64.so.1", "/lib/ld-musl-i386.so.1"]
-        with patch("glob.glob", return_value=loaders):
-            from pramanix._platform import _check_musl
+        from pramanix._platform import _check_musl
 
-            with pytest.raises(ConfigurationError, match="ld-musl-x86_64"):
-                _check_musl()
+        with pytest.raises(ConfigurationError, match="ld-musl-x86_64"):
+            _check_musl(_glob_fn=lambda *a: loaders)

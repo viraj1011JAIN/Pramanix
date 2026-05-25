@@ -843,6 +843,9 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         # Phase 1-B: GovernanceConfig bundle (replaces 4 flat fields) (v1.0.0+)
         "governance",
         "memory_store",
+        # P0.2: solver + clock injection for tests (v1.0.0+)
+        "solver_factory",
+        "clock",
     }
 )
 
@@ -876,6 +879,9 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     # Phase 1-B: GovernanceConfig bundle (replaces 4 flat fields) (v1.0.0+)
     "governance": None,
     "memory_store": None,
+    # P0.2: solver + clock injection for tests (v1.0.0+)
+    "solver_factory": None,
+    "clock": None,
 }
 
 

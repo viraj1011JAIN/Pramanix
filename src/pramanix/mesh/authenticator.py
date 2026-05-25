@@ -919,7 +919,7 @@ def _verify_signature(
     else:
         # This branch is unreachable under normal operation because the
         # algorithm whitelist is enforced before _verify_signature is called.
-        raise MeshAuthenticationError(  # pragma: no cover
+        raise MeshAuthenticationError(
             f"Internal error: unhandled algorithm {alg!r} reached signature verification.",
             reason="disallowed_algorithm",
             token_preview=token_preview,

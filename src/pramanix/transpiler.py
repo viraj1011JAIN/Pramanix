@@ -37,7 +37,7 @@ import warnings
 from collections import deque
 from dataclasses import dataclass as _dataclass
 from decimal import Decimal
-from typing import Any, ClassVar, cast
+from typing import Any, Callable, ClassVar, cast
 
 import z3
 
@@ -370,6 +370,7 @@ def transpile(
     node: Any,
     ctx: z3.Context | None = None,
     promotions: dict[str, dict[str, int]] | None = None,
+    clock: Callable[[], float] | None = None,
 ) -> z3.ExprRef:
     """Recursively walk the DSL AST *node* and return the equivalent Z3 formula.
 
@@ -403,8 +404,8 @@ def transpile(
             return _z3_lit(v, ctx)
 
         case _BinOp(op=op, left=l, right=r):
-            lz = cast("z3.ArithRef", transpile(l, ctx, promotions))
-            rz = cast("z3.ArithRef", transpile(r, ctx, promotions))
+            lz = cast("z3.ArithRef", transpile(l, ctx, promotions, clock))
+            rz = cast("z3.ArithRef", transpile(r, ctx, promotions, clock))
             # Sort coercion: numeric literals default to RealVal in _z3_lit.
             # When the peer operand is Int-sorted, coerce the literal to IntVal
             # so that Int arithmetic (integer div, mod) propagates correctly.
@@ -468,8 +469,8 @@ def transpile(
             raise TranspileError(f"Unknown BinOp operator: {op!r}")
 
         case _CmpOp(op=op, left=l, right=r):
-            lz = transpile(l, ctx, promotions)
-            rz = transpile(r, ctx, promotions)
+            lz = transpile(l, ctx, promotions, clock)
+            rz = transpile(r, ctx, promotions, clock)
 
             # When a promoted String field (now Int-sorted) is compared to a
             # string literal, _z3_lit() produces a StringVal which Z3 rejects.
@@ -522,7 +523,7 @@ def transpile(
             raise TranspileError(f"Unknown CmpOp operator: {op!r}")
 
         case _BoolOp(op=op, operands=ops):
-            zops = [transpile(o, ctx, promotions) for o in ops]
+            zops = [transpile(o, ctx, promotions, clock) for o in ops]
             if op == "and":
                 return cast("z3.ExprRef", z3.And(*zops))
             if op == "or":
@@ -534,7 +535,7 @@ def transpile(
         case _InOp(left=l, values=vs):
             # Transpile as a Z3 disjunction: (field == v1) | (field == v2) | …
             # Use Z3_mk_eq (not Python ==) so String-sorted fields work correctly.
-            lz = transpile(l, ctx, promotions)
+            lz = transpile(l, ctx, promotions, clock)
             # When the field is promoted (String→Int), encode string literals.
             _promoted_field = (
                 promotions
@@ -554,7 +555,7 @@ def transpile(
                                 if _promoted_field
                                 and isinstance(v, _Literal)
                                 and isinstance(v.value, str)
-                                else transpile(v, ctx, promotions)
+                                else transpile(v, ctx, promotions, clock)
                             ).as_ast(),
                         ),
                         lz.ctx,
@@ -569,12 +570,12 @@ def transpile(
         case _AbsOp(operand=o):
             # Transpile |x| as z3.If(x >= 0, x, -x).
             # Z3's ArithRef supports If-then-else for Real and Int sorts.
-            z_op = cast("z3.ArithRef", transpile(o, ctx, promotions))
+            z_op = cast("z3.ArithRef", transpile(o, ctx, promotions, clock))
             return cast("z3.ExprRef", z3.If(z_op >= 0, z_op, -z_op))
 
         case _PowOp(base=b, exp=e):
             # Lower x**n to repeated Z3 multiplication (n ≤ 4 is enforced in expressions.py).
-            z_base = cast("z3.ArithRef", transpile(b, ctx, promotions))
+            z_base = cast("z3.ArithRef", transpile(b, ctx, promotions, clock))
             result: z3.ArithRef = z_base
             for _ in range(e - 1):
                 result = cast("z3.ArithRef", result * z_base)
@@ -582,7 +583,7 @@ def transpile(
 
         case _ModOp(dividend=d, divisor=v):
             # Z3 modulo — only defined for Int sorts.
-            z_dividend = cast("z3.ArithRef", transpile(d, ctx, promotions))
+            z_dividend = cast("z3.ArithRef", transpile(d, ctx, promotions, clock))
             # Integer literals are compiled as RealVal by default (_z3_lit).
             # If the dividend is Int-sorted, coerce a plain integer literal
             # divisor to IntVal so the sorts match.
@@ -593,7 +594,7 @@ def transpile(
             ):
                 z_divisor: z3.ArithRef = cast("z3.ArithRef", z3.IntVal(v.value, ctx))
             else:
-                z_divisor = cast("z3.ArithRef", transpile(v, ctx, promotions))
+                z_divisor = cast("z3.ArithRef", transpile(v, ctx, promotions, clock))
             try:
                 return cast("z3.ExprRef", z_dividend % z_divisor)
             except z3.Z3Exception as exc:
@@ -604,22 +605,22 @@ def transpile(
                 ) from exc
 
         case _StartsWithOp(operand=o, prefix=p):
-            z_str = transpile(o, ctx, promotions)
+            z_str = transpile(o, ctx, promotions, clock)
             z_pre = cast("z3.SeqRef", z3.StringVal(p.value, ctx))
             return cast("z3.ExprRef", z3.PrefixOf(z_pre, cast("z3.SeqRef", z_str)))
 
         case _EndsWithOp(operand=o, suffix=s):
-            z_str = transpile(o, ctx, promotions)
+            z_str = transpile(o, ctx, promotions, clock)
             z_suf = cast("z3.SeqRef", z3.StringVal(s.value, ctx))
             return cast("z3.ExprRef", z3.SuffixOf(z_suf, cast("z3.SeqRef", z_str)))
 
         case _ContainsOp(operand=o, substring=sub):
-            z_str = transpile(o, ctx, promotions)
+            z_str = transpile(o, ctx, promotions, clock)
             z_sub = cast("z3.SeqRef", z3.StringVal(sub.value, ctx))
             return cast("z3.ExprRef", z3.Contains(cast("z3.SeqRef", z_str), z_sub))
 
         case _LengthBetweenOp(operand=o, lo=lo, hi=hi):
-            z_str = cast("z3.SeqRef", transpile(o, ctx, promotions))
+            z_str = cast("z3.SeqRef", transpile(o, ctx, promotions, clock))
             z_len = cast("z3.ArithRef", z3.Length(z_str))
             return cast(
                 "z3.ExprRef",
@@ -627,7 +628,7 @@ def transpile(
             )
 
         case _RegexMatchOp(operand=o, pattern=pat):
-            z_str = cast("z3.SeqRef", transpile(o, ctx, promotions))
+            z_str = cast("z3.SeqRef", transpile(o, ctx, promotions, clock))
             try:
                 z_re = cast("z3.ReRef", z3.Re(pat))
                 return cast("z3.ExprRef", z3.InRe(z_str, z_re))
@@ -641,7 +642,8 @@ def transpile(
         case _NowOp():
             import time as _time
 
-            return cast("z3.ExprRef", z3.IntVal(int(_time.time()), ctx))
+            _now = clock() if clock is not None else _time.time()
+            return cast("z3.ExprRef", z3.IntVal(int(_now), ctx))
 
         case _:
             raise TranspileError(f"Unknown DSL AST node type: {type(node)!r}")

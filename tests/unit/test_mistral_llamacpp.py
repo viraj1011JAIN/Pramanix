@@ -21,8 +21,7 @@ def test_mistral_raises_config_error_without_package(monkeypatch: pytest.MonkeyP
     monkeypatch.setitem(sys.modules, "mistralai.client", None)
     monkeypatch.setitem(sys.modules, "mistralai.async_client", None)
     monkeypatch.setitem(sys.modules, "mistralai.models.chat_completion", None)
-    if "pramanix.translator.mistral" in sys.modules:
-        del sys.modules["pramanix.translator.mistral"]
+    monkeypatch.delitem(sys.modules, "pramanix.translator.mistral", raising=False)
     with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[mistral\\]'"):
         from pramanix.translator.mistral import MistralTranslator
 
