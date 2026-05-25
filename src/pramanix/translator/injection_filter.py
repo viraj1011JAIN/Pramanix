@@ -49,20 +49,30 @@ class SecurityWarning(UserWarning):
 __all__ = ["INJECTION_PATTERNS", "InjectionFilter"]
 
 # ── RE2 engine (linear-time, ReDoS-immune) ────────────────────────────────────
-# google-re2 guarantees O(n) matching; required — module raises RuntimeError at
-# load time if absent.  Install via: pip install 'pramanix[security]'
+# google-re2 guarantees O(n) matching.  Absence is detected at import time but
+# the error is raised lazily at instantiation so that the module can be imported
+# without google-re2 installed (e.g. in environments that only use the Z3 core).
 _RE2_AVAILABLE = False
+_re_engine: Any = None
+_re2_import_error: ImportError | None = None
 try:
     import re2 as _re2
 
-    _re_engine: Any = _re2
+    _re_engine = _re2
     _RE2_AVAILABLE = True
 except ImportError as _re2_err:
-    raise RuntimeError(
-        "pramanix.translator.injection_filter: google-re2 is required but not installed. "
-        "ReDoS via crafted injection patterns is a critical security risk without it. "
-        "Install with: pip install 'pramanix[security]'"
-    ) from _re2_err
+    _re2_import_error = _re2_err
+
+
+def _require_re2() -> None:
+    if not _RE2_AVAILABLE:
+        from pramanix.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            "pramanix.translator.injection_filter: google-re2 is required but not installed. "
+            "ReDoS via crafted injection patterns is a critical security risk without it. "
+            "Install with: pip install 'pramanix[security]'"
+        ) from _re2_import_error
 
 
 def _re_ci(pattern: str) -> Any:
@@ -86,15 +96,22 @@ def _re_ci(pattern: str) -> Any:
 #
 from pramanix.translator._injection_patterns import INJECTION_PATTERNS  # noqa: E402
 
-# Combined alternation compiled once at import time.
-_COMBINED_RE: re.Pattern[str] = _re_ci(
-    "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS),
-)
 
-# Individual patterns compiled for reason attribution (on a hit only).
-_INDIVIDUAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (_re_ci(pat), label) for pat, label in INJECTION_PATTERNS
-]
+def _build_injection_compiled() -> tuple[Any, list[tuple[Any, str]]]:
+    if not _RE2_AVAILABLE:
+        return None, []
+    combined = _re_ci(
+        "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS),
+    )
+    individual = [(_re_ci(pat), label) for pat, label in INJECTION_PATTERNS]
+    return combined, individual
+
+
+# Combined alternation and individual patterns compiled once at import time
+# (returns (None, []) when re2 is absent — guarded at instantiation).
+_COMBINED_RE: Any
+_INDIVIDUAL_PATTERNS: list[tuple[Any, str]]
+_COMBINED_RE, _INDIVIDUAL_PATTERNS = _build_injection_compiled()
 
 
 class InjectionFilter:
@@ -120,6 +137,9 @@ class InjectionFilter:
         if blocked:
             raise InjectionBlockedError(reason)
     """
+
+    def __init__(self) -> None:
+        _require_re2()
 
     def is_injection(self, text: str) -> tuple[bool, str]:
         """Scan *text* for injection / jailbreak patterns.
