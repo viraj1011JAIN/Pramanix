@@ -34,27 +34,44 @@ class SecurityWarning(UserWarning):
 # avoid lookbehind assertions (not supported by RE2).  The phone pattern uses
 # \b (word boundary) instead of the stdlib lookbehind — functionally equivalent
 # for the corpus of natural-language text this module targets.
+#
+# re2 is an optional security extra (pramanix[security]).  We do NOT raise at
+# module-import time so that tests and code paths that don't use PII detection
+# can still import pramanix normally.  ConfigurationError is raised lazily in
+# PIIDetector.__init__() and _re_ci()/_re_ci_ml() when re2 is absent.
 _RE2_AVAILABLE = False
+_re_engine: Any = None
+_re2_import_error: ImportError | None = None
 try:
     import re2 as _re2
 
-    _re_engine: Any = _re2
+    _re_engine = _re2
     _RE2_AVAILABLE = True
 except ImportError as _re2_err:
-    raise RuntimeError(
-        "pramanix.nlp.validators: google-re2 is required but not installed. "
-        "ReDoS via crafted PII patterns is a critical security risk without it. "
-        "Install with: pip install 'pramanix[security]'"
-    ) from _re2_err
+    _re2_import_error = _re2_err
+
+
+def _require_re2() -> None:
+    """Raise ConfigurationError if google-re2 is not installed."""
+    if not _RE2_AVAILABLE:
+        from pramanix.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            "pramanix.nlp.validators: google-re2 is required but not installed. "
+            "ReDoS via crafted PII patterns is a critical security risk without it. "
+            "Install with: pip install 'pramanix[security]'"
+        ) from _re2_import_error
 
 
 def _re_ci(pattern: str) -> Any:
+    _require_re2()
     opts = _re_engine.Options()
     opts.case_sensitive = False
     return _re_engine.compile(pattern, opts)
 
 
 def _re_ci_ml(pattern: str) -> Any:
+    _require_re2()
     opts = _re_engine.Options()
     opts.case_sensitive = False
     opts.one_line = False
@@ -176,52 +193,49 @@ def _normalise(text: str) -> str:
 
 # ── PIIDetector ────────────────────────────────────────────────────────────────
 
-# Compiled patterns for common PII types.
-# All patterns include word-boundary anchors or equivalent delimiters.
-# Lookbehind assertions are intentionally avoided so these patterns compile
-# under google-re2 (which does not support lookbehind).  The phone pattern
-# uses \b instead of (?<!\d) — equivalent for natural-language text.
-_PII_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    # US Social Security Number  (xxx-xx-xxxx)
-    ("ssn", _re_engine.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
-    # Credit / debit card — 13-19 digit groups separated by spaces or dashes.
-    # Covers Visa (13/16), MC (16), Amex (15), Discover (16), UnionPay (16-19).
-    (
-        "credit_card",
-        _re_engine.compile(r"\b(?:\d[ -]?){13,19}\b"),
-    ),
-    # Email addresses (RFC 5321 simplified)
-    (
-        "email",
-        _re_ci(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"),
-    ),
-    # Phone numbers — US/international formats (+1 xxx xxx xxxx, (xxx) xxx-xxxx, etc.)
-    # Uses \b (word boundary) instead of (?<!\d)/(?!\d) lookbehind for RE2 compatibility.
-    (
-        "phone",
-        _re_engine.compile(
-            r"\b"
-            r"(?:\+?1[\s\-.]?)?"  # optional US country code
-            r"(?:\(?\d{3}\)?[\s\-.]?)"  # area code
-            r"\d{3}[\s\-.]?"  # exchange
-            r"\d{4}"  # subscriber
-            r"\b",
+def _build_pii_patterns() -> list[tuple[str, Any]]:
+    """Build compiled PII patterns. Returns [] when google-re2 is absent."""
+    if not _RE2_AVAILABLE:
+        return []
+    return [
+        # US Social Security Number  (xxx-xx-xxxx)
+        ("ssn", _re_engine.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+        # Credit / debit card — 13-19 digit groups separated by spaces or dashes.
+        # Covers Visa (13/16), MC (16), Amex (15), Discover (16), UnionPay (16-19).
+        ("credit_card", _re_engine.compile(r"\b(?:\d[ -]?){13,19}\b")),
+        # Email addresses (RFC 5321 simplified)
+        ("email", _re_ci(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
+        # Phone numbers — US/international formats.
+        # Uses \b instead of (?<!\d)/(?!\d) lookbehind for RE2 compatibility.
+        (
+            "phone",
+            _re_engine.compile(
+                r"\b"
+                r"(?:\+?1[\s\-.]?)?"
+                r"(?:\(?\d{3}\)?[\s\-.]?)"
+                r"\d{3}[\s\-.]?"
+                r"\d{4}"
+                r"\b",
+            ),
         ),
-    ),
-    # IPv4 addresses
-    (
-        "ipv4",
-        _re_engine.compile(
-            r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
+        # IPv4 addresses
+        (
+            "ipv4",
+            _re_engine.compile(
+                r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+                r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
+            ),
         ),
-    ),
-    # US passport number (A followed by 8 digits)
-    ("passport_us", _re_engine.compile(r"\b[A-Z]\d{8}\b")),
-    # UK National Insurance number (XX 99 99 99 X)
-    ("nino_uk", _re_ci(r"\b[A-CEGHJ-PR-TW-Z]{2}\d{6}[ABCD]\b")),
-    # Driver's licence — common North American pattern (1-2 letters + 5-14 digits)
-    ("drivers_licence", _re_engine.compile(r"\b[A-Z]{1,2}\d{5,14}\b")),
-]
+        # US passport number (A followed by 8 digits)
+        ("passport_us", _re_engine.compile(r"\b[A-Z]\d{8}\b")),
+        # UK National Insurance number (XX 99 99 99 X)
+        ("nino_uk", _re_ci(r"\b[A-CEGHJ-PR-TW-Z]{2}\d{6}[ABCD]\b")),
+        # Driver's licence — common North American pattern (1-2 letters + 5-14 digits)
+        ("drivers_licence", _re_engine.compile(r"\b[A-Z]{1,2}\d{5,14}\b")),
+    ]
+
+
+_PII_PATTERNS: list[tuple[str, Any]] = _build_pii_patterns()
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +283,7 @@ class PIIDetector:
         self,
         extra_patterns: list[tuple[str, re.Pattern[str]]] | None = None,
     ) -> None:
+        _require_re2()
         self._patterns: list[tuple[str, re.Pattern[str]]] = list(_PII_PATTERNS)
         if extra_patterns:
             self._patterns.extend(extra_patterns)
