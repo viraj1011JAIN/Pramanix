@@ -490,14 +490,16 @@ class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
                 stacklevel=2,
             )
         elif os.environ.get("PRAMANIX_ENV", "").lower() == "production":
-            warnings.warn(
-                "InMemoryExecutionTokenVerifier is in use in a production "
-                "environment (PRAMANIX_ENV=production). Replay protection will "
-                "break if this process restarts or multiple workers are started. "
-                "Switch to RedisExecutionTokenVerifier or SQLiteExecutionTokenVerifier "
-                "for durable, multi-worker-safe token storage.",
-                RuntimeWarning,
-                stacklevel=2,
+            from pramanix.exceptions import ConfigurationError as _CE
+
+            raise _CE(
+                "InMemoryExecutionTokenVerifier is not permitted when "
+                "PRAMANIX_ENV=production. Replay protection will break if this "
+                "process restarts or multiple workers are started — tokens "
+                "consumed on one restart are forgotten, enabling replay attacks. "
+                "Switch to RedisExecutionTokenVerifier or "
+                "SQLiteExecutionTokenVerifier for durable, multi-worker-safe "
+                "token storage."
             )
         else:
             warnings.warn(

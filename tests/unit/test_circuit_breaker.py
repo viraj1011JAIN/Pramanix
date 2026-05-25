@@ -243,23 +243,27 @@ class TestCircuitBreakerOpen:
 class TestCircuitBreakerIsolation:
     @pytest.mark.asyncio
     async def test_three_open_episodes_cause_isolation(self) -> None:
+        # _record_solve only counts an episode when state is HALF_OPEN.
+        # Calling _inject_pressure while OPEN hits the early-return guard and
+        # does nothing.  We must manually set HALF_OPEN before each probe
+        # injection so that the episode counter is correctly incremented.
         config = CircuitBreakerConfig(
             pressure_threshold_ms=40.0,
             consecutive_pressure_count=2,
             isolation_threshold=3,
-            recovery_seconds=0.05,
         )
         breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD, config=config)
 
-        for _episode in range(3):
-            # Trip the breaker
-            await _inject_pressure(breaker, count=2, solve_ms=55.0)
+        # Episode 1: trip CLOSED → OPEN via pressure injection.
+        await _inject_pressure(breaker, count=2, solve_ms=55.0)
+        assert breaker.state == CircuitState.OPEN
 
-            if breaker.state != CircuitState.ISOLATED:
-                # Allow recovery window to elapse
-                await asyncio.sleep(0.1)
-                # Inject a failing probe to keep breaker under pressure
-                await _inject_pressure(breaker, count=1, solve_ms=55.0)
+        # Episodes 2 and 3: force HALF_OPEN then record a slow probe so that
+        # _open_episodes increments.  The third episode reaches isolation_threshold.
+        for _ in range(2):
+            async with breaker._lock:
+                breaker._state = CircuitState.HALF_OPEN
+            await _inject_pressure(breaker, count=1, solve_ms=55.0)
 
         assert breaker.state == CircuitState.ISOLATED
 

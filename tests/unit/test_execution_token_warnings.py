@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 Viraj Jain
-"""Tests for InMemoryExecutionTokenVerifier tiered warning logic — Issue #16.
+"""Tests for InMemoryExecutionTokenVerifier tiered warning/error logic — Issue #16.
 
 Three tiers:
-1. Multi-worker env vars present  → RuntimeWarning
-2. PRAMANIX_ENV=production (no multi-worker vars) → RuntimeWarning
-3. Neither                         → UserWarning
+1. Multi-worker env vars present       → RuntimeWarning
+2. PRAMANIX_ENV=production (single)    → ConfigurationError (hard block)
+3. Neither                             → UserWarning
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import secrets
 
 import pytest
 
+from pramanix.exceptions import ConfigurationError
 from pramanix.execution_token import InMemoryExecutionTokenVerifier
 
 _SECRET = secrets.token_bytes(32)
@@ -33,15 +34,15 @@ class TestInMemoryWarningTiers:
         with pytest.warns(UserWarning, match="InMemoryExecutionTokenVerifier"):
             InMemoryExecutionTokenVerifier(secret_key=_SECRET)
 
-    def test_production_env_emits_runtime_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """PRAMANIX_ENV=production (no multi-worker signals) → RuntimeWarning."""
+    def test_production_env_raises_configuration_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PRAMANIX_ENV=production (no multi-worker signals) → ConfigurationError hard block."""
         monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
         monkeypatch.delenv("GUNICORN_CMD_ARGS", raising=False)
         monkeypatch.delenv("UVICORN_WORKERS", raising=False)
         monkeypatch.delenv("HYPERCORN_WORKERS", raising=False)
         monkeypatch.setenv("PRAMANIX_ENV", "production")
 
-        with pytest.warns(RuntimeWarning, match="production"):
+        with pytest.raises(ConfigurationError, match="not permitted when PRAMANIX_ENV=production"):
             InMemoryExecutionTokenVerifier(secret_key=_SECRET)
 
     def test_web_concurrency_emits_runtime_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -67,14 +68,14 @@ class TestInMemoryWarningTiers:
             InMemoryExecutionTokenVerifier(secret_key=_SECRET)
 
     def test_production_env_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """PRAMANIX_ENV value is normalised to lowercase before comparison."""
+        """PRAMANIX_ENV value is normalised to lowercase — 'PRODUCTION' also blocks."""
         monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
         monkeypatch.delenv("GUNICORN_CMD_ARGS", raising=False)
         monkeypatch.delenv("UVICORN_WORKERS", raising=False)
         monkeypatch.delenv("HYPERCORN_WORKERS", raising=False)
         monkeypatch.setenv("PRAMANIX_ENV", "PRODUCTION")
 
-        with pytest.warns(RuntimeWarning, match="production"):
+        with pytest.raises(ConfigurationError, match="not permitted when PRAMANIX_ENV=production"):
             InMemoryExecutionTokenVerifier(secret_key=_SECRET)
 
     def test_multi_worker_takes_priority_over_production_env(
