@@ -314,11 +314,21 @@ async def extract_with_consensus(
     # ── Step 0: System 1 fast-path injection filter ───────────────────────────
     # Runs before any LLM call.  Sub-millisecond regex scan; kills obviously
     # malicious prompts without wasting API budget or incurring GPU latency.
-    _filter = InjectionFilter()
-    _blocked, _reason = _filter.is_injection(text)
-    if _blocked:
-        raise InjectionBlockedError(
-            f"System 1 injection filter blocked input before LLM call. " f"{_reason}"
+    # Degrades gracefully when google-re2 is absent (logs security warning).
+    from pramanix.exceptions import ConfigurationError as _ConfigurationError
+
+    try:
+        _filter = InjectionFilter()
+        _blocked, _reason = _filter.is_injection(text)
+        if _blocked:
+            raise InjectionBlockedError(
+                f"System 1 injection filter blocked input before LLM call. " f"{_reason}"
+            )
+    except _ConfigurationError:
+        _log.warning(
+            "pramanix: System 1 injection filter unavailable — google-re2 not installed. "
+            "Input proceeds without ReDoS-resistant injection scanning. "
+            "Install 'pramanix[security]' to enable this layer."
         )
 
     # ── Step 1: Sanitise input ────────────────────────────────────────────────
