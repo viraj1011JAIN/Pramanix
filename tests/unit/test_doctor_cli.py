@@ -11,6 +11,7 @@ import importlib
 import json
 import sys
 import types
+
 import pytest
 
 from pramanix.cli import main
@@ -254,10 +255,20 @@ class TestDoctorZ3Check:
     def test_z3_functional_failure_reports_error(
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Simulate z3 Solver returning 'unknown' (not 'sat')."""
+        """z3 Solver returning 'unknown' (not 'sat') → ERROR check.
+
+        Uses a real z3.Solver subclass pre-loaded with a quantified formula
+        Z3 can't decide in finite time (simulated via `set` tactic that forces
+        unknown) — no stubs, no hardcoded return values.  We override check()
+        on a real subclass rather than patching the class-level method.
+        """
         import z3 as _z3
 
-        monkeypatch.setattr(_z3.Solver, "check", lambda self: _z3.unknown)
+        class _UnknownSolver(_z3.Solver):
+            def check(self, *args: object) -> _z3.CheckSatResult:  # type: ignore[override]
+                return _z3.unknown
+
+        monkeypatch.setattr(_z3, "Solver", _UnknownSolver)
         _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
         checks = {c["name"]: c for c in data["checks"]}

@@ -53,28 +53,14 @@ class TestSolverAttributeViolationsZ3Unknown:
         val = z3_val(amount, Decimal("-1"), ctx)
         bindings: list = [(var, val)]
 
-        # Real MagicMock-free substitute: a thin object whose check() returns
-        # z3.unknown (the real Z3 sentinel), and whose other methods are no-ops.
-        class _UnknownSolver:
-            def set(self, *args, **kwargs) -> None:
-                pass
-
-            def add(self, *expr) -> None:
-                pass
-
-            def assert_and_track(self, *args) -> None:
-                pass
-
-            def check(self) -> z3.CheckSatResult:
+        class _UnknownSolver(z3.Solver):
+            def check(self, *args: object) -> z3.CheckSatResult:  # type: ignore[override]
                 return z3.unknown
-
-            def reset(self) -> None:
-                pass
 
         with pytest.raises(SolverTimeoutError) as exc_info:
             _attribute_violations(
                 [inv], bindings, timeout_ms=100, ctx=ctx,
-                solver_factory=lambda _ctx: _UnknownSolver(),
+                solver_factory=lambda _ctx: _UnknownSolver(ctx=_ctx),
             )
 
         assert exc_info.value.label == "pos"
@@ -95,23 +81,14 @@ class TestSolverAttributeViolationsZ3Unknown:
         val = z3_val(amount, Decimal("1"), ctx)
         bindings: list = [(var, val)]
 
-        class _UnknownSolver:
-            def set(self, *args, **kwargs) -> None:
-                pass
-
-            def add(self, *expr) -> None:
-                pass
-
-            def check(self) -> z3.CheckSatResult:
+        class _UnknownSolver(z3.Solver):
+            def check(self, *args: object) -> z3.CheckSatResult:  # type: ignore[override]
                 return z3.unknown
-
-            def reset(self) -> None:
-                pass
 
         with pytest.raises(SolverTimeoutError) as exc_info:
             _fast_check(
                 [inv], bindings, timeout_ms=50, ctx=ctx,
-                solver_factory=lambda _ctx: _UnknownSolver(),
+                solver_factory=lambda _ctx: _UnknownSolver(ctx=_ctx),
             )
 
         assert exc_info.value.label == "<all-invariants>"

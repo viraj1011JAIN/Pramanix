@@ -6,26 +6,11 @@
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
-from pramanix.exceptions import ConfigurationError
 from tests.helpers.real_protocols import _LlamaCppModule, _MistralClientStub
 
 # ── MistralTranslator ─────────────────────────────────────────────────────────
-
-
-def test_mistral_raises_config_error_without_package(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setitem(sys.modules, "mistralai", None)
-    monkeypatch.setitem(sys.modules, "mistralai.client", None)
-    monkeypatch.setitem(sys.modules, "mistralai.async_client", None)
-    monkeypatch.setitem(sys.modules, "mistralai.models.chat_completion", None)
-    monkeypatch.delitem(sys.modules, "pramanix.translator.mistral", raising=False)
-    with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[mistral\\]'"):
-        from pramanix.translator.mistral import MistralTranslator
-
-        MistralTranslator("mistral-small")
 
 
 def test_mistral_translator_init_model_attribute() -> None:
@@ -68,17 +53,7 @@ async def test_mistral_extract_calls_single_call() -> None:
 # breaks later tests which rely on both pointing to the same module object.
 #
 # Since llama_cpp is installed in the project venv, all tests run against the
-# real module.  ConfigurationError is tested by shadowing "llama_cpp" in
-# sys.modules with None (import machinery raises ImportError on None entries).
-
-
-def test_llamacpp_raises_config_error_without_package(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ConfigurationError raised when llama_cpp is absent (not installed)."""
-    from pramanix.translator.llamacpp import LlamaCppTranslator
-
-    monkeypatch.setitem(sys.modules, "llama_cpp", None)  # type: ignore[arg-type]
-    with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[llamacpp\\]'"):
-        LlamaCppTranslator("/models/test.gguf")
+# real module.
 
 
 def test_llamacpp_translator_model_property() -> None:

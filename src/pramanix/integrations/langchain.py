@@ -25,6 +25,7 @@ from pramanix.integrations._feedback import format_block_feedback
 
 _log = logging.getLogger(__name__)
 
+
 class _BaseToolFallback:
     """Raises ConfigurationError when langchain-core is not installed."""
 
@@ -35,19 +36,22 @@ class _BaseToolFallback:
         from pramanix.exceptions import ConfigurationError
 
         raise ConfigurationError(
-            "LangChain integration requires 'langchain-core': "
-            "pip install 'pramanix[langchain]'"
+            "LangChain integration requires 'langchain-core': " "pip install 'pramanix[langchain]'"
         )
 
-    def _run(  # pragma: no cover
-        self, tool_input: str, **kwargs: Any
-    ) -> str:
-        raise NotImplementedError
+    def _run(self, tool_input: str, **kwargs: Any) -> str:
+        from pramanix.exceptions import ConfigurationError
 
-    async def _arun(  # pragma: no cover
-        self, tool_input: str, **kwargs: Any
-    ) -> str:
-        raise NotImplementedError
+        raise ConfigurationError(
+            "LangChain integration requires 'langchain-core': " "pip install 'pramanix[langchain]'"
+        )
+
+    async def _arun(self, tool_input: str, **kwargs: Any) -> str:
+        from pramanix.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            "LangChain integration requires 'langchain-core': " "pip install 'pramanix[langchain]'"
+        )
 
 
 _LANGCHAIN_AVAILABLE: bool = False

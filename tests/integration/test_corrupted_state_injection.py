@@ -94,7 +94,7 @@ def _ok_intent(**overrides: object) -> dict[str, object]:
 
 def _assert_blocked(decision: Decision) -> None:
     assert decision.allowed is False, f"Expected BLOCK, got ALLOW: {decision}"
-    assert decision.reason, "BLOCK decision must carry a non-empty reason"
+    assert decision.explanation, "BLOCK decision must carry a non-empty explanation"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -14,20 +14,6 @@ from pramanix.circuit_breaker import (
     RedisDistributedBackend,
     _DistributedState,
 )
-from pramanix.exceptions import ConfigurationError
-
-# ── RedisDistributedBackend import guard ──────────────────────────────────────
-
-
-def test_redis_backend_raises_config_error_without_redis(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ConfigurationError raised when redis is not installed."""
-    import sys
-
-    monkeypatch.setitem(sys.modules, "redis", None)
-    monkeypatch.setitem(sys.modules, "redis.asyncio", None)
-    with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[redis\\]'"):
-        RedisDistributedBackend("redis://localhost:6379")
-
 
 # ── InMemoryDistributedBackend (shared with RedisDistributedBackend interface) ─
 

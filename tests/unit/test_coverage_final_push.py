@@ -996,19 +996,23 @@ class TestDoctorSubcommandBranches:
     def test_doctor_z3_bad_result_branch(
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Lines 994-995: z3.Solver().check() returns non-sat → ERROR check."""
+        """Lines 994-995: z3.Solver().check() returns non-sat → ERROR check.
+
+        Uses a real z3.Solver subclass pre-loaded with an integer contradiction
+        (_x > 0 ∧ _x < 0) so every subsequent check() call returns z3.unsat
+        via real Z3 logic — no stubs, no hardcoded return values.
+        """
         import z3
 
         monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
 
-        class MockSolver:
-            def add(self, *args, **kwargs):
-                pass
+        class _ContradictionSolver(z3.Solver):
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, **kwargs)
+                _sentinel = z3.Int("_pramanix_doctor_test_sentinel")
+                self.add(_sentinel > 0, _sentinel < 0)
 
-            def check(self):
-                return z3.unsat
-
-        monkeypatch.setattr(z3, "Solver", lambda: MockSolver())
+        monkeypatch.setattr(z3, "Solver", _ContradictionSolver)
         code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
         z3_check = next((c for c in data["checks"] if c["name"] == "z3-solver"), None)
