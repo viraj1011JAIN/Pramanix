@@ -265,6 +265,19 @@ class TestSplunkWorkerStopEventPath:
         sink._stop_event = threading.Event()
         # _client is not set — the send path is never reached (queue is empty).
 
+        # Signal from inside the worker the moment queue.get() is first entered.
+        # This eliminates the time.sleep(0.65) race: we set stop_event only
+        # AFTER the loop is provably blocked in queue.get(), so the next
+        # queue.Empty check is guaranteed to see stop_event=True.
+        _loop_entered = threading.Event()
+        _orig_get = sink._queue.get
+
+        def _signalling_get(block: bool = True, timeout: float | None = None) -> Any:
+            _loop_entered.set()
+            return _orig_get(block=block, timeout=timeout)
+
+        sink._queue.get = _signalling_get  # type: ignore[method-assign]
+
         worker = threading.Thread(
             target=sink._send_loop,
             daemon=True,
@@ -272,10 +285,8 @@ class TestSplunkWorkerStopEventPath:
         )
         worker.start()
 
-        # _send_loop uses queue.get(timeout=0.5); wait for at least one timeout.
-        time.sleep(0.65)
-
-        # Set stop_event → next queue.Empty sees it → break at line 520.
+        # Wait until the thread is provably inside queue.get(), then stop it.
+        assert _loop_entered.wait(timeout=5.0), "worker never entered send loop"
         sink._stop_event.set()
         worker.join(timeout=2.0)
 
@@ -324,9 +335,19 @@ class TestDatadogWorkerStopEventPath:
         """Line 652: _send_loop breaks when stop_event is set and queue is empty.
 
         Requires datadog_api_client because _send_loop imports from it at the
-        top of the function body.
+        top of the function body (lazy import inside the function).
+
+        We pre-warm those submodule imports here so the worker thread's
+        `from datadog_api_client.v2.model.http_log import HTTPLog` is an
+        instant sys.modules cache hit instead of a slow first-import.  Without
+        pre-warming the import can take >5 s, defeating the synchronisation
+        event that signals when queue.get() has been entered.
         """
         pytest.importorskip("datadog_api_client")
+
+        # Pre-warm the two submodule imports _send_loop does lazily.
+        import datadog_api_client.v2.model.http_log
+        import datadog_api_client.v2.model.http_log_item  # noqa: F401
 
         sink = DatadogAuditSink.__new__(DatadogAuditSink)
         sink._service = "pramanix"
@@ -339,6 +360,18 @@ class TestDatadogWorkerStopEventPath:
         sink._queue = queue.Queue(maxsize=500)
         sink._stop_event = threading.Event()
 
+        # Signal from inside the worker the moment queue.get() is first entered.
+        # Because the imports are pre-warmed the thread reaches queue.get()
+        # almost immediately, making the synchronisation reliable.
+        _loop_entered = threading.Event()
+        _orig_get = sink._queue.get
+
+        def _signalling_get(block: bool = True, timeout: float | None = None) -> Any:
+            _loop_entered.set()
+            return _orig_get(block=block, timeout=timeout)
+
+        sink._queue.get = _signalling_get  # type: ignore[method-assign]
+
         worker = threading.Thread(
             target=sink._send_loop,
             daemon=True,
@@ -346,10 +379,8 @@ class TestDatadogWorkerStopEventPath:
         )
         worker.start()
 
-        # _send_loop uses queue.get(timeout=0.5); wait for at least one cycle.
-        time.sleep(0.65)
-
-        # Set stop_event without sentinel → next queue.Empty breaks at line 652.
+        # Wait until the thread is provably inside queue.get(), then stop it.
+        assert _loop_entered.wait(timeout=5.0), "worker never entered send loop"
         sink._stop_event.set()
         worker.join(timeout=2.0)
 
