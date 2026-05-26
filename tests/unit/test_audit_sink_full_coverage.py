@@ -107,22 +107,18 @@ def test_in_memory_sink_clear_empties_list() -> None:
 # ── _increment_overflow_metric(): Prometheus counter paths ───────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("prometheus_client") is not None,
+    reason="run in tox:no-prometheus — prometheus_client is installed in this env",
+)
 def test_increment_overflow_metric_when_counter_is_none() -> None:
     """_increment_overflow_metric() is a no-op (no exception) when counter is None.
 
-    L-08: counter is eagerly initialized at module load; _increment_overflow_metric
-    just calls .inc() if not None.  When None (prometheus_client absent), it
-    silently returns without raising.
+    When prometheus_client is absent, _OVERFLOW_COUNTER is None and
+    _increment_overflow_metric() silently returns without raising.
     """
-    import pramanix.audit_sink as _sink_mod
-
-    original = _sink_mod._OVERFLOW_COUNTER
-    _sink_mod._OVERFLOW_COUNTER = None
-    try:
-        _increment_overflow_metric()  # must not raise
-        _increment_overflow_metric()  # idempotent
-    finally:
-        _sink_mod._OVERFLOW_COUNTER = original
+    _increment_overflow_metric()  # must not raise
+    _increment_overflow_metric()  # idempotent
 
 
 def test_increment_overflow_metric_calls_inc_when_counter_set() -> None:
@@ -160,21 +156,32 @@ def test_kafka_sink_raises_config_error_without_package() -> None:
 def test_kafka_sink_queue_overflow_drops_decision() -> None:
     """KafkaAuditSink drops a decision when the queue is already at max_queue_size.
 
-    No real broker needed — the overflow check fires before any produce() call.
+    Uses a real constructor with _producer injection.  _NeverDeliverProducer.produce()
+    accepts messages but never fires the delivery callback, so _queue_depth stays
+    elevated and the second emit() hits the overflow path.
     """
-    confluent_kafka = pytest.importorskip("confluent_kafka")
-    _ = confluent_kafka  # used for skip
     from pramanix.audit_sink import KafkaAuditSink
+
+    class _NeverDeliverProducer:
+        """Accepts produce() calls but never fires the delivery callback."""
+
+        def produce(self, topic: str, value: Any = None, callback: Any = None) -> None:
+            pass  # callback intentionally not called
+
+        def poll(self, timeout: float = 0.0) -> int:
+            return 0
+
+        def flush(self, timeout: float = 10.0) -> int:
+            return 0
 
     sink = KafkaAuditSink(
         topic="t",
-        producer_conf={"bootstrap.servers": "localhost:9092"},
+        producer_conf={},
         max_queue_size=1,
+        _producer=_NeverDeliverProducer(),
     )
-    # Simulate full queue by setting the depth to the limit directly.
-    # The lock is acquired in emit(); we bypass it here (single-threaded test).
-    sink._queue_depth = 1  # white-box unit test: simulate full queue
-    sink.emit(_safe_decision())
+    sink.emit(_safe_decision())  # depth → 1, callback never fires
+    sink.emit(_safe_decision())  # _queue_depth (1) >= _max_queue (1) → overflow
     assert sink.overflow_count == 1
 
 

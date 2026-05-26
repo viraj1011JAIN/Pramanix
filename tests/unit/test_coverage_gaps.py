@@ -122,43 +122,56 @@ class NoVersionPolicy(Policy):
 
 
 class TestFastPathExceptionHandlers:
-    """Cover except-clause lines inside rule closures (83-84, 101-102, 136-137, 163-164)."""
+    """Cover except-clause lines inside rule closures.
 
-    def test_negative_amount_swallows_non_numeric_string(self):
-        """Lines 83-84: Decimal("not-a-number") raises → except swallows → None."""
+    fast_path.py is fail-closed: malformed numeric input returns a block
+    reason string (not None). None is only returned when the field is
+    absent or the value is a valid number that passes the check.
+    """
+
+    def test_negative_amount_parse_failure_blocks(self):
+        """Decimal parse failure → fail-closed block reason string."""
         rule = SemanticFastPath.negative_amount("amount")
         result = rule({"amount": "not-a-number"}, {})
+        assert isinstance(result, str)
+        assert "amount" in result
+
+    def test_negative_amount_dict_value_is_falsy_passes(self):
+        """{}  is falsy → val = {} or None = None → rule returns None (pass to Z3)."""
+        rule = SemanticFastPath.negative_amount("amount")
+        result = rule({"amount": {}}, {})
         assert result is None
 
-    def test_negative_amount_swallows_dict_value(self):
-        """Lines 83-84: Decimal(str({})) raises InvalidOperation → None."""
-        rule = SemanticFastPath.negative_amount("amount")
-        assert rule({"amount": {}}, {}) is None
-
-    def test_zero_or_negative_balance_swallows_non_numeric(self):
-        """Lines 101-102: Decimal("not-a-balance") raises → except swallows → None."""
+    def test_zero_or_negative_balance_parse_failure_blocks(self):
+        """Non-numeric balance → fail-closed block reason string."""
         rule = SemanticFastPath.zero_or_negative_balance("balance")
-        assert rule({}, {"balance": "not-a-balance"}) is None
+        result = rule({}, {"balance": "not-a-balance"})
+        assert isinstance(result, str)
+        assert "balance" in result
 
     def test_exceeds_hard_cap_missing_field_returns_none(self):
-        """Line 132: val is None when neither intent nor state has the field."""
+        """val is None when neither intent nor state has the field → pass."""
         rule = SemanticFastPath.exceeds_hard_cap("amount", cap=1_000_000)
         assert rule({}, {}) is None
 
-    def test_exceeds_hard_cap_swallows_non_numeric(self):
-        """Lines 136-137: Decimal("xyz") raises → except swallows → None."""
+    def test_exceeds_hard_cap_parse_failure_blocks(self):
+        """Non-numeric amount → fail-closed block reason string."""
         rule = SemanticFastPath.exceeds_hard_cap("amount", cap=1_000_000)
-        assert rule({"amount": "xyz"}, {}) is None
+        result = rule({"amount": "xyz"}, {})
+        assert isinstance(result, str)
+        assert "amount" in result
 
-    def test_amount_exceeds_balance_swallows_non_numeric_amount(self):
-        """Lines 163-164: Decimal(str("bad")) raises → except swallows → None."""
+    def test_amount_exceeds_balance_non_numeric_amount_blocks(self):
+        """Non-numeric amount → fail-closed block reason string."""
         rule = SemanticFastPath.amount_exceeds_balance("amount", "balance")
-        assert rule({"amount": "bad"}, {"balance": Decimal("500")}) is None
+        result = rule({"amount": "bad"}, {"balance": Decimal("500")})
+        assert isinstance(result, str)
 
-    def test_amount_exceeds_balance_swallows_non_numeric_balance(self):
-        """Lines 163-164: Decimal(str("bad")) for balance raises → None."""
+    def test_amount_exceeds_balance_non_numeric_balance_blocks(self):
+        """Non-numeric balance → fail-closed block reason string."""
         rule = SemanticFastPath.amount_exceeds_balance("amount", "balance")
-        assert rule({"amount": Decimal("100")}, {"balance": "bad"}) is None
+        result = rule({"amount": Decimal("100")}, {"balance": "bad"})
+        assert isinstance(result, str)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

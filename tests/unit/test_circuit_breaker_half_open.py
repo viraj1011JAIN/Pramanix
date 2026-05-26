@@ -16,7 +16,7 @@ transitions without sleeping — the same pattern as test_circuit_breaker.py.
 from __future__ import annotations
 
 import asyncio
-import sys
+import importlib.util as _ilu
 from decimal import Decimal
 
 import pytest
@@ -310,25 +310,17 @@ async def test_distributed_cb_open_state_returns_error_decision() -> None:
 # ── Redis backend: ConfigurationError (lines 614-618) ────────────────────────
 
 
+@pytest.mark.skipif(
+    _ilu.find_spec("redis") is not None,
+    reason="run in tox:no-redis — redis is installed in this env",
+)
 def test_redis_distributed_backend_config_error_without_redis() -> None:
     """Lines 614-618: ConfigurationError when redis.asyncio is not available."""
+    from pramanix.circuit_breaker import RedisDistributedBackend
     from pramanix.exceptions import ConfigurationError
 
-    prev = sys.modules.get("redis.asyncio")
-    sys.modules["redis.asyncio"] = None  # type: ignore[assignment]
-    try:
-        if "pramanix.circuit_breaker" in sys.modules:
-            # Force module reload to pick up missing redis check at instantiation
-            pass
-        from pramanix.circuit_breaker import RedisDistributedBackend
-
-        with pytest.raises(ConfigurationError, match="redis\\[asyncio\\]"):
-            RedisDistributedBackend(redis_url="redis://localhost/0")
-    finally:
-        if prev is None:
-            sys.modules.pop("redis.asyncio", None)
-        else:
-            sys.modules["redis.asyncio"] = prev
+    with pytest.raises(ConfigurationError, match="redis\\[asyncio\\]"):
+        RedisDistributedBackend(redis_url="redis://localhost/0")
 
 
 # ── Redis backend: _get_client() cached path (lines 623-625) ─────────────────

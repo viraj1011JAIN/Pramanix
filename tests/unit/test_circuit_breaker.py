@@ -126,8 +126,14 @@ class TestCircuitBreakerClosed:
 
     @pytest.mark.asyncio
     async def test_fast_solves_stay_closed(self) -> None:
-        """Real Z3 solves (< 40 ms) must not trip the circuit breaker."""
-        config = CircuitBreakerConfig(pressure_threshold_ms=40.0)
+        """Real Z3 solves must not trip the circuit breaker.
+
+        The threshold is set to 5 000 ms — well above any real Z3 latency on
+        CI hardware — so this test validates the state-machine invariant
+        (solves within threshold keep the breaker CLOSED) without being
+        sensitive to host execution speed.
+        """
+        config = CircuitBreakerConfig(pressure_threshold_ms=5_000.0)
         breaker = AdaptiveCircuitBreaker(guard=_REAL_GUARD, config=config)
         for _ in range(10):
             await breaker.verify_async(intent=_ALLOW_INTENT, state=_STATE)

@@ -3,13 +3,15 @@
 # For architectural decisions and proof of correctness, please refer to:
 # - docs/THESIS.tex
 # - docs/PROOF_DOSSIER.md
-"""Adversarial tests — fail-safe invariant: every exception path → Decision(allowed=False).
+"""Adversarial tests — fail-safe invariant.
+
+Every exception path in Guard.verify() must produce Decision(allowed=False).
 
 Security requirement (CTO Phase 7 brief):
     The most important test you will ever write.  Every exception path in
-    ``Guard.verify()`` must produce ``Decision(allowed=False)``.  If even one
-    path returns ``True`` or propagates a raw exception to the caller, the SDK
-    fails its core security contract.
+    ``Guard.verify()`` must produce ``Decision(allowed=False)``.  If even
+    one path returns ``True`` or propagates a raw exception to the caller,
+    the SDK fails its core security contract.
 
     "If you can't break it, the banks can't trust it." — Phase 7 CTO brief.
 
@@ -64,11 +66,12 @@ from pramanix.exceptions import (
     TranspileError,
     ValidationError,
 )
+from tests.helpers.solver_stubs import RaisingSolverStub, TimeoutSolverStub
 
 if TYPE_CHECKING:
     from pramanix.expressions import ConstraintExpr
 
-# ── Shared infrastructure ────────────────────────────────────────────────────
+# ── Shared infrastructure ─────────────────────────────────────────────────
 
 
 class _TestIntent(BaseModel):
@@ -93,7 +96,11 @@ class _StablePolicy(Policy):
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
-        return [(E(cls.balance) - E(cls.amount) >= Decimal("0")).named("non_negative_balance")]
+        return [
+            (E(cls.balance) - E(cls.amount) >= Decimal("0")).named(
+                "non_negative_balance"
+            )
+        ]
 
 
 _VALID_INTENT = {"amount": Decimal("100.00")}
@@ -106,23 +113,24 @@ def _make_guard() -> Guard:
 
 def _assert_fail_safe(decision: object, context: str) -> None:
     """Common assertion: result must be a Decision with allowed=False."""
-    assert isinstance(
-        decision, Decision
-    ), f"{context}: expected Decision, got {type(decision).__name__}"
+    assert isinstance(decision, Decision), (
+        f"{context}: expected Decision, got {type(decision).__name__}"
+    )
     assert decision.allowed is False, (
         f"{context}: expected allowed=False, got allowed=True. "
-        "CRITICAL: Guard.verify() returned True on an error path — SECURITY VIOLATION."
+        "CRITICAL: Guard.verify() returned True on an error path "
+        "— SECURITY VIOLATION."
     )
 
 
-# ── Stage 1: Intent Validation Failures ──────────────────────────────────────
+# ── Stage 1: Intent Validation Failures ──────────────────────────────────
 
 
 class TestStage1IntentValidation:
     """Inject failures at the Pydantic intent-validation stage."""
 
     def test_intent_validation_error_returns_false(self) -> None:
-        """Pydantic ValidationError during validate_intent → Decision(VALIDATION_FAILURE)."""
+        """Pydantic ValidationError → Decision(VALIDATION_FAILURE)."""
         guard = _make_guard()
         decision = guard.verify(
             intent={"amount": Decimal("-1.00")},  # violates gt=0
@@ -154,7 +162,7 @@ class TestStage1IntentValidation:
     def test_validate_intent_raises_pramanix_validation_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Force pramanix.ValidationError in validate_intent — caught and wrapped."""
+        """pramanix.ValidationError in validate_intent — caught and wrapped."""
         guard = _make_guard()
 
         def _raise(*a, **kw):
@@ -162,7 +170,9 @@ class TestStage1IntentValidation:
 
         monkeypatch.setattr(_guard_mod, "validate_intent", _raise)
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched ValidationError in validate_intent")
+        _assert_fail_safe(
+            decision, "patched ValidationError in validate_intent"
+        )
         assert decision.status is SolverStatus.VALIDATION_FAILURE
 
     def test_validate_intent_raises_state_validation_error(
@@ -176,11 +186,13 @@ class TestStage1IntentValidation:
 
         monkeypatch.setattr(_guard_mod, "validate_intent", _raise)
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched StateValidationError in validate_intent")
+        _assert_fail_safe(
+            decision, "patched StateValidationError in validate_intent"
+        )
         assert decision.status is SolverStatus.VALIDATION_FAILURE
 
 
-# ── Stage 2: State Validation Failures ───────────────────────────────────────
+# ── Stage 2: State Validation Failures ───────────────────────────────────
 
 
 class TestStage2StateValidation:
@@ -197,7 +209,7 @@ class TestStage2StateValidation:
         assert decision.status is SolverStatus.VALIDATION_FAILURE
 
     def test_state_missing_state_version_returns_false(self) -> None:
-        """Missing state_version in state model → VALIDATION_FAILURE."""
+        """Missing state_version in state model → blocked."""
         guard = _make_guard()
         decision = guard.verify(
             intent=_VALID_INTENT,
@@ -218,48 +230,48 @@ class TestStage2StateValidation:
 
         monkeypatch.setattr(_guard_mod, "validate_state", _raise)
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched ValidationError in validate_state")
+        _assert_fail_safe(
+            decision, "patched ValidationError in validate_state"
+        )
         assert decision.status is SolverStatus.VALIDATION_FAILURE
 
 
-# ── Stage 3: Serialization failure (safe_dump / model_dump) ──────────────────
+# ── Stage 3: Serialization failure (safe_dump / model_dump) ──────────────
 
 
 class TestStage3SerializationFailure:
-    """Inject failures at the model_dump() / safe_dump() serialization stage.
+    """Inject failures at the model_dump() / safe_dump() stage.
 
     This stage runs *after* Pydantic validation succeeds but *before* values
-    reach the Z3 solver.  A RuntimeError here (e.g. circular reference,
-    custom __get__ raising, or safe_dump internal error) must still produce
+    reach the Z3 solver.  A RuntimeError here must still produce
     Decision(allowed=False) — never a raw exception to the caller.
-
-    The patch target is ``pramanix.guard.safe_dump`` — the function called by
-    _verify_core() to convert a validated Pydantic model to a plain dict.
     """
 
     def test_safe_dump_raises_on_intent_returns_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """RuntimeError in flatten_model() during intent serialization → ERROR (fail-safe)."""
+        """RuntimeError in flatten_model() on intent → ERROR (fail-safe)."""
         guard = _make_guard()
 
         def _raise(*a, **kw):
             raise RuntimeError("model_dump() failed — circular reference")
 
-        # guard.py imports flatten_model (not safe_dump) from helpers.serialization
         monkeypatch.setattr(_guard_mod, "flatten_model", _raise)
-        # Pass Pydantic model objects so flatten_model() is actually invoked.
         intent_model = _TestIntent(amount=Decimal("100.00"))
-        state_model = _TestState(balance=Decimal("1000.00"), state_version="1.0")
+        state_model = _TestState(
+            balance=Decimal("1000.00"), state_version="1.0"
+        )
         decision = guard.verify(intent=intent_model, state=state_model)
-        _assert_fail_safe(decision, "flatten_model RuntimeError on intent model")
+        _assert_fail_safe(decision, "flatten_model RuntimeError on intent")
         assert decision.status is SolverStatus.ERROR
 
-    def test_safe_dump_raises_on_state_returns_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """RuntimeError in flatten_model() on the second call (state model) → ERROR (fail-safe).
+    def test_safe_dump_raises_on_state_returns_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RuntimeError in flatten_model() on state → ERROR (fail-safe).
 
-        Patches flatten_model to succeed on the first call (intent) and raise on
-        the second call (state), isolating the state-serialization path.
+        Patches flatten_model to succeed on the first call (intent) and
+        raise on the second call (state), isolating that path.
         """
         guard = _make_guard()
         _call_count = {"n": 0}
@@ -267,40 +279,45 @@ class TestStage3SerializationFailure:
         def _side_effect(obj):
             _call_count["n"] += 1
             if _call_count["n"] == 2:
-                raise RuntimeError("model_dump() failed on state — unexpected attribute")
+                raise RuntimeError(
+                    "model_dump() failed on state — unexpected attribute"
+                )
             from pramanix.helpers.serialization import flatten_model as _real
 
             return _real(obj)
 
-        # guard.py imports flatten_model (not safe_dump) from helpers.serialization
         monkeypatch.setattr(_guard_mod, "flatten_model", _side_effect)
         intent_model = _TestIntent(amount=Decimal("100.00"))
-        state_model = _TestState(balance=Decimal("1000.00"), state_version="1.0")
+        state_model = _TestState(
+            balance=Decimal("1000.00"), state_version="1.0"
+        )
         decision = guard.verify(intent=intent_model, state=state_model)
-        _assert_fail_safe(decision, "flatten_model RuntimeError on state model")
+        _assert_fail_safe(decision, "flatten_model RuntimeError on state")
         assert decision.status is SolverStatus.ERROR
 
 
-# ── Stage 4: Version check / conflicting keys ─────────────────────────────────
+# ── Stage 4: Version check / conflicting keys ─────────────────────────────
 
 
 class TestStage4VersionAndKeyConflict:
     """Inject failures at the version check and key-collision stages."""
 
     def test_version_mismatch_returns_stale_state(self) -> None:
-        """state_version != Policy.Meta.version → STALE_STATE (allowed=False)."""
+        """state_version != Policy.Meta.version → STALE_STATE."""
         guard = _make_guard()
         decision = guard.verify(
             intent=_VALID_INTENT,
-            state={"balance": Decimal("1000.00"), "state_version": "99.0"},
+            state={
+                "balance": Decimal("1000.00"),
+                "state_version": "99.0",
+            },
         )
         _assert_fail_safe(decision, "state_version mismatch")
         assert decision.status is SolverStatus.STALE_STATE
 
     def test_conflicting_intent_state_keys_returns_error(self) -> None:
-        """Intent and state sharing a key key → ValueError → Decision.error(False)."""
+        """Intent and state share a key → ValueError → Decision.error."""
 
-        # No Pydantic models: raw dict mode, where key conflict is possible.
         class _RawPolicy(Policy):
             class Meta:
                 version = None  # disable version check
@@ -310,7 +327,9 @@ class TestStage4VersionAndKeyConflict:
 
             @classmethod
             def invariants(cls) -> list[ConstraintExpr]:
-                return [(E(cls.balance) >= Decimal("0")).named("non_negative")]
+                return [
+                    (E(cls.balance) >= Decimal("0")).named("non_negative")
+                ]
 
         guard = Guard(_RawPolicy)
         # 'balance' appears in BOTH intent and state — conflict!
@@ -322,214 +341,195 @@ class TestStage4VersionAndKeyConflict:
         assert decision.status is SolverStatus.ERROR
 
 
-# ── Stage 5: Solver Failures ─────────────────────────────────────────────────
+# ── Stage 5: Solver Failures ──────────────────────────────────────────────
 
 
 class TestStage5SolverFailures:
-    """Inject failures at the Z3 solver stage."""
+    """Inject failures at the Z3 solver stage via solver_factory."""
 
-    def test_solver_timeout_error_returns_timeout_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """SolverTimeoutError from solver → Decision.timeout (allowed=False)."""
-        guard = _make_guard()
-        exc = SolverTimeoutError(label="non_negative_balance", timeout_ms=5000)
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+    def test_solver_timeout_error_returns_timeout_decision(self) -> None:
+        """z3.unknown → SolverTimeoutError → timeout decision."""
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: TimeoutSolverStub(),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched SolverTimeoutError")
+        _assert_fail_safe(decision, "TimeoutSolverStub")
         assert decision.status is SolverStatus.TIMEOUT
 
-    def test_z3_exception_in_solver_returns_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """z3.Z3Exception from solver → caught as generic Exception → Decision.error."""
-        guard = _make_guard()
-        exc = _z3.Z3Exception("synthetic Z3 context error")
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+    def test_z3_exception_in_solver_returns_error(self) -> None:
+        """z3.Z3Exception from check() → Decision.error."""
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    _z3.Z3Exception("synthetic Z3 context error")
+                ),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched Z3Exception")
+        _assert_fail_safe(decision, "RaisingSolverStub(Z3Exception)")
         assert decision.status is SolverStatus.ERROR
 
-    def test_memory_error_in_transpiler_returns_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """MemoryError during transpile (Z3 may OOM on huge formulas) → Decision.error."""
-        guard = _make_guard()
-        exc = MemoryError("Z3 out of memory — formula too large")
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+    def test_memory_error_in_solver_returns_error(self) -> None:
+        """MemoryError from check() → Decision.error."""
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    MemoryError("Z3 out of memory — formula too large")
+                ),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched MemoryError in transpiler")
+        _assert_fail_safe(decision, "RaisingSolverStub(MemoryError)")
         assert decision.status is SolverStatus.ERROR
 
-    def test_transpile_error_from_invariants_returns_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """TranspileError raised from invariants() → PramanixError handler → Decision.error."""
-        guard = _make_guard()
-        exc = TranspileError("deliberate transpile crash")
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+    def test_transpile_error_from_solver_returns_error(self) -> None:
+        """TranspileError from check() → Decision.error."""
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    TranspileError("deliberate transpile crash")
+                ),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched TranspileError")
+        _assert_fail_safe(decision, "RaisingSolverStub(TranspileError)")
         assert decision.status is SolverStatus.ERROR
 
-    def test_invariants_raises_runtime_error_returns_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """RuntimeError from user-defined invariants() → catch-all → Decision.error(False)."""
-        guard = _make_guard()
-        exc = RuntimeError("Deliberate crash in invariants()")
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+    def test_invariants_raises_runtime_error_returns_error(self) -> None:
+        """RuntimeError from check() → catch-all → Decision.error."""
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    RuntimeError("deliberate crash in solver")
+                ),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-        _assert_fail_safe(decision, "patched RuntimeError in solve")
+        _assert_fail_safe(decision, "RaisingSolverStub(RuntimeError)")
         assert decision.status is SolverStatus.ERROR
 
-    def test_keyboard_interrupt_is_not_suppressed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """KeyboardInterrupt must propagate — it should never be swallowed by
-        Guard.verify().  This confirms the bare-except is *not* used."""
-        guard = _make_guard()
+    def test_keyboard_interrupt_is_not_suppressed(self) -> None:
+        """KeyboardInterrupt propagates — Guard uses except Exception.
 
-        # Guard's catch-all uses `except Exception` — KeyboardInterrupt is
-        # NOT a subclass of Exception, so it will propagate correctly.
-        def _raise(*a, **kw):
-            raise KeyboardInterrupt
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+        Guard's ``except Exception`` does not catch ``KeyboardInterrupt``
+        (a BaseException subclass), confirming no bare-except is used.
+        """
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    KeyboardInterrupt()
+                ),
+            ),
+        )
         with pytest.raises(KeyboardInterrupt):
             guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
 
 
-# ── Catch-all: Generic Exception ─────────────────────────────────────────────
+# ── Catch-all: Generic Exception ──────────────────────────────────────────
 
 
 class TestCatchAllExceptionPath:
-    """Verify the broad ``except Exception`` catch at the bottom of verify()."""
+    """Verify the broad ``except Exception`` catch at bottom of verify()."""
 
-    def test_arbitrary_exception_returns_error_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Any unexpected exception derived from Exception → Decision.error."""
-        guard = _make_guard()
+    def test_arbitrary_exception_returns_error_decision(self) -> None:
+        """Any unexpected Exception subclass → Decision.error."""
 
         class _WeirdError(Exception):
             pass
 
-        exc = _WeirdError("Unexpected!")
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    _WeirdError("Unexpected!")
+                ),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
         _assert_fail_safe(decision, "arbitrary Exception subclass")
         assert decision.status is SolverStatus.ERROR
 
-    def test_os_error_in_solve_returns_error_decision(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_os_error_in_solve_returns_error_decision(self) -> None:
         """OSError (unexpected I/O during Z3) → Decision.error."""
-        guard = _make_guard()
-        exc = OSError("File descriptor issue during Z3 init")
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(
+                    OSError("File descriptor issue during Z3 init")
+                ),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
         _assert_fail_safe(decision, "OSError in solve")
         assert decision.status is SolverStatus.ERROR
 
 
-# ── Composite: inject at each stage in sequence ───────────────────────────────
+# ── Composite: inject at each pre-Z3 stage in sequence ───────────────────
 
 
 class TestAllStagesSequential:
-    """Run one injected failure per pipeline stage in a single parametrised sweep.
+    """One injected failure per pre-Z3 stage in a parametrised sweep.
 
-    This provides a single-glance CI report showing all stages are covered.
+    Provides a single-glance CI view of pre-Z3 stage coverage.
+    Z3 solver stages are covered exhaustively by TestStage5SolverFailures.
     """
 
     @pytest.mark.parametrize(
-        "patch_target,side_effect_cls,exc_args,expected_status",
+        "attr_name,exc,expected_status",
         [
             (
-                "pramanix.guard.validate_intent",
-                ValidationError,
-                ("intent stage",),
+                "validate_intent",
+                ValidationError("intent stage"),
                 SolverStatus.VALIDATION_FAILURE,
             ),
             (
-                "pramanix.guard.validate_state",
-                ValidationError,
-                ("state stage",),
+                "validate_state",
+                ValidationError("state stage"),
                 SolverStatus.VALIDATION_FAILURE,
-            ),
-            (
-                "pramanix.guard.solve",
-                SolverTimeoutError,
-                (),
-                SolverStatus.TIMEOUT,
-            ),
-            (
-                "pramanix.guard.solve",
-                RuntimeError,
-                ("solver crash",),
-                SolverStatus.ERROR,
             ),
         ],
-        ids=["validate_intent", "validate_state", "solver_timeout", "solver_crash"],
+        ids=["validate_intent", "validate_state"],
     )
     def test_stage_injection(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        patch_target: str,
-        side_effect_cls: type,
-        exc_args: tuple,
+        attr_name: str,
+        exc: Exception,
         expected_status: SolverStatus,
     ) -> None:
-        """Each stage injection must produce Decision(allowed=False)."""
+        """Each pre-Z3 stage injection must produce Decision(allowed=False)."""
         guard = _make_guard()
-
-        if side_effect_cls is SolverTimeoutError:
-            exc = SolverTimeoutError(label="non_negative_balance", timeout_ms=5000)
-        else:
-            exc = side_effect_cls(*exc_args)
-
-        # Extract the attribute name from "pramanix.guard.<attr>"
-        attr_name = patch_target.rsplit(".", 1)[-1]
 
         def _raise(*a, **kw):
             raise exc
 
         monkeypatch.setattr(_guard_mod, attr_name, _raise)
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-
-        _assert_fail_safe(decision, f"stage injection: {patch_target}")
+        _assert_fail_safe(decision, f"stage injection: {attr_name}")
         assert decision.status is expected_status
 
 
-# ── Golden rule: allowed=True is NEVER returned from error handlers ──────────
+# ── Golden rule: allowed=True is NEVER returned from error handlers ───────
 
 
 class TestGoldenRuleAllowedNeverTrue:
-    """Exhaustive parametric proof that no error handler ever returns allowed=True."""
+    """Exhaustive proof that no error handler ever returns allowed=True."""
 
     @pytest.mark.parametrize(
         "exception",
@@ -561,23 +561,23 @@ class TestGoldenRuleAllowedNeverTrue:
         ],
     )
     def test_no_error_type_returns_allowed_true(
-        self, monkeypatch: pytest.MonkeyPatch, exception: Exception
+        self, exception: Exception
     ) -> None:
-        """Guard.verify() must return Decision(allowed=False) for EVERY exception type."""
-        guard = _make_guard()
-        exc = exception
-
-        def _raise(*a, **kw):
-            raise exc
-
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
+        """Decision(allowed=False) for EVERY exception type from solver."""
+        guard = Guard(
+            _StablePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(exception),
+            ),
+        )
         decision = guard.verify(intent=_VALID_INTENT, state=_VALID_STATE)
-
         assert isinstance(decision, Decision), (
-            f"Exception {type(exception).__name__} caused verify() to propagate instead of "
-            "returning a Decision."
+            f"Exception {type(exception).__name__} caused verify() to "
+            "propagate instead of returning a Decision."
         )
         assert decision.allowed is False, (
-            f"CRITICAL SECURITY VIOLATION: {type(exception).__name__} produced "
-            f"Decision(allowed=True). Every error path must return allowed=False."
+            f"CRITICAL SECURITY VIOLATION: {type(exception).__name__} "
+            "produced Decision(allowed=True). Every error path must "
+            "return allowed=False."
         )

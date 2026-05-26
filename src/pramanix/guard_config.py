@@ -179,6 +179,12 @@ try:
     _OTEL_AVAILABLE = True
 
 except ImportError:
+    warnings.warn(
+        "opentelemetry is not installed — OTel spans will be no-ops. "
+        "Install tracing support with: pip install 'pramanix[otel]'",
+        ImportWarning,
+        stacklevel=2,
+    )
 
     def _span(name: str) -> Any:
         """No-op span when opentelemetry is not installed."""
@@ -243,7 +249,12 @@ try:
     _PROM_AVAILABLE = True
 
 except ImportError:
-    pass
+    warnings.warn(
+        "prometheus_client is not installed — Prometheus metrics will be disabled. "
+        "Install metrics support with: pip install 'pramanix[metrics]'",
+        ImportWarning,
+        stacklevel=2,
+    )
 except ValueError as _prom_val_err:
     import logging as _gc_log
 
@@ -514,7 +525,7 @@ class GuardConfig:
     Default: ``None`` (secure memory not configured).
     """
 
-    solver_factory: "Callable[[Any], SolverProtocol] | None" = field(default=None)
+    solver_factory: Callable[[Any], SolverProtocol] | None = field(default=None)
     """Optional factory for the Z3 solver — enables test isolation without
     patching the z3 C-extension (Law 3).
 
@@ -537,7 +548,7 @@ class GuardConfig:
     ``solver_factory`` is supplied.
     """
 
-    clock: "Callable[[], float] | None" = field(default=None)
+    clock: Callable[[], float] | None = field(default=None)
     """Optional clock injection for ``E.now()`` time-policy expressions.
 
     The callable must return the current Unix timestamp as a float (same

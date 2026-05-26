@@ -1201,7 +1201,7 @@ class TestMistralParseNonExtractionError:
         async def _fake_single_call(*, system_prompt: str, user_content: str) -> str:
             return "raw text"
 
-        t._single_call = _fake_single_call  # type: ignore[method-assign]
+        monkeypatch.setattr(t, "_single_call", _fake_single_call)
 
         import pramanix.translator.mistral as _mist_mod
 

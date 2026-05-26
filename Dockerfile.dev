@@ -113,7 +113,6 @@ ENV PYTHONDONTWRITEBYTECODE="1" \
     # Pramanix dev defaults
     PRAMANIX_EXECUTION_MODE="async-thread" \
     PRAMANIX_WORKER_WARMUP="true" \
-    PRAMANIX_TRANSLATOR_ENABLED="false" \
     PRAMANIX_LOG_LEVEL="DEBUG"
 
 # ── Drop to non-root for test execution ──────────────────────────────────────

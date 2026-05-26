@@ -170,7 +170,7 @@ class InMemoryAuditSink:
 # different labelset), which is a real bug that must surface immediately.
 _OVERFLOW_COUNTER: Any = None
 _AUDIT_METRICS_LOCK = threading.Lock()
-_AUDIT_REGISTERED_METRICS: dict[str, Any] = {}
+_AUDIT_REGISTERED_METRICS: dict[str, Any] = globals().get("_AUDIT_REGISTERED_METRICS", {})
 
 try:
     import prometheus_client as _prom_init
@@ -235,18 +235,20 @@ class KafkaAuditSink:
         max_queue_size: int = 10_000,
         _producer: Any = None,
     ) -> None:
-        try:
-            from confluent_kafka import Producer
-        except ImportError as exc:
-            from pramanix.exceptions import ConfigurationError
+        if _producer is None:
+            try:
+                from confluent_kafka import Producer
+            except ImportError as exc:
+                from pramanix.exceptions import ConfigurationError
 
-            raise ConfigurationError(
-                "confluent-kafka is required for KafkaAuditSink. "
-                "Install it with: pip install 'pramanix[kafka]'"
-            ) from exc
-
+                raise ConfigurationError(
+                    "confluent-kafka is required for KafkaAuditSink. "
+                    "Install it with: pip install 'pramanix[kafka]'"
+                ) from exc
+            self._producer: Any = Producer(producer_conf)
+        else:
+            self._producer = _producer
         self._topic = topic
-        self._producer: Any = _producer if _producer is not None else Producer(producer_conf)
         self._max_queue = max_queue_size
         # H-08: protect _queue_depth with a lock — incremented in the emit
         # thread and decremented in the Kafka delivery-callback thread.

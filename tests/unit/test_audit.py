@@ -10,6 +10,7 @@ Tests DecisionSigner, DecisionVerifier, MerkleAnchor, and CLI.
 
 from __future__ import annotations
 
+import importlib.util as _ilu
 import json
 import sys
 from typing import Any
@@ -155,21 +156,15 @@ class TestIncSigningFailure:
         finally:
             _mod._signing_failure_counter = saved
 
+    @pytest.mark.skipif(
+        _ilu.find_spec("prometheus_client") is not None,
+        reason="run in tox:no-prometheus — prometheus_client is installed in this env",
+    )
     def test_import_error_silenced(self) -> None:
         """53-54: ImportError when prometheus_client is unavailable is suppressed."""
-        import sys
-
         import pramanix.audit.signer as _mod
 
-        orig = sys.modules.get("prometheus_client", _missing := object())
-        sys.modules["prometheus_client"] = None  # blocks `from prometheus_client import …`
-        try:
-            _mod._inc_signing_failure()  # must not raise
-        finally:
-            if orig is _missing:
-                del sys.modules["prometheus_client"]
-            else:
-                sys.modules["prometheus_client"] = orig  # type: ignore[assignment]
+        _mod._inc_signing_failure()  # must not raise
 
     def test_unexpected_exception_from_inc_silenced(self) -> None:
         """55-56: generic exception from counter.inc() is caught by the outer except."""

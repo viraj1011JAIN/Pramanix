@@ -342,7 +342,8 @@ class TestParseFailureCounter:
         rule_label = "negative_amount(amount)"
         before = self._sample(rule_label)
         result = rule({"amount": "not-a-number"}, {})
-        assert result is None  # passes through to Z3
+        assert isinstance(result, str)  # fail-closed: block on malformed input
+        assert "amount" in result
         assert self._sample(rule_label) == before + 1.0
 
     def test_zero_or_negative_balance_parse_failure_increments_counter(self):
@@ -350,7 +351,8 @@ class TestParseFailureCounter:
         rule_label = "zero_or_negative_balance(balance)"
         before = self._sample(rule_label)
         result = rule({}, {"balance": "not-a-number"})
-        assert result is None
+        assert isinstance(result, str)  # fail-closed: block on malformed input
+        assert "balance" in result
         assert self._sample(rule_label) == before + 1.0
 
     def test_exceeds_hard_cap_parse_failure_increments_counter(self):
@@ -358,7 +360,8 @@ class TestParseFailureCounter:
         rule_label = "exceeds_hard_cap(amount,1000000)"
         before = self._sample(rule_label)
         result = rule({"amount": "not-a-number"}, {})
-        assert result is None
+        assert isinstance(result, str)  # fail-closed: block on malformed input
+        assert "amount" in result
         assert self._sample(rule_label) == before + 1.0
 
     def test_amount_exceeds_balance_parse_failure_increments_counter(self):
@@ -366,7 +369,7 @@ class TestParseFailureCounter:
         rule_label = "amount_exceeds_balance(amount,balance)"
         before = self._sample(rule_label)
         result = rule({"amount": "not-a-number"}, {"balance": Decimal("500")})
-        assert result is None
+        assert isinstance(result, str)  # fail-closed: block on malformed input
         assert self._sample(rule_label) == before + 1.0
 
     def test_valid_input_does_not_increment_counter(self):

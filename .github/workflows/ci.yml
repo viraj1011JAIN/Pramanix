@@ -143,7 +143,6 @@ jobs:
           for PATTERN in "${BANNED_PATTERNS[@]}"; do
             HITS=$(grep -rn -E "$PATTERN" \
               --include="*.py" --include="*.yml" --include="*.yaml" --include="*.toml" \
-              --exclude-dir=tests \
               --exclude-dir=.venv \
               --exclude-dir=.github \
               --exclude-dir=__pycache__ \
@@ -795,9 +794,6 @@ jobs:
     name: "Ollama live LLM tests (tinyllama)"
     runs-on: ubuntu-latest
     needs: test
-    # Non-blocking: failures are allowed — this is an informational gate only.
-    # Remove `continue-on-error: true` to make it a strict gate.
-    continue-on-error: true
 
     services:
       ollama:

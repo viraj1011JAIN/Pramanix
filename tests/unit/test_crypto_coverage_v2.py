@@ -24,7 +24,6 @@ import sys
 
 import pytest
 
-
 # ── _increment_signing_failure_counter: counter.inc() path (lines 95-96) ───────
 
 
@@ -78,20 +77,14 @@ class TestIncrementSigningFailureCounter:
 
 
 class TestPramanixSignerImportError:
-    def test_import_error_raises_with_install_hint(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_import_error_raises_with_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lines 175-176: cryptography missing → ImportError with pip hint."""
         import importlib
 
         monkeypatch.setitem(sys.modules, "cryptography", None)
         monkeypatch.setitem(sys.modules, "cryptography.hazmat", None)
-        monkeypatch.setitem(
-            sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None
-        )
-        monkeypatch.setitem(
-            sys.modules, "cryptography.hazmat.primitives.serialization", None
-        )
+        monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
+        monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.serialization", None)
 
         import pramanix.crypto as _crypto_mod
 
@@ -107,16 +100,12 @@ class TestPramanixSignerImportError:
 
 
 class TestPramanixVerifierImportError:
-    def test_import_error_raises_with_install_hint(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_import_error_raises_with_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lines 368-369: cryptography missing → ImportError with pip hint."""
         pytest.importorskip("cryptography")
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
         from cryptography.hazmat.primitives.serialization import (
             Encoding,
-            NoEncryption,
-            PrivateFormat,
         )
 
         private_key = Ed25519PrivateKey.generate()
@@ -154,7 +143,9 @@ class TestPramanixVerifierVerifyException:
         from pramanix.exceptions import VerificationError
 
         private_key = Ed25519PrivateKey.generate()
-        pub_pem = private_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+        pub_pem = private_key.public_key().public_bytes(
+            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        )
         verifier = PramanixVerifier(public_key_pem=pub_pem)
 
         def _bad_decode(s: str) -> bytes:
@@ -181,11 +172,13 @@ class TestPramanixVerifierDecisionPaths:
             PublicFormat,
         )
 
-        from pramanix.crypto import PramanixSigner, PramanixVerifier
+        from pramanix.crypto import PramanixVerifier
         from pramanix.decision import Decision, SolverStatus
 
         private_key = Ed25519PrivateKey.generate()
-        pub_pem = private_key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+        pub_pem = private_key.public_key().public_bytes(
+            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        )
         verifier = PramanixVerifier(public_key_pem=pub_pem)
 
         d = Decision(
@@ -210,11 +203,6 @@ class TestPramanixVerifierDecisionPaths:
     ) -> None:
         """Lines 431-436: non-VerificationError inside verify_decision is wrapped."""
         pytest.importorskip("cryptography")
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import (
-            Encoding,
-            PublicFormat,
-        )
 
         from pramanix.crypto import PramanixSigner, PramanixVerifier
         from pramanix.decision import Decision, SolverStatus
@@ -291,8 +279,13 @@ class TestRS256SignerEdgePaths:
     def test_rs256_signer_sign_exception_is_swallowed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Lines 560-563: exception in sign() logs error and returns empty string."""
+        """Lines 560-563: exception in sign() logs error and returns empty string.
+
+        Patches _b64url (post-sign encoding) since RSAPrivateKey.sign is
+        Rust-backed and its attribute is read-only.
+        """
         pytest.importorskip("cryptography")
+        import pramanix.crypto as _crypto_mod
         from pramanix.crypto import RS256Signer
         from pramanix.decision import Decision, SolverStatus
 
@@ -304,10 +297,10 @@ class TestRS256SignerEdgePaths:
             explanation="ok",
         )
 
-        def _boom(*args: object, **kwargs: object) -> bytes:
-            raise RuntimeError("hardware token not responding")
+        def _bad_b64url(data: bytes) -> str:
+            raise RuntimeError("base64 encode failed — signing buffer corrupt")
 
-        monkeypatch.setattr(signer._private_key, "sign", _boom)
+        monkeypatch.setattr(_crypto_mod, "_b64url", _bad_b64url)
         result = signer.sign(d)
         assert result == ""
 
@@ -328,18 +321,23 @@ class TestRS256VerifierEdgePaths:
     def test_rs256_verifier_verify_unexpected_exception(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Lines 622-625: non-InvalidSignature exception → VerificationError."""
+        """Lines 622-625: non-InvalidSignature exception → VerificationError.
+
+        Patches _b64url_decode to raise RuntimeError since RSAPublicKey.verify
+        is Rust-backed and read-only.
+        """
         pytest.importorskip("cryptography")
+        import pramanix.crypto as _crypto_mod
         from pramanix.crypto import RS256Signer, RS256Verifier
         from pramanix.exceptions import VerificationError
 
         signer = RS256Signer.generate()
         verifier = RS256Verifier(public_key_pem=signer.public_key_pem())
 
-        def _boom(*args: object, **kwargs: object) -> None:
-            raise RuntimeError("hardware token vanished")
+        def _bad_decode(s: str) -> bytes:
+            raise RuntimeError("HSM decode failure")
 
-        monkeypatch.setattr(verifier._public_key, "verify", _boom)
+        monkeypatch.setattr(_crypto_mod, "_b64url_decode", _bad_decode)
 
         with pytest.raises(VerificationError, match="RS256 verify"):
             verifier.verify("some_hash", "c29tZV9zaWc")
@@ -491,11 +489,14 @@ class TestES256Signer:
         signer = ES256Signer()
         assert signer.public_key_pem() is not None
 
-    def test_es256_signer_sign_exception_swallowed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Lines 768-771: exception in sign() returns empty string."""
+    def test_es256_signer_sign_exception_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Lines 768-771: exception in sign() returns empty string.
+
+        Patches _b64url since EllipticCurvePrivateKey.sign is Rust-backed
+        and its attribute is read-only.
+        """
         pytest.importorskip("cryptography")
+        import pramanix.crypto as _crypto_mod
         from pramanix.crypto import ES256Signer
         from pramanix.decision import Decision, SolverStatus
 
@@ -507,10 +508,10 @@ class TestES256Signer:
             explanation="ok",
         )
 
-        def _boom(*args: object, **kwargs: object) -> bytes:
-            raise RuntimeError("HSM timeout")
+        def _bad_b64url(data: bytes) -> str:
+            raise RuntimeError("base64 encode failed — signing buffer corrupt")
 
-        monkeypatch.setattr(signer._private_key, "sign", _boom)
+        monkeypatch.setattr(_crypto_mod, "_b64url", _bad_b64url)
         result = signer.sign(d)
         assert result == ""
 
@@ -591,8 +592,10 @@ class TestES256Verifier:
 
         from pramanix.crypto import ES256Verifier
 
-        ed_pub_pem = Ed25519PrivateKey.generate().public_key().public_bytes(
-            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        ed_pub_pem = (
+            Ed25519PrivateKey.generate()
+            .public_key()
+            .public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
         )
         with pytest.raises(ValueError, match="EC public key"):
             ES256Verifier(public_key_pem=ed_pub_pem)
@@ -613,18 +616,23 @@ class TestES256Verifier:
     def test_es256_verifier_verify_unexpected_exception(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Lines 834-837: non-InvalidSignature exception → VerificationError."""
+        """Lines 834-837: non-InvalidSignature exception → VerificationError.
+
+        Patches _b64url_decode to raise RuntimeError since
+        EllipticCurvePublicKey.verify is Rust-backed and read-only.
+        """
         pytest.importorskip("cryptography")
+        import pramanix.crypto as _crypto_mod
         from pramanix.crypto import ES256Signer, ES256Verifier
         from pramanix.exceptions import VerificationError
 
         signer = ES256Signer.generate()
         verifier = ES256Verifier(public_key_pem=signer.public_key_pem())
 
-        def _boom(*args: object, **kwargs: object) -> None:
-            raise RuntimeError("EC operations unavailable")
+        def _bad_decode(s: str) -> bytes:
+            raise RuntimeError("EC operations unavailable — HSM offline")
 
-        monkeypatch.setattr(verifier._public_key, "verify", _boom)
+        monkeypatch.setattr(_crypto_mod, "_b64url_decode", _bad_decode)
 
         with pytest.raises(VerificationError, match="ES256 verify"):
             verifier.verify("hash_value", "c29tZXNpZw")
@@ -632,13 +640,9 @@ class TestES256Verifier:
     def test_es256_verifier_verify_decision_valid(self) -> None:
         """ES256Verifier.verify_decision() returns True for a correctly signed decision."""
         pytest.importorskip("cryptography")
+
         from pramanix.crypto import ES256Signer, ES256Verifier
         from pramanix.decision import Decision, SolverStatus
-        from pramanix.guard import Guard
-        from pramanix.guard_config import GuardConfig
-        from pramanix.policy import Policy
-        from pramanix.expressions import E, Field
-        from decimal import Decimal
 
         signer = ES256Signer.generate()
         verifier = ES256Verifier(public_key_pem=signer.public_key_pem())
@@ -653,6 +657,7 @@ class TestES256Verifier:
         sig = signer.sign(d)
         # Create a new decision with the signature
         import dataclasses
+
         signed_d = dataclasses.replace(d, signature=sig)
         # verify_decision should return True
         assert verifier.verify_decision(signed_d) is True

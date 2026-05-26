@@ -130,24 +130,45 @@ class TestDecisionIsCacheHit:
 
 class TestCanonicalBytesJsonFallback:
     def test_json_fallback_produces_sorted_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 62-67: when orjson is absent, stdlib json is used with sorted keys."""
-        # Block orjson so the except ImportError branch in decision.py is taken.
+        """Lines 62-67: when orjson is absent, stdlib json is used with sorted keys.
+
+        Uses sys.modules pop+restore instead of importlib.reload to avoid
+        mutating the original module's __dict__ in-place, which would corrupt
+        SolverStatus identity for all subsequent tests.
+        """
+        # Save and temporarily evict the original module so a fresh import
+        # re-executes module-level code with orjson blocked.
+        import pramanix as _pramanix_pkg
+
+        _original = sys.modules.pop("pramanix.decision", None)
+        # Also save the package attribute — Python's import machinery sets
+        # pramanix.decision = <new module> on every fresh import of the
+        # sub-module.  We must restore it so that later tests using
+        # `import pramanix.decision as X` (which uses IMPORT_FROM semantics
+        # and reads the package attribute, not sys.modules) see the right
+        # module object.
+        _original_attr = getattr(_pramanix_pkg, "decision", None)
         monkeypatch.setitem(sys.modules, "orjson", None)
 
-        import importlib
-
-        import pramanix.decision as _dec_mod
-
-        importlib.reload(_dec_mod)
         try:
-            result = _dec_mod._canonical_bytes({"b": 2, "a": 1})
+            import pramanix.decision as _fresh_dec  # triggers lines 62-67
+
+            result = _fresh_dec._canonical_bytes({"b": 2, "a": 1})
             assert isinstance(result, bytes)
             decoded = result.decode()
             # stdlib json with sort_keys=True puts "a" before "b"
             assert decoded.index('"a"') < decoded.index('"b"')
         finally:
-            # Restore the module to its original state so other tests see orjson.
-            importlib.reload(_dec_mod)
+            # Discard the orjson-less module and restore the original,
+            # leaving all pre-existing SolverStatus/Decision references intact.
+            sys.modules.pop("pramanix.decision", None)
+            if _original is not None:
+                sys.modules["pramanix.decision"] = _original
+            # Restore the package attribute to keep sys.modules and the
+            # package attribute in sync (prevents IMPORT_FROM from returning
+            # a stale reference in subsequent tests).
+            if _original_attr is not None:
+                _pramanix_pkg.decision = _original_attr
 
 
 # ── lifecycle/diff.ShadowEvaluator.arecord (line 411) ─────────────────────────

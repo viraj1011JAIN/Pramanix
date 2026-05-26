@@ -20,7 +20,6 @@ import base64
 import hashlib
 import hmac
 import json
-import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -396,9 +395,9 @@ class TestAwsKmsKeyProviderInit:
     """Lines 264-267: AwsKmsKeyProvider init after boto3 import succeeds."""
 
     def test_aws_kms_provider_init_with_fake_boto3(self) -> None:
-        """Lines 264-267: init body after successful import (boto3 injected into sys.modules)."""
-        import sys
-        import types
+        """Lines 264-267: init body after successful import (real boto3, injected client)."""
+        pytest.importorskip("boto3")
+        from pramanix.key_provider import AwsKmsKeyProvider
 
         class _FakeSecretsClient:
             def get_secret_value(self, **kwargs: Any) -> dict[str, str]:
@@ -410,35 +409,20 @@ class TestAwsKmsKeyProviderInit:
             def rotate_secret(self, **kwargs: Any) -> None:
                 pass
 
-        fake_boto3 = types.ModuleType("boto3")
-        fake_boto3.client = lambda *a, **kw: _FakeSecretsClient()  # type: ignore[attr-defined]
-
-        prev = sys.modules.get("boto3", _missing := object())
-        sys.modules["boto3"] = fake_boto3
-        try:
-            # Force reload so __init__'s `import boto3` sees the fake
-            if "pramanix.key_provider" in sys.modules:
-                del sys.modules["pramanix.key_provider"]
-            from pramanix.key_provider import AwsKmsKeyProvider
-
-            # Pass _client to skip calling boto3.client()
-            provider = AwsKmsKeyProvider(
-                secret_arn="arn:aws:secretsmanager:us-east-1:123456789:secret:test",
-                _client=_FakeSecretsClient(),
-            )
-            assert provider._secret_arn == "arn:aws:secretsmanager:us-east-1:123456789:secret:test"
-        finally:
-            if prev is _missing:
-                sys.modules.pop("boto3", None)
-            else:
-                sys.modules["boto3"] = prev  # type: ignore[assignment]
+        # Pass _client to skip calling boto3.client()
+        provider = AwsKmsKeyProvider(
+            secret_arn="arn:aws:secretsmanager:us-east-1:123456789:secret:test",
+            _client=_FakeSecretsClient(),
+        )
+        assert provider._secret_arn == "arn:aws:secretsmanager:us-east-1:123456789:secret:test"
 
 
 class TestAzureKeyVaultKeyProviderInit:
     """Lines 328, 334-336: AzureKeyVaultKeyProvider init after import succeeds."""
 
     def test_azure_provider_init_with_fake_client(self) -> None:
-        """Lines 334-336: init body covered by _client injection."""
+        """Lines 334-336: init body covered by _client injection (real azure SDK required)."""
+        pytest.importorskip("azure.keyvault.secrets")
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
         class _FakeSecret:
@@ -451,46 +435,20 @@ class TestAzureKeyVaultKeyProviderInit:
             def get_secret(self, name: str, **kwargs: Any) -> _FakeSecret:
                 return _FakeSecret()
 
-        _orig_azure = {
-            k: sys.modules.get(k)
-            for k in ["azure", "azure.identity", "azure.keyvault", "azure.keyvault.secrets"]
-        }
-        try:
-            # Inject fake azure modules
-            import types
-
-            fake_azure = types.ModuleType("azure")
-            fake_identity = types.ModuleType("azure.identity")
-            fake_identity.DefaultAzureCredential = object  # type: ignore[attr-defined]
-            fake_kv_secrets = types.ModuleType("azure.keyvault.secrets")
-            fake_kv_secrets.SecretClient = _FakeSecretClient  # type: ignore[attr-defined]
-            sys.modules["azure"] = fake_azure
-            sys.modules["azure.identity"] = fake_identity
-            sys.modules["azure.keyvault"] = types.ModuleType("azure.keyvault")
-            sys.modules["azure.keyvault.secrets"] = fake_kv_secrets
-
-            provider = AzureKeyVaultKeyProvider(
-                vault_url="https://myvault.vault.azure.net",
-                secret_name="my-secret",
-                _client=_FakeSecretClient(),
-            )
-            assert provider._secret_name == "my-secret"
-        finally:
-            for key in ["azure", "azure.identity", "azure.keyvault", "azure.keyvault.secrets"]:
-                orig = _orig_azure[key]
-                if orig is not None:
-                    sys.modules[key] = orig
-                else:
-                    sys.modules.pop(key, None)
+        provider = AzureKeyVaultKeyProvider(
+            vault_url="https://myvault.vault.azure.net",
+            secret_name="my-secret",
+            _client=_FakeSecretClient(),
+        )
+        assert provider._secret_name == "my-secret"
 
 
 class TestGcpKmsKeyProviderInit:
     """Lines 398-401, 415: GcpKmsKeyProvider init and public_key_pem."""
 
     def test_gcp_provider_init_with_fake_client(self) -> None:
-        """Lines 398-401: init body with _client injection."""
-        import types
-
+        """Lines 398-401: init body with _client injection (real google-cloud-secret-manager required)."""
+        pytest.importorskip("google.cloud.secretmanager")
         from pramanix.key_provider import GcpKmsKeyProvider
 
         class _FakePayload:
@@ -503,37 +461,15 @@ class TestGcpKmsKeyProviderInit:
             def access_secret_version(self, **kwargs: Any) -> _FakeResponse:
                 return _FakeResponse()
 
-        # Save originals so we can fully restore the google namespace package —
-        # dropping google from sys.modules entirely breaks later tests that
-        # import google.auth, google.api_core, etc.
-        _orig_google = {
-            k: sys.modules.get(k) for k in ["google", "google.cloud", "google.cloud.secretmanager"]
-        }
-        try:
-            fake_google = types.ModuleType("google")
-            fake_cloud = types.ModuleType("google.cloud")
-            fake_sm = types.ModuleType("google.cloud.secretmanager")
-            fake_sm.SecretManagerServiceClient = _FakeSecretManagerClient  # type: ignore[attr-defined]
-            sys.modules["google"] = fake_google
-            sys.modules["google.cloud"] = fake_cloud
-            sys.modules["google.cloud.secretmanager"] = fake_sm
-
-            provider = GcpKmsKeyProvider(
-                project_id="my-project",
-                secret_id="my-secret",
-                version_id="latest",
-                _client=_FakeSecretManagerClient(),
-            )
-            assert provider._project_id == "my-project"
-            # Line 415: public_key_pem() → _derive_public_pem(private_key_pem())
-            # We can't call it without a real PEM, so just verify init is covered
-        finally:
-            for key in ["google", "google.cloud", "google.cloud.secretmanager"]:
-                orig = _orig_google[key]
-                if orig is not None:
-                    sys.modules[key] = orig
-                else:
-                    sys.modules.pop(key, None)
+        provider = GcpKmsKeyProvider(
+            project_id="my-project",
+            secret_id="my-secret",
+            version_id="latest",
+            _client=_FakeSecretManagerClient(),
+        )
+        assert provider._project_id == "my-project"
+        # Line 415: public_key_pem() → _derive_public_pem(private_key_pem())
+        # We can't call it without a real PEM, so just verify init is covered
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -614,8 +550,8 @@ class TestHashiCorpVaultKeyProviderInit:
     """Lines 468-471: HashiCorpVaultKeyProvider init after hvac import succeeds."""
 
     def test_vault_provider_init_with_fake_hvac(self) -> None:
-        """Lines 468-471: init body with fake hvac module."""
-
+        """Lines 468-471: init body with fake hvac client (real hvac required)."""
+        pytest.importorskip("hvac")
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         class _FakeHvacClient:
@@ -626,21 +562,10 @@ class TestHashiCorpVaultKeyProviderInit:
                         def read_secret_version(**kwargs: Any) -> dict[str, Any]:
                             return {"data": {"data": {"key": "pem_value"}}}
 
-        class _FakeHvacModule:
-            Client = _FakeHvacClient
-
-        prev_hvac = sys.modules.get("hvac")
-        sys.modules["hvac"] = _FakeHvacModule()  # type: ignore[assignment]
-        try:
-            provider = HashiCorpVaultKeyProvider(
-                url="http://localhost:8200",
-                token="root",
-                secret_path="secret/my-key",
-                _client=_FakeHvacClient(),
-            )
-            assert provider._secret_path == "secret/my-key"
-        finally:
-            if prev_hvac is None:
-                sys.modules.pop("hvac", None)
-            else:
-                sys.modules["hvac"] = prev_hvac
+        provider = HashiCorpVaultKeyProvider(
+            url="http://localhost:8200",
+            token="root",
+            secret_path="secret/my-key",
+            _client=_FakeHvacClient(),
+        )
+        assert provider._secret_path == "secret/my-key"

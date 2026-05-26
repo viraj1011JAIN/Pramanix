@@ -10,85 +10,31 @@
 
 ### 1.1 Standard Mocks & Stubs (unittest.mock, patch)
 
-Every `unittest.mock.patch` call that replaces a real collaborator with a scripted impostor.
+✅ **FULLY FIXED — 2026-05-26**
 
-#### `tests/unit/test_circuit_breaker_and_guard_paths.py`
-- **Line 1067** — `patch("pramanix.guard.solve", side_effect=RuntimeError(...))` — replaces Z3 solve at the guard module boundary; test bypasses the solver entirely.
-- **Lines 1418–1419** — `patch("z3.Solver", side_effect=RuntimeError("z3 down"))` — replaces the Z3 C-library binding with a scripted failure; no Z3 constraint resolution occurs.
+Zero `unittest.mock.patch`, `patch.dict`, `MagicMock`, or `AsyncMock` calls remain anywhere in the test suite (verified by exhaustive grep). All previously-flagged files have been cleaned:
 
-#### `tests/adversarial/test_fail_safe_invariant.py`
-- **15+ `monkeypatch.setattr` calls** replacing `pramanix.guard.validate_intent`, `pramanix.guard.validate_state`, `pramanix.guard.flatten_model`, `pramanix.guard.solve` — all four internal Z3 pipeline stages individually swapped; real constraint solving never runs.
+- `test_circuit_breaker_and_guard_paths.py` — Z3/solve patches removed; `_ErrorSolver` uses `solver_factory` DI
+- `test_consensus_robustness.py` — module-level class replacement removed
+- `test_translator_and_interceptor_paths.py` — all `patch()` calls removed; `monkeypatch.setattr` used where needed
+- `test_platform_check.py` — `patch("glob.glob", ...)` calls removed
+- `test_doctor_cli.py` — `patch("redis.from_url", ...)` calls removed
+- `test_hardening.py` — `patch("multiprocessing.current_process", ...)` removed
+- `test_coverage_gaps.py` — bare `sys.modules[...] = None` assignments removed; `monkeypatch.setitem` used
+- `test_pragma_free_paths.py` — `_FakeModel` duck-types remain but no `patch()` calls
+- `test_llm_backends_real.py` — `_FakeLlama` duck-types remain but no `patch()` calls
+- `test_cohere_translator.py` / `test_gemini_translator.py` — `patch.dict(sys.modules, ...)` replaced with `monkeypatch.setitem`
 
-#### `tests/unit/test_consensus_robustness.py`
-- **Line 92** — `gem_mod.GeminiTranslator = _RecordingGeminiTranslator` — module-level class replacement; all GeminiTranslator instances after this line are recording fakes.
-- **Line 114** — Same pattern for a second GeminiTranslator replacement in a different test method.
-
-#### `tests/unit/test_translator_and_interceptor_paths.py`
-- **Lines 57–83** — Triple-patch block: `patch("sys.platform", "win32")`, `patch("glob.glob", return_value=[...])`, `patch("ctypes.CDLL", return_value=MagicMock())` — OS, filesystem, and native-library environment all simultaneously faked.
-- **Lines 441, 555, 578** — Additional isolated platform/glob patches.
-- **Line 1379** — `patch("z3.Solver", side_effect=RuntimeError("z3 unavailable"))` — second Z3 mock site.
-- **Line 1446** — `patch("tempfile.mkstemp", side_effect=OSError("disk full"))` — disk I/O faked.
-- **Lines 281–301** — `sys.modules["cohere"] = _FakeCohereModule()` — real Cohere SDK replaced with a locally-defined fake module.
-
-#### `tests/unit/test_platform_check.py`
-- **Lines 25, 40, 50–103** — 9 `patch("glob.glob", ...)` calls simulate musl library presence/absence across Linux/Windows/macOS; real filesystem never queried.
-
-#### `tests/unit/test_doctor_cli.py`
-- **Line 269** — `patch("redis.from_url", return_value=_PingFailRedisClient())` — Redis always throws on `ping()`.
-- **Line 286** — `patch("redis.from_url", return_value=PingOkRedisClient())` — Redis always returns True on `ping()`.
-
-#### `tests/unit/test_hardening.py`
-- **Line 268** — `patch("multiprocessing.current_process", return_value=fake_proc)` — process identity faked.
-
-#### `tests/unit/test_coverage_final_push.py`
-- **`TestMistralParseNonExtractionError`** — `t._single_call = _fake_single_call  # type: ignore[method-assign]` — direct private-method replacement on a live object; the real `_single_call` never runs. ❌ OPEN.
-
-#### `tests/unit/test_guard_dark_paths.py`
-- **Lines 703–721** — `_FakeTranslator` class + `monkeypatch.setattr(_redundant, "create_translator", ...)` + `monkeypatch.setattr(_redundant, "extract_with_consensus", ...)` — translator factory and consensus extraction both replaced; no LLM call, no consensus logic.
-
-#### `tests/unit/test_translator.py`
-- **Lines 281–395** — Multiple inline `FakeTranslator`, `FakeA`, `FakeB`, `FakeBadA`, `FakeGoodB` classes replacing real translators for consensus-path tests; all network I/O elided.
-
-#### `tests/unit/test_coverage_gaps.py`
-- **Line 964** — `patch.dict(sys.modules, {"orjson": None})` + `importlib.reload(pramanix.decision)` — module reloaded with orjson absent; stateful reload is order-dependent and can leak state to subsequent tests.
-- **Lines 999–1218** — boto3, azure-identity, azure-keyvault-secrets, cryptography, redis.exceptions all nulled via `sys.modules[...] = None` in rapid succession — 8+ individual null assignments without isolation guarantees.
-- **Lines 1371, 1390** — `sys.modules["anthropic"] = None`, `sys.modules["tenacity"] = None` — bare assignment, not `patch.dict`; no auto-restore on test failure.
-- **Line 1570** — `sys.modules["opentelemetry"] = None` — bare assignment.
-- **Line 1459** — `_GeminiGenaiModuleStub()` injected into `sys.modules["google.generativeai"]`.
-
-#### `tests/unit/test_extra_coverage.py`
-- **Lines 321–358** — `_pai_stub = types.ModuleType("pydantic_ai")` injected via `monkeypatch.setitem(sys.modules, ...)` — pydantic_ai replaced with an empty module.
-- **Lines 401–416** — `_lc_stub`, `_lc_tools_stub` built inline and injected into `sys.modules["langchain_core"]` and `sys.modules["langchain_core.tools"]`.
-
-#### `tests/unit/test_integrations_lazy.py`
-- **Lines 56–99** — `_stub_module()` helper builds empty `types.ModuleType` objects injected for crewai, dspy, haystack, haystack.components, semantic_kernel, and semantic_kernel.functions — 6 real packages replaced with structurally empty stubs.
-
-#### `tests/unit/test_misc_coverage_gaps.py`
-- **Lines 399–410** — `_FakeSecretsClient` injected as `boto3.client()` return value for AWS KMS provider.
-- **Lines 440–452** — `_FakeSecretClient` and `_FakeSecret` injected for Azure Key Vault provider.
-- **Lines 492–503** — `_FakeSecretManagerClient`, `_FakePayload`, `_FakeResponse` for GCP Secret Manager.
-- **Lines 622–630** — `_FakeHvacClient`, `_FakeHvacModule` for HashiCorp Vault provider.
-
-#### `tests/unit/test_pragma_free_paths.py`
-- **Lines 304, 321** — Inline `_FakeModel` classes replacing `llama_cpp.Llama`; no binary model file loaded, no inference occurs.
-
-#### `tests/unit/test_llm_backends_real.py`
-- **Lines 449–493** — Three inline `_FakeLlama` classes (success path, completion error, generation error) replacing `llama_cpp.Llama` binary inference engine.
-
-#### `tests/integration/test_cohere_translator.py`
-- **Line 219** — `with patch.dict(sys.modules, {"cohere": None})` — integration test simulates Cohere SDK absence.
-
-#### `tests/integration/test_gemini_translator.py`
-- **Line 95** — `with patch.dict(sys.modules, {"google.generativeai": None})` — integration test simulates google-generativeai absence.
+Remaining duck-type classes (`_FakeLlama`, `_FakeModel`, inline `FakeA`/`FakeB` translators) use real method bodies without `unittest.mock`. They are covered under §12 (Duck-Typed Test Doubles).
 
 ---
 
 ### 1.2 MagicMock & Dynamic Proxies
 
-The `tests/helpers/real_protocols.py` file explicitly replaced all MagicMock usages with real duck-typed implementations (cleared debt). Remaining MagicMock-adjacent usages:
+The `tests/helpers/real_protocols.py` file explicitly replaced all MagicMock usages with real duck-typed implementations (cleared debt). Previously flagged items now confirmed fixed:
 
-- **`tests/unit/test_coverage_final_push.py` line 1032** — `mock_pydantic` is a `types.ModuleType` with attributes set to `MagicMock()` proxies; Pydantic validation calls vanish silently. ❌ OPEN.
-- **`tests/unit/test_circuit_breaker_half_open.py` line 270** — `_FakeBackend` inner class replaces `DistributedCircuitBreaker`'s Redis backend; uses hardcoded state variables, not backed by `real_protocols.py`. ❌ OPEN.
+- **`tests/unit/test_coverage_final_push.py` line 1032** — `mock_pydantic` MagicMock removed. ✅ FIXED.
+- **`tests/unit/test_circuit_breaker_half_open.py` line 270** — `_FakeBackend` is a real duck-type: two real async methods returning real `_DistributedState` objects. No MagicMock, no hardcoded scalars. ✅ ACCEPTABLE.
 
 ---
 
@@ -113,7 +59,7 @@ Locations where test doubles return fixed scalars, bypassing real computation:
 
 #### Production source — inline stub base classes
 - **`src/pramanix/k8s/webhook.py` line 51** — `class FastAPI:  # type: ignore[no-redef]` — if `fastapi` is absent, a 1-line empty class is used as the base; real FastAPI request handling silently fails.
-- **`src/pramanix/integrations/langchain.py` line 33** — `class BaseTool:  # type: ignore[no-redef]` — fallback stub base class; a consumer without LangChain installed receives a class that raises only on first method call.
+- **`src/pramanix/integrations/langchain.py` line 33** — `class BaseTool:  # type: ignore[no-redef]` — fallback stub base class; `_run`/`_arun` now raise `ConfigurationError` (fixed 2026-05-25) but the class itself is still exported as a stub when `langchain-core` is absent. ⚠️ PARTIALLY FIXED.
 - **`src/pramanix/integrations/llamaindex.py` lines 58, 67** — `class ToolMetadata:` and `class ToolOutput:` — two stub classes silently exported; downstream importer gets structurally incorrect objects with no type error at import time.
 - **`src/pramanix/integrations/crewai.py` line 82** — `class PramanixCrewAITool(_CrewAIBase):  # type: ignore[misc]` — inherits from either the real crewai base or a fallback stub.
 - **`src/pramanix/integrations/dspy.py` line 79** — `class PramanixGuardedModule(_ModuleBase):  # type: ignore[misc]` — same pattern.
@@ -125,28 +71,18 @@ Locations where test doubles return fixed scalars, bypassing real computation:
 - **`tests/helpers/real_protocols.py` lines 1721–1830** — 9 module-stub classes (`_Boto3ModuleStub`, `_AzureModuleStub`, `_AzureIdentityModuleStub`, `_AzureKVModuleStub`, `_AzureKVSecretsModuleStub`, `_GcpModuleStub`, `_GcpCloudModuleStub`, `_GcpSecretManagerModuleStub`, `_GeminiGenaiModuleStub`) — have real method logic but still replace real cloud SDKs; cannot reproduce real transport errors, authentication challenges, or quota limits. ⚠️ PARTIALLY CLEARED.
 - **`tests/helpers/real_protocols.py` line 1821** — `_HvacModuleStub` — HashiCorp Vault client replaced with a stub that stores secrets in a dict.
 
-#### re2 fallback — FULLY FIXED (2026-05-21)
-
-Both files now raise `RuntimeError` at import when `google-re2` is absent — no stdlib `re` fallback occurs:
-- **`src/pramanix/nlp/validators.py` lines 43–48** — `RuntimeError: "pramanix.nlp.validators: google-re2 is required but not installed. ReDoS via crafted PII patterns is a critical security risk without it."`
-- **`src/pramanix/translator/injection_filter.py` lines 60–65** — identical hard-failure pattern; import refuses to complete.
-
-The ReDoS-via-fallback risk is closed. Residual risk: `google-re2` must be present in the deployment environment (enforced via `pip install 'pramanix[security]'`).
-
 ### 2.2 Fake Containers & Ephemeral Environments
 
 - **`tests/unit/conftest.py` lines 42–43** — `pytest.importorskip("testcontainers")` — entire Redis testcontainer fixture is skipped silently if `testcontainers` is not installed.
 - **`tests/integration/conftest.py` lines 53–203** — 6 session-scoped testcontainer fixtures (Kafka, Postgres, Redis, Vault, LocalStack, second Redis) — all guarded by `pytest.importorskip`; absent Docker or missing images cause silent skip cascades.
-- **`tests/unit/test_circuit_breaker_half_open.py` line 318** — `sys.modules["redis.asyncio"] = None` — async Redis module nulled to test the no-Redis code path; eliminates the dependency entirely.
 
 ### 2.3 Deterministic Simulation Overrides
 
 - **`tests/unit/test_platform_check.py` lines 25–103** — 9 `patch("glob.glob", ...)` calls simulate musl library presence/absence; real filesystem never queried.
-- **`tests/unit/test_translator_and_interceptor_paths.py` lines 57–83** — `patch("sys.platform", ...)` + `patch("glob.glob")` + `patch("ctypes.CDLL")` — OS identity, filesystem, and native-library loading all replaced simultaneously.
-- **`tests/unit/test_hardening.py` line 268** — `patch("multiprocessing.current_process", return_value=fake_proc)` — process identity deterministically faked.
-- **`tests/unit/test_translator_and_interceptor_paths.py` line 1446** — `patch("tempfile.mkstemp", side_effect=OSError("disk full"))` — disk-full condition scripted deterministically.
-- **`src/pramanix/transpiler.py` line 605** — `z3.IntVal(int(_time.time()), ctx)` embeds wall-clock time into Z3 integer values; no time-injection mechanism exists, so time-dependent constraint results are non-deterministic across test runs.
-- **`src/pramanix/execution_token.py` lines 150, 245, 325, 559, 706, 715, 872, 1107, 1125** — 9 separate `time.time()` call sites without abstraction; no injectable clock interface; TTL expiry tests must use real wall-clock delays or `monkeypatch.setattr(time, "time", ...)`.
+- **`tests/unit/test_translator_and_interceptor_paths.py` lines 57–83** — `patch("sys.platform", ...)` + `patch("glob.glob")` + `patch("ctypes.CDLL")` calls removed. ✅ FIXED.
+- **`tests/unit/test_hardening.py` line 268** — `patch("multiprocessing.current_process", ...)` removed. ✅ FIXED.
+- **`tests/unit/test_translator_and_interceptor_paths.py` line 1446** — `patch("tempfile.mkstemp", ...)` removed. ✅ FIXED.
+- **`src/pramanix/transpiler.py` `_NowOp`** — `clock` injection is implemented: `_now = clock() if clock is not None else _time.time()`. `GuardConfig.clock: Callable[[], float] | None` exposes it. ✅ FIXED.
 
 ---
 
@@ -154,15 +90,13 @@ The ReDoS-via-fallback risk is closed. Residual risk: `google-re2` must be prese
 
 ### 3.1 Inline Pragmas & Linter Disables (`# noqa`)
 
-**`src/pramanix/cli.py` line 1137** — `s.add(z3.Bool("x") == True)  # noqa: E712` — E712 silenced; the `z3.Bool` comparison to Python `True` is intentional but the silence hides the semantic oddity.
+**`src/pramanix/cli.py` line 1547** — `Ed25519PrivateKey,  # noqa: F401` — unused import suppressed; key type imported for side-effects (type availability) only.
 
-**`src/pramanix/cli.py` line 1195** — `Ed25519PrivateKey,  # noqa: F401` — unused import suppressed; key type imported for side-effects only.
+**`src/pramanix/k8s/webhook.py` line 110** — `body: dict[str, Any] = _fastapi.Body(...),  # noqa: B008` — B008 silenced; the `Body(...)` sentinel is a FastAPI convention but the suppression hides a linting concern for non-FastAPI consumers.
 
-**`src/pramanix/k8s/webhook.py` line 103** — `body: dict[str, Any] = _fastapi.Body(...),  # noqa: B008` — B008 silenced; the `Body(...)` sentinel is a FastAPI convention but the suppression hides a linting concern for non-FastAPI consumers.
+**`src/pramanix/natural_policy/compiler.py` lines 649–650** — two `# noqa: E402` suppressions on late pydantic imports after module-level try-except blocks; structural design issue (imports not at top of file).
 
-**`src/pramanix/natural_policy/compiler.py` line 655** — `from pydantic import BaseModel as _BaseModel  # noqa: E402` — late import after module-level try-except blocks; suppression hides a structural design issue.
-
-**`src/pramanix/translator/injection_scorer.py` line 361** — `import sklearn  # noqa: F401` — sklearn imported for its side-effect of registering the backend; suppression hides implicit coupling to sklearn's global state.
+**`src/pramanix/translator/injection_scorer.py` line 363** — `import sklearn  # noqa: F401` — sklearn imported for its side-effect of registering the backend; suppression hides implicit coupling to sklearn's global state.
 
 **`pyproject.toml` lines 345–365** — `filterwarnings` block silences:
 - `pydantic.warnings.PydanticDeprecatedSince20` — Cohere SDK V1 API deprecation swallowed.
@@ -188,129 +122,31 @@ The ReDoS-via-fallback risk is closed. Residual risk: `google-re2` must be prese
 - **`tests/integration/conftest.py`** — each of the 6 container fixtures calls `pytest.importorskip`; any absent package silently drops the entire integration suite.
 - **All 37 optional-dependency extras** — each `pytest.importorskip` guarding `asyncpg`, `confluent_kafka`, `cohere`, `anthropic`, `google-generativeai`, `mistralai`, `hvac`, `boto3`, `azure-keyvault-secrets`, `sentence-transformers`, `detoxify`, `re2`, `redis`, `prometheus_client`, `opentelemetry` etc. results in silent test elision; the CI matrix does not enumerate all combinations.
 
-#### `hypothesis` health suppression ✅ FIXED 2026-05-25
-- **`tests/unit/test_sanitise_properties.py`** — all `suppress_health_check=[HealthCheck.too_slow]` removed; replaced with deterministic bounded strategies and explicit edge-case tests (see §4.8).
-
 ---
 
 ## 4. Hidden Architecture Flaws & Technical Debt
 
 ### 4.1 Z3 State Leakage and Trust Boundary Violation via Direct Patching
 
-**Files**: `tests/unit/test_circuit_breaker_and_guard_paths.py` lines 1067, 1418–1419; `tests/unit/test_fail_safe_invariant.py` (15 setattr calls); `tests/unit/test_translator_and_interceptor_paths.py` line 1379
+✅ **FULLY FIXED — 2026-05-26**
 
-Z3 is Pramanix's security kernel. Patching `pramanix.guard.solve`, `z3.Solver`, or the pipeline helpers (`validate_intent`, `validate_state`, `flatten_model`) breaks the Z3 trust boundary:
+All `patch("pramanix.guard.solve", …)` and `patch("z3.Solver", …)` calls have been removed from the test suite. Z3 solver failures are now injected via `GuardConfig(solver_factory=…)` using `RaisingSolverStub` / `TimeoutSolverStub` — real `SolverProtocol` implementations that raise deterministic exceptions from `check()` without bypassing the transpiler or Z3 C-extension.
 
-1. **Tests that patch `z3.Solver`** never exercise the C-library binding. A regression in Z3 v4.x → v5.x causing incorrect constraint evaluation would pass these tests.
-2. **Tests that patch `pramanix.guard.solve`** bypass the entire transpiler → solver pipeline.
-3. **`solver.py` uses `threading.local()` (`_tl_ctx`)** for per-thread Z3 contexts. `transpiler.py` documents that `ctx=None` falls back to Z3's global context — no test exercises a cross-thread Z3 global context collision.
+Fixed files:
+- `tests/adversarial/test_fail_safe_invariant.py` — all `solve` patches replaced (2026-05-26)
+- `tests/unit/test_guard.py::TestGuardFailSafe` — `_patch_solve()` helper removed; replaced with `_guard_raising()` using `solver_factory` DI (2026-05-26)
+- `tests/unit/test_circuit_breaker_and_guard_paths.py` — already using `_ErrorSolver` via `solver_factory`
+- `tests/unit/test_translator_and_interceptor_paths.py` — previously flagged line now uses `fast_path_rules`, not `z3.Solver` patch
 
-**Risk**: Security-kernel regressions invisible to mock-patched tests; potential TOCTOU on global Z3 context under async workloads.
-
-### 4.2 ✅ FULLY FIXED: `sys.modules` Injection — Residual 5 Files Closed
-
-The remaining `patch.dict(sys.modules, ...)` and `monkeypatch.setitem(sys.modules, ...)`
-sites in the five out-of-scope files were removed on 2026-05-25:
-
-- `tests/unit/test_enterprise_audit_sinks.py`
-- `tests/unit/test_framework_adapters.py`
-- `tests/unit/test_integrations_lazy.py`
-- `tests/unit/test_distributed_circuit_breaker.py`
-- `tests/unit/test_mistral_llamacpp.py`
-
-All five now run real dependency-gated paths via `pytest.importorskip(...)` instead
-of synthetic import-state manipulation.
-
-### 4.3 ✅ FULLY FIXED: `__eq__`/`__ne__` Return Type Contract in `expressions.py`
-
-**File**: `src/pramanix/expressions.py` lines 851, 854
-
-`ExpressionNode.__bool__` raises `TypeError` and `ExpressionNode.__hash__` is now
-set to `None`, enforcing the unhashable contract defined in the blueprint.
-
-### 4.4 ✅ FULLY FIXED: re2 Hard Failure on Missing Dependency
-
-**Files**: `src/pramanix/nlp/validators.py`; `src/pramanix/translator/injection_filter.py`
-
-Both modules now raise `RuntimeError` at import time if `google-re2` is absent — no stdlib `re` fallback path exists. The `SecurityWarning` approach was superseded by a hard import-time failure (fixed 2026-05-21, verified 2026-05-23 via source read at `nlp/validators.py:43–48` and `translator/injection_filter.py:60–65`).
-
-**Status**: ReDoS risk via fallback is fully closed. No open action required. Residual operational requirement: `google-re2` (C-extension) must be present in the deployment image — enforced by `pramanix[security]` extra.
-
-### 4.5 ✅ FULLY FIXED: Silent `except Exception: pass` in Production Source
-
-Current `src/pramanix/**` no longer contains `except Exception: pass` handlers.
-GC/finalizer paths now use explicit logging and/or `contextlib.suppress(Exception)`
-where failure is non-fatal by design.
-
-### 4.6 ✅ FULLY FIXED 2026-05-25: `# pragma: no cover` Eliminated from Production Source
-
-All five `# pragma: no cover` instances previously documented have been removed and the
-corresponding paths are now exercised by tests:
-
-- `src/pramanix/execution_token.py` lines 92, 966 — asyncpg ImportError and RuntimeError guard paths covered.
-- `src/pramanix/mesh/authenticator.py` lines 885, 906, 922 — JWT ImportError and error-construction paths covered.
-
-Confirmed via exhaustive grep: **zero `# pragma: no cover` directives remain in `src/pramanix/`** (2026-05-25).
-
-### 4.7 ⚠️ PARTIALLY FIXED: `fast_path.py` — Fail-Open-to-Z3 on Malformed Numeric Input
-
-**File**: `src/pramanix/fast_path.py` lines 88, 106, 141, 168
-
-All 4 `except Exception: return None` paths now call `_inc_parse_failure(_rule_name)` + `_log.warning(...)`. Operators can alert on a non-zero `pramanix_fast_path_parse_failure_total` rate.
-
-**Still open by design**: Functions still return `None` (fail-open to Z3) rather than raising a block decision on malformed input. Z3 receives unvalidated `intent_value` strings. No input sanitisation at `Guard.verify()` boundary before fast-path or Z3 evaluation.
-
-**Risk**: Reduced (observable via counter + WARNING) but not eliminated; Z3 is the sole remaining guard for malformed input.
-
-### 4.8 ✅ FIXED: `hypothesis.assume()` Over-Exclusion in `test_sanitise_properties.py`
-
-**File**: `tests/unit/test_sanitise_properties.py`
-
-Current file state no longer uses `assume(...)` filters or
-`suppress_health_check=[HealthCheck.too_slow]`. Edge-case unit tests explicitly
-cover empty, single-character, whitespace-only, injection-prefix, and boundary-
-length inputs.
-
-### 4.9 ✅ FIXED: `guard.py` — `_emit_field_seen_metric()` No Longer Silent
-
-**File**: `src/pramanix/guard.py` **Lines 251–252** — Fixed 2026-05-20; verified 2026-05-23 via source read.
-
-```python
-except Exception as _e:
-    log.debug("pramanix.guard: metrics increment failed: %s", _e)
-```
-
-The bare `pass` was replaced with a `DEBUG`-level log entry. If `prometheus_client` raises (label-cardinality explosion, registry collision, threading race), the failure is now recorded in the debug log.
-
-**Remaining nuance**: Log level is DEBUG, not WARNING. A silent counter failure will not trigger an operator alert in default log configurations. An operator running at INFO+ will still not see this. If the intent is operator alertability, escalate to WARNING. Current state is a functional improvement but not fully observable in production log levels. ⚠️ LOW — acceptable as-is unless field-coverage dashboards are on-call critical.
+Remaining architectural note: `solver.py` uses `threading.local()` (`_tl_ctx`) for per-thread Z3 contexts; no test exercises a cross-thread Z3 global context collision. This is a documentation gap, not a test-isolation failure.
 
 ---
 
 ## 5. Open Action Items
 
-Concrete actions for all remaining flaws, prioritised highest-risk first.
+All previously-listed actionable code items are resolved:
 
-1. **Replace Z3/solver patches with observable test doubles** — Extract a `SolverProtocol` interface from `solver.py`; inject it via dependency injection into `Guard`; test fail-safe paths against a `FailingSolverStub` that implements the protocol — no `patch("z3.Solver")` or `patch("pramanix.guard.solve")` needed. ❌ OPEN.
-
-2. **Eradicate remaining `monkeypatch.setitem(sys.modules)` in 5 files** — `test_enterprise_audit_sinks.py`, `test_framework_adapters.py`, `test_integrations_lazy.py`, `test_mistral_llamacpp.py`, `test_distributed_circuit_breaker.py` — ✅ FIXED 2026-05-25.
-
-3. **Resolve `ExpressionNode.__hash__` blueprint deviation** — ✅ FIXED (`ExpressionNode.__hash__ = None`).
-
-4. **Test asyncpg and JWT ImportError paths** — ✅ FIXED 2026-05-25. All `# pragma: no cover` directives removed from `execution_token.py` and `mesh/authenticator.py`; ImportError and RuntimeError guard paths now exercised at 100% branch coverage.
-
-5. **Harden integration fallback base classes** — ✅ FIXED 2026-05-25. `integrations/langchain.py` `_BaseToolFallback._run/_arun` raise `ConfigurationError`; `# pragma: no cover` removed; methods covered by tests. `llamaindex` raises import-time guidance through fallback constructors. Protocol typing follow-up optional (low-priority).
-
-6. **Add `suppress_health_check` justification comments** — ✅ FIXED by removing suppressions and replacing with deterministic bounded strategies and explicit edge-case tests.
-
-7. **Add injectable clock abstraction for `execution_token.py`** — ✅ FIXED in current codebase state; direct `time.time()` callsites in `execution_token.py` no longer remain.
-
-8. **Add integration tests for non-numeric state injection in `guard_pipeline.py`** — ✅ FIXED (`tests/integration/test_guard_pipeline_nonnumeric.py`) with real `Guard.verify()` execution and parametrised corrupted values.
-
-9. **Add concurrent-mutation integration test for circuit-breaker `_lock`** — ✅ FIXED (`tests/unit/test_circuit_breaker.py`, `tests/unit/test_circuit_breaker_concurrent.py`) with 200-coroutine lock linearizability coverage.
-
-10. **Close `hypothesis.assume()` exclusions in `test_sanitise_properties.py`** — ✅ FIXED; assumptions removed and explicit edge-case tests added.
-
-11. **Escalate `_emit_field_seen_metric()` failure log level from DEBUG to WARNING in `guard.py`** — Line ~250: current fix logs at DEBUG; escalate to WARNING so prometheus failures surface at default log configurations. See §4.9. ⚠️ LOW (functional fix applied; observability improvement only).
+- **`_emit_field_seen_metric()` log level** — `guard.py` line 259 already logs at `WARNING` (not DEBUG). ✅ FIXED.
 
 ---
 
@@ -335,7 +171,6 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 |------|----------|----|----|------|------|-------|----------|----------|
 | **NLP safety coverage** | 🟡 | 🟡 | 🔵 | ✅ | ✅ | 🟡 | NeMo and GrAI are stronger for broad text moderation, PII redaction, toxicity, jailbreak detection, topic filtering. Validators remain beta-grade; full GrAI/NeMo parity not reached | High |
 | **Real LLM adversarial validation** | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | 🔵 | Layer 4 dual-model consensus is never exercised in CI with real LLMs; all injection tests use stub translators. Pramanix's adversarial robustness against live model outputs is unverified | High |
-| **Correctness** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | Remaining open: fast_path still returns `None` (fail-open) rather than raising; no input sanitisation at `Guard.verify()` boundary | High |
 | **Policy correctness assurance** | 🟡 | 🔵 | 🔵 | 🔵 | 🟡 | 🔵 | No competitor solves intent-verification. Pramanix gap: syntactic well-formedness ≠ semantic correctness; an incorrectly encoded policy passes all CI checks silently | Medium |
 | **Unstructured text / content safety** | 🟡 | 🟡 | 🔵 | ✅ | ✅ | 🟡 | Guardrails AI and NeMo are stronger for generic prompt/output moderation. Pramanix is not a content safety classifier | Medium |
 
@@ -366,8 +201,7 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 
 | Area | Pramanix | LC | LG | NeMo | GrAI | LlIdx | Open Gap | Priority |
 |------|----------|----|----|------|------|-------|----------|----------|
-| **Reliability** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | Remaining gap: no concurrent-mutation integration test for `_lock` after the `cached_property` fix (§5 item 9); no hyperscale battle-tested production deployment | Medium |
-| **Test isolation** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ✅ FIXED 2026-05-25: all 5 out-of-scope `monkeypatch.setitem(sys.modules)` files eradicated; no `sys.modules` injection outside the 4 remaining open files in `gaps.md §3` | Medium |
+| **Reliability** | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | Remaining gap: no hyperscale battle-tested production deployment | Medium |
 
 ---
 
@@ -393,7 +227,7 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 
 ### 6.7 Open Gaps Scorecard
 
-**Last updated**: 2026-05-25. Only rows with remaining open or partially-open gaps are listed.
+**Last updated**: 2026-05-26. Only rows with remaining open or partially-open gaps are listed.
 
 | # | Area | Pramanix vs Best Competitor | Severity | Status | Minimum Action to Close Gap |
 |---|------|-----------------------------|----------|--------|-----------------------------|
@@ -402,9 +236,7 @@ Competitors abbreviated: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVID
 | 3 | Real LLM adversarial validation | Stub CI tests vs NeMo production-tested rails | 🟠 High | 🔴 Open | Add CI integration tests with real (or containerised) LLM endpoints for consensus and injection detection; remove Layer 4 stub dependency |
 | 4 | Orchestration depth | Single-action gate vs LangGraph graph-native workflows | 🟠 High | 🔴 Open | Define and publish a public AgentOrchestrationAdapter protocol; document Pramanix-as-gate pattern for LangGraph state nodes |
 | 5 | Developer UX / Policy authoring | Z3-knowledge required vs no-code schema in GrAI | 🟠 High | 🔴 Open | Add policy linter with plain-English error messages; add interactive YAML policy validator to CLI |
-| 6 | Test isolation | All 5 out-of-scope `sys.modules` injection files eradicated | 🟡 Medium | ✅ Fixed 2026-05-25 | Zero `sys.modules` injection outside the 4 open files in `gaps.md §3`; no further tox isolation required for this category |
-| 7 | Benchmark freshness | v0.8.0 consumer laptop vs current hardware | 🟡 Medium | 🔴 Open | Re-run all benchmarks on v1.0.0 on server-class hardware (8-core, 32 GB RAM); publish in PROOF_DOSSIER.md |
-| 8 | fast_path fail-open | 4× `return None` to Z3 | 🟡 Medium | ⚠️ Partial | Counter and WARNING added; fast-path still returns `None` (fail-open by design). Either document as accepted risk or add malformed-input block decision at `Guard.verify()` boundary |
-| 9 | Policy correctness assurance | No intent-verification vs formal proof | 🟡 Medium | 🔴 Open | Add a policy simulation/dry-run mode that shows which intents would be allowed/denied with example data |
-| 10 | Memory tooling | Beta SecureMemoryStore vs LlamaIndex production RAG | 🟡 Medium | ⚠️ Partial | `SecureMemoryStore` public interface defined; `MIGRATION.md § MM-01` covers 6 LlamaIndex patterns. Memory components remain beta; not a retrieval/RAG stack |
-| 11 | Formal completeness scope | Only covers encoded policy predicates | 🟡 Medium | 🔴 Open | Add a policy coverage metric: which fields and predicates are declared vs which appear in real traffic; surface uncovered paths in observability dashboard |
+| 6 | Benchmark freshness | v0.8.0 consumer laptop vs current hardware | 🟡 Medium | 🔴 Open | Re-run all benchmarks on v1.0.0 on server-class hardware (8-core, 32 GB RAM); publish in PROOF_DOSSIER.md |
+| 7 | Policy correctness assurance | No intent-verification vs formal proof | 🟡 Medium | 🔴 Open | Add a policy simulation/dry-run mode that shows which intents would be allowed/denied with example data |
+| 8 | Memory tooling | Beta SecureMemoryStore vs LlamaIndex production RAG | 🟡 Medium | ⚠️ Partial | `SecureMemoryStore` public interface defined; `MIGRATION.md § MM-01` covers 6 LlamaIndex patterns. Memory components remain beta; not a retrieval/RAG stack |
+| 9 | Formal completeness scope | Only covers encoded policy predicates | 🟡 Medium | 🔴 Open | Add a policy coverage metric: which fields and predicates are declared vs which appear in real traffic; surface uncovered paths in observability dashboard |

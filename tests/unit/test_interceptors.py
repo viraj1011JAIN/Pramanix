@@ -16,7 +16,7 @@ Coverage:
 
 from __future__ import annotations
 
-import sys
+import importlib.util as _ilu
 from decimal import Decimal
 from typing import ClassVar
 
@@ -185,18 +185,14 @@ class TestAdmissionWebhook:
         },
     }
 
-    def test_create_webhook_requires_fastapi(self, monkeypatch: pytest.MonkeyPatch):
+    @pytest.mark.skipif(
+        _ilu.find_spec("fastapi") is not None,
+        reason="run in tox:no-fastapi — fastapi is installed in this env",
+    )
+    def test_create_webhook_requires_fastapi(self):
         """create_admission_webhook raises ConfigurationError when FastAPI missing."""
-        import importlib
-
         from pramanix.exceptions import ConfigurationError
-
-        monkeypatch.setitem(sys.modules, "fastapi", None)
-        monkeypatch.setitem(sys.modules, "fastapi.responses", None)
-
         from pramanix.k8s import webhook as wh_mod
-
-        importlib.reload(wh_mod)
 
         with pytest.raises((ConfigurationError, Exception)):
             wh_mod.create_admission_webhook(
@@ -209,12 +205,6 @@ class TestAdmissionWebhook:
         """Allowed admission request → response contains allowed=true."""
         pytest.importorskip("fastapi")
         pytest.importorskip("httpx")
-
-        import importlib
-
-        from pramanix.k8s import webhook as wh_mod
-
-        importlib.reload(wh_mod)  # restore clean module state after test_create_webhook_requires_fastapi
 
         from fastapi.testclient import TestClient
 
@@ -236,12 +226,6 @@ class TestAdmissionWebhook:
     def test_webhook_blocked_returns_allowed_false(self):
         """Blocked admission request → response contains allowed=false."""
         pytest.importorskip("fastapi")
-
-        import importlib
-
-        from pramanix.k8s import webhook as wh_mod
-
-        importlib.reload(wh_mod)  # restore clean module state after test_create_webhook_requires_fastapi
 
         from fastapi.testclient import TestClient
 

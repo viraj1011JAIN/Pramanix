@@ -246,6 +246,18 @@ class _KafkaDLQProducer:
         if callback is not None:
             callback(None, _KafkaMessage(value, topic=topic))
 
+    def poll(self, timeout: float = 0.0) -> int:
+        """No-op: callbacks are fired synchronously in produce().
+
+        The real ``confluent_kafka.Producer.poll()`` drains pending delivery
+        callbacks from the internal librdkafka queue.  Because this duck-type
+        producer fires callbacks immediately inside ``produce()``, there is
+        never a pending queue to drain.  Returning 0 (events served) satisfies
+        the ``KafkaAuditSink._background_poll()`` contract without logging
+        spurious AttributeErrors.
+        """
+        return 0
+
     def flush(self, timeout: float = -1.0) -> None:
         self.flush_called = True
 
@@ -374,8 +386,14 @@ class _ErrorPollProducer:
     Not a mock — ``poll()`` has a real body that raises a real ``Exception``.
     """
 
+    def produce(self, topic: str, value: Any = None, callback: Any = None) -> None:
+        pass  # no-op
+
     def poll(self, timeout: float = 0.0) -> None:
         raise Exception("kafka down")
+
+    def flush(self, timeout: float = -1.0) -> int:
+        return 0
 
 
 class _ErrorFlushProducer:
@@ -386,6 +404,12 @@ class _ErrorFlushProducer:
 
     Not a mock — ``flush()`` has a real body that raises a real ``Exception``.
     """
+
+    def produce(self, topic: str, value: Any = None, callback: Any = None) -> None:
+        pass  # no-op
+
+    def poll(self, timeout: float = 0.0) -> int:
+        return 0
 
     def flush(self, timeout: float = -1.0) -> None:
         raise Exception("flush failed")

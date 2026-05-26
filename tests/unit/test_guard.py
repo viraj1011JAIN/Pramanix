@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 import pramanix.guard as _guard_mod
 from pramanix.decision import Decision, SolverStatus
+from tests.helpers.solver_stubs import RaisingSolverStub
 from pramanix.exceptions import (
     ConfigurationError,
     InvariantLabelError,
@@ -505,42 +506,53 @@ class TestGuardVerifyRawMode:
 
 
 class TestGuardFailSafe:
-    """Guard.verify() must return Decision(allowed=False) for ALL exception types."""
+    """Guard.verify() must never raise — every exception → allowed=False."""
 
     def setup_method(self) -> None:
         self.guard = Guard(_TradePolicy)
 
-    def _patch_solve(self, monkeypatch: pytest.MonkeyPatch, side_effect: Exception) -> Decision:
-        def _raise(*a, **kw):
-            raise side_effect
+    def _guard_raising(self, exc: BaseException) -> Guard:
+        """Guard whose solver raises *exc* on every check() call."""
+        return Guard(
+            _TradePolicy,
+            GuardConfig(
+                execution_mode="sync",
+                solver_factory=lambda ctx: RaisingSolverStub(exc),
+            ),
+        )
 
-        monkeypatch.setattr(_guard_mod, "solve", _raise)
-        return self.guard.verify(_GOOD_INTENT, _GOOD_STATE)
-
-    def test_solver_timeout_returns_timeout_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        d = self._patch_solve(monkeypatch, SolverTimeoutError("non_negative_balance", 5_000))
+    def test_solver_timeout_returns_timeout_decision(self) -> None:
+        d = self._guard_raising(
+            SolverTimeoutError("non_negative_balance", 5_000)
+        ).verify(_GOOD_INTENT, _GOOD_STATE)
         assert d.allowed is False
         assert d.status is SolverStatus.TIMEOUT
         assert "non_negative_balance" in d.violated_invariants
 
-    def test_transpile_error_returns_error_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        d = self._patch_solve(monkeypatch, TranspileError("bad node"))
+    def test_transpile_error_returns_error_decision(self) -> None:
+        d = self._guard_raising(
+            TranspileError("bad node")
+        ).verify(_GOOD_INTENT, _GOOD_STATE)
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
 
-    def test_runtime_error_returns_error_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        d = self._patch_solve(monkeypatch, RuntimeError("z3 segfault simulation"))
+    def test_runtime_error_returns_error_decision(self) -> None:
+        d = self._guard_raising(
+            RuntimeError("z3 segfault simulation")
+        ).verify(_GOOD_INTENT, _GOOD_STATE)
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR
 
-    def test_unexpected_exception_explanation_contains_type(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        d = self._patch_solve(monkeypatch, ValueError("surprise"))
+    def test_unexpected_exception_explanation_contains_type(self) -> None:
+        d = self._guard_raising(
+            ValueError("surprise")
+        ).verify(_GOOD_INTENT, _GOOD_STATE)
         assert "ValueError" in d.explanation
 
-    def test_memory_error_returns_error_decision(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        d = self._patch_solve(monkeypatch, MemoryError("OOM"))
+    def test_memory_error_returns_error_decision(self) -> None:
+        d = self._guard_raising(
+            MemoryError("OOM")
+        ).verify(_GOOD_INTENT, _GOOD_STATE)
         assert d.allowed is False
 
     @pytest.mark.parametrize(
@@ -555,10 +567,12 @@ class TestGuardFailSafe:
         ],
     )
     def test_all_exception_types_return_allowed_false(
-        self, monkeypatch: pytest.MonkeyPatch, exc: Exception
+        self, exc: Exception
     ) -> None:
-        d = self._patch_solve(monkeypatch, exc)
-        assert d.allowed is False, f"{type(exc).__name__} produced allowed=True"
+        d = self._guard_raising(exc).verify(_GOOD_INTENT, _GOOD_STATE)
+        assert d.allowed is False, (
+            f"{type(exc).__name__} produced allowed=True"
+        )
 
     def test_invariants_raising_returns_error_decision(
         self, monkeypatch: pytest.MonkeyPatch
@@ -575,7 +589,9 @@ class TestGuardFailSafe:
         def _boom(*a, **kw):
             raise RuntimeError("boom")
 
-        monkeypatch.setattr(_ExplodingPolicy, "invariants", classmethod(_boom))
+        monkeypatch.setattr(
+            _ExplodingPolicy, "invariants", classmethod(_boom)
+        )
         d = g.verify({"x": Decimal("1")}, {})
         assert d.allowed is False
         assert d.status is SolverStatus.ERROR

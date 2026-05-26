@@ -100,24 +100,35 @@ try:
             _WORKER_REGISTERED_METRICS[name] = metric
             return metric
 
-    _WORKER_WARMUP_FAILURE_COUNTER = _worker_prom_register(
-        "pramanix_worker_warmup_failures_total",
-        "Number of Z3 worker warmup failures",
-    )
-    _WORKER_WATCHDOG_ERROR_COUNTER = _worker_prom_register(
-        "pramanix_worker_watchdog_errors_total",
-        "Number of PPID watchdog errors (zombie worker risk)",
-    )
+    def _worker_prometheus_register_all() -> None:
+        """Register all worker Prometheus metrics; catch label conflicts.
+
+        Extracted into a callable so the ValueError path can be exercised by
+        tests without a sys.modules pop (which corrupts concurrent.futures state
+        on Python 3.13 spawn-context process pools).
+        """
+        global _WORKER_WARMUP_FAILURE_COUNTER, _WORKER_WATCHDOG_ERROR_COUNTER
+        try:
+            _WORKER_WARMUP_FAILURE_COUNTER = _worker_prom_register(
+                "pramanix_worker_warmup_failures_total",
+                "Number of Z3 worker warmup failures",
+            )
+            _WORKER_WATCHDOG_ERROR_COUNTER = _worker_prom_register(
+                "pramanix_worker_watchdog_errors_total",
+                "Number of PPID watchdog errors (zombie worker risk)",
+            )
+        except ValueError as _wk_prom_err:
+            import logging as _wk_log
+
+            _wk_log.getLogger(__name__).warning(
+                "pramanix.worker: Prometheus metric registration error "
+                "(name collision with different labelset — this is a programming error): %s",
+                _wk_prom_err,
+            )
+
+    _worker_prometheus_register_all()
 except ImportError:
     pass  # prometheus_client not installed — metrics silently disabled
-except ValueError as _worker_prom_val_err:
-    import logging as _wk_log
-
-    _wk_log.getLogger(__name__).warning(
-        "pramanix.worker: Prometheus metric registration error "
-        "(name collision with different labelset — this is a programming error): %s",
-        _worker_prom_val_err,
-    )
 
 
 # ── Phase 10.4: Adaptive Concurrency Limiter ──────────────────────────────────

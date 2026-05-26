@@ -318,3 +318,121 @@ class TestWrapTools:
         execute_fn({"amount": Decimal("1")})
         assert len(_called) == 1
         assert _called[0]["amount"] == Decimal("1")
+
+    def test_wrap_tools_uses_orig_run_when_no_execute_map(self):
+        """When a tool has _run and no execute_map, _make_default uses _run."""
+        _run_calls: list[str] = []
+
+        class _RealTool:
+            name = "real_tool"
+            description = "has a _run method"
+
+            def _run(self, input_str: str) -> str:
+                _run_calls.append(input_str)
+                return f"ran:{input_str}"
+
+        wrapped = wrap_tools(
+            [_RealTool()],
+            guard=_guard_allow,
+            intent_schema=_IntentModel,
+            state_provider=lambda: _STATE,
+        )
+        assert len(wrapped) == 1
+        # The default execute_fn should wrap _run
+        execute_fn = object.__getattribute__(wrapped[0], "_pramanix_execute")
+        result = execute_fn({"amount": 1})
+        assert len(_run_calls) == 1
+        assert "ran:" in result
+
+    def test_wrap_tools_no_run_uses_json_dumps_default(self):
+        """When tool has no _run and no execute_map, default returns JSON."""
+        tool_no_run = type("T", (), {"name": "plain", "description": "plain tool"})()
+        wrapped = wrap_tools(
+            [tool_no_run],
+            guard=_guard_allow,
+            intent_schema=_IntentModel,
+            state_provider=lambda: _STATE,
+        )
+        assert len(wrapped) == 1
+        execute_fn = object.__getattribute__(wrapped[0], "_pramanix_execute")
+        result = execute_fn({"amount": 5})
+        data = json.loads(result)
+        assert "amount" in data
+
+
+# ── execute_fn=None paths ─────────────────────────────────────────────────────
+
+
+class TestExecuteFnNone:
+    def test_construction_with_no_execute_fn_logs_warning(self, caplog):
+        """Constructing without execute_fn emits a warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="pramanix.integrations.langchain"):
+            tool = PramanixGuardedTool(
+                name="warn_tool",
+                description="no execute_fn",
+                guard=_guard_allow,
+                intent_schema=_IntentModel,
+                state_provider=lambda: _STATE,
+            )
+        assert tool is not None
+        assert any("execute_fn" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_arun_allow_without_execute_fn_raises_configuration_error(self):
+        """ALLOW decision with no execute_fn raises ConfigurationError, not crashes."""
+        from pramanix.exceptions import ConfigurationError
+
+        tool = PramanixGuardedTool(
+            name="no_exec",
+            description="d",
+            guard=_guard_allow,
+            intent_schema=_IntentModel,
+            state_provider=lambda: _STATE,
+        )
+        with pytest.raises(ConfigurationError, match="execute_fn"):
+            await tool._arun(json.dumps({"amount": "10"}))
+
+
+# ── _run inside a running event loop (ThreadPoolExecutor path) ────────────────
+
+
+class TestRunInsideEventLoop:
+    @pytest.mark.asyncio
+    async def test_run_called_from_async_context_uses_thread_executor(self):
+        """_run dispatches to ThreadPoolExecutor when a loop is already running."""
+        tool = PramanixGuardedTool(
+            name="t",
+            description="d",
+            guard=_guard_allow,
+            intent_schema=_IntentModel,
+            state_provider=lambda: _STATE,
+            execute_fn=lambda i: "thread_result",
+        )
+        # asyncio.get_running_loop() succeeds here → ThreadPoolExecutor path
+        result = tool._run(json.dumps({"amount": "5"}))
+        assert "thread_result" in result
+
+
+# ── _get_state_async coroutine path ──────────────────────────────────────────
+
+
+class TestGetStateAsyncCoroutine:
+    @pytest.mark.asyncio
+    async def test_arun_with_coroutine_returning_state_provider(self):
+        """state_provider that returns a coroutine is awaited correctly."""
+
+        async def _async_state() -> dict:
+            return {"state_version": "1.0"}
+
+        tool = PramanixGuardedTool(
+            name="t",
+            description="d",
+            guard=_guard_allow,
+            intent_schema=_IntentModel,
+            state_provider=_async_state,
+            execute_fn=lambda i: "coroutine_state_ok",
+        )
+        result = await tool._arun(json.dumps({"amount": "10"}))
+        assert "coroutine_state_ok" in result

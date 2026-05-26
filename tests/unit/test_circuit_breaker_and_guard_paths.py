@@ -565,15 +565,9 @@ class TestKafkaDeliveryCallback:
     def _make_kafka_sink(self, producer: Any, max_queue: int = 10_000) -> Any:
         from pramanix.audit_sink import KafkaAuditSink
 
-        sink = KafkaAuditSink.__new__(KafkaAuditSink)
-        sink._topic = "test-topic"
-        sink._producer = producer
-        sink._queue_depth = 0
-        sink._max_queue = max_queue
-        sink._overflow_count = 0
-        sink._queue_lock = threading.Lock()
-        sink._poll_stop = threading.Event()
-        return sink
+        return KafkaAuditSink(
+            topic="test-topic", producer_conf={}, max_queue_size=max_queue, _producer=producer
+        )
 
     def test_delivery_callback_with_error_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         """delivery callback invoked with error → logs error."""

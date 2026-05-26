@@ -118,13 +118,16 @@ class SemanticFastPath:
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
                 log.warning(
-                    "fast_path.negative_amount: could not parse %r as Decimal "
-                    "— passing through to Z3/semantic check (%s: %s)",
+                    "fast_path.negative_amount: could not parse %r as Decimal"
+                    " — blocking as fail-safe (%s: %s)",
                     val,
                     type(_exc).__name__,
                     _exc,
                 )
-                return None
+                return (
+                    f"Malformed {field_name!r} value:"
+                    f" {val!r} is not a valid number"
+                )
             return None
 
         _rule.__name__ = _rule_name
@@ -145,13 +148,17 @@ class SemanticFastPath:
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
                 log.warning(
-                    "fast_path.zero_or_negative_balance: could not parse %r as Decimal "
-                    "— passing through to Z3/semantic check (%s: %s)",
+                    "fast_path.zero_or_negative_balance:"
+                    " could not parse %r as Decimal"
+                    " — blocking as fail-safe (%s: %s)",
                     val,
                     type(_exc).__name__,
                     _exc,
                 )
-                return None
+                return (
+                    f"Malformed {field_name!r} balance:"
+                    f" {val!r} is not a valid number"
+                )
             return None
 
         _rule.__name__ = _rule_name
@@ -189,13 +196,16 @@ class SemanticFastPath:
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
                 log.warning(
-                    "fast_path.exceeds_hard_cap: could not parse %r as Decimal "
-                    "— passing through to Z3/semantic check (%s: %s)",
+                    "fast_path.exceeds_hard_cap: could not parse %r as Decimal"
+                    " — blocking as fail-safe (%s: %s)",
                     val,
                     type(_exc).__name__,
                     _exc,
                 )
-                return None
+                return (
+                    f"Malformed {amount_field!r} value:"
+                    f" {val!r} is not a valid number"
+                )
             return None
 
         _rule.__name__ = _rule_name
@@ -226,15 +236,18 @@ class SemanticFastPath:
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
                 log.warning(
-                    "fast_path.amount_exceeds_balance: could not parse "
-                    "amount=%r or balance=%r as Decimal "
-                    "— passing through to Z3/semantic check (%s: %s)",
+                    "fast_path.amount_exceeds_balance: could not parse"
+                    " amount=%r or balance=%r as Decimal"
+                    " — blocking as fail-safe (%s: %s)",
                     amount_val,
                     balance_val,
                     type(_exc).__name__,
                     _exc,
                 )
-                return None
+                return (
+                    f"Malformed {amount_field!r} or {balance_field!r}:"
+                    " non-numeric value cannot be verified"
+                )
             return None
 
         _rule.__name__ = _rule_name

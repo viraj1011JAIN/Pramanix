@@ -286,13 +286,13 @@ class Decision:
     # ── Cross-invariant validation ────────────────────────────────────────────
 
     def __post_init__(self) -> None:
-        if self.allowed and self.status is not SolverStatus.SAFE:
+        if self.allowed and self.status.value != SolverStatus.SAFE.value:
             raise ValueError(
                 f"Decision.allowed=True requires status=SAFE, "
                 f"got status={self.status.name}. "
                 "Use Decision.safe() to construct an allowed decision."
             )
-        if not self.allowed and self.status is SolverStatus.SAFE:
+        if not self.allowed and self.status.value == SolverStatus.SAFE.value:
             raise ValueError(
                 "Decision(allowed=False, status=SAFE) is inconsistent. "
                 "SAFE status implies the action is permitted."

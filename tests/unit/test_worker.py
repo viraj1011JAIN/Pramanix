@@ -77,7 +77,7 @@ class TestWorkerPoolThreadMode:
         values = {"balance": Decimal("1000"), "amount": Decimal("100")}
         decision = pool.submit_solve(_SimplePolicy, values, timeout_ms=5_000)
         assert decision.allowed
-        assert decision.status is SolverStatus.SAFE
+        assert decision.status.value == SolverStatus.SAFE.value
         pool.shutdown()
 
     def test_submit_solve_unsafe(self) -> None:
@@ -91,7 +91,7 @@ class TestWorkerPoolThreadMode:
         values = {"balance": Decimal("50"), "amount": Decimal("1000")}
         decision = pool.submit_solve(_SimplePolicy, values, timeout_ms=5_000)
         assert not decision.allowed
-        assert decision.status is SolverStatus.UNSAFE
+        assert decision.status.value == SolverStatus.UNSAFE.value
         assert "non_negative_balance" in decision.violated_invariants
         pool.shutdown()
 
@@ -149,7 +149,7 @@ class TestWorkerPoolThreadMode:
         values = {"balance": Decimal("100"), "amount": Decimal("10")}
         decision = pool.submit_solve(_SimplePolicy, values, timeout_ms=5_000)
         assert not decision.allowed
-        assert decision.status is SolverStatus.ERROR
+        assert decision.status.value == SolverStatus.ERROR.value
 
 
 # ── Process boundary tests ─────────────────────────────────────────────────────

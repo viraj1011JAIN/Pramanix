@@ -66,7 +66,7 @@ __all__: list[str] = ["SolverProtocol"]
 class SolverProtocol(Protocol):
     """Structural interface for the z3.Solver methods Pramanix actually calls.
 
-    Any object implementing these four methods is a valid drop-in for z3.Solver
+    Any object implementing these methods is a valid drop-in for z3.Solver
     in tests — no MagicMock, no z3 C-extension patching required.
     """
 
@@ -75,6 +75,7 @@ class SolverProtocol(Protocol):
     def assert_and_track(self, formula: Any, label: str) -> None: ...
     def check(self) -> Any: ...  # z3.CheckSatResult or equivalent
     def unsat_core(self) -> list[Any]: ...
+    def reset(self) -> None: ...
 
 
 # ── Thread-local Z3 context ───────────────────────────────────────────────────

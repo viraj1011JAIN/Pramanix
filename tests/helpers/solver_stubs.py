@@ -5,57 +5,73 @@
 These classes are real implementations of the ``SolverProtocol`` interface —
 they are NOT mocks or unittest.mock objects.  Each stub exercises a specific
 failure/edge-case mode of the Z3 solver surface, enabling deterministic tests
-without patching the Z3 C extension.
+without patching the Z3 C extension or any ``pramanix.guard`` internal.
 
 Available stubs
 ---------------
-- ``FailingSolverStub``  — ``check()`` raises ``RuntimeError`` immediately.
-- ``SlowSolverStub``     — ``check()`` raises ``TimeoutError``; simulates SMT
-  timeout without touching ``time.sleep``.
-- ``UnsatSolverStub``    — ``check()`` returns a ``_UnsatResult`` sentinel;
-  ``unsat_core()`` returns the tracked formula labels.
-- ``SatSolverStub``      — ``check()`` always returns a ``_SatResult`` sentinel.
+- ``RaisingSolverStub`` — ``check()`` raises a configurable exception;
+  covers Z3Exception, MemoryError, TranspileError, RuntimeError,
+  KeyboardInterrupt, and any other type Guard must handle.
+- ``TimeoutSolverStub``  — ``check()`` returns ``z3.unknown`` →
+  ``SolverTimeoutError``; simulates SMT budget exhaustion.
+- ``FailingSolverStub``  — ``check()`` raises ``RuntimeError``; kept for
+  backwards-compatibility with existing tests.
+- ``SlowSolverStub``     — ``check()`` raises ``TimeoutError``; legacy alias.
+- ``UnsatSolverStub``    — ``check()`` returns ``z3.unsat``; ``unsat_core()``
+  returns the tracked formula labels.
+- ``SatSolverStub``      — ``check()`` always returns ``z3.sat``.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-# ── Result sentinels (no z3 dependency required) ─────────────────────────────
+import z3 as _z3
 
 
-class _SatResult:
-    """Lightweight SAT sentinel — str-compares as ``"sat"``."""
-
-    def __str__(self) -> str:
-        return "sat"
-
-    def __repr__(self) -> str:
-        return "_SatResult()"
+# ── Primary stubs ────────────────────────────────────────────────────────────
 
 
-class _UnsatResult:
-    """Lightweight UNSAT sentinel — str-compares as ``"unsat"``."""
+class RaisingSolverStub:
+    """Solver stub that raises a configurable exception from ``check()``.
 
-    def __str__(self) -> str:
-        return "unsat"
+    Replaces ``monkeypatch.setattr(_guard_mod, "solve", _raise)`` in
+    fail-safe tests.  Pass the exception instance you want the solver to
+    raise; ``Guard.verify()`` must catch it and return ``allowed=False``.
 
-    def __repr__(self) -> str:
-        return "_UnsatResult()"
+    Args:
+        exc: Any ``BaseException`` instance — including ``KeyboardInterrupt``
+             for tests that verify non-``Exception`` errors propagate.
+    """
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def set(self, key: str, value: Any) -> None:
+        pass
+
+    def add(self, *formulas: Any) -> None:
+        pass
+
+    def assert_and_track(self, formula: Any, label: str) -> None:
+        pass
+
+    def check(self) -> Any:
+        raise self._exc
+
+    def unsat_core(self) -> list[Any]:
+        return []
+
+    def reset(self) -> None:
+        pass
 
 
-_SAT = _SatResult()
-_UNSAT = _UnsatResult()
+class TimeoutSolverStub:
+    """Solver stub whose ``check()`` returns ``z3.unknown``.
 
-
-# ── Stubs ─────────────────────────────────────────────────────────────────────
-
-
-class FailingSolverStub:
-    """Solver stub whose ``check()`` always raises ``RuntimeError``.
-
-    Use to verify that ``Guard.verify()`` converts solver errors into a
-    ``BLOCKED`` decision via the fail-safe path — not an unhandled exception.
+    ``solver.py`` converts ``unknown`` into ``SolverTimeoutError``
+    (Budget exhausted / resource limit hit).  Use to verify Guard returns
+    ``Decision.timeout()`` — always ``allowed=False`` — without sleeping.
     """
 
     def set(self, key: str, value: Any) -> None:
@@ -68,17 +84,49 @@ class FailingSolverStub:
         pass
 
     def check(self) -> Any:
-        raise RuntimeError("FailingSolverStub: solver failure injected for testing.")
+        return _z3.unknown
 
     def unsat_core(self) -> list[Any]:
         return []
+
+    def reset(self) -> None:
+        pass
+
+
+# ── Backwards-compatible stubs ───────────────────────────────────────────────
+
+
+class FailingSolverStub:
+    """Solver stub whose ``check()`` always raises ``RuntimeError``.
+
+    Equivalent to ``RaisingSolverStub(RuntimeError(...))``; kept for
+    backwards-compatibility with existing callers.
+    """
+
+    def set(self, key: str, value: Any) -> None:
+        pass
+
+    def add(self, *formulas: Any) -> None:
+        pass
+
+    def assert_and_track(self, formula: Any, label: str) -> None:
+        pass
+
+    def check(self) -> Any:
+        raise RuntimeError("FailingSolverStub: solver failure for testing.")
+
+    def unsat_core(self) -> list[Any]:
+        return []
+
+    def reset(self) -> None:
+        pass
 
 
 class SlowSolverStub:
     """Solver stub whose ``check()`` raises ``TimeoutError``.
 
-    Simulates SMT solver timeout without calling ``time.sleep``.  Confirms
-    that the Guard's timeout-error path returns ``BLOCKED``.
+    Legacy alias; prefer ``TimeoutSolverStub`` for new tests (it exercises
+    the real ``SolverTimeoutError`` path via ``z3.unknown``).
     """
 
     def set(self, key: str, value: Any) -> None:
@@ -96,13 +144,16 @@ class SlowSolverStub:
     def unsat_core(self) -> list[Any]:
         return []
 
+    def reset(self) -> None:
+        pass
+
 
 class UnsatSolverStub:
-    """Solver stub that always returns UNSAT.
+    """Solver stub that always returns ``z3.unsat``.
 
     Accumulates formula labels passed to ``assert_and_track()`` and returns
-    them from ``unsat_core()``, enabling tests to assert which invariants
-    were tracked.
+    them from ``unsat_core()``, enabling assertions on which invariants were
+    tracked.
     """
 
     def __init__(self) -> None:
@@ -118,17 +169,20 @@ class UnsatSolverStub:
         self._labels.append(label)
 
     def check(self) -> Any:
-        return _UNSAT
+        return _z3.unsat
 
     def unsat_core(self) -> list[Any]:
         return list(self._labels)
 
+    def reset(self) -> None:
+        self._labels.clear()
+
 
 class SatSolverStub:
-    """Solver stub that always returns SAT (all invariants satisfied).
+    """Solver stub that always returns ``z3.sat`` (all invariants satisfied).
 
-    Use to verify that ``Guard.verify()`` returns an ``ALLOWED`` decision when
-    the solver confirms satisfiability.
+    Use to verify that ``Guard.verify()`` returns an ``ALLOWED`` decision
+    when the solver confirms satisfiability.
     """
 
     def set(self, key: str, value: Any) -> None:
@@ -141,7 +195,10 @@ class SatSolverStub:
         pass
 
     def check(self) -> Any:
-        return _SAT
+        return _z3.sat
 
     def unsat_core(self) -> list[Any]:
         return []
+
+    def reset(self) -> None:
+        pass

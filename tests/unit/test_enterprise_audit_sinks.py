@@ -56,18 +56,10 @@ def test_in_memory_sink_clear() -> None:
 
 
 def _make_kafka_sink(producer: _CapturingProducer, max_queue: int = 10_000) -> KafkaAuditSink:
-    """Build a KafkaAuditSink via __new__ with all required attrs set."""
-    import threading
-
-    sink = KafkaAuditSink.__new__(KafkaAuditSink)
-    sink._topic = "test-topic"
-    sink._producer = producer
-    sink._queue_depth = 0
-    sink._max_queue = max_queue
-    sink._overflow_count = 0
-    sink._queue_lock = threading.Lock()
-    sink._poll_stop = threading.Event()
-    return sink
+    """Build a KafkaAuditSink with a real constructor using injected producer."""
+    return KafkaAuditSink(
+        topic="test-topic", producer_conf={}, max_queue_size=max_queue, _producer=producer
+    )
 
 
 def test_kafka_sink_records_to_queue() -> None:

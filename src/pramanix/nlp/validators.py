@@ -25,6 +25,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+
 class SecurityWarning(UserWarning):
     """Security advisory (not a Python built-in — defined here for all versions)."""
 
@@ -77,12 +78,39 @@ def _re_ci_ml(pattern: str) -> Any:
     opts.one_line = False
     return _re_engine.compile(pattern, opts)
 
+
 # ── ML backend detection (lazy, zero import-time cost) ────────────────────────
 
 # Prometheus gauges for NLP model availability (set at module load time).
 # Operators can alert on pramanix_nlp_model_available{model="..."} == 0.
 _NLP_GAUGE: Any = None  # set below after load attempts
 _NLP_GAUGE_LOCK = __import__("threading").Lock()
+
+# Counter for NLP scorer degradation events (fallback to keyword/Jaccard).
+# Operators can alert on pramanix_nlp_degradation_total{scorer=...,fallback=...}.
+_NLP_DEGRADATION_COUNTER: Any = None
+_NLP_DEGRADATION_COUNTER_LOCK = __import__("threading").Lock()
+
+
+def _get_nlp_degradation_counter() -> Any:
+    """Return (or lazily create) the pramanix_nlp_degradation_total counter."""
+    global _NLP_DEGRADATION_COUNTER
+    if _NLP_DEGRADATION_COUNTER is not None:
+        return _NLP_DEGRADATION_COUNTER
+    with _NLP_DEGRADATION_COUNTER_LOCK:
+        if _NLP_DEGRADATION_COUNTER is not None:
+            return _NLP_DEGRADATION_COUNTER
+        try:
+            from prometheus_client import Counter
+
+            _NLP_DEGRADATION_COUNTER = Counter(
+                "pramanix_nlp_degradation_total",
+                "NLP scorer degradation events — how often a fallback backend was selected",
+                ["scorer", "fallback"],
+            )
+        except Exception as _e:
+            _log.debug("pramanix.nlp.validators: degradation counter setup failed: %s", _e)
+    return _NLP_DEGRADATION_COUNTER
 
 
 def _get_nlp_gauge() -> Any:
@@ -193,6 +221,7 @@ def _normalise(text: str) -> str:
 
 # ── PIIDetector ────────────────────────────────────────────────────────────────
 
+
 def _build_pii_patterns() -> list[tuple[str, Any]]:
     """Build compiled PII patterns. Returns [] when google-re2 is absent."""
     if not _RE2_AVAILABLE:
@@ -222,8 +251,7 @@ def _build_pii_patterns() -> list[tuple[str, Any]]:
         (
             "ipv4",
             _re_engine.compile(
-                r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
-                r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
+                r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}" r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
             ),
         ),
         # US passport number (A followed by 8 digits)
@@ -482,6 +510,10 @@ class ToxicityScorer:
                     "install 'detoxify' for production-grade toxicity scoring: "
                     "pip install 'pramanix[nlp]'"
                 )
+                _c = _get_nlp_degradation_counter()
+                if _c is not None:
+                    with contextlib.suppress(Exception):
+                        _c.labels(scorer="ToxicityScorer", fallback="keyword").inc()
 
     def score(self, text: str) -> float:
         """Compute a toxicity score for *text*.
@@ -645,6 +677,10 @@ class SemanticSimilarityGuard:
                     "install 'sentence-transformers' for production-grade semantic "
                     "similarity: pip install 'pramanix[nlp]'"
                 )
+                _c = _get_nlp_degradation_counter()
+                if _c is not None:
+                    with contextlib.suppress(Exception):
+                        _c.labels(scorer="SemanticSimilarityGuard", fallback="jaccard").inc()
 
         # Pre-tokenise anchors for the Jaccard fallback path.
         self._anchor_tokens: list[frozenset[str]] = [self._tokenise(a) for a in self._anchors]
