@@ -33,12 +33,14 @@ from pramanix.translator.redundant import (
 
 __all__ = [
     "AnthropicTranslator",
+    "BedrockTranslator",
     "InjectionFilter",
     "OllamaTranslator",
     "OpenAICompatTranslator",
     "RedundantTranslator",
     "Translator",
     "TranslatorContext",
+    "VertexAITranslator",
     "create_translator",
     "extract_with_consensus",
 ]
@@ -59,4 +61,12 @@ def __getattr__(name: str) -> object:
         from pramanix.translator.ollama import OllamaTranslator
 
         return OllamaTranslator
+    if name == "BedrockTranslator":
+        from pramanix.translator.bedrock import BedrockTranslator
+
+        return BedrockTranslator
+    if name == "VertexAITranslator":
+        from pramanix.translator.vertexai import VertexAITranslator
+
+        return VertexAITranslator
     raise AttributeError(f"module 'pramanix.translator' has no attribute {name!r}")

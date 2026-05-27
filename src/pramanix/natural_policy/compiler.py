@@ -68,7 +68,9 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from pydantic import BaseModel as _BaseModel
 from pydantic import ValidationError as PydanticValidationError
+from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode
 
 from pramanix.exceptions import ExtractionFailureError, FieldTypeError, PolicyCompilationError
 from pramanix.expressions import (
@@ -646,8 +648,6 @@ class NaturalPolicyCompiler:
 # intent_schema so it can derive a JSON schema for the LLM's response_format.
 # We wrap NaturalPolicySchema in a thin shell that delegates to it.
 
-from pydantic import BaseModel as _BaseModel  # noqa: E402  (must be after other imports)
-from pydantic.json_schema import GenerateJsonSchema, JsonSchemaMode  # noqa: E402
 
 
 class _SchemaWrapper(_BaseModel):

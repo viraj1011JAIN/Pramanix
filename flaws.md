@@ -209,7 +209,7 @@ When optional dependencies are absent, several integration modules define stub b
 
 | Control | Status |
 |---------|--------|
-| AGPL-3.0 licence | In place — see §6 §GA-1 for enterprise blocker |
+| AGPL-3.0 licence | In place — see GA-1 for enterprise blocker |
 | Non-root Docker UID (10001) | ✅ All Dockerfiles confirmed |
 | Digest-pinned base images | ✅ `python:3.11-slim@sha256:...` |
 | Alpine BANNED | ✅ CI has `alpine-ban` job |
@@ -378,19 +378,19 @@ Competitors: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVIDIA NeMo Guar
 | # | Category | Gap | Severity | Status | Minimum Action to Close |
 |---|----------|-----|----------|--------|------------------------|
 | **GA-1** | Adoption | AGPL-3.0 vs Apache-2.0 (all competitors) | 🔴 Critical | 🔴 Open | Re-licence core to Apache-2.0 or strengthen the commercial dual-licence story; update pyproject.toml, README, LICENCE, marketing |
-| **GA-2** | Validators | 4 NLP validator types vs GrAI 200+ validators | 🔴 Critical | ⚠️ Partial | Expand `nlp/validators.py` with: JSON schema, regex length, URL, profanity, language detection, date, numeric range — cover the 20 most-requested GrAI validator types |
-| **GA-3** | Policy DSL | No YAML/TOML policy authoring | 🟠 High | 🔴 Open | Add `pramanix.natural_policy.yaml_loader` that compiles YAML → Policy subclass; target CISOs and security engineers who don't write Python |
-| **GA-4** | UX | No policy linter with plain-English errors | 🟠 High | 🔴 Open | Add `pramanix lint <policy_file>` CLI command that validates policy correctness and surfaces Z3 unsat errors in human-readable form |
+| **GA-2** | Validators | 4 NLP validator types vs GrAI 200+ validators | 🔴 Critical | ✅ Fixed 2026-05-26 | Added 7 new stdlib-only validators: `StringLengthValidator`, `NumericRangeValidator`, `DateValidator`, `URLValidator`, `EmailValidator` (RE2-backed), `JSONSchemaValidator`, `ProfanityDetector`. Full test coverage in `test_nlp_validators_extended.py` (57 tests). |
+| **GA-3** | Policy DSL | No YAML/TOML policy authoring | 🟠 High | ✅ Fixed 2026-05-26 | Added `pramanix.natural_policy.yaml_loader` — safe AST-based YAML/TOML compiler (never calls eval/exec). Functions: `load_policy_yaml`, `load_policy_toml`, `load_policy_string`, `load_policy_file`. Full test coverage in `test_yaml_dsl.py` (35 tests). |
+| **GA-4** | UX | No policy linter with plain-English errors | 🟠 High | ✅ Fixed 2026-05-26 | Added `pramanix lint-policy <file>` CLI subcommand. Codes: E001 (missing label), E002 (duplicate), E003 (empty), E004 (load failure), W001–W005. Supports `--json`, `--strict`, `--policy-var`. Full test coverage in `test_cli_lint_policy.py` (32 tests). |
 | **GA-5** | LLM CI | Layer 4 consensus uses stubs in CI | 🟠 High | 🔴 Open | Add CI integration tests with containerised Ollama or real (rate-limited) API calls for consensus and injection detection |
 | **GA-6** | Integrations | LlamaIndex stub ToolMetadata/ToolOutput silently exported | 🟠 High | ⚠️ Partial | Raise `ConfigurationError` on instantiation of stub classes; add importorskip-guarded tests that exercise real LlamaIndex protocol |
-| **GA-7** | Streaming | No streaming validation pipeline | 🟠 High | 🔴 Open | Add `Guard.verify_stream()` that validates LLM output chunks incrementally; required for real-time safety in chat applications |
+| **GA-7** | Streaming | No streaming validation pipeline | 🟠 High | ✅ Fixed 2026-05-26 | Added `Guard.verify_stream(tokens, state, *, verify_every_n_tokens=20, max_tokens=4096)` — async generator over token strings, accumulates JSON buffer, verifies at checkpoints, stops on BLOCK. Full test coverage in `test_guard_stream_coverage.py` (7 async tests). |
 | **GA-8** | Orchestration | No graph/multi-agent workflow support | 🟠 High | 🔴 Open | Define `AgentOrchestrationAdapter` protocol; document and test Pramanix-as-gate pattern for LangGraph state nodes |
-| **GA-9** | Translators | No AWS Bedrock translator | 🟡 Medium | 🔴 Open | Add `translator/bedrock.py` using `boto3.client("bedrock-runtime")`; add `pramanix[bedrock]` extra |
-| **GA-10** | Translators | No native GCP Vertex AI translator | 🟡 Medium | 🔴 Open | Add `translator/vertexai.py` using `google-cloud-aiplatform`; add `pramanix[vertexai]` extra |
+| **GA-9** | Translators | No AWS Bedrock translator | 🟡 Medium | ✅ Fixed 2026-05-26 | Added `translator/bedrock.py` — asyncio.run_in_executor wrapping boto3 sync client; routes Claude/Titan/Llama/other by model name prefix; Converse API fallback. Registered in `create_translator()` via `bedrock:` prefix. `pramanix[bedrock]` extra added to pyproject.toml. |
+| **GA-10** | Translators | No native GCP Vertex AI translator | 🟡 Medium | ✅ Fixed 2026-05-26 | Added `translator/vertexai.py` — asyncio.run_in_executor wrapping vertexai sync SDK; routes Gemini (GenerativeModel) vs PaLM2 (TextGenerationModel) by model name. Registered in `create_translator()` via `vertexai:` prefix. `pramanix[vertexai]` extra added to pyproject.toml. |
 | **GA-11** | Benchmarks | v0.8.0 consumer HW benchmarks are outdated | 🟡 Medium | 🔴 Open | Re-run all benchmarks on v1.0.0 on server-class hardware (8-core, 32 GB RAM); publish updated PROOF_DOSSIER.md |
 | **GA-12** | Policy Hub | No policy sharing mechanism | 🟡 Medium | 🔴 Open | Design and implement Pramanix Hub registry (could be GitHub-based initially); allow `pramanix install finance/soc2-policy` |
-| **GA-13** | Completeness | No policy coverage metric | 🟡 Medium | 🔴 Open | Add `Guard.coverage_report()` that shows which fields/predicates are declared vs seen in real traffic; expose in Prometheus |
-| **GA-14** | Warnings | 3 pyproject.toml suppressed warnings need attention | 🟡 Medium | ⚠️ Partial | Audit Cohere V1 deprecation, aclose() resource leak, Z3 non-linear arithmetic warning — resolve or document explicitly |
+| **GA-13** | Completeness | No policy coverage metric | 🟡 Medium | ✅ Fixed 2026-05-26 | Added `Guard.coverage_report()` → `PolicyCoverageReport` (frozen dataclass). Tracks: `total_verifications`, `invariant_violations` (per-label), `fields_seen`, `coverage_pct` (% of invariants violated ≥1×). Thread-safe via `threading.Lock`. `to_dict()` is JSON-serialisable. Full test coverage in `test_guard_stream_coverage.py` (14 tests). |
+| **GA-14** | Warnings | 4 pyproject.toml suppressed warnings need attention | 🟡 Medium | ⚠️ Partial | Audit Cohere V1 deprecation, Google SDK FutureWarning, aclose() resource leak, Z3 non-linear arithmetic warning — resolve or document explicitly |
 | **GA-15** | Community | Zero external tutorials / community content | 🟡 Medium | 🔴 Open | Publish quickstart tutorial, blog post, YouTube demo; submit to Awesome-LLM-Safety list; reach out to AI safety community |
 | **GA-16** | DX | Missing cloud translators in stub tests | 🟡 Medium | ⚠️ Partial | 9 module stubs in `real_protocols.py` cannot reproduce real transport errors; add testcontainers-based LocalStack tests for AWS paths |
 

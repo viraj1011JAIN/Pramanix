@@ -75,10 +75,12 @@ import asyncio
 import contextlib
 import contextvars
 import dataclasses
+import json as _json_stdlib
 import secrets
 import threading
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import BaseModel
@@ -124,7 +126,55 @@ from pramanix.worker import WorkerPool
 if TYPE_CHECKING:
     from pramanix.policy import Policy
 
-__all__ = ["Guard", "GuardConfig"]
+__all__ = ["Guard", "GuardConfig", "PolicyCoverageReport"]
+
+
+@dataclasses.dataclass(frozen=True)
+class PolicyCoverageReport:
+    """Snapshot of per-invariant coverage statistics from a :class:`Guard` instance.
+
+    Attributes:
+        policy_name:          Python class name of the policy.
+        policy_hash:          SHA-256 fingerprint of the policy definition.
+        total_verifications:  Total ``verify()``/``verify_async()`` calls recorded.
+        declared_invariants:  All invariant labels in declaration order.
+        invariant_violations: Mapping of label → number of times the invariant
+                              was violated (i.e. appeared in a BLOCK decision).
+        fields_declared:      All field names declared on the policy.
+        fields_seen:          Field names that appeared in at least one intent dict.
+        coverage_pct:         Percentage of invariants violated at least once
+                              (0–100).  Used to gauge test-suite completeness.
+    """
+
+    policy_name: str
+    policy_hash: str
+    total_verifications: int
+    declared_invariants: list[str]
+    invariant_violations: dict[str, int]
+    fields_declared: list[str]
+    fields_seen: list[str]
+    coverage_pct: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable representation."""
+        return {
+            "policy_name": self.policy_name,
+            "policy_hash": self.policy_hash,
+            "total_verifications": self.total_verifications,
+            "declared_invariants": self.declared_invariants,
+            "invariant_violations": self.invariant_violations,
+            "fields_declared": self.fields_declared,
+            "fields_seen": self.fields_seen,
+            "coverage_pct": self.coverage_pct,
+            "uncovered_invariants": [
+                label
+                for label in self.declared_invariants
+                if self.invariant_violations.get(label, 0) == 0
+            ],
+            "unseen_fields": [
+                f for f in self.fields_declared if f not in self.fields_seen
+            ],
+        }
 
 # C-1: Fail fast on musl libc (Alpine). Runs once at module import time.
 check_platform()
@@ -418,6 +468,19 @@ class Guard:
         self._int_field_names: frozenset[str] = frozenset(
             name for name, f in policy.fields().items() if f.z3_type == "Int"
         )
+
+        # ── GA-13: in-process coverage tracking ──────────────────────────────
+        # Thread-safe counters for policy coverage reporting.  Updated by every
+        # _verify_core() call.  Zero cost when coverage_report() is never called.
+        self._coverage_lock = threading.Lock()
+        self._coverage_total: int = 0
+        _inv_labels = [
+            getattr(inv, "label", None) or f"invariant_{i}"
+            for i, inv in enumerate(policy.invariants())
+        ]
+        self._coverage_inv_labels: tuple[str, ...] = tuple(_inv_labels)
+        self._coverage_violations: dict[str, int] = dict.fromkeys(_inv_labels, 0)
+        self._coverage_fields_seen: set[str] = set()
 
     # ── verify ────────────────────────────────────────────────────────────────
 
@@ -994,6 +1057,7 @@ class Guard:
                         state_dump=state_values,
                     )
                     _metric_status = decision_safe.status.value
+                    self._record_coverage(decision_safe, intent_values)
 
                     # ── Steps 7-9: Governance gates (privilege, oversight, IFC)
                     # Single shared implementation — never diverges from async path.
@@ -1024,6 +1088,7 @@ class Guard:
                     state_dump=state_values,
                 )
                 _metric_status = decision_unsafe.status.value
+                self._record_coverage(decision_unsafe, intent_values)
                 _log.info(
                     "pramanix.guard.decision",
                     decision_id=decision_id,
@@ -1672,3 +1737,160 @@ class Guard:
                 f"will cause process-mode dispatch to fail: {bad}. "
                 "Call model_dump() on your intent/state before passing to verify_async()."
             )
+
+    # ── GA-13: coverage tracking helpers ──────────────────────────────────────
+
+    def _record_coverage(self, decision: Decision, intent_values: dict[str, Any]) -> None:
+        """Update per-invariant and per-field coverage counters after a solve."""
+        with self._coverage_lock:
+            self._coverage_total += 1
+            for label in decision.violated_invariants:
+                if label in self._coverage_violations:
+                    self._coverage_violations[label] += 1
+            self._coverage_fields_seen.update(intent_values.keys())
+
+    def coverage_report(self) -> PolicyCoverageReport:
+        """Return a snapshot of per-invariant coverage statistics.
+
+        Aggregates all calls to :meth:`verify` and :meth:`verify_async` since
+        this Guard instance was constructed.  Thread-safe; may be called at any
+        time, including concurrently with active verification.
+
+        The *coverage_pct* is the fraction of declared invariants that have been
+        violated at least once (i.e. exercised on a BLOCK path).  100% means
+        every invariant has been tested against at least one failing input —
+        useful for policy test-suite completeness.
+
+        Returns:
+            A :class:`PolicyCoverageReport` with totals and per-invariant stats.
+
+        Example::
+
+            guard = Guard(BankingPolicy)
+            # … run test scenarios …
+            report = guard.coverage_report()
+            assert report.coverage_pct >= 80.0, "Not enough invariant coverage"
+            for label, count in report.invariant_violations.items():
+                print(f"  {label}: {count} violation(s)")
+        """
+        with self._coverage_lock:
+            total = self._coverage_total
+            violations = dict(self._coverage_violations)
+            fields_seen = sorted(self._coverage_fields_seen)
+            labels = list(self._coverage_inv_labels)
+
+        declared_fields = list(self._policy.fields().keys())
+        violated_at_least_once = sum(1 for v in violations.values() if v > 0)
+        coverage_pct = (
+            100.0 * violated_at_least_once / len(labels) if labels else 0.0
+        )
+
+        return PolicyCoverageReport(
+            policy_name=self._policy.__name__,
+            policy_hash=self._policy_hash,
+            total_verifications=total,
+            declared_invariants=labels,
+            invariant_violations=violations,
+            fields_declared=declared_fields,
+            fields_seen=fields_seen,
+            coverage_pct=round(coverage_pct, 2),
+        )
+
+    # ── GA-7: streaming validation ────────────────────────────────────────────
+
+    async def verify_stream(
+        self,
+        tokens: AsyncIterator[str],
+        state: dict[str, Any] | BaseModel | None = None,
+        *,
+        verify_every_n_tokens: int = 20,
+        max_tokens: int = 4_096,
+    ) -> AsyncIterator[tuple[str, Decision | None]]:
+        """Validate a streaming token sequence against this policy.
+
+        Yields ``(token, decision)`` pairs.  ``decision`` is non-``None`` only
+        when a verification was triggered (every *verify_every_n_tokens* tokens,
+        or on the final token).  A ``Decision(allowed=False)`` terminates the
+        stream after that yield — the caller should stop reading from the source.
+
+        The accumulated buffer is parsed as JSON on each checkpoint.  If the
+        buffer is not yet valid JSON, the checkpoint is deferred until the next
+        token.  A final verification is always attempted on stream end, even if
+        the buffer accumulated fewer than *verify_every_n_tokens* tokens.
+
+        This is most useful when an upstream LLM is generating structured JSON
+        and you want to catch policy violations as early as possible — stopping
+        generation before the full response is produced.
+
+        Args:
+            tokens:               Async iterable of token strings (e.g. from an
+                                  LLM streaming response).
+            state:                Policy state dict or Pydantic model.
+            verify_every_n_tokens: Checkpoint interval (default: 20 tokens).
+            max_tokens:           Hard cap.  Yields a BLOCK :class:`Decision`
+                                  and stops if exceeded.
+
+        Yields:
+            ``(token, decision_or_none)`` tuples.
+
+        Example::
+
+            async for token, decision in guard.verify_stream(llm_stream, state=account):
+                if decision is not None and not decision.allowed:
+                    # Halt upstream generation — policy violated
+                    break
+                output += token
+        """
+        state_dict: dict[str, Any]
+        if state is None:
+            state_dict = {}
+        elif isinstance(state, BaseModel):
+            state_dict = flatten_model(state)
+        else:
+            state_dict = dict(state)
+
+        buffer = ""
+        token_count = 0
+
+        async for token in tokens:
+            token_count += 1
+            buffer += token
+
+            if token_count > max_tokens:
+                block = Decision.error(
+                    reason=f"verify_stream: stream exceeded max_tokens={max_tokens}"
+                )
+                yield token, block
+                return
+
+            should_verify = token_count % verify_every_n_tokens == 0
+            if should_verify:
+                decision = self._parse_and_verify_buffer(buffer, state_dict)
+                yield token, decision
+                if decision is not None and not decision.allowed:
+                    return
+            else:
+                yield token, None
+
+        # Final checkpoint on the complete buffer
+        if buffer.strip():
+            decision = self._parse_and_verify_buffer(buffer, state_dict)
+            yield "", decision
+
+    def _parse_and_verify_buffer(
+        self,
+        buffer: str,
+        state_dict: dict[str, Any],
+    ) -> Decision | None:
+        """Attempt to parse *buffer* as JSON and verify it.  Returns ``None`` if
+        the buffer is not yet valid JSON (incomplete stream — try again later)."""
+        stripped = buffer.strip()
+        if not stripped or stripped[0] not in ("{", "["):
+            return None
+        try:
+            intent_data = _json_stdlib.loads(stripped)
+        except _json_stdlib.JSONDecodeError:
+            return None
+        if not isinstance(intent_data, dict):
+            return None
+        return self._verify_core(intent_data, state_dict)

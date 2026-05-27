@@ -648,10 +648,23 @@ def create_translator(
         model_path = model.removeprefix("llama:")
         return LlamaCppTranslator(model_path)
 
+    if model.startswith("bedrock:"):
+        from pramanix.translator.bedrock import BedrockTranslator
+
+        bare_model = model.removeprefix("bedrock:")
+        return BedrockTranslator(bare_model, timeout=timeout)
+
+    if model.startswith("vertexai:"):
+        from pramanix.translator.vertexai import VertexAITranslator
+
+        bare_model = model.removeprefix("vertexai:")
+        return VertexAITranslator(bare_model, timeout=timeout)
+
     raise ExtractionFailureError(
         f"Cannot infer translator for model '{model}'. "
         "Supported prefixes: 'gpt-', 'o1-', 'o3-', 'chatgpt-', 'claude-', "
-        "'gemini-', 'gemini:', 'ollama:', 'cohere:', 'mistral:', 'llama:'. "
+        "'gemini-', 'gemini:', 'ollama:', 'cohere:', 'mistral:', 'llama:', "
+        "'bedrock:', 'vertexai:'. "
         "Pass an explicit Translator instance to bypass auto-routing."
     )
 

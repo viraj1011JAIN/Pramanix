@@ -57,6 +57,7 @@ __all__ = [
     "OversightRequiredError",
     "PolicyCompilationError",
     "PolicyError",
+    "PolicySyntaxError",
     "PramanixError",
     "PrivilegeEscalationError",
     "ProvenanceError",
@@ -148,6 +149,15 @@ class TranspileError(PolicyError):
 
     Raised by the transpiler when it encounters an unknown node type.
     Wraps the original exception as ``__cause__`` when applicable.
+    """
+
+
+class PolicySyntaxError(PolicyError):
+    """Raised when a declarative policy file (YAML/TOML) is syntactically invalid.
+
+    Examples: disallowed AST nodes in expressions, unknown fields referenced,
+    missing required sections, duplicate invariant labels, non-boolean top-level
+    expressions, or unsupported z3_type values.
     """
 
 

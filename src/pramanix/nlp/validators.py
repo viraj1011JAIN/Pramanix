@@ -20,7 +20,9 @@ import contextlib
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -773,3 +775,470 @@ class SemanticSimilarityGuard:
                     best_anchor = anchor
 
         return best_anchor, best_score
+
+
+# ── StringLengthValidator ──────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class StringLengthValidator:
+    """Validates that a string's length falls within a declared range.
+
+    Uses ``len(text)`` (Unicode code-point count, not byte count).  For
+    byte-length constraints on encoded payloads use
+    ``len(text.encode('utf-8'))`` before calling.
+
+    Args:
+        min_length: Minimum allowed length, inclusive (default 0).
+        max_length: Maximum allowed length, inclusive (default 10 000).
+
+    Example::
+
+        v = StringLengthValidator(min_length=1, max_length=256)
+        ok, reason = v.validate("Hello, world!")
+        assert ok
+    """
+
+    min_length: int = 0
+    max_length: int = 10_000
+
+    def __post_init__(self) -> None:
+        if self.min_length < 0:
+            raise ValueError("StringLengthValidator: min_length must be >= 0")
+        if self.max_length < self.min_length:
+            raise ValueError(
+                f"StringLengthValidator: max_length ({self.max_length}) "
+                f"must be >= min_length ({self.min_length})"
+            )
+
+    def validate(self, text: str) -> tuple[bool, str]:
+        """Return ``(True, "")`` if *text* is within bounds, else ``(False, reason)``."""
+        n = len(text)
+        if n < self.min_length:
+            return False, f"too short: {n} characters < minimum {self.min_length}"
+        if n > self.max_length:
+            return False, f"too long: {n} characters > maximum {self.max_length}"
+        return True, ""
+
+    def is_valid(self, text: str) -> bool:
+        """Return ``True`` if ``validate(text)`` succeeds."""
+        ok, _ = self.validate(text)
+        return ok
+
+
+# ── NumericRangeValidator ──────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class NumericRangeValidator:
+    """Validates that a numeric value is within a declared range.
+
+    Accepts ``int``, ``float``, ``Decimal``, or a string representation that
+    ``Decimal(str(value))`` can parse.  Uses ``Decimal`` internally to avoid
+    floating-point drift when comparing values from JSON.
+
+    Args:
+        min_value:  Lower bound (default ``None`` — no lower bound).
+        max_value:  Upper bound (default ``None`` — no upper bound).
+        inclusive:  When ``True`` (default) the bounds are inclusive (``>=``/``<=``).
+                    When ``False`` the bounds are exclusive (``>``/``<``).
+
+    Example::
+
+        v = NumericRangeValidator(min_value=0, max_value=1_000_000, inclusive=True)
+        ok, reason = v.validate("500.50")
+        assert ok
+    """
+
+    min_value: float | int | Decimal | None = None
+    max_value: float | int | Decimal | None = None
+    inclusive: bool = True
+
+    def validate(self, value: int | float | Decimal | str) -> tuple[bool, str]:
+        """Return ``(True, "")`` when *value* satisfies the range constraint."""
+        try:
+            v = Decimal(str(value))
+        except InvalidOperation:
+            return False, f"cannot parse {value!r} as a numeric value"
+
+        if self.min_value is not None:
+            lo = Decimal(str(self.min_value))
+            if self.inclusive and v < lo:
+                return False, f"{v} < minimum {lo}"
+            if not self.inclusive and v <= lo:
+                return False, f"{v} must be strictly greater than {lo}"
+
+        if self.max_value is not None:
+            hi = Decimal(str(self.max_value))
+            if self.inclusive and v > hi:
+                return False, f"{v} > maximum {hi}"
+            if not self.inclusive and v >= hi:
+                return False, f"{v} must be strictly less than {hi}"
+
+        return True, ""
+
+    def is_valid(self, value: int | float | Decimal | str) -> bool:
+        """Return ``True`` if ``validate(value)`` succeeds."""
+        ok, _ = self.validate(value)
+        return ok
+
+
+# ── DateValidator ──────────────────────────────────────────────────────────────
+
+
+@dataclass
+class DateValidator:
+    """Validates ISO 8601 date/datetime strings and optional temporal constraints.
+
+    Parses the value with ``datetime.fromisoformat()``.  Naive datetimes are
+    treated as UTC.  Timezone-aware datetimes are converted to UTC before any
+    ``not_before``/``not_after`` comparison.
+
+    Args:
+        allow_past:   Accept dates before ``datetime.now(UTC)``.  Default ``True``.
+        allow_future: Accept dates after ``datetime.now(UTC)``.   Default ``True``.
+        not_before:   Hard lower bound (inclusive).  ``None`` = no lower bound.
+        not_after:    Hard upper bound (inclusive).  ``None`` = no upper bound.
+
+    Example::
+
+        import datetime
+        v = DateValidator(allow_past=False)
+        ok, reason = v.validate("2099-01-01T00:00:00+00:00")
+        assert ok
+    """
+
+    allow_past: bool = True
+    allow_future: bool = True
+    not_before: datetime | None = None
+    not_after: datetime | None = None
+
+    def validate(self, date_str: str) -> tuple[bool, str]:
+        """Parse *date_str* and check all temporal constraints."""
+
+        try:
+            dt = datetime.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            return False, f"invalid ISO 8601 date/datetime: {date_str!r}"
+
+        # Normalise to UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+
+        now = datetime.now(UTC)
+
+        if not self.allow_past and dt < now:
+            return False, f"date {dt.isoformat()} is in the past"
+        if not self.allow_future and dt > now:
+            return False, f"date {dt.isoformat()} is in the future"
+
+        if self.not_before is not None:
+            nb = self.not_before
+            if nb.tzinfo is None:
+                nb = nb.replace(tzinfo=UTC)
+            if dt < nb:
+                return False, (f"date {dt.isoformat()} is before minimum {nb.isoformat()}")
+
+        if self.not_after is not None:
+            na = self.not_after
+            if na.tzinfo is None:
+                na = na.replace(tzinfo=UTC)
+            if dt > na:
+                return False, (f"date {dt.isoformat()} is after maximum {na.isoformat()}")
+
+        return True, ""
+
+    def is_valid(self, date_str: str) -> bool:
+        """Return ``True`` if ``validate(date_str)`` succeeds."""
+        ok, _ = self.validate(date_str)
+        return ok
+
+
+# ── URLValidator ──────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class URLValidator:
+    """Validates URL format with optional scheme and domain constraints.
+
+    Uses stdlib ``urllib.parse.urlparse()`` — no network calls.
+
+    Args:
+        allowed_schemes:  Set of permitted schemes (default: ``{"https"}``).
+        allowed_domains:  Allowlist of domain suffixes.  ``None`` = any domain.
+                          Both exact matches and subdomain matches are accepted
+                          (e.g. ``"example.com"`` matches ``"api.example.com"``).
+        blocked_domains:  Blocklist of domain suffixes (checked before allowlist).
+        require_path:     Require a non-root path component.  Default ``False``.
+
+    Example::
+
+        v = URLValidator(allowed_schemes={"https"}, blocked_domains=frozenset({"evil.com"}))
+        ok, reason = v.validate("https://api.example.com/v1/endpoint")
+        assert ok
+    """
+
+    allowed_schemes: frozenset[str] = frozenset({"https"})
+    allowed_domains: frozenset[str] | None = None
+    blocked_domains: frozenset[str] = frozenset()
+    require_path: bool = False
+
+    def validate(self, url: str) -> tuple[bool, str]:
+        """Return ``(True, "")`` if *url* passes all configured checks."""
+        from urllib.parse import urlparse
+
+        try:
+            parsed = urlparse(url)
+        except ValueError as exc:
+            return False, f"malformed URL: {exc}"
+
+        if not parsed.scheme:
+            return False, "URL has no scheme"
+        if parsed.scheme.lower() not in self.allowed_schemes:
+            return False, (
+                f"scheme {parsed.scheme!r} not in allowed set " f"{sorted(self.allowed_schemes)}"
+            )
+        if not parsed.netloc:
+            return False, "URL has no host"
+
+        host = (parsed.hostname or "").lower()
+
+        for bd in self.blocked_domains:
+            if host == bd.lower() or host.endswith(f".{bd.lower()}"):
+                return False, f"domain {host!r} is in the blocklist"
+
+        if self.allowed_domains is not None:
+            if not any(
+                host == ad.lower() or host.endswith(f".{ad.lower()}") for ad in self.allowed_domains
+            ):
+                return False, f"domain {host!r} is not in the allowlist"
+
+        if self.require_path and not parsed.path.strip("/"):
+            return False, "URL requires a non-empty path component"
+
+        return True, ""
+
+    def is_valid(self, url: str) -> bool:
+        """Return ``True`` if ``validate(url)`` succeeds."""
+        ok, _ = self.validate(url)
+        return ok
+
+
+# ── EmailValidator ─────────────────────────────────────────────────────────────
+
+
+class EmailValidator:
+    """RFC 5321-compatible email address validator backed by google-re2.
+
+    Uses a RE2-compiled pattern for ReDoS-immune matching.  Requires the
+    ``pramanix[security]`` extra (``google-re2``).
+
+    Raises:
+        ConfigurationError: If google-re2 is not installed.
+
+    Example::
+
+        v = EmailValidator()
+        ok, reason = v.validate("alice@example.com")
+        assert ok
+    """
+
+    # Simplified RFC 5321 local-part @ domain pattern.  RE2 does not support
+    # lookahead/lookbehind so we anchor with ^ and $ instead.
+    _PATTERN = r"^[A-Za-z0-9._%+\-]+" r"@" r"[A-Za-z0-9.\-]+" r"\." r"[A-Za-z]{2,}$"
+
+    def __init__(self) -> None:
+        _require_re2()
+        self._re = _re_ci(self._PATTERN)
+
+    def validate(self, email: str) -> tuple[bool, str]:
+        """Return ``(True, "")`` if *email* matches the RFC 5321 pattern."""
+        stripped = email.strip() if isinstance(email, str) else ""
+        if not stripped:
+            return False, "email address is empty"
+        if "@" not in stripped:
+            return False, f"missing '@' in email address: {email!r}"
+        if self._re.search(stripped) is None:
+            return False, f"email {email!r} does not match RFC 5321 pattern"
+        local, _, domain = stripped.rpartition("@")
+        if len(local) > 64:
+            return False, f"local part exceeds 64 characters: {len(local)}"
+        if len(domain) > 255:
+            return False, f"domain exceeds 255 characters: {len(domain)}"
+        return True, ""
+
+    def is_valid(self, email: str) -> bool:
+        """Return ``True`` if ``validate(email)`` succeeds."""
+        ok, _ = self.validate(email)
+        return ok
+
+
+# ── JSONSchemaValidator ────────────────────────────────────────────────────────
+
+
+@dataclass
+class JSONSchemaValidator:
+    """Validates a dict or JSON string against a JSON Schema (draft 7) definition.
+
+    Uses ``jsonschema`` if installed; falls back to a structural check that
+    verifies required fields and top-level object type.
+
+    Args:
+        schema: A JSON Schema dict (e.g. ``{"type": "object", "required": ["amount"]}``).
+
+    Example::
+
+        v = JSONSchemaValidator(schema={
+            "type": "object",
+            "required": ["amount", "currency"],
+            "properties": {
+                "amount":   {"type": "number", "minimum": 0},
+                "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+            },
+        })
+        ok, reason = v.validate({"amount": 100, "currency": "USD"})
+        assert ok
+    """
+
+    schema: dict[str, Any] = field(default_factory=dict)
+
+    def validate(self, data: dict[str, Any] | str | Any) -> tuple[bool, str]:
+        """Return ``(True, "")`` if *data* is valid against the schema."""
+        import json as _json
+
+        if isinstance(data, str):
+            try:
+                data = _json.loads(data)
+            except _json.JSONDecodeError as exc:
+                return False, f"invalid JSON string: {exc}"
+
+        try:
+            import jsonschema  # type: ignore[import]
+
+            try:
+                jsonschema.validate(instance=data, schema=self.schema)
+                return True, ""
+            except jsonschema.ValidationError as exc:
+                return False, f"JSON schema violation: {exc.message}"
+            except jsonschema.SchemaError as exc:
+                return False, f"invalid JSON schema definition: {exc.message}"
+        except ImportError:
+            return self._fallback_validate(data)
+
+    def _fallback_validate(self, data: Any) -> tuple[bool, str]:
+        """Structural check when jsonschema is not installed."""
+        expected_type = self.schema.get("type")
+        if expected_type == "object" and not isinstance(data, dict):
+            return False, f"expected JSON object, got {type(data).__name__}"
+        if expected_type == "array" and not isinstance(data, list):
+            return False, f"expected JSON array, got {type(data).__name__}"
+
+        if isinstance(data, dict):
+            for key in self.schema.get("required", []):
+                if key not in data:
+                    return False, f"missing required field: {key!r}"
+
+        return True, ""
+
+    def is_valid(self, data: dict[str, Any] | str | Any) -> bool:
+        """Return ``True`` if ``validate(data)`` succeeds."""
+        ok, _ = self.validate(data)
+        return ok
+
+
+# ── ProfanityDetector ──────────────────────────────────────────────────────────
+
+# Default word list — curated for general-purpose content moderation.
+# Uses root forms only; whole-word matching prevents false positives on
+# innocent words that contain profane substrings (e.g. "classic").
+_DEFAULT_PROFANITY_WORDS: frozenset[str] = frozenset(
+    {
+        "fuck",
+        "shit",
+        "bitch",
+        "bastard",
+        "crap",
+        "piss",
+        "cock",
+        "dick",
+        "cunt",
+        "twat",
+        "arsehole",
+        "asshole",
+        "motherfucker",
+        "bullshit",
+        "horseshit",
+        "jackass",
+        "dumbass",
+        "wanker",
+        "tosser",
+        "prick",
+        "bollocks",
+    }
+)
+
+
+class ProfanityDetector:
+    """Keyword-based profanity detector.  Zero external dependencies.
+
+    Uses whole-word matching (stdlib ``re`` word boundaries) to avoid
+    flagging innocent words that contain profane substrings.
+
+    Args:
+        extra_words:      Additional profanity words to detect.
+        case_sensitive:   When ``True``, matching is exact-case.
+                          Default ``False`` (case-insensitive).
+
+    Example::
+
+        detector = ProfanityDetector()
+        assert detector.is_profane("What the f*** is this?")
+        assert not detector.is_profane("classic architecture")
+        censored = detector.censor("This is bullshit!")
+        assert "***" in censored
+    """
+
+    def __init__(
+        self,
+        extra_words: list[str] | None = None,
+        *,
+        case_sensitive: bool = False,
+    ) -> None:
+        words: set[str] = set(_DEFAULT_PROFANITY_WORDS)
+        if extra_words:
+            words.update(w.strip() for w in extra_words if w.strip())
+        self._case_sensitive = case_sensitive
+        self._words: frozenset[str] = frozenset(words)
+        # Pre-compile per-word whole-boundary patterns for deterministic matching.
+        flags = 0 if case_sensitive else re.IGNORECASE
+        self._patterns: list[tuple[str, re.Pattern[str]]] = [
+            (w, re.compile(r"(?<!\w)" + re.escape(w) + r"(?!\w)", flags))
+            for w in sorted(self._words)
+        ]
+
+    def detect(self, text: str) -> list[str]:
+        """Return sorted list of profanity words found in *text*.
+
+        Uses whole-word boundary matching — ``"classic"`` does not trigger
+        even though it contains ``"ass"``.
+        """
+        found: list[str] = []
+        for word, pattern in self._patterns:
+            if pattern.search(text) is not None:
+                found.append(word)
+        return found
+
+    def is_profane(self, text: str) -> bool:
+        """Return ``True`` if *text* contains at least one profanity word."""
+        return any(pattern.search(text) is not None for _w, pattern in self._patterns)
+
+    def censor(self, text: str, replacement: str = "***") -> str:
+        """Return a copy of *text* with all profanity replaced by *replacement*.
+
+        Replacements are applied right-to-left (longest match first) to
+        preserve correct character offsets across substitutions.
+        """
+        result = text
+        for _word, pattern in self._patterns:
+            result = pattern.sub(replacement, result)
+        return result

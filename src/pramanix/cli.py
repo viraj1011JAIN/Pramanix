@@ -331,6 +331,45 @@ def main() -> int:
         help="Print a minimal policy YAML template to stdout and exit.",
     )
 
+    # lint-policy subcommand — static linter for Python and YAML/TOML policy files
+    lp = sub.add_parser(
+        "lint-policy",
+        help=(
+            "Statically lint a Policy definition file and report authoring issues "
+            "(unlabelled invariants, unused fields, duplicate labels, missing Meta, etc.)."
+        ),
+    )
+    lp.add_argument(
+        "policy_file",
+        metavar="POLICY_FILE",
+        help=(
+            "Path to a policy file.  Supported formats:\n"
+            "  .py         — Python file; --policy-var names the Policy class (default: first Policy subclass)\n"
+            "  .yaml/.yml  — YAML declarative DSL\n"
+            "  .toml       — TOML declarative DSL"
+        ),
+    )
+    lp.add_argument(
+        "--policy-var",
+        metavar="CLASS",
+        default=None,
+        help=(
+            "For Python files: name of the Policy class to lint "
+            "(default: first Policy subclass found in the file)."
+        ),
+    )
+    lp.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output results as JSON.",
+    )
+    lp.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 on warnings as well as errors.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -359,6 +398,9 @@ def main() -> int:
 
     if args.command == "compile-policy":
         return _cmd_compile_policy(args)
+
+    if args.command == "lint-policy":
+        return _cmd_lint_policy(args)
 
     parser.print_help()
     return 2
@@ -2036,6 +2078,259 @@ def _cmd_compile_policy(args: argparse.Namespace) -> int:
             print(f"    Mismatch: {m}")
 
     return 0 if compiled.verification.verified else 1
+
+
+def _cmd_lint_policy(args: argparse.Namespace) -> int:
+    """Static linter for Pramanix policy files.
+
+    Reports errors (fail the build) and warnings (informational) across:
+
+    * **E001** — Missing invariant label (``.named()`` not called)
+    * **E002** — Duplicate invariant labels
+    * **E003** — Empty invariants list
+    * **E004** — File not found / import failure
+    * **W001** — No ``Meta`` class declared (version pinning unavailable)
+    * **W002** — No ``intent_model`` on ``Meta`` (intent validation disabled)
+    * **W003** — No ``state_model`` on ``Meta`` (state validation disabled)
+    * **W004** — Fields declared but not referenced by any invariant
+    * **W005** — ``Policy.validate()`` raises (policy is syntactically ill-formed)
+
+    Exit codes:
+        0 — No errors (warnings only if ``--strict`` is not set)
+        1 — One or more errors (or warnings in ``--strict`` mode)
+        2 — Usage error
+    """
+    import pathlib
+
+    policy_path = pathlib.Path(args.policy_file)
+    as_json = getattr(args, "as_json", False)
+    strict = getattr(args, "strict", False)
+
+    findings: list[dict[str, str]] = []
+
+    def _report(code: str, level: str, message: str) -> None:
+        findings.append({"code": code, "level": level, "message": message})
+
+    # ── Load the Policy class ─────────────────────────────────────────────────
+    policy_cls = None
+    suffix = policy_path.suffix.lower()
+
+    if not policy_path.exists():
+        _report("E004", "ERROR", f"File not found: {policy_path}")
+    elif suffix == ".py":
+        policy_cls = _lint_load_python_policy(
+            policy_path, getattr(args, "policy_var", None), _report
+        )
+    elif suffix in (".yaml", ".yml", ".toml"):
+        policy_cls = _lint_load_declarative_policy(policy_path, suffix, _report)
+    else:
+        _report(
+            "E004",
+            "ERROR",
+            f"Unsupported file extension {policy_path.suffix!r}.  "
+            "Use .py, .yaml, .yml, or .toml",
+        )
+
+    # ── Structural lint (only when loading succeeded) ─────────────────────────
+    if policy_cls is not None:
+        _lint_policy_class(policy_cls, _report)
+
+    # ── Output ────────────────────────────────────────────────────────────────
+    errors = [f for f in findings if f["level"] == "ERROR"]
+    warnings = [f for f in findings if f["level"] == "WARN"]
+
+    if as_json:
+        print(
+            _json.dumps(
+                {
+                    "file": str(policy_path),
+                    "errors": len(errors),
+                    "warnings": len(warnings),
+                    "findings": findings,
+                    "ok": len(errors) == 0 and (not strict or len(warnings) == 0),
+                },
+                indent=2,
+            )
+        )
+    else:
+        total = len(findings)
+        if total == 0:
+            print(f"[OK] {policy_path} — no issues found")
+        else:
+            for f in findings:
+                sym = "E" if f["level"] == "ERROR" else "W"
+                print(f"[{sym}] {f['code']} {f['message']}")
+            print(
+                f"\n{len(errors)} error(s), {len(warnings)} warning(s) "
+                f"in {policy_path}"
+            )
+
+    if errors:
+        return 1
+    if strict and warnings:
+        return 1
+    return 0
+
+
+def _lint_load_python_policy(
+    path: "pathlib.Path",
+    class_name: str | None,
+    report: Any,
+) -> Any:
+    """Import a Python policy file and return the Policy class."""
+    import importlib.util
+    import pathlib
+
+    try:
+        spec = importlib.util.spec_from_file_location("_pramanix_lint_policy", path)
+        if spec is None or spec.loader is None:
+            report("E004", "ERROR", f"Cannot create module spec from {path}")
+            return None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    except Exception as exc:
+        report("E004", "ERROR", f"Failed to import {path}: {exc}")
+        return None
+
+    from pramanix.policy import Policy
+
+    if class_name:
+        cls = getattr(module, class_name, None)
+        if cls is None:
+            report("E004", "ERROR", f"Class {class_name!r} not found in {path}")
+            return None
+        if not (isinstance(cls, type) and issubclass(cls, Policy) and cls is not Policy):
+            report("E004", "ERROR", f"{class_name!r} is not a Policy subclass")
+            return None
+        return cls
+
+    # Discover the first Policy subclass in the module
+    for name in dir(module):
+        obj = getattr(module, name)
+        if (
+            isinstance(obj, type)
+            and issubclass(obj, Policy)
+            and obj is not Policy
+            and obj.__module__ == module.__name__
+        ):
+            return obj
+
+    report("E004", "ERROR", f"No Policy subclass found in {path}")
+    return None
+
+
+def _lint_load_declarative_policy(
+    path: "pathlib.Path",
+    suffix: str,
+    report: Any,
+) -> Any:
+    """Load a YAML/TOML declarative policy file."""
+    try:
+        from pramanix.natural_policy.yaml_loader import load_policy_file
+
+        return load_policy_file(path)
+    except Exception as exc:
+        report("E004", "ERROR", f"Failed to load declarative policy {path}: {exc}")
+        return None
+
+
+def _lint_policy_class(policy_cls: Any, report: Any) -> None:
+    """Inspect a loaded Policy class and emit lint findings."""
+
+    # ── E003: invariants must not be empty ────────────────────────────────────
+    try:
+        invariants = policy_cls.invariants()
+    except NotImplementedError:
+        report("E003", "ERROR", "Policy.invariants() is not implemented")
+        return
+    except Exception as exc:
+        report("E003", "ERROR", f"Policy.invariants() raised: {exc}")
+        return
+
+    if not invariants:
+        report("E003", "ERROR", "Policy.invariants() returned an empty list")
+        return
+
+    # ── E001 / E002: label checks ─────────────────────────────────────────────
+    seen_labels: set[str] = set()
+    referenced_fields: set[str] = set()
+    structural_errors = False
+
+    for inv in invariants:
+        label = getattr(inv, "label", None) or ""
+        if not label:
+            report("E001", "ERROR", "Invariant is missing a label (.named() not called)")
+            structural_errors = True
+        elif label in seen_labels:
+            report("E002", "ERROR", f"Duplicate invariant label: {label!r}")
+            structural_errors = True
+        else:
+            seen_labels.add(label)
+
+        # Collect field references from the expression tree
+        _collect_field_refs(inv, referenced_fields)
+
+    # ── W005: validate() must not raise for reasons beyond E001-E003 ─────────
+    # Only run if no structural errors were found (validate would raise for them too)
+    if not structural_errors:
+        try:
+            policy_cls.validate()
+        except Exception as exc:
+            report("W005", "WARN", f"Policy.validate() raised unexpectedly: {exc}")
+
+    # ── W001 / W002 / W003: Meta checks ──────────────────────────────────────
+    meta = getattr(policy_cls, "Meta", None)
+    if meta is None:
+        report("W001", "WARN", "No Meta class declared — version pinning and model validation unavailable")
+    else:
+        if not getattr(meta, "intent_model", None):
+            report("W002", "WARN", "Meta.intent_model not set — intent schema validation disabled")
+        if not getattr(meta, "state_model", None):
+            report("W003", "WARN", "Meta.state_model not set — state schema validation disabled")
+
+    # ── W004: declared-but-unused fields ────────────────────────────────────
+    declared_fields: dict[str, Any] = {}
+    try:
+        declared_fields = policy_cls.fields()
+    except Exception:
+        pass
+
+    unused = sorted(set(declared_fields) - referenced_fields)
+    for field_name in unused:
+        report(
+            "W004",
+            "WARN",
+            f"Field {field_name!r} is declared but not referenced by any invariant",
+        )
+
+
+def _collect_field_refs(node: Any, out: set[str]) -> None:
+    """Walk an expression tree and collect all field names referenced."""
+    from pramanix.expressions import ConstraintExpr, ExpressionNode, _BinOp, _BoolOp, _CmpOp, _FieldRef
+
+    if node is None:
+        return
+    if isinstance(node, ConstraintExpr):
+        _collect_field_refs(node.node, out)
+        return
+    if isinstance(node, ExpressionNode):
+        _collect_field_refs(node.node, out)
+        return
+    if isinstance(node, _FieldRef):
+        out.add(node.field.name)
+        return
+    if isinstance(node, _BinOp):
+        _collect_field_refs(node.left, out)
+        _collect_field_refs(node.right, out)
+        return
+    if isinstance(node, _CmpOp):
+        _collect_field_refs(node.left, out)
+        _collect_field_refs(node.right, out)
+        return
+    if isinstance(node, _BoolOp):
+        for operand in node.operands:
+            _collect_field_refs(operand, out)
+        return
 
 
 if __name__ == "__main__":

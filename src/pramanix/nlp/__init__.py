@@ -13,46 +13,63 @@ PIIDetector
     numbers, and passport-style identifiers.
 
 ToxicityScorer
-    Keyword-density scorer returning a ``[0.0, 1.0]`` float.  Higher values
-    indicate more toxic content.
+    Keyword-density scorer returning a ``[0.0, 1.0]`` float.
 
 RegexClassifier
     Configurable list of ``(pattern, label)`` pairs; returns all matching
     labels for a given text.
 
 SemanticSimilarityGuard
-    Lightweight Jaccard/word-overlap similarity check between input text and
-    operator-defined anchor phrases.  No external ML libraries required.
+    Lightweight Jaccard/word-overlap similarity check against anchor phrases.
 
-Usage::
+StringLengthValidator
+    Validates that a string's character length is within a declared range.
 
-    from pramanix.nlp import PIIDetector, ToxicityScorer
+NumericRangeValidator
+    Validates that a numeric value is within a declared [min, max] range.
 
-    pii = PIIDetector()
-    matches = pii.detect("Call me at 555-867-5309 or email bob@example.com")
-    # → [PIIMatch(label='phone', value='555-867-5309'), PIIMatch(label='email', ...)]
+DateValidator
+    Validates ISO 8601 date/datetime strings with optional temporal constraints.
 
-    scorer = ToxicityScorer()
-    score = scorer.score("I will destroy everything you care about")
-    # → 0.6  (rough heuristic; tune threshold per deployment)
+URLValidator
+    Validates URL format with scheme allowlist and domain allow/block lists.
 
-All classes are usable as drop-in ``ConstraintExpr`` wrappers via the
-``FieldMatchesNLPGuard`` primitive when you need to block policy decisions
-that contain PII or toxic content in a text field.
+EmailValidator
+    RFC 5321 email address validator backed by google-re2.
+
+JSONSchemaValidator
+    Validates a dict or JSON string against a JSON Schema definition.
+
+ProfanityDetector
+    Keyword-based profanity detector with whole-word matching; zero ML deps.
 """
 
 from pramanix.nlp.validators import (
+    DateValidator,
+    EmailValidator,
+    JSONSchemaValidator,
+    NumericRangeValidator,
     PIIDetector,
     PIIMatch,
+    ProfanityDetector,
     RegexClassifier,
     SemanticSimilarityGuard,
+    StringLengthValidator,
     ToxicityScorer,
+    URLValidator,
 )
 
 __all__ = [
+    "DateValidator",
+    "EmailValidator",
+    "JSONSchemaValidator",
+    "NumericRangeValidator",
     "PIIDetector",
     "PIIMatch",
+    "ProfanityDetector",
     "RegexClassifier",
     "SemanticSimilarityGuard",
+    "StringLengthValidator",
     "ToxicityScorer",
+    "URLValidator",
 ]
