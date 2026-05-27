@@ -2173,13 +2173,12 @@ def _cmd_lint_policy(args: argparse.Namespace) -> int:
 
 
 def _lint_load_python_policy(
-    path: "pathlib.Path",
+    path: pathlib.Path,
     class_name: str | None,
     report: Any,
 ) -> Any:
     """Import a Python policy file and return the Policy class."""
     import importlib.util
-    import pathlib
 
     try:
         spec = importlib.util.spec_from_file_location("_pramanix_lint_policy", path)
@@ -2220,7 +2219,7 @@ def _lint_load_python_policy(
 
 
 def _lint_load_declarative_policy(
-    path: "pathlib.Path",
+    path: pathlib.Path,
     suffix: str,
     report: Any,
 ) -> Any:
@@ -2292,8 +2291,8 @@ def _lint_policy_class(policy_cls: Any, report: Any) -> None:
     declared_fields: dict[str, Any] = {}
     try:
         declared_fields = policy_cls.fields()
-    except Exception:
-        pass
+    except (AttributeError, TypeError):
+        pass  # policy_cls doesn't expose .fields() — W004 check unavailable
 
     unused = sorted(set(declared_fields) - referenced_fields)
     for field_name in unused:
@@ -2306,7 +2305,14 @@ def _lint_policy_class(policy_cls: Any, report: Any) -> None:
 
 def _collect_field_refs(node: Any, out: set[str]) -> None:
     """Walk an expression tree and collect all field names referenced."""
-    from pramanix.expressions import ConstraintExpr, ExpressionNode, _BinOp, _BoolOp, _CmpOp, _FieldRef
+    from pramanix.expressions import (
+        ConstraintExpr,
+        ExpressionNode,
+        _BinOp,
+        _BoolOp,
+        _CmpOp,
+        _FieldRef,
+    )
 
     if node is None:
         return

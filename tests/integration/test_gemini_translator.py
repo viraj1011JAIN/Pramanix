@@ -42,14 +42,11 @@ class TransferIntent(BaseModel):
 
 def _make_translator(genai_module: _GeminiRecordingGenaiModule) -> GeminiTranslator:
     """Build a GeminiTranslator with injected genai module — no real API call."""
-    t = GeminiTranslator.__new__(GeminiTranslator)
-    t.model = "gemini-1.5-flash"
-    t._api_key = os.environ.get("GOOGLE_API_KEY", "")
-    t._timeout = 30.0
-    t._genai = genai_module
-    t._client = None
-    t._retryable = (Exception,)
-    return t
+    return GeminiTranslator(
+        "gemini-1.5-flash",
+        api_key=os.environ.get("GOOGLE_API_KEY", "") or None,
+        _genai_override=genai_module,
+    )
 
 
 # ── Unit tests (real genai duck-type, no @patch) ──────────────────────────────

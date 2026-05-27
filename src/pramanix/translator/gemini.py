@@ -63,7 +63,21 @@ class GeminiTranslator:
         *,
         api_key: str | None = None,
         timeout: float = 30.0,
+        _genai_override: Any = None,
     ) -> None:
+        self.model = model
+        self._api_key = api_key or os.environ.get("GOOGLE_API_KEY") or None
+        self._timeout = timeout
+
+        if _genai_override is not None:
+            # DI path: caller supplies a duck-typed genai module (tests only).
+            # Skip the google-generativeai import entirely so tests can run
+            # without the package installed and without __new__() bypasses.
+            self._genai = _genai_override
+            self._client: Any = None
+            self._retryable: tuple[type[Exception], ...] = (Exception,)
+            return
+
         import warnings as _warnings_mod
 
         # Scope the google-generativeai deprecation warning suppression to
@@ -110,9 +124,6 @@ class GeminiTranslator:
                     "Install it with: pip install 'pramanix[gemini]'"
                 ) from exc
 
-        self.model = model
-        self._api_key = api_key or os.environ.get("GOOGLE_API_KEY") or None
-        self._timeout = timeout
         # M-12: build a per-instance genai client so two Guard instances with
         # different keys don't overwrite each other via genai.configure().
         import google.generativeai as _genai
@@ -123,7 +134,7 @@ class GeminiTranslator:
             # Older versions only have global configure(); we use it under a lock
             # (see _single_call) to serialise multi-tenant access.
             _client_cls = getattr(_genai, "Client", None)
-            self._client: Any = (
+            self._client = (
                 _client_cls(api_key=self._api_key) if _client_cls is not None else None
             )
         else:
@@ -132,7 +143,7 @@ class GeminiTranslator:
         try:
             import google.api_core.exceptions as _gapi_exc
 
-            self._retryable: tuple[type[Exception], ...] = (
+            self._retryable = (
                 _gapi_exc.DeadlineExceeded,
                 _gapi_exc.ServiceUnavailable,
                 _gapi_exc.InternalServerError,

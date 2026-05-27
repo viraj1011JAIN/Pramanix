@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from pramanix.translator.base import TranslatorContext
+
+_log = logging.getLogger(__name__)
 
 __all__ = ["BedrockTranslator"]
 
@@ -292,8 +295,12 @@ class BedrockTranslator:
         """Close the underlying boto3 client session."""
         try:
             self._client.close()
-        except Exception:
-            pass
+        except Exception as _close_exc:
+            _log.debug(
+                "BedrockTranslator.aclose: error closing boto3 client (ignored): %s",
+                _close_exc,
+                exc_info=True,
+            )
 
     async def __aenter__(self) -> BedrockTranslator:
         return self
