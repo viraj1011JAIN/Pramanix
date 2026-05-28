@@ -41,9 +41,6 @@ from tests.helpers.solver_stubs import RaisingSolverStub
 class _BankingPolicy(Policy):
     """amount <= balance — blocks when amount exceeds balance."""
 
-    class Meta:
-        version = "1.0"
-
     amount = Field("amount", Decimal, "Real")
     balance = Field("balance", Decimal, "Real")
 
@@ -58,9 +55,6 @@ class _BankingPolicy(Policy):
 
 class _PositiveAmountPolicy(Policy):
     """amount > 0 — always blocks negative/zero amounts."""
-
-    class Meta:
-        version = "1.0"
 
     amount = Field("amount", Decimal, "Real")
 

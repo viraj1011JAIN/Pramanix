@@ -3131,11 +3131,11 @@ from decimal import Decimal
 from pramanix import Guard, Policy, Field, E, GuardConfig
 
 class TransferPolicy(Policy):
-    amount    = Field(Decimal, z3_type="Real")
-    balance   = Field(Decimal, z3_type="Real")
-    daily_limit = Field(Decimal, z3_type="Real")
-    is_frozen = Field(bool, z3_type="Bool")
-    status    = Field(str, z3_type="String")
+    amount      = Field("amount",      Decimal, "Real")
+    balance     = Field("balance",     Decimal, "Real")
+    daily_limit = Field("daily_limit", Decimal, "Real")
+    is_frozen   = Field("is_frozen",   bool,    "Bool")
+    status      = Field("status",      str,     "String")
 
     class Meta:
         version = "1.0.0"
