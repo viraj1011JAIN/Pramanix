@@ -12,6 +12,8 @@ If the package is not installed, instantiation raises
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -51,9 +53,13 @@ class CohereTranslator:
         *,
         api_key: str | None = None,
         timeout: float = 30.0,
+        _cohere_factory: Any = None,
     ) -> None:
         try:
-            import cohere
+            if _cohere_factory is not None:
+                cohere = _cohere_factory()
+            else:
+                import cohere
         except ImportError as exc:
             raise ConfigurationError(
                 "cohere is required for CohereTranslator. "
@@ -166,6 +172,31 @@ class CohereTranslator:
             result = _close()
             if inspect.isawaitable(result):
                 await result
+
+    def __del__(self) -> None:
+        """Synchronously close the underlying client on GC to prevent RuntimeWarning.
+
+        httpx.AsyncClient emits ``RuntimeWarning: coroutine 'AsyncClient.aclose'
+        was never awaited`` when GC destroys the client without an awaited close.
+        We close the underlying transport synchronously here to prevent that.
+        """
+        client = getattr(self, "_client", None)
+        if client is None:
+            return
+        # httpx.AsyncClient exposes its transport via ._transport; close it sync.
+        transport = getattr(client, "_transport", None) or getattr(
+            getattr(client, "_base_client", None), "_transport", None
+        )
+        if transport is not None and hasattr(transport, "close"):
+            with contextlib.suppress(Exception):
+                transport.close()
+            return
+        # Fallback: if no running loop, run aclose() in a fresh loop.
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop()
+            return  # running loop — can't call asyncio.run(); skip silently
+        with contextlib.suppress(Exception):
+            asyncio.run(self.aclose())
 
     async def __aenter__(self) -> CohereTranslator:
         return self

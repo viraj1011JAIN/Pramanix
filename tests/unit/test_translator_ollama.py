@@ -50,7 +50,6 @@ from __future__ import annotations
 
 import http.server
 import json
-import sys
 import threading
 from typing import Any
 
@@ -412,10 +411,10 @@ class TestOllamaTranslatorMalformedResponse:
 
 
 class TestOllamaTranslatorMissingDependency:
-    def test_missing_httpx_raises_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_httpx_raises_import_error(self) -> None:
         """If httpx is not installed, OllamaTranslator() raises ImportError."""
-        monkeypatch.setitem(  # type: ignore[arg-type]
-            sys.modules, "httpx", None
-        )
+        def _raise_import():
+            raise ImportError("httpx not installed")
+
         with pytest.raises(ImportError, match="httpx"):
-            OllamaTranslator()
+            OllamaTranslator(_httpx_factory=_raise_import)

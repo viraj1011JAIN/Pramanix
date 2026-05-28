@@ -59,8 +59,11 @@ class TestMistralTranslatorReal:
         """Lines 161-175: _single_call executes, parse_llm_response returns dict."""
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralClientStub('{"amount": 100, "recipient": "Alice"}')
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralClientStub('{"amount": 100, "recipient": "Alice"}'),
+        )
         result = await t.extract("Pay Alice 100", _Payment)
         assert result["recipient"] == "Alice"
         assert Decimal(str(result["amount"])) == Decimal("100")
@@ -73,8 +76,11 @@ class TestMistralTranslatorReal:
         class _Ctx:
             extra_context = "Spending limit: $1000"
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralClientStub('{"amount": 50, "recipient": "Bob"}')
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralClientStub('{"amount": 50, "recipient": "Bob"}'),
+        )
         result = await t.extract("Pay Bob 50", _Payment, context=_Ctx())
         assert result["recipient"] == "Bob"
 
@@ -87,8 +93,11 @@ class TestMistralTranslatorReal:
         from pramanix.exceptions import LLMTimeoutError
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralRaisingClientStub(TimeoutError("connection refused"))
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralRaisingClientStub(TimeoutError("connection refused")),
+        )
         with pytest.raises(LLMTimeoutError, match="retry attempts exhausted"):
             await t.extract("Pay Alice 100", _Payment)
 
@@ -98,8 +107,11 @@ class TestMistralTranslatorReal:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralClientStub("THIS IS NOT JSON AT ALL @@##$$")
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralClientStub("THIS IS NOT JSON AT ALL @@##$$"),
+        )
         with pytest.raises(ExtractionFailureError):
             await t.extract("Pay Alice 100", _Payment)
 
@@ -109,30 +121,35 @@ class TestMistralTranslatorReal:
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralClientStub("")
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralClientStub(""),
+        )
         with pytest.raises(ExtractionFailureError):
             await t.extract("Pay Alice 100", _Payment)
 
-    @pytest.mark.skipif(
-        _ilu.find_spec("mistralai") is not None,
-        reason="run in tox:no-mistral — mistralai is installed in this env",
-    )
     def test_init_raises_config_error_without_package(self):
-        """ConfigurationError when mistralai is absent (tox:no-mistral only)."""
+        """ConfigurationError when mistralai is absent (DI factory pattern)."""
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.mistral import MistralTranslator
 
+        def _raise_import():
+            raise ImportError("mistralai not installed")
+
         with pytest.raises(ConfigurationError, match="mistralai"):
-            MistralTranslator("mistral-large-latest")
+            MistralTranslator("mistral-large-latest", _mistralai_factory=_raise_import)
 
     @pytest.mark.asyncio
     async def test_extract_without_context_no_extra_appended(self):
         """context=None → user_content is unchanged (lines 107-110 else branch)."""
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralClientStub('{"amount": 75, "recipient": "Carol"}')
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralClientStub('{"amount": 75, "recipient": "Carol"}'),
+        )
         result = await t.extract("Pay Carol 75", _Payment, context=None)
         assert result["recipient"] == "Carol"
 
@@ -144,8 +161,11 @@ class TestMistralTranslatorReal:
         class _CtxNoExtra:
             extra_context = None
 
-        t = MistralTranslator("mistral-large-latest", api_key=_MISTRAL_API_KEY)
-        t._client = _MistralClientStub('{"amount": 80, "recipient": "Dan"}')
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key=_MISTRAL_API_KEY,
+            _client_override=_MistralClientStub('{"amount": 80, "recipient": "Dan"}'),
+        )
         result = await t.extract("Pay Dan 80", _Payment, context=_CtxNoExtra())
         assert result["recipient"] == "Dan"
 

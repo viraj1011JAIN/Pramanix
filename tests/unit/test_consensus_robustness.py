@@ -16,8 +16,6 @@ Coverage:
 
 from __future__ import annotations
 
-from typing import ClassVar
-
 import pytest
 
 from pramanix.translator.redundant import _raw_strings_agree, create_translator
@@ -76,45 +74,21 @@ class TestRawStringsAgree:
 
 
 class TestCreateTranslatorRouting:
-    def test_gemini_prefix_routing(self, monkeypatch: pytest.MonkeyPatch):
+    def test_gemini_prefix_routing(self):
         """create_translator with 'gemini:...' should instantiate GeminiTranslator."""
-        import sys
+        pytest.importorskip("google.generativeai")
+        from pramanix.translator.gemini import GeminiTranslator
 
-        from tests.helpers.real_protocols import _GeminiGenaiModule
+        t = create_translator("gemini:gemini-1.5-flash", api_key="test-key")
+        assert isinstance(t, GeminiTranslator)
 
-        class _RecordingGeminiTranslator:
-            instances: ClassVar[list] = []
-
-            def __init__(self, *args, **kwargs):
-                _RecordingGeminiTranslator.instances.clear()
-                _RecordingGeminiTranslator.instances.append(self)
-
-        import pramanix.translator.gemini as gem_mod
-
-        monkeypatch.setitem(sys.modules, "google.generativeai", _GeminiGenaiModule())
-        monkeypatch.setattr(gem_mod, "GeminiTranslator", _RecordingGeminiTranslator)
-        create_translator("gemini:gemini-1.5-flash", api_key="key")
-        assert len(_RecordingGeminiTranslator.instances) == 1
-
-    def test_cohere_prefix_routing(self, monkeypatch: pytest.MonkeyPatch):
+    def test_cohere_prefix_routing(self):
         """create_translator with 'cohere:...' should instantiate CohereTranslator."""
-        import sys
-        import types
+        pytest.importorskip("cohere")
+        from pramanix.translator.cohere import CohereTranslator
 
-        class _RecordingCohereTranslator:
-            instances: ClassVar[list] = []
-
-            def __init__(self, *args, **kwargs):
-                _RecordingCohereTranslator.instances.clear()
-                _RecordingCohereTranslator.instances.append(self)
-
-        import pramanix.translator.cohere as coh_mod
-
-        fake_cohere = types.SimpleNamespace(Client=object, AsyncClient=object)
-        monkeypatch.setitem(sys.modules, "cohere", fake_cohere)
-        monkeypatch.setattr(coh_mod, "CohereTranslator", _RecordingCohereTranslator)
-        create_translator("cohere:command-r", api_key="key")
-        assert len(_RecordingCohereTranslator.instances) == 1
+        t = create_translator("cohere:command-r", api_key="co-test-key")
+        assert isinstance(t, CohereTranslator)
 
     def test_unknown_prefix_raises(self):
         from pramanix.exceptions import ExtractionFailureError

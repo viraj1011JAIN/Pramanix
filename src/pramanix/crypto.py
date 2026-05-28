@@ -144,6 +144,7 @@ class PramanixSigner:
         private_key_pem: bytes | str | None = None,
         *,
         force_ephemeral: bool = False,
+        _crypto_factory: Any = None,
     ) -> None:
         """Initialize with an Ed25519 private key.
 
@@ -162,16 +163,26 @@ class PramanixSigner:
                           auditor discovers months of unsigned decisions.
         """
         try:
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-                Ed25519PrivateKey,
-            )
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                NoEncryption,
-                PrivateFormat,
-                PublicFormat,
-                load_pem_private_key,
-            )
+            if _crypto_factory is not None:
+                (
+                    Ed25519PrivateKey,
+                    Encoding,
+                    NoEncryption,
+                    PrivateFormat,
+                    PublicFormat,
+                    load_pem_private_key,
+                ) = _crypto_factory()
+            else:
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                    Ed25519PrivateKey,
+                )
+                from cryptography.hazmat.primitives.serialization import (
+                    Encoding,
+                    NoEncryption,
+                    PrivateFormat,
+                    PublicFormat,
+                    load_pem_private_key,
+                )
         except ImportError as e:
             raise ImportError(
                 "The 'cryptography' package is required for Ed25519 signing. "
@@ -462,17 +473,29 @@ class RS256Signer:
         private_key_pem: bytes | str | None = None,
         *,
         force_ephemeral: bool = False,
+        _crypto_factory: Any = None,
     ) -> None:
         try:
-            from cryptography.hazmat.primitives.asymmetric import rsa
-            from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                NoEncryption,
-                PrivateFormat,
-                PublicFormat,
-                load_pem_private_key,
-            )
+            if _crypto_factory is not None:
+                (
+                    rsa,
+                    RSAPrivateKey,
+                    Encoding,
+                    NoEncryption,
+                    PrivateFormat,
+                    PublicFormat,
+                    load_pem_private_key,
+                ) = _crypto_factory()
+            else:
+                from cryptography.hazmat.primitives.asymmetric import rsa
+                from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+                from cryptography.hazmat.primitives.serialization import (
+                    Encoding,
+                    NoEncryption,
+                    PrivateFormat,
+                    PublicFormat,
+                    load_pem_private_key,
+                )
         except ImportError as exc:
             raise ImportError(
                 "The 'cryptography' package is required for RS256 signing. "
@@ -584,10 +607,13 @@ class RS256Verifier:
         public_key_pem: PEM-encoded RSA public key.
     """
 
-    def __init__(self, public_key_pem: bytes | str) -> None:
+    def __init__(self, public_key_pem: bytes | str, *, _crypto_factory: Any = None) -> None:
         try:
-            from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
-            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+            if _crypto_factory is not None:
+                RSAPublicKey, load_pem_public_key = _crypto_factory()
+            else:
+                from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+                from cryptography.hazmat.primitives.serialization import load_pem_public_key
         except ImportError as exc:
             raise ImportError(
                 "The 'cryptography' package is required for RS256 verification."
@@ -666,20 +692,33 @@ class ES256Signer:
         private_key_pem: bytes | str | None = None,
         *,
         force_ephemeral: bool = False,
+        _crypto_factory: Any = None,
     ) -> None:
         try:
-            from cryptography.hazmat.primitives.asymmetric.ec import (
-                SECP256R1,
-                EllipticCurvePrivateKey,
-                generate_private_key,
-            )
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                NoEncryption,
-                PrivateFormat,
-                PublicFormat,
-                load_pem_private_key,
-            )
+            if _crypto_factory is not None:
+                (
+                    SECP256R1,
+                    EllipticCurvePrivateKey,
+                    generate_private_key,
+                    Encoding,
+                    NoEncryption,
+                    PrivateFormat,
+                    PublicFormat,
+                    load_pem_private_key,
+                ) = _crypto_factory()
+            else:
+                from cryptography.hazmat.primitives.asymmetric.ec import (
+                    SECP256R1,
+                    EllipticCurvePrivateKey,
+                    generate_private_key,
+                )
+                from cryptography.hazmat.primitives.serialization import (
+                    Encoding,
+                    NoEncryption,
+                    PrivateFormat,
+                    PublicFormat,
+                    load_pem_private_key,
+                )
         except ImportError as exc:
             raise ImportError(
                 "The 'cryptography' package is required for ES256 signing. "
@@ -792,13 +831,16 @@ class ES256Verifier:
         public_key_pem: PEM-encoded P-256 public key.
     """
 
-    def __init__(self, public_key_pem: bytes | str) -> None:
+    def __init__(self, public_key_pem: bytes | str, *, _crypto_factory: Any = None) -> None:
         try:
-            from cryptography.hazmat.primitives.asymmetric.ec import (
-                SECP256R1,
-                EllipticCurvePublicKey,
-            )
-            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+            if _crypto_factory is not None:
+                SECP256R1, EllipticCurvePublicKey, load_pem_public_key = _crypto_factory()
+            else:
+                from cryptography.hazmat.primitives.asymmetric.ec import (
+                    SECP256R1,
+                    EllipticCurvePublicKey,
+                )
+                from cryptography.hazmat.primitives.serialization import load_pem_public_key
         except ImportError as exc:
             raise ImportError(
                 "The 'cryptography' package is required for ES256 verification."

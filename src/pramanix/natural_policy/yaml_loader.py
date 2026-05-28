@@ -119,6 +119,30 @@ _PYTHON_TYPES: dict[str, type] = {
 
 # ── Safe expression parser ────────────────────────────────────────────────────
 
+
+def _raise_unexpected_operand(op_name: str, invariant_name: str) -> None:
+    """Raise PolicySyntaxError for an unexpected operand type.
+
+    Extracted from the defensive guards in _visit() so the branches are
+    directly testable without needing to bypass the type invariants of _visit.
+    """
+    raise PolicySyntaxError(
+        f"Invariant {invariant_name!r}: {op_name!r} applied to unexpected node type"
+    )
+
+
+def _raise_unhandled_ast_node(node: Any, invariant_name: str) -> None:
+    """Raise PolicySyntaxError for an AST node type that passed the allow-list
+    but is not handled by any isinstance branch in _visit().
+
+    Extracted so the branch is directly testable: pass _ast.Not() which IS
+    in _ALLOWED_NODES but is never the subject of an isinstance(node, ...) check.
+    """
+    raise PolicySyntaxError(
+        f"Invariant {invariant_name!r}: unhandled AST node {type(node).__name__!r}"
+    )
+
+
 # Only these AST node types are allowed in invariant expressions.
 # Anything not in this set raises PolicySyntaxError immediately.
 _ALLOWED_NODES = frozenset(
@@ -248,9 +272,7 @@ def _visit(
             if isinstance(operand, ExpressionNode):
                 # Bool field wrapped in ExpressionNode — use .is_false()
                 return operand.is_false()
-            raise PolicySyntaxError(  # pragma: no cover
-                f"Invariant {invariant_name!r}: 'not' applied to unexpected node"
-            )
+            _raise_unexpected_operand("not", invariant_name)
         if isinstance(node.op, _ast.USub):
             if isinstance(operand, ExpressionNode):
                 return -operand
@@ -336,10 +358,10 @@ def _visit(
                 promoted.append(op_node)
             elif isinstance(op_node, ExpressionNode):
                 promoted.append(op_node.is_true())
-            else:  # pragma: no cover
-                raise PolicySyntaxError(
-                    f"Invariant {invariant_name!r}: unexpected operand type "
-                    f"{type(op_node).__name__!r}"
+            else:
+                _raise_unexpected_operand(
+                    f"BoolOp with unexpected operand type {type(op_node).__name__!r}",
+                    invariant_name,
                 )
         result = promoted[0]
         for operand in promoted[1:]:
@@ -349,9 +371,7 @@ def _visit(
                 result = result | operand
         return result
 
-    raise PolicySyntaxError(  # pragma: no cover
-        f"Invariant {invariant_name!r}: unhandled AST node {type(node).__name__!r}"
-    )
+    _raise_unhandled_ast_node(node, invariant_name)
 
 
 # ── Policy builder ────────────────────────────────────────────────────────────

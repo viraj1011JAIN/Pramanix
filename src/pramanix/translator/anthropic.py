@@ -48,9 +48,13 @@ class AnthropicTranslator:
         *,
         api_key: str | None = None,
         timeout: float = 30.0,
+        _anthropic_factory: Any = None,
     ) -> None:
         try:
-            import anthropic
+            if _anthropic_factory is not None:
+                anthropic = _anthropic_factory()
+            else:
+                import anthropic
         except ImportError as exc:
             raise ImportError(
                 "anthropic package is required for AnthropicTranslator. "

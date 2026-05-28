@@ -12,10 +12,12 @@ If the package is not installed, instantiation raises
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 from typing import TYPE_CHECKING, Any, cast
 
-from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
+from pramanix.exceptions import ConfigurationError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
@@ -51,34 +53,47 @@ class MistralTranslator:
         *,
         api_key: str | None = None,
         timeout: float = 30.0,
+        _client_override: Any = None,
+        _mistralai_factory: Any = None,
     ) -> None:
-        _mistral_factory: Any = None
-        try:
-            from mistralai.client import Mistral  # v2+
-
-            _mistral_factory = Mistral
-        except ImportError:
-            try:
-                import mistralai as _mistralai_pkg  # v1 top-level
-
-                _mistral_factory = cast(Any, _mistralai_pkg).Mistral
-            except ImportError as exc:
-                raise ConfigurationError(
-                    "mistralai is required for MistralTranslator. "
-                    "Install it with: pip install 'pramanix[mistral]'"
-                ) from exc
-
         self.model = model
         self._api_key = api_key or os.environ.get("MISTRAL_API_KEY") or None
         self._timeout = timeout
+
+        if _client_override is not None:
+            # DI path: tests inject a duck-typed stub to avoid real HTTP clients.
+            self._client: Any = _client_override
+            return
+
+        _mistral_cls: Any = None
+        try:
+            if _mistralai_factory is not None:
+                _mistral_cls = _mistralai_factory()
+            else:
+                try:
+                    from mistralai.client import Mistral  # v2+
+
+                    _mistral_cls = Mistral
+                except ImportError:
+                    import mistralai as _mistralai_pkg  # v1 top-level
+
+                    _mistral_cls = cast(Any, _mistralai_pkg).Mistral
+        except ImportError as exc:
+            raise ConfigurationError(
+                "mistralai is required for MistralTranslator. "
+                "Install it with: pip install 'pramanix[mistral]'"
+            ) from exc
+
         # M-14: create the client once; reuse across all calls and retries.
-        self._client: Any = _mistral_factory(api_key=self._api_key or "")
+        self._client = _mistral_cls(api_key=self._api_key or "")
 
     async def extract(
         self,
         text: str,
         intent_schema: type[BaseModel],
         context: TranslatorContext | None = None,
+        *,
+        _tenacity_factory: Any = None,
     ) -> dict[str, Any]:
         """Extract structured intent from *text* using Mistral.
 
@@ -91,17 +106,21 @@ class MistralTranslator:
             Raw dict from the model; caller validates against *intent_schema*.
 
         Raises:
-            ExtractionFailureError: Model returned bad/unparseable JSON.
-            LLMTimeoutError:        All retry attempts exhausted.
-            ConfigurationError:     ``mistralai`` not installed.
+            LLMTimeoutError:    All retry attempts exhausted.
+            ConfigurationError: ``mistralai`` or ``tenacity`` not installed.
         """
         try:
-            from tenacity import (
-                AsyncRetrying,
-                retry_if_exception_type,
-                stop_after_attempt,
-                wait_exponential,
-            )
+            if _tenacity_factory is not None:
+                AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential = (
+                    _tenacity_factory()
+                )
+            else:
+                from tenacity import (
+                    AsyncRetrying,
+                    retry_if_exception_type,
+                    stop_after_attempt,
+                    wait_exponential,
+                )
         except ImportError as exc:
             raise ConfigurationError(
                 "tenacity is required for MistralTranslator retry support. "
@@ -155,15 +174,7 @@ class MistralTranslator:
                 f"after {attempts} attempt(s): {exc}",
             ) from exc
 
-        try:
-            return parse_llm_response(raw, model_name=self.model)
-        except ExtractionFailureError:
-            raise
-        except Exception as exc:
-            raise ExtractionFailureError(
-                f"MistralTranslator: failed to parse model response: {exc!r}. "
-                f"Raw response: {raw!r}"
-            ) from exc
+        return parse_llm_response(raw, model_name=self.model)
 
     async def _single_call(
         self,
@@ -186,3 +197,38 @@ class MistralTranslator:
             timeout=self._timeout,
         )
         return response.choices[0].message.content or ""
+
+    async def aclose(self) -> None:
+        """Close the underlying Mistral HTTP client and release resources."""
+        import inspect
+
+        # mistralai v2+: client.close() is a coroutine; v1: sync close().
+        _close = getattr(self._client, "aclose", None) or getattr(self._client, "close", None)
+        if _close is not None:
+            result = _close()
+            if inspect.isawaitable(result):
+                await result
+
+    def __del__(self) -> None:
+        """Synchronously close the Mistral client on GC to prevent RuntimeWarning."""
+        client = getattr(self, "_client", None)
+        if client is None:
+            return
+        # mistralai v2 exposes http_client; close its transport synchronously.
+        http_client = getattr(client, "http_client", None)
+        transport = getattr(http_client, "_transport", None)
+        if transport is not None and hasattr(transport, "close"):
+            with contextlib.suppress(Exception):
+                transport.close()
+            return
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop()
+            return
+        with contextlib.suppress(Exception):
+            asyncio.run(self.aclose())
+
+    async def __aenter__(self) -> MistralTranslator:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        await self.aclose()

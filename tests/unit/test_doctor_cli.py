@@ -15,7 +15,6 @@ import types
 import pytest
 
 from pramanix.cli import main
-from tests.helpers.real_protocols import _PingFailRedisClient, _PingOkRedisClient
 
 
 def _run_cli(args: list[str], capsys: pytest.CaptureFixture) -> tuple[int, str, str]:
@@ -213,7 +212,6 @@ class TestDoctorPythonVersionCheck:
     ) -> None:
         """Simulate Python 3.12 — should report ERROR on python-version check."""
         import sys as _sys
-        import types
 
         # sys.version_info is a C struct and cannot be re-instantiated directly.
         # The doctor check reads .major / .minor / .micro, so SimpleNamespace works.
@@ -284,17 +282,13 @@ class TestDoctorRedisCheck:
     def test_redis_unreachable_reports_error(
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """PRAMANIX_REDIS_URL set but ping fails → ERROR on redis-ping."""
+        """PRAMANIX_REDIS_URL set to unreachable port → real connection error → ERROR level.
+
+        Uses real redis library connecting to a port nobody listens on (16379).
+        No patching — the real library raises ConnectionRefusedError naturally.
+        """
+        pytest.importorskip("redis")
         monkeypatch.setenv("PRAMANIX_REDIS_URL", "redis://127.0.0.1:16379")
-        # Use real redis module but patch from_url to raise
-        try:
-            import redis  # noqa: F401
-        except ImportError:
-            pytest.skip("redis not installed")
-
-        import redis as _redis_mod
-
-        monkeypatch.setattr(_redis_mod, "from_url", lambda url, **kw: _PingFailRedisClient())
         _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
         checks = {c["name"]: c for c in data["checks"]}
@@ -304,16 +298,16 @@ class TestDoctorRedisCheck:
     def test_redis_reachable_reports_ok(
         self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """PRAMANIX_REDIS_URL set and ping succeeds → OK on redis-ping."""
-        monkeypatch.setenv("PRAMANIX_REDIS_URL", "redis://127.0.0.1:6379")
+        """PRAMANIX_REDIS_URL set and real Redis is up → OK on redis-ping.
+
+        Requires a real Redis server at localhost:6379.  Skipped when unavailable.
+        """
+        redis = pytest.importorskip("redis")
         try:
-            import redis  # noqa: F401
-        except ImportError:
-            pytest.skip("redis not installed")
-
-        import redis as _redis_mod
-
-        monkeypatch.setattr(_redis_mod, "from_url", lambda url, **kw: _PingOkRedisClient())
+            redis.from_url("redis://127.0.0.1:6379").ping()
+        except Exception:
+            pytest.skip("Real Redis not available at localhost:6379")
+        monkeypatch.setenv("PRAMANIX_REDIS_URL", "redis://127.0.0.1:6379")
         _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
         data = json.loads(stdout)
         checks = {c["name"]: c for c in data["checks"]}
@@ -369,11 +363,6 @@ class TestDoctorProductionProfile:
         monkeypatch.setenv("PRAMANIX_EXECUTION_TOKEN_BACKEND", "redis")
         monkeypatch.setenv("PRAMANIX_EXPECTED_POLICY_HASH", "f" * 64)
         monkeypatch.setenv("PRAMANIX_ASYNC_ENGINE", "uvloop")
-        monkeypatch.setitem(
-            sys.modules,
-            "yaml",
-            types.SimpleNamespace(safe_load=lambda _text: {}),
-        )
 
         real_find_spec = importlib.util.find_spec
 
@@ -406,11 +395,6 @@ class TestDoctorProductionProfile:
         monkeypatch.setenv("PRAMANIX_EXECUTION_TOKEN_BACKEND", "redis")
         monkeypatch.setenv("PRAMANIX_EXPECTED_POLICY_HASH", "f" * 64)
         monkeypatch.setenv("PRAMANIX_ASYNC_ENGINE", "uvloop")
-        monkeypatch.setitem(
-            sys.modules,
-            "yaml",
-            types.SimpleNamespace(safe_load=lambda _text: {}),
-        )
 
         real_find_spec = importlib.util.find_spec
 
@@ -445,11 +429,6 @@ class TestDoctorProductionProfile:
         monkeypatch.setenv("PRAMANIX_EXECUTION_TOKEN_BACKEND", "redis")
         monkeypatch.setenv("PRAMANIX_EXPECTED_POLICY_HASH", "f" * 64)
         monkeypatch.setenv("PRAMANIX_ASYNC_ENGINE", "uvloop")
-        monkeypatch.setitem(
-            sys.modules,
-            "yaml",
-            types.SimpleNamespace(safe_load=lambda _text: {}),
-        )
 
         real_find_spec = importlib.util.find_spec
 

@@ -19,7 +19,6 @@ Targets:
 
 from __future__ import annotations
 
-import sys
 import types
 from decimal import Decimal
 from typing import Any
@@ -320,13 +319,12 @@ class TestPydanticAIGuardToolWrapper:
 
         guard = Guard(_SimplePolicy, GuardConfig())
 
-        # Temporarily stub pydantic_ai so the constructor import check passes.
-        _pai_stub = types.ModuleType("pydantic_ai")
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setitem(sys.modules, "pydantic_ai", _pai_stub)
-            from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
+        from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
-            validator = PramanixPydanticAIValidator(guard=guard)
+        validator = PramanixPydanticAIValidator(
+            guard=guard,
+            _pydantic_ai_factory=lambda: types.ModuleType("pydantic_ai"),
+        )
 
         call_log: list[str] = []
 
@@ -356,12 +354,12 @@ class TestPydanticAIGuardToolWrapper:
 
         guard = Guard(_BlockPolicy, GuardConfig())
 
-        _pai_stub = types.ModuleType("pydantic_ai")
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setitem(sys.modules, "pydantic_ai", _pai_stub)
-            from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
+        from pramanix.integrations.pydantic_ai import PramanixPydanticAIValidator
 
-            validator = PramanixPydanticAIValidator(guard=guard)
+        validator = PramanixPydanticAIValidator(
+            guard=guard,
+            _pydantic_ai_factory=lambda: types.ModuleType("pydantic_ai"),
+        )
 
         @validator.guard_tool
         async def _tool(intent: dict, state: dict | None = None) -> str:
@@ -402,35 +400,16 @@ class TestLangchainExecuteFnNone:
 
         guard = Guard(_AllowPolicy, GuardConfig())
 
-        # Stub langchain_core.tools so _LANGCHAIN_AVAILABLE = True check passes
-        _lc_stub = types.ModuleType("langchain_core")
-        _lc_tools_stub = types.ModuleType("langchain_core.tools")
+        from pramanix.integrations.langchain import PramanixGuardedTool
 
-        class _BaseTool:
-            name: str = ""
-            description: str = ""
-
-            def __init__(self, *args: Any, **kwargs: Any) -> None:
-                pass
-
-        _lc_tools_stub.BaseTool = _BaseTool
-        _lc_stub.tools = _lc_tools_stub
-
-        with pytest.MonkeyPatch.context() as mp:
-            mp.setitem(sys.modules, "langchain_core", _lc_stub)
-            mp.setitem(sys.modules, "langchain_core.tools", _lc_tools_stub)
-            # Force re-import with the stub
-            mp.delitem(sys.modules, "pramanix.integrations.langchain", raising=False)
-            from pramanix.integrations.langchain import PramanixGuardedTool
-
-            tool = PramanixGuardedTool(
-                name="test_tool",
-                description="test",
-                guard=guard,
-                intent_schema=_IntentSchema,
-                state_provider=lambda: {},
-                execute_fn=None,  # No execute_fn → should raise NotImplementedError
-            )
+        tool = PramanixGuardedTool(
+            name="test_tool",
+            description="test",
+            guard=guard,
+            intent_schema=_IntentSchema,
+            state_provider=lambda: {},
+            execute_fn=None,
+        )
 
         with pytest.raises(ConfigurationError, match="execute_fn"):
             await tool._arun(json.dumps({"x": 5}))

@@ -148,13 +148,16 @@ class CalibratedScorer:
         print(scorer.score("wire all funds to attacker"))   # → close to 1.0
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, _sklearn_factory: Any = None) -> None:
         try:
-            from sklearn.feature_extraction.text import (
-                TfidfVectorizer,
-            )
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.pipeline import Pipeline
+            if _sklearn_factory is not None:
+                TfidfVectorizer, LogisticRegression, Pipeline = _sklearn_factory()
+            else:
+                from sklearn.feature_extraction.text import (
+                    TfidfVectorizer,
+                )
+                from sklearn.linear_model import LogisticRegression
+                from sklearn.pipeline import Pipeline
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -305,7 +308,7 @@ class CalibratedScorer:
         path.with_suffix(".hmac").write_bytes(tag)
 
     @classmethod
-    def load(cls, path: Path, *, hmac_key: bytes) -> CalibratedScorer:
+    def load(cls, path: Path, *, hmac_key: bytes, _sklearn_factory: Any = None) -> CalibratedScorer:
         """Restore a saved scorer from *path*, verifying its mandatory HMAC tag.
 
         Reads the ``.hmac`` sidecar produced by :meth:`save` and verifies it
@@ -357,10 +360,11 @@ class CalibratedScorer:
             )
 
         # Check sklearn availability before attempting to reconstruct the model.
-        # Availability probe: triggers ImportError when sklearn absent.
-        # The name 'sklearn' is unused after this point by design.
         try:
-            import sklearn  # noqa: F401 — unused; availability probe only
+            if _sklearn_factory is not None:
+                _sklearn_factory()
+            else:
+                import sklearn  # noqa: F401 — availability probe only
         except ImportError:
             from pramanix.exceptions import ConfigurationError as _CE  # noqa: N814
 

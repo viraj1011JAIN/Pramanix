@@ -20,8 +20,6 @@ Targets:
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 # ── _increment_signing_failure_counter: counter.inc() path (lines 95-96) ───────
@@ -73,27 +71,19 @@ class TestIncrementSigningFailureCounter:
             _crypto_mod._signing_failure_counter = original
 
 
-# ── PramanixSigner — ImportError path (lines 175-176) ────────────────────────
+# ── PramanixSigner — ImportError path (lines 175-179) ───────────────────────
 
 
 class TestPramanixSignerImportError:
-    def test_import_error_raises_with_install_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 175-176: cryptography missing → ImportError with pip hint."""
-        import importlib
+    def test_cryptography_absent_raises_import_error(self) -> None:
+        """Lines 175-179: ImportError when cryptography package is absent."""
+        from pramanix.crypto import PramanixSigner
 
-        monkeypatch.setitem(sys.modules, "cryptography", None)
-        monkeypatch.setitem(sys.modules, "cryptography.hazmat", None)
-        monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.asymmetric.ed25519", None)
-        monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.serialization", None)
+        def _raise_import():
+            raise ImportError("cryptography not installed")
 
-        import pramanix.crypto as _crypto_mod
-
-        importlib.reload(_crypto_mod)
-        try:
-            with pytest.raises(ImportError, match="cryptography"):
-                _crypto_mod.PramanixSigner(force_ephemeral=True)
-        finally:
-            importlib.reload(_crypto_mod)
+        with pytest.raises(ImportError, match="cryptography"):
+            PramanixSigner(force_ephemeral=True, _crypto_factory=_raise_import)
 
 
 # ── PramanixVerifier — ImportError path (lines 368-369) ─────────────────────
@@ -228,6 +218,62 @@ class TestPramanixVerifierDecisionPaths:
 
         with pytest.raises(VerificationError, match="Ed25519 verify_decision"):
             verifier.verify_decision(d)
+
+
+# ── RS256Signer — ImportError via DI ─────────────────────────────────────────
+
+
+class TestRS256SignerImportError:
+    def test_cryptography_absent_raises_import_error(self) -> None:
+        from pramanix.crypto import RS256Signer
+
+        def _raise_import():
+            raise ImportError("cryptography not installed")
+
+        with pytest.raises(ImportError, match="cryptography"):
+            RS256Signer(force_ephemeral=True, _crypto_factory=_raise_import)
+
+
+# ── RS256Verifier — ImportError via DI ───────────────────────────────────────
+
+
+class TestRS256VerifierImportError:
+    def test_cryptography_absent_raises_import_error(self) -> None:
+        from pramanix.crypto import RS256Verifier
+
+        def _raise_import():
+            raise ImportError("cryptography not installed")
+
+        with pytest.raises(ImportError, match="cryptography"):
+            RS256Verifier(public_key_pem=b"dummy", _crypto_factory=_raise_import)
+
+
+# ── ES256Signer — ImportError via DI ─────────────────────────────────────────
+
+
+class TestES256SignerImportError:
+    def test_cryptography_absent_raises_import_error(self) -> None:
+        from pramanix.crypto import ES256Signer
+
+        def _raise_import():
+            raise ImportError("cryptography not installed")
+
+        with pytest.raises(ImportError, match="cryptography"):
+            ES256Signer(force_ephemeral=True, _crypto_factory=_raise_import)
+
+
+# ── ES256Verifier — ImportError via DI ───────────────────────────────────────
+
+
+class TestES256VerifierImportError:
+    def test_cryptography_absent_raises_import_error(self) -> None:
+        from pramanix.crypto import ES256Verifier
+
+        def _raise_import():
+            raise ImportError("cryptography not installed")
+
+        with pytest.raises(ImportError, match="cryptography"):
+            ES256Verifier(public_key_pem=b"dummy", _crypto_factory=_raise_import)
 
 
 # ── RS256Signer — ImportError + key-size < 2048 ──────────────────────────────

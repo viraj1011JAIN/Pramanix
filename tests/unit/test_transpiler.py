@@ -188,8 +188,10 @@ class TestTranspileBinOp:
         s.add(add_expr >= z3.RealVal(50))
         assert s.check() == z3.sat
 
+    @pytest.mark.filterwarnings("ignore::UserWarning")
     def test_div_new_operator(self) -> None:
         # balance / amount >= 0 is SAT (positive values)
+        # field÷field is non-linear — the transpiler emits a UserWarning by design.
         expr = transpile(
             _CmpOp("ge", _BinOp("div", _FieldRef(_balance), _FieldRef(_amount)), _Literal(0))
         )

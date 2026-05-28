@@ -71,12 +71,16 @@ class LlamaCppTranslator:
         n_ctx: int = _DEFAULT_N_CTX,
         n_gpu_layers: int = 0,
         max_tokens: int = _DEFAULT_MAX_TOKENS,
+        _llamacpp_factory: Any = None,
     ) -> None:
         try:
-            import importlib as _il
+            if _llamacpp_factory is not None:
+                _llamacpp_factory()
+            else:
+                import importlib as _il
 
-            _il.import_module("llama_cpp")
-            del _il
+                _il.import_module("llama_cpp")
+                del _il
         except ImportError as exc:
             raise ConfigurationError(
                 "llama-cpp-python is required for LlamaCppTranslator. "

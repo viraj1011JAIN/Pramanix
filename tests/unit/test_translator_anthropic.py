@@ -62,6 +62,18 @@ class TestAnthropicTranslatorConstruction:
             assert isinstance(t, AnthropicTranslator)
 
 
+# ── ImportError via DI ────────────────────────────────────────────────────────
+
+
+class TestAnthropicTranslatorImportError:
+    def test_anthropic_absent_raises_import_error(self) -> None:
+        def _raise_import():
+            raise ImportError("anthropic not installed")
+
+        with pytest.raises(ImportError, match="anthropic package"):
+            AnthropicTranslator("claude-opus-4-6", _anthropic_factory=_raise_import)
+
+
 # ── Live extraction ───────────────────────────────────────────────────────────
 
 

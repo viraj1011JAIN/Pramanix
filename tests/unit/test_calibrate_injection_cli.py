@@ -113,29 +113,17 @@ def test_calibrate_injection_min_examples_enforced(
     assert exit_code != 0
 
 
-def test_calibrate_injection_no_sklearn_exits_nonzero(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
-    """Exits non-zero with error message when sklearn is missing."""
-    dataset = tmp_path / "dataset.jsonl"
-    _write_dataset(dataset, 150, 150)
-    output = tmp_path / "scorer.pkl"
+# ── CalibratedScorer: sklearn absent raises ConfigurationError ────────────────
 
-    monkeypatch.setitem(sys.modules, "sklearn", None)
-    monkeypatch.setitem(sys.modules, "sklearn.pipeline", None)
-    monkeypatch.setitem(sys.modules, "sklearn.feature_extraction.text", None)
-    monkeypatch.setitem(sys.modules, "sklearn.linear_model", None)
-    if "pramanix.translator.injection_scorer" in sys.modules:
-        del sys.modules["pramanix.translator.injection_scorer"]
 
-    exit_code, _, _ = _run_cli(
-        [
-            "calibrate-injection",
-            "--dataset",
-            str(dataset),
-            "--output",
-            str(output),
-        ],
-        capsys,
-    )
-    assert exit_code != 0
+class TestCalibratedScorerSklearnAbsent:
+    def test_sklearn_absent_raises_configuration_error(self) -> None:
+        """CalibratedScorer raises ConfigurationError when sklearn absent (DI)."""
+        from pramanix.exceptions import ConfigurationError
+        from pramanix.translator.injection_scorer import CalibratedScorer
+
+        def _raise_import():
+            raise ImportError("scikit-learn not installed")
+
+        with pytest.raises(ConfigurationError, match="scikit-learn"):
+            CalibratedScorer(_sklearn_factory=_raise_import)

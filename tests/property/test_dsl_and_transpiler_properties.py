@@ -94,8 +94,12 @@ def test_addition_is_commutative(xv: Decimal, yv: Decimal, threshold: Decimal) -
 
 @given(xv=_decimal, yv=_decimal, threshold=_decimal)
 @settings(max_examples=500, deadline=timedelta(seconds=5))
+@pytest.mark.filterwarnings("ignore::UserWarning")
 def test_multiplication_is_commutative(xv: Decimal, yv: Decimal, threshold: Decimal) -> None:
-    """E(x) * E(y) >= t  iff  E(y) * E(x) >= t — Z3 Real multiplication is commutative."""
+    """E(x) * E(y) >= t  iff  E(y) * E(x) >= t — Z3 Real multiplication is commutative.
+
+    field*field is non-linear: the transpiler emits UserWarning by design.
+    """
     inv_ab = [(E(_x) * E(_y) >= threshold).named("mul_ab")]
     inv_ba = [(E(_y) * E(_x) >= threshold).named("mul_ba")]
     vals = {"x": xv, "y": yv}

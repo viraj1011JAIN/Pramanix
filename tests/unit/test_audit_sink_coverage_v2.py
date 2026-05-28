@@ -22,7 +22,6 @@ from __future__ import annotations
 import concurrent.futures
 import importlib
 import queue
-import sys
 import threading
 import time
 from typing import Any
@@ -68,16 +67,27 @@ class _BoomDecision:
         raise RuntimeError("to_dict deliberate failure — testing outer except")
 
 
-# ── Prometheus module-level cache hit (line 187) ──────────────────────────────
+# ── Prometheus module-level ImportError path ──────────────────────────────────
 
 
 class TestPrometheusModuleLevelPaths:
+    def test_prometheus_import_error_returns_none(self) -> None:
+        """ImportError branch: _init_audit_overflow_counter returns None when
+        prometheus_client is unavailable (via DI factory)."""
+        from pramanix.audit_sink import _init_audit_overflow_counter
+
+        def _raise_import() -> None:
+            raise ImportError("prometheus_client not installed")
+
+        result = _init_audit_overflow_counter(_prom_factory=_raise_import)
+        assert result is None
+
     def test_prometheus_counter_cache_hit_on_reload(self) -> None:
-        """Line 187: reloading audit_sink triggers the else branch (cache hit).
+        """Line 197: reloading audit_sink triggers the else branch (cache hit).
 
         On the first load, the metric is registered and stored in
         _AUDIT_REGISTERED_METRICS.  A subsequent reload finds the existing
-        entry and takes the else branch at line 187 instead of registering again.
+        entry and takes the else branch instead of registering again.
         Since audit_sink defines no enums, a reload is safe — no cross-test
         SolverStatus identity contamination.
         """
@@ -86,37 +96,53 @@ class TestPrometheusModuleLevelPaths:
         importlib.reload(_sink_mod)
         assert _sink_mod._OVERFLOW_COUNTER is not None
 
-    def test_prometheus_import_error_at_module_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Line 189: when prometheus_client is absent the counter stays None.
 
-        Uses sys.modules pop+restore (NOT importlib.reload) so the original
-        module's __dict__ is never mutated — avoids cross-test contamination.
-        """
-        _original = sys.modules.pop("pramanix.audit_sink", None)
-        monkeypatch.setitem(sys.modules, "prometheus_client", None)
-
-        try:
-            import pramanix.audit_sink as _fresh_sink  # triggers line 189
-
-            assert _fresh_sink._OVERFLOW_COUNTER is None
-        finally:
-            sys.modules.pop("pramanix.audit_sink", None)
-            if _original is not None:
-                sys.modules["pramanix.audit_sink"] = _original
-
-
-# ── KafkaAuditSink ImportError (lines 240-243) ───────────────────────────────
+# ── KafkaAuditSink: ImportError / ConfigurationError ─────────────────────────
 
 
 class TestKafkaAuditSinkImportError:
-    def test_requires_confluent_kafka(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 240-243: ConfigurationError when confluent-kafka is absent."""
+    def test_confluent_kafka_absent_raises_configuration_error(self) -> None:
+        """ImportError branch: raises ConfigurationError when confluent-kafka absent."""
+        from pramanix.audit_sink import KafkaAuditSink
         from pramanix.exceptions import ConfigurationError
 
-        monkeypatch.setitem(sys.modules, "confluent_kafka", None)
+        def _raise_import():
+            raise ImportError("confluent_kafka not installed")
 
         with pytest.raises(ConfigurationError, match="confluent-kafka"):
-            KafkaAuditSink("test-topic", {"bootstrap.servers": "localhost:9092"})
+            KafkaAuditSink("topic", {}, _kafka_factory=_raise_import)
+
+
+# ── S3AuditSink: ImportError / ConfigurationError ────────────────────────────
+
+
+class TestS3AuditSinkImportError:
+    def test_boto3_absent_raises_configuration_error(self) -> None:
+        """ImportError branch: raises ConfigurationError when boto3 is absent."""
+        from pramanix.audit_sink import S3AuditSink
+        from pramanix.exceptions import ConfigurationError
+
+        def _raise_import():
+            raise ImportError("boto3 not installed")
+
+        with pytest.raises(ConfigurationError, match="boto3"):
+            S3AuditSink("bucket", _boto3_factory=_raise_import)
+
+
+# ── DatadogAuditSink: ImportError / ConfigurationError ───────────────────────
+
+
+class TestDatadogAuditSinkImportError:
+    def test_datadog_api_client_absent_raises_configuration_error(self) -> None:
+        """ImportError branch: raises ConfigurationError when datadog-api-client absent."""
+        from pramanix.audit_sink import DatadogAuditSink
+        from pramanix.exceptions import ConfigurationError
+
+        def _raise_import():
+            raise ImportError("datadog_api_client not installed")
+
+        with pytest.raises(ConfigurationError, match="datadog-api-client"):
+            DatadogAuditSink(_datadog_factory=_raise_import)
 
 
 # ── KafkaAuditSink delivery callback err=None (294->exit) ────────────────────
@@ -134,20 +160,6 @@ class TestKafkaDeliveryCallbackBranch:
         sink.emit(_make_decision())
         # If we reach here without exception, the callback ran and 294->exit covered.
         assert producer.flush_called is False  # no flush called in emit
-
-
-# ── S3AuditSink ImportError (lines 354-357) ──────────────────────────────────
-
-
-class TestS3AuditSinkImportError:
-    def test_requires_boto3(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 354-357: ConfigurationError when boto3 is absent."""
-        from pramanix.exceptions import ConfigurationError
-
-        monkeypatch.setitem(sys.modules, "boto3", None)
-
-        with pytest.raises(ConfigurationError, match="boto3"):
-            S3AuditSink("my-bucket")
 
 
 # ── S3AuditSink._worker — stop_event paths (lines 387-390) ───────────────────
@@ -311,20 +323,6 @@ class TestSplunkEmitOuterException:
 
         # _BoomDecision.to_dict() raises → outer except covers lines 555-556.
         sink.emit(_BoomDecision())  # must not propagate the exception
-
-
-# ── DatadogAuditSink ImportError (lines 608-611) ─────────────────────────────
-
-
-class TestDatadogAuditSinkImportError:
-    def test_requires_datadog_api_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 608-611: ConfigurationError when datadog-api-client is absent."""
-        from pramanix.exceptions import ConfigurationError
-
-        monkeypatch.setitem(sys.modules, "datadog_api_client", None)
-
-        with pytest.raises(ConfigurationError, match="datadog-api-client"):
-            DatadogAuditSink()
 
 
 # ── DatadogAuditSink._send_loop — stop_event break (line 652) ────────────────

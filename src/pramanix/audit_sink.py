@@ -172,27 +172,45 @@ _OVERFLOW_COUNTER: Any = None
 _AUDIT_METRICS_LOCK = threading.Lock()
 _AUDIT_REGISTERED_METRICS: dict[str, Any] = globals().get("_AUDIT_REGISTERED_METRICS", {})
 
-try:
-    import prometheus_client as _prom_init
 
-    with _AUDIT_METRICS_LOCK:
-        _name = "pramanix_audit_sink_overflow_total"
-        if _name not in _AUDIT_REGISTERED_METRICS:
-            _OVERFLOW_COUNTER = _prom_init.Counter(
-                _name,
-                "Number of audit decisions dropped due to sink queue overflow",
-            )
-            _AUDIT_REGISTERED_METRICS[_name] = _OVERFLOW_COUNTER
+def _init_audit_overflow_counter(_prom_factory: Any = None) -> Any:
+    """Register the overflow Prometheus counter and return it (or None on failure).
+
+    Accepts an optional ``_prom_factory`` callable for dependency injection in
+    tests — when provided, the callable is invoked instead of importing
+    ``prometheus_client`` so that the ImportError branch can be exercised without
+    touching ``sys.modules``.
+    """
+    global _OVERFLOW_COUNTER
+    try:
+        if _prom_factory is not None:
+            _prom_init = _prom_factory()
         else:
-            _OVERFLOW_COUNTER = _AUDIT_REGISTERED_METRICS[_name]
-except ImportError:
-    pass  # prometheus_client not installed — metrics silently disabled
-except ValueError as _prom_val_err:
-    log.warning(
-        "pramanix.audit_sink: Prometheus metric registration error "
-        "(name collision with different labelset — this is a programming error): %s",
-        _prom_val_err,
-    )
+            import prometheus_client as _prom_init  # type: ignore[assignment]
+
+        with _AUDIT_METRICS_LOCK:
+            _name = "pramanix_audit_sink_overflow_total"
+            if _name not in _AUDIT_REGISTERED_METRICS:
+                _OVERFLOW_COUNTER = _prom_init.Counter(
+                    _name,
+                    "Number of audit decisions dropped due to sink queue overflow",
+                )
+                _AUDIT_REGISTERED_METRICS[_name] = _OVERFLOW_COUNTER
+            else:
+                _OVERFLOW_COUNTER = _AUDIT_REGISTERED_METRICS[_name]
+        return _OVERFLOW_COUNTER
+    except ImportError:
+        return None  # prometheus_client not installed — metrics silently disabled
+    except ValueError as _prom_val_err:
+        log.warning(
+            "pramanix.audit_sink: Prometheus metric registration error "
+            "(name collision with different labelset — this is a programming error): %s",
+            _prom_val_err,
+        )
+        return None
+
+
+_init_audit_overflow_counter()
 
 
 def _increment_overflow_metric() -> None:
@@ -234,10 +252,14 @@ class KafkaAuditSink:
         *,
         max_queue_size: int = 10_000,
         _producer: Any = None,
+        _kafka_factory: Any = None,
     ) -> None:
         if _producer is None:
             try:
-                from confluent_kafka import Producer
+                if _kafka_factory is not None:
+                    Producer = _kafka_factory()
+                else:
+                    from confluent_kafka import Producer  # type: ignore[assignment]
             except ImportError as exc:
                 from pramanix.exceptions import ConfigurationError
 
@@ -349,15 +371,20 @@ class S3AuditSink:
         timeout: float = 30.0,
         *,
         max_queue_size: int = 1_000,
+        _boto3_factory: Any = None,
         **boto3_kwargs: Any,
     ) -> None:
         try:
-            import boto3
+            if _boto3_factory is not None:
+                boto3 = _boto3_factory()
+            else:
+                import boto3  # type: ignore[assignment]
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
-                "boto3 is required for S3AuditSink. " "Install it with: pip install 'pramanix[s3]'"
+                "boto3 is required for S3AuditSink. "
+                "Install it with: pip install 'pramanix[s3]'"
             ) from exc
 
         self._bucket = bucket
@@ -603,10 +630,14 @@ class DatadogAuditSink:
         source: str = "pramanix",
         tags: str = "",
         max_queue_size: int = 500,
+        _datadog_factory: Any = None,
     ) -> None:
         try:
-            from datadog_api_client import ApiClient, Configuration
-            from datadog_api_client.v2.api.logs_api import LogsApi
+            if _datadog_factory is not None:
+                ApiClient, Configuration, LogsApi = _datadog_factory()
+            else:
+                from datadog_api_client import ApiClient, Configuration
+                from datadog_api_client.v2.api.logs_api import LogsApi
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 

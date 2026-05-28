@@ -1369,6 +1369,75 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _check_z3_solver(solver_factory: type | None = None) -> dict[str, object]:
+    """Run the Z3 functional sanity check.
+
+    Args:
+        solver_factory: Z3 Solver class to use.  Defaults to ``z3.Solver``.
+            Pass a subclass in tests to exercise the ERROR path without
+            monkeypatching the global ``z3.Solver``.
+
+    Returns:
+        A ``_check`` kwarg dict with ``name``, ``level``, ``detail``, ``hint``.
+    """
+    try:
+        import z3
+
+        _factory = solver_factory if solver_factory is not None else z3.Solver
+        s = _factory()
+        s.add(z3.Bool("x") == True)
+        res = str(s.check())
+        if res == "sat":
+            return {
+                "name": "z3-solver",
+                "level": "OK",
+                "detail": f"z3 {z3.get_version_string()} — solver functional",
+                "hint": "",
+            }
+        return {
+            "name": "z3-solver",
+            "level": "ERROR",
+            "detail": f"z3.Solver().check() returned {res!r} — unexpected",
+            "hint": "Reinstall z3-solver: pip install 'z3-solver>=4.12'.",
+        }
+    except ImportError:
+        return {
+            "name": "z3-solver",
+            "level": "ERROR",
+            "detail": "z3-solver not installed",
+            "hint": "pip install 'z3-solver>=4.12'",
+        }
+    except Exception as exc:
+        return {
+            "name": "z3-solver",
+            "level": "ERROR",
+            "detail": f"z3 functional check failed: {exc}",
+            "hint": "Reinstall z3-solver: pip install 'z3-solver>=4.12'.",
+        }
+
+
+def _check_pointer_width(calcsize_fn: type | None = None) -> dict[str, object]:
+    """Return the pointer-width check result dict.
+
+    Args:
+        calcsize_fn: Callable with the same signature as ``struct.calcsize``.
+            Defaults to ``struct.calcsize``.  Pass a lambda in tests to
+            simulate a 32-bit machine without monkeypatching ``struct``.
+    """
+    import struct as _struct
+
+    _fn = calcsize_fn if calcsize_fn is not None else _struct.calcsize
+    bits = _fn("P") * 8
+    if bits == 64:
+        return {"name": "platform-bits", "level": "OK", "detail": "64-bit process", "hint": ""}
+    return {
+        "name": "platform-bits",
+        "level": "WARN",
+        "detail": f"{bits}-bit process — 32-bit is unsupported",
+        "hint": "Run on a 64-bit platform.",
+    }
+
+
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """Validate the Pramanix deployment environment.
 
@@ -1385,7 +1454,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     import importlib.util
     import pathlib
     import platform
-    import struct
     import sys as _sys
     from typing import Literal
 
@@ -1462,16 +1530,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
 
     # ── 3. Pointer width ──────────────────────────────────────────────────────
-    bits = struct.calcsize("P") * 8
-    if bits == 64:
-        _check("platform-bits", "OK", "64-bit process")
-    else:
-        _check(
-            "platform-bits",
-            "WARN",
-            f"{bits}-bit process — 32-bit is unsupported",
-            hint="Run on a 64-bit platform.",
-        )
+    _check(**_check_pointer_width())
 
     # ── 4. Core pramanix import ───────────────────────────────────────────────
     try:
@@ -1488,32 +1547,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
 
     # ── 5. Z3 solver ─────────────────────────────────────────────────────────
-    try:
-        import z3
-
-        s = z3.Solver()
-        s.add(z3.Bool("x") == True)
-        res = str(s.check())
-        if res == "sat":
-            _check("z3-solver", "OK", f"z3 {z3.get_version_string()} — solver functional")
-        else:
-            _check(
-                "z3-solver",
-                "ERROR",
-                f"z3.Solver().check() returned {res!r} — unexpected",
-                hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.",
-            )
-    except ImportError:
-        _check(
-            "z3-solver", "ERROR", "z3-solver not installed", hint="pip install 'z3-solver>=4.12'"
-        )
-    except Exception as exc:
-        _check(
-            "z3-solver",
-            "ERROR",
-            f"z3 functional check failed: {exc}",
-            hint="Reinstall z3-solver: pip install 'z3-solver>=4.12'.",
-        )
+    z3_result = _check_z3_solver()
+    _check(**z3_result)
 
     # ── 6. Pydantic ───────────────────────────────────────────────────────────
     try:
@@ -2160,10 +2195,7 @@ def _cmd_lint_policy(args: argparse.Namespace) -> int:
             for f in findings:
                 sym = "E" if f["level"] == "ERROR" else "W"
                 print(f"[{sym}] {f['code']} {f['message']}")
-            print(
-                f"\n{len(errors)} error(s), {len(warnings)} warning(s) "
-                f"in {policy_path}"
-            )
+            print(f"\n{len(errors)} error(s), {len(warnings)} warning(s) " f"in {policy_path}")
 
     if errors:
         return 1
@@ -2280,7 +2312,11 @@ def _lint_policy_class(policy_cls: Any, report: Any) -> None:
     # ── W001 / W002 / W003: Meta checks ──────────────────────────────────────
     meta = getattr(policy_cls, "Meta", None)
     if meta is None:
-        report("W001", "WARN", "No Meta class declared — version pinning and model validation unavailable")
+        report(
+            "W001",
+            "WARN",
+            "No Meta class declared — version pinning and model validation unavailable",
+        )
     else:
         if not getattr(meta, "intent_model", None):
             report("W002", "WARN", "Meta.intent_model not set — intent schema validation disabled")

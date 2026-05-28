@@ -335,9 +335,13 @@ class AwsKmsKeyProvider:
         version_stage: str = "AWSCURRENT",
         version: str | None = None,
         _client: Any = None,
+        _boto3_factory: Any = None,
     ) -> None:
         try:
-            import boto3
+            if _boto3_factory is not None:
+                boto3 = _boto3_factory()
+            else:
+                import boto3
         except ImportError as exc:
             raise ImportError(
                 "AwsKmsKeyProvider requires 'boto3'. " "Install it: pip install 'pramanix[aws]'"
@@ -444,10 +448,14 @@ class AzureKeyVaultKeyProvider:
         secret_version: str | None = None,
         credential: Any = None,
         _client: Any = None,
+        _azure_factory: Any = None,
     ) -> None:
         try:
-            from azure.identity import DefaultAzureCredential
-            from azure.keyvault.secrets import SecretClient
+            if _azure_factory is not None:
+                DefaultAzureCredential, SecretClient = _azure_factory()
+            else:
+                from azure.identity import DefaultAzureCredential
+                from azure.keyvault.secrets import SecretClient
         except ImportError as exc:
             raise ImportError(
                 "AzureKeyVaultKeyProvider requires 'azure-keyvault-secrets' and "
@@ -561,9 +569,13 @@ class GcpKmsKeyProvider:
         *,
         version_id: str = "latest",
         _client: Any = None,
+        _gcp_factory: Any = None,
     ) -> None:
         try:
-            from google.cloud import secretmanager
+            if _gcp_factory is not None:
+                secretmanager = _gcp_factory()
+            else:
+                from google.cloud import secretmanager
         except ImportError as exc:
             raise ImportError(
                 "GcpKmsKeyProvider requires 'google-cloud-secret-manager'. "
@@ -680,9 +692,13 @@ class HashiCorpVaultKeyProvider:
         token: str | None = None,
         mount_point: str = "secret",
         _client: Any = None,
+        _hvac_factory: Any = None,
     ) -> None:
         try:
-            import hvac
+            if _hvac_factory is not None:
+                hvac = _hvac_factory()
+            else:
+                import hvac
         except ImportError as exc:
             raise ImportError(
                 "HashiCorpVaultKeyProvider requires 'hvac'. "
@@ -779,14 +795,17 @@ class HashiCorpVaultKeyProvider:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _derive_public_pem(private_pem: bytes) -> bytes:
+def _derive_public_pem(private_pem: bytes, *, _crypto_factory: Any = None) -> bytes:
     """Derive the public key PEM from a private key PEM."""
     try:
-        from cryptography.hazmat.primitives.serialization import (
-            Encoding,
-            PublicFormat,
-            load_pem_private_key,
-        )
+        if _crypto_factory is not None:
+            Encoding, PublicFormat, load_pem_private_key = _crypto_factory()
+        else:
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                PublicFormat,
+                load_pem_private_key,
+            )
     except ImportError as exc:
         raise ImportError(
             "The 'cryptography' package is required. " "Install it: pip install 'pramanix[crypto]'"

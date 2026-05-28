@@ -13,8 +13,8 @@ Coverage targets:
   _try_detoxify_scorer(): success path — returns callable, gauge set to 1
   _try_sentence_transformer(): success path — returns model, gauge set to 1
 
-No MagicMock, no patch objects — only patch.dict(sys.modules) to exercise the
-ImportError branch (the same pattern used in test_audit_sink_full_coverage.py).
+No MagicMock, no patch objects — failure paths are exercised naturally because
+detoxify and sentence_transformers are not installed in the test environment.
 """
 
 from __future__ import annotations

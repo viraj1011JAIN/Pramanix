@@ -56,43 +56,63 @@ _REGISTERED_METRICS: dict[str, Any] = {}
 # Split-brain detection counter — incremented whenever the DistributedCircuitBreaker
 # cannot sync state to/from Redis.  Alert on non-zero values in Grafana.
 # Lazy-initialized to avoid import-time prometheus_client dependency.
-_CB_SYNC_FAILURE_COUNTER: Any = None
-_CB_SYNC_FAILURE_LOCK = threading.Lock()
+
+
+class _SyncFailureMetric:
+    """Thread-safe, DI-friendly wrapper for the sync-failure Prometheus counter.
+
+    Encapsulates the double-checked-locking lazy-init pattern so tests can
+    inject a ``_prom_factory`` callable that raises :exc:`ImportError` without
+    reaching into ``sys.modules``.
+    """
+
+    def __init__(self) -> None:
+        self._counter: Any = None
+        self._lock = threading.Lock()
+
+    def increment(self, *, _prom_factory: Any = None) -> None:
+        """Lazily register the counter (if not yet done) and increment it."""
+        if self._counter is None:
+            with self._lock:
+                if self._counter is None:
+                    try:
+                        if _prom_factory is not None:
+                            _Counter = _prom_factory()
+                        else:
+                            from prometheus_client import Counter as _Counter  # type: ignore[assignment]
+
+                        self._counter = _prom_register(
+                            _Counter,
+                            "pramanix_circuit_breaker_state_sync_failure_total",
+                            "Total Redis state-sync failures in DistributedCircuitBreaker "
+                            "(non-zero indicates split-brain risk)",
+                            [],
+                        )
+                    except Exception as _prom_exc:
+                        log.warning(
+                            "pramanix.circuit_breaker: failed to register "
+                            "pramanix_circuit_breaker_state_sync_failure_total — "
+                            "split-brain metrics will be unavailable: %s",
+                            _prom_exc,
+                        )
+                        return
+        try:
+            if self._counter is not None:
+                self._counter.inc()
+        except Exception as _e:
+            log.warning(
+                "pramanix.circuit_breaker: metrics increment failed — "
+                "split-brain counter may be stale: %s",
+                _e,
+            )
+
+
+_SYNC_FAILURE_METRIC: _SyncFailureMetric = _SyncFailureMetric()
 
 
 def _inc_sync_failure_counter() -> None:
     """Increment pramanix_circuit_breaker_state_sync_failure_total."""
-    global _CB_SYNC_FAILURE_COUNTER
-    if _CB_SYNC_FAILURE_COUNTER is None:
-        with _CB_SYNC_FAILURE_LOCK:
-            if _CB_SYNC_FAILURE_COUNTER is None:
-                try:
-                    from prometheus_client import Counter as _Counter
-
-                    _CB_SYNC_FAILURE_COUNTER = _prom_register(
-                        _Counter,
-                        "pramanix_circuit_breaker_state_sync_failure_total",
-                        "Total Redis state-sync failures in DistributedCircuitBreaker "
-                        "(non-zero indicates split-brain risk)",
-                        [],
-                    )
-                except Exception as _prom_exc:
-                    log.warning(
-                        "pramanix.circuit_breaker: failed to register "
-                        "pramanix_circuit_breaker_state_sync_failure_total — "
-                        "split-brain metrics will be unavailable: %s",
-                        _prom_exc,
-                    )
-                    return
-    try:
-        if _CB_SYNC_FAILURE_COUNTER is not None:
-            _CB_SYNC_FAILURE_COUNTER.inc()
-    except Exception as _e:
-        log.warning(
-            "pramanix.circuit_breaker: metrics increment failed — "
-            "split-brain counter may be stale: %s",
-            _e,
-        )
+    _SYNC_FAILURE_METRIC.increment()
 
 
 def _prom_register(factory: Any, name: str, description: str, labelnames: list[str]) -> Any:
@@ -200,6 +220,8 @@ class AdaptiveCircuitBreaker:
         self,
         guard: Any,
         config: CircuitBreakerConfig | None = None,
+        *,
+        _prom_factory: Any = None,
     ) -> None:
         self._guard = guard
         self._config = config or CircuitBreakerConfig()
@@ -216,7 +238,7 @@ class AdaptiveCircuitBreaker:
         self._metrics_available = False
         self._state_gauge: Any = None
         self._pressure_counter: Any = None
-        self._register_metrics()
+        self._register_metrics(_prom_factory=_prom_factory)
 
     @functools.cached_property
     def _lock(self) -> asyncio.Lock:
@@ -426,9 +448,12 @@ class AdaptiveCircuitBreaker:
             )
         )
 
-    def _register_metrics(self) -> None:
+    def _register_metrics(self, _prom_factory: Any = None) -> None:
         try:
-            from prometheus_client import Counter, Gauge
+            if _prom_factory is not None:
+                Counter, Gauge = _prom_factory()
+            else:
+                from prometheus_client import Counter, Gauge
 
             self._state_gauge = _prom_register(
                 Gauge,
@@ -594,6 +619,8 @@ class DistributedCircuitBreaker:
         guard: Any,
         config: CircuitBreakerConfig | None = None,
         backend: Any = None,
+        *,
+        _prom_factory: Any = None,
     ) -> None:
         self._guard = guard
         self._config = config or CircuitBreakerConfig()
@@ -614,7 +641,7 @@ class DistributedCircuitBreaker:
         self._metrics_available = False
         self._state_gauge: Any = None
         self._pressure_counter: Any = None
-        self._register_metrics()
+        self._register_metrics(_prom_factory=_prom_factory)
 
     @functools.cached_property
     def _lock(self) -> asyncio.Lock:
@@ -771,10 +798,13 @@ class DistributedCircuitBreaker:
             )
         )
 
-    def _register_metrics(self) -> None:
+    def _register_metrics(self, _prom_factory: Any = None) -> None:
         """Register Prometheus metrics (same set as AdaptiveCircuitBreaker)."""
         try:
-            from prometheus_client import Counter, Gauge
+            if _prom_factory is not None:
+                Counter, Gauge = _prom_factory()
+            else:
+                from prometheus_client import Counter, Gauge
 
             self._state_gauge = _prom_register(
                 Gauge,
@@ -1137,6 +1167,7 @@ class TranslatorCircuitBreaker:
         *,
         failure_threshold: int = 5,
         recovery_seconds: float = 30.0,
+        _prom_factory: Any = None,
     ) -> None:
         self.model = model
         self._failure_threshold = failure_threshold
@@ -1153,17 +1184,20 @@ class TranslatorCircuitBreaker:
         self._trips_counter: Any = None
         self._probes_counter: Any = None
         self._calls_counter: Any = None
-        self._register_metrics()
+        self._register_metrics(_prom_factory=_prom_factory)
 
     @functools.cached_property
     def _lock(self) -> asyncio.Lock:
         """Lazily-created asyncio.Lock — always binds to the current event loop."""
         return asyncio.Lock()
 
-    def _register_metrics(self) -> None:
+    def _register_metrics(self, _prom_factory: Any = None) -> None:
         """Register per-model LLM circuit-breaker Prometheus metrics."""
         try:
-            from prometheus_client import Counter, Gauge
+            if _prom_factory is not None:
+                Counter, Gauge = _prom_factory()
+            else:
+                from prometheus_client import Counter, Gauge
 
             self._state_gauge = _prom_register(
                 Gauge,

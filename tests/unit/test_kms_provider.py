@@ -242,27 +242,46 @@ _HAS_HVAC = _has_module("hvac")
 
 
 class TestCloudKmsImportGuard:
-    """Provider constructors raise ImportError when the SDK is absent."""
+    """Provider constructors raise ImportError when the SDK is absent (DI factory pattern)."""
 
-    @pytest.mark.skipif(_HAS_BOTO3, reason="boto3 is installed")
     def test_aws_kms_raises_import_error(self) -> None:
+        def _raise_import():
+            raise ImportError("boto3 not installed")
+
         with pytest.raises(ImportError, match="boto3"):
-            AwsKmsKeyProvider("arn:aws:secretsmanager:us-east-1:123:secret:k")
+            AwsKmsKeyProvider(
+                "arn:aws:secretsmanager:us-east-1:123:secret:k",
+                _boto3_factory=_raise_import,
+            )
 
-    @pytest.mark.skipif(_HAS_AZURE, reason="azure-keyvault-secrets is installed")
     def test_azure_raises_import_error(self) -> None:
+        def _raise_import():
+            raise ImportError("azure not installed")
+
         with pytest.raises(ImportError, match="azure"):
-            AzureKeyVaultKeyProvider("https://vault.azure.net", "my-secret")
+            AzureKeyVaultKeyProvider(
+                "https://vault.azure.net",
+                "my-secret",
+                _azure_factory=_raise_import,
+            )
 
-    @pytest.mark.skipif(_HAS_GCP, reason="google-cloud-secret-manager is installed")
     def test_gcp_raises_import_error(self) -> None:
-        with pytest.raises(ImportError, match="google-cloud-secret-manager"):
-            GcpKmsKeyProvider("my-project", "my-secret")
+        def _raise_import():
+            raise ImportError("google-cloud-secret-manager not installed")
 
-    @pytest.mark.skipif(_HAS_HVAC, reason="hvac is installed")
+        with pytest.raises(ImportError, match="google-cloud-secret-manager"):
+            GcpKmsKeyProvider("my-project", "my-secret", _gcp_factory=_raise_import)
+
     def test_vault_raises_import_error(self) -> None:
+        def _raise_import():
+            raise ImportError("hvac not installed")
+
         with pytest.raises(ImportError, match="hvac"):
-            HashiCorpVaultKeyProvider("https://vault.example.com", "pramanix/key")
+            HashiCorpVaultKeyProvider(
+                "https://vault.example.com",
+                "pramanix/key",
+                _hvac_factory=_raise_import,
+            )
 
 
 # ── AwsKmsKeyProvider — behaviour with injected mock client ──────────────────

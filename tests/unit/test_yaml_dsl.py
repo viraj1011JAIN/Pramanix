@@ -353,11 +353,6 @@ class TestYAMLDSLErrors:
         assert cls is not None
 
     def test_and_or_expressions(self, yaml_loader) -> None:
-        src = (
-            "meta:\n  name: X\n"
-            "fields:\n  a:\n    z3_type: Real\n       b:\n    z3_type: Real\n"
-            "invariants:\n  - name: inv\n    expr: 'a >= 0 and b >= 0'\n"
-        )
         # Even if indented badly, test the happy path for and/or
         pytest.importorskip("yaml")
         from pramanix.natural_policy.yaml_loader import load_policy_yaml
@@ -373,3 +368,43 @@ class TestYAMLDSLErrors:
         assert d.allowed
         d2 = guard.verify(intent={"a": Decimal("-1"), "b": Decimal("2")}, state={})
         assert not d2.allowed
+
+
+# ── yaml_loader internal defensive guards ────────────────────────────────────
+
+
+class TestYamlLoaderDefensiveHelpers:
+    def test_raise_unexpected_operand_raises_policy_syntax_error(self) -> None:
+        """_raise_unexpected_operand raises PolicySyntaxError with op and inv name."""
+        from pramanix.exceptions import PolicySyntaxError
+        from pramanix.natural_policy.yaml_loader import _raise_unexpected_operand
+
+        with pytest.raises(PolicySyntaxError, match="test_inv.*not"):
+            _raise_unexpected_operand("not", "test_inv")
+
+    def test_raise_unhandled_ast_node_raises_policy_syntax_error(self) -> None:
+        """_raise_unhandled_ast_node raises PolicySyntaxError with node type info."""
+        import ast as _ast
+
+        from pramanix.exceptions import PolicySyntaxError
+        from pramanix.natural_policy.yaml_loader import _raise_unhandled_ast_node
+
+        node = _ast.Not()
+        with pytest.raises(PolicySyntaxError, match="Not"):
+            _raise_unhandled_ast_node(node, "test_inv")
+
+    def test_visit_unhandled_node_type_raises_via_helper(self) -> None:
+        """_visit raises PolicySyntaxError when a node in _ALLOWED_NODES has no handler.
+
+        _ast.Not is in _ALLOWED_NODES (needed for the allow-list check), but
+        _visit has no isinstance(node, _ast.Not) branch — it falls through to
+        _raise_unhandled_ast_node.
+        """
+        import ast as _ast
+
+        from pramanix.exceptions import PolicySyntaxError
+        from pramanix.natural_policy.yaml_loader import _visit
+
+        node = _ast.Not()
+        with pytest.raises(PolicySyntaxError, match="Not"):
+            _visit(node, {}, "test expr", "test_inv")

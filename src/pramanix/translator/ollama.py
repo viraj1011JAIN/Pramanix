@@ -69,9 +69,13 @@ class OllamaTranslator:
         base_url: str | None = None,
         timeout: float = 60.0,
         temperature: float = 0.0,
+        _httpx_factory: Any = None,
     ) -> None:
         try:
-            import httpx
+            if _httpx_factory is not None:
+                httpx = _httpx_factory()
+            else:
+                import httpx
         except ImportError as exc:
             raise ImportError(
                 "httpx is required for OllamaTranslator. "

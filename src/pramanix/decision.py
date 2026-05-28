@@ -49,6 +49,14 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
+import json as _json_stdlib
+
+
+def _stdlib_canonical_bytes(payload: dict[str, Any]) -> bytes:
+    """Canonical bytes via stdlib json — always available, used as orjson fallback."""
+    return _json_stdlib.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+
 try:
     import orjson as _orjson
 

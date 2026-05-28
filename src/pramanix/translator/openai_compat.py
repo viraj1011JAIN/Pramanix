@@ -51,9 +51,13 @@ class OpenAICompatTranslator:
         api_key: str | None = None,
         base_url: str | None = None,
         timeout: float = 30.0,
+        _openai_factory: Any = None,
     ) -> None:
         try:
-            import openai
+            if _openai_factory is not None:
+                openai = _openai_factory()
+            else:
+                import openai  # type: ignore[assignment]
         except ImportError as exc:
             raise ImportError(
                 "openai package is required for OpenAICompatTranslator. "
@@ -77,6 +81,8 @@ class OpenAICompatTranslator:
         text: str,
         intent_schema: type[BaseModel],
         context: TranslatorContext | None = None,
+        *,
+        _tenacity_factory: Any = None,
     ) -> dict[str, Any]:
         """Extract structured intent from *text* using the configured model.
 
@@ -94,12 +100,17 @@ class OpenAICompatTranslator:
             LLMTimeoutError:        All retry attempts exhausted.
         """
         try:
-            from tenacity import (
-                AsyncRetrying,
-                retry_if_exception_type,
-                stop_after_attempt,
-                wait_exponential,
-            )
+            if _tenacity_factory is not None:
+                AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential = (
+                    _tenacity_factory()
+                )
+            else:
+                from tenacity import (
+                    AsyncRetrying,
+                    retry_if_exception_type,
+                    stop_after_attempt,
+                    wait_exponential,
+                )
         except ImportError as exc:
             raise ImportError(
                 "tenacity package is required for retry support. "

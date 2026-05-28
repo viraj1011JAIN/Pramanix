@@ -89,9 +89,13 @@ class VertexAITranslator:
         timeout: float = 30.0,
         max_tokens: int = 1024,
         credentials: Any | None = None,
+        _vertexai_factory: Any = None,
     ) -> None:
         try:
-            import vertexai  # noqa: F401 — availability probe
+            if _vertexai_factory is not None:
+                _vertexai_factory()
+            else:
+                import vertexai  # noqa: F401 — availability probe
         except ImportError as exc:
             raise ConfigurationError(
                 "google-cloud-aiplatform is required for VertexAITranslator. "

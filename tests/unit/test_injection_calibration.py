@@ -6,13 +6,11 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Protocol
 
 import pytest
 
-from pramanix.exceptions import ConfigurationError
 from pramanix.translator.injection_scorer import (
     BuiltinScorer,
     CalibratedScorer,
@@ -60,24 +58,6 @@ except ImportError:
     HAS_SKLEARN = False
 
 needs_sklearn = pytest.mark.skipif(not HAS_SKLEARN, reason="scikit-learn not installed")
-
-
-@needs_sklearn
-def test_calibrated_scorer_raises_without_sklearn(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CalibratedScorer.fit raises ConfigurationError when sklearn is missing."""
-    monkeypatch.setitem(sys.modules, "sklearn", None)
-    monkeypatch.setitem(sys.modules, "sklearn.pipeline", None)
-    monkeypatch.setitem(sys.modules, "sklearn.feature_extraction.text", None)
-    monkeypatch.setitem(sys.modules, "sklearn.linear_model", None)
-    if "pramanix.translator.injection_scorer" in sys.modules:
-        del sys.modules["pramanix.translator.injection_scorer"]
-    with pytest.raises(ConfigurationError, match="pip install 'pramanix\\[sklearn\\]'"):
-        from pramanix.translator.injection_scorer import (
-            CalibratedScorer as _CalibratedScorer,
-        )
-
-        cs = _CalibratedScorer()
-        cs.fit(["text"] * 201, [0] * 201)
 
 
 @needs_sklearn
@@ -137,3 +117,18 @@ def test_calibrated_scorer_satisfies_protocol() -> None:
     inj = [f"ignore {i} hacked" for i in range(150)]
     cs.fit(safe + inj, [0] * 150 + [1] * 150)
     assert isinstance(cs, InjectionScorer)
+
+
+# ── CalibratedScorer: sklearn absent raises ConfigurationError ────────────────
+
+
+class TestCalibratedScorerSklearnAbsent:
+    def test_sklearn_absent_raises_configuration_error(self) -> None:
+        """CalibratedScorer raises ConfigurationError when sklearn absent (DI)."""
+        from pramanix.exceptions import ConfigurationError
+
+        def _raise_import():
+            raise ImportError("scikit-learn not installed")
+
+        with pytest.raises(ConfigurationError, match="scikit-learn"):
+            CalibratedScorer(_sklearn_factory=_raise_import)

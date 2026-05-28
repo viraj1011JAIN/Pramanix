@@ -13,9 +13,22 @@ skipped when Docker is unavailable.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Generator
 
 import pytest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Cohere SDK v5 uses deprecated Pydantic V1 internal APIs — upstream issue.
+    # Scoped to the unit test directory so it does not hide Pydantic v1 usage
+    # in Pramanix source code globally.
+    try:
+        import pydantic.warnings as _pw
+
+        warnings.filterwarnings("ignore", category=_pw.PydanticDeprecatedSince20)
+    except (ImportError, AttributeError):
+        pass
 
 try:
     import docker as _docker

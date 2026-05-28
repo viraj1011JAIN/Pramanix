@@ -30,9 +30,44 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
 from collections.abc import Generator
 
 import pytest
+
+# ── Integration-suite warning filters ────────────────────────────────────────
+# These warnings originate in upstream SDK internals that we do not control.
+# They are scoped to the integration tests directory (not globally) so that
+# any Pydantic v1 API usage in our own source code remains visible.
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # Cohere SDK v5 uses deprecated Pydantic V1 internal APIs — upstream issue.
+    # Scoped here so it does not hide Pydantic v1 usage in Pramanix source.
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message=r".*PydanticDeprecatedSince20.*",
+    )
+    try:
+        import pydantic.warnings as _pw
+
+        warnings.filterwarnings("ignore", category=_pw.PydanticDeprecatedSince20)
+    except (ImportError, AttributeError):
+        pass
+    # google-generativeai emits FutureWarning about its own deprecation.
+    # GeminiTranslator.__init__ suppresses it locally during import, but the
+    # SDK may also emit it during individual generate_content() calls.
+    warnings.filterwarnings(
+        "ignore",
+        message=r"(?s).*google\.generativeai.*",
+        category=FutureWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"(?s).*google\.generativeai.*",
+        category=DeprecationWarning,
+    )
 
 # ── Docker availability guard ─────────────────────────────────────────────────
 _DOCKER_AVAILABLE: bool = True

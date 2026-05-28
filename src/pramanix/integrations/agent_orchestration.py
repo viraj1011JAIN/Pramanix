@@ -76,12 +76,21 @@ References
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from pramanix.decision import Decision
+    from pramanix.guard import Guard
 
-__all__ = ["AgentOrchestrationAdapter"]
+__all__ = [
+    "AgentOrchestrationAdapter",
+    "LangGraphGuardAdapter",
+    "AutoGenGuardAdapter",
+]
+
+_log = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -163,3 +172,190 @@ class AgentOrchestrationAdapter(Protocol):
             ``False`` if the guard would allow it.
         """
         ...
+
+
+# ── Concrete adapter implementations ─────────────────────────────────────────
+
+
+class LangGraphGuardAdapter:
+    """Concrete ``AgentOrchestrationAdapter`` for LangGraph state machines.
+
+    Wraps a :class:`~pramanix.guard.Guard` and implements the three lifecycle
+    hooks so Pramanix can be inserted as a conditional edge in any LangGraph
+    StateGraph without subclassing or mocking.
+
+    ``should_block()`` calls ``Guard.verify()`` synchronously — safe to call
+    from any LangGraph router function.  The ``on_node_exit()`` hook writes the
+    full policy verdict sidecar (including latency and violated invariants) into
+    the state dict under ``sidecar_key`` so downstream nodes and the LLM have
+    full context about why an action was blocked.
+
+    Args:
+        guard:       A pre-constructed :class:`~pramanix.guard.Guard`.
+        intent_key:  State key whose value is passed as ``intent`` to
+                     ``Guard.verify()``.  When ``None`` the entire state dict
+                     is used as intent.
+        state_key:   State key whose value is passed as ``state`` to
+                     ``Guard.verify()``.  When ``None`` ``{}`` is used.
+        sidecar_key: Key written into the state dict by ``on_node_exit()``
+                     with the full policy verdict.
+
+    Example::
+
+        from pramanix.integrations.agent_orchestration import LangGraphGuardAdapter
+
+        adapter = LangGraphGuardAdapter(guard=guard, intent_key="intent")
+
+        def router(state):
+            return "blocked" if adapter.should_block(state) else "proceed"
+    """
+
+    def __init__(
+        self,
+        *,
+        guard: Guard,
+        intent_key: str | None = None,
+        state_key: str | None = None,
+        sidecar_key: str = "_pramanix_verdict",
+    ) -> None:
+        self._guard = guard
+        self._intent_key = intent_key
+        self._state_key = state_key
+        self._sidecar_key = sidecar_key
+        self._enter_times: dict[str, float] = {}
+
+    def on_node_enter(self, node_id: str, state: dict[str, Any]) -> None:
+        """Record the node entry timestamp for latency tracking."""
+        self._enter_times[node_id] = time.perf_counter()
+        _log.debug("pramanix.langgraph.enter node=%s", node_id)
+
+    def on_node_exit(
+        self,
+        node_id: str,
+        state: dict[str, Any],
+        decision: Decision,
+    ) -> None:
+        """Write the policy verdict sidecar into *state* under ``sidecar_key``."""
+        enter_t = self._enter_times.pop(node_id, time.perf_counter())
+        latency_ms = (time.perf_counter() - enter_t) * 1000.0
+
+        state[self._sidecar_key] = {
+            "node": node_id,
+            "allowed": decision.allowed,
+            "status": decision.status.value,
+            "violated_invariants": list(decision.violated_invariants),
+            "explanation": decision.explanation,
+            "latency_ms": round(latency_ms, 3),
+        }
+        _log.debug(
+            "pramanix.langgraph.exit node=%s allowed=%s",
+            node_id,
+            decision.allowed,
+        )
+
+    def should_block(self, state: dict[str, Any]) -> bool:
+        """Return ``True`` if the guard would block the intent in *state*.
+
+        Extracts ``intent`` and ``state`` payloads from the state dict using
+        the configured ``intent_key`` / ``state_key``, then calls
+        ``Guard.verify()`` synchronously.  Never raises — any error is treated
+        as a block (fail-closed).
+        """
+        try:
+            intent: dict[str, Any] = (
+                dict(state.get(self._intent_key, state))  # type: ignore[arg-type]
+                if self._intent_key is not None
+                else dict(state)
+            )
+            payload: dict[str, Any] = (
+                dict(state.get(self._state_key, {}))  # type: ignore[arg-type]
+                if self._state_key is not None
+                else {}
+            )
+            decision = self._guard.verify(intent=intent, state=payload)
+            return not decision.allowed
+        except Exception:
+            _log.exception("pramanix.langgraph.should_block error — failing closed")
+            return True
+
+
+class AutoGenGuardAdapter:
+    """Concrete ``AgentOrchestrationAdapter`` for AutoGen conversation graphs.
+
+    Implements the three lifecycle hooks so Pramanix can be wired into any
+    AutoGen-style multi-agent conversation as a guard gate.  The adapter is
+    completely framework-agnostic — it does not import ``pyautogen`` and works
+    with any class whose tool functions accept keyword arguments.
+
+    ``should_block()`` calls ``Guard.verify()`` synchronously.  The
+    ``on_node_exit()`` hook records the rejection reason under ``rejection_key``
+    in the state dict so the orchestrating agent has full context.
+
+    Args:
+        guard:         A pre-constructed :class:`~pramanix.guard.Guard`.
+        intent_key:    State key whose value is the intent dict.  When ``None``
+                       the full state dict is treated as intent.
+        rejection_key: Key written into state by ``on_node_exit()`` when the
+                       action is blocked.  Contains the explanation string.
+
+    Example::
+
+        from pramanix.integrations.agent_orchestration import AutoGenGuardAdapter
+
+        adapter = AutoGenGuardAdapter(guard=guard, intent_key="tool_args")
+
+        def should_execute(state):
+            return not adapter.should_block(state)
+    """
+
+    def __init__(
+        self,
+        *,
+        guard: Guard,
+        intent_key: str | None = None,
+        rejection_key: str = "_pramanix_rejection",
+    ) -> None:
+        self._guard = guard
+        self._intent_key = intent_key
+        self._rejection_key = rejection_key
+
+    def on_node_enter(self, node_id: str, state: dict[str, Any]) -> None:
+        """No-op for AutoGen — tool calls do not have a separate entry phase."""
+        _log.debug("pramanix.autogen.enter node=%s", node_id)
+
+    def on_node_exit(
+        self,
+        node_id: str,
+        state: dict[str, Any],
+        decision: Decision,
+    ) -> None:
+        """Write the rejection reason into *state* when the action was blocked."""
+        if not decision.allowed:
+            state[self._rejection_key] = {
+                "node": node_id,
+                "explanation": decision.explanation,
+                "violated_invariants": list(decision.violated_invariants),
+            }
+        _log.debug(
+            "pramanix.autogen.exit node=%s allowed=%s",
+            node_id,
+            decision.allowed,
+        )
+
+    def should_block(self, state: dict[str, Any]) -> bool:
+        """Return ``True`` if the guard would block the intent in *state*.
+
+        Extracts the intent from ``state[intent_key]`` when configured, or
+        uses the full state dict as intent.  Never raises — any error is a block.
+        """
+        try:
+            intent: dict[str, Any] = (
+                dict(state.get(self._intent_key, state))  # type: ignore[arg-type]
+                if self._intent_key is not None
+                else dict(state)
+            )
+            decision = self._guard.verify(intent=intent, state={})
+            return not decision.allowed
+        except Exception:
+            _log.exception("pramanix.autogen.should_block error — failing closed")
+            return True

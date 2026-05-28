@@ -18,7 +18,6 @@ Covers:
 
 from __future__ import annotations
 
-import sys
 from decimal import Decimal
 
 import pytest
@@ -124,51 +123,6 @@ class TestDecisionIsCacheHit:
         )
         assert d.is_cache_hit() is False
 
-
-# ── decision._canonical_bytes — stdlib json fallback (lines 62-67) ────────────
-
-
-class TestCanonicalBytesJsonFallback:
-    def test_json_fallback_produces_sorted_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 62-67: when orjson is absent, stdlib json is used with sorted keys.
-
-        Uses sys.modules pop+restore instead of importlib.reload to avoid
-        mutating the original module's __dict__ in-place, which would corrupt
-        SolverStatus identity for all subsequent tests.
-        """
-        # Save and temporarily evict the original module so a fresh import
-        # re-executes module-level code with orjson blocked.
-        import pramanix as _pramanix_pkg
-
-        _original = sys.modules.pop("pramanix.decision", None)
-        # Also save the package attribute — Python's import machinery sets
-        # pramanix.decision = <new module> on every fresh import of the
-        # sub-module.  We must restore it so that later tests using
-        # `import pramanix.decision as X` (which uses IMPORT_FROM semantics
-        # and reads the package attribute, not sys.modules) see the right
-        # module object.
-        _original_attr = getattr(_pramanix_pkg, "decision", None)
-        monkeypatch.setitem(sys.modules, "orjson", None)
-
-        try:
-            import pramanix.decision as _fresh_dec  # triggers lines 62-67
-
-            result = _fresh_dec._canonical_bytes({"b": 2, "a": 1})
-            assert isinstance(result, bytes)
-            decoded = result.decode()
-            # stdlib json with sort_keys=True puts "a" before "b"
-            assert decoded.index('"a"') < decoded.index('"b"')
-        finally:
-            # Discard the orjson-less module and restore the original,
-            # leaving all pre-existing SolverStatus/Decision references intact.
-            sys.modules.pop("pramanix.decision", None)
-            if _original is not None:
-                sys.modules["pramanix.decision"] = _original
-            # Restore the package attribute to keep sys.modules and the
-            # package attribute in sync (prevents IMPORT_FROM from returning
-            # a stale reference in subsequent tests).
-            if _original_attr is not None:
-                _pramanix_pkg.decision = _original_attr
 
 
 # ── lifecycle/diff.ShadowEvaluator.arecord (line 411) ─────────────────────────
@@ -349,25 +303,45 @@ class TestRS256VerifierDecisionException:
             verifier.verify_decision(decision)
 
 
-# ── guard_config._span — OTel fallback when opentelemetry absent (181-187) ────
+# ── decision._stdlib_canonical_bytes — stdlib json fallback (lines 55-57) ────
 
 
-class TestGuardConfigOtelFallback:
-    def test_otel_fallback_span_is_context_manager(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 181-187: when opentelemetry is absent, _span returns nullcontext."""
-        import importlib
+class TestStdlibCanonicalBytes:
+    def test_stdlib_canonical_bytes_sorts_keys(self) -> None:
+        """_stdlib_canonical_bytes always produces sorted-key JSON bytes."""
+        from pramanix.decision import _stdlib_canonical_bytes
 
-        # Block opentelemetry so the except ImportError branch in guard_config is taken.
-        monkeypatch.setitem(sys.modules, "opentelemetry", None)
-        monkeypatch.setitem(sys.modules, "opentelemetry.trace", None)
+        result = _stdlib_canonical_bytes({"z": 3, "a": 1, "m": 2})
+        assert result == b'{"a":1,"m":2,"z":3}'
 
-        import pramanix.guard_config as _gc_mod
+    def test_stdlib_canonical_bytes_handles_nested_dict(self) -> None:
+        """_stdlib_canonical_bytes produces deterministic bytes for nested dicts."""
+        from pramanix.decision import _stdlib_canonical_bytes
 
-        importlib.reload(_gc_mod)
-        try:
-            span = _gc_mod._span("test-operation")
-            # Should be a no-op context manager (nullcontext)
-            with span:
+        result = _stdlib_canonical_bytes({"b": {"y": 9, "x": 8}, "a": 1})
+        import json
+
+        decoded = json.loads(result)
+        assert decoded == {"a": 1, "b": {"x": 8, "y": 9}}
+
+
+# ── guard_config._noop_span — OTel no-op fallback ────────────────────────────
+
+
+class TestNoopSpan:
+    def test_noop_span_returns_null_context(self) -> None:
+        """_noop_span returns contextlib.nullcontext — the OTel-absent fallback."""
+        from pramanix.guard_config import _noop_span
+
+        ctx = _noop_span("test-operation")
+        # Must be a valid context manager that does nothing
+        with ctx:
+            pass
+
+    def test_noop_span_accepts_any_name(self) -> None:
+        """_noop_span works with arbitrary span names."""
+        from pramanix.guard_config import _noop_span
+
+        for name in ("a", "pramanix.verify", "very.long.span.name.here"):
+            with _noop_span(name):
                 pass
-        finally:
-            importlib.reload(_gc_mod)

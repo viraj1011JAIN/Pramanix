@@ -35,8 +35,10 @@ from __future__ import annotations
 
 __all__ = [
     "INTEGRATION_STATUS",
-    # Agent orchestration (framework-agnostic Protocol)
+    # Agent orchestration (framework-agnostic Protocol + concrete adapters)
     "AgentOrchestrationAdapter",
+    "LangGraphGuardAdapter",
+    "AutoGenGuardAdapter",
     # FastAPI
     "PramanixMiddleware",
     "pramanix_route",
@@ -67,6 +69,8 @@ __all__ = [
 INTEGRATION_STATUS: dict[str, str] = {
     # ── Production-ready integrations ─────────────────────────────────────────
     "AgentOrchestrationAdapter": "stable",
+    "LangGraphGuardAdapter": "stable",
+    "AutoGenGuardAdapter": "stable",
     "GuardNodeAdapterProtocol": "stable",
     "PramanixMiddleware": "stable",
     "pramanix_route": "stable",
@@ -90,8 +94,10 @@ INTEGRATION_STATUS: dict[str, str] = {
 # Using importlib.import_module avoids the repeated `_m` local-variable
 # redefinitions that mypy flags as no-redef errors.
 _NAME_TO_MODULE: dict[str, str] = {
-    # Agent orchestration (framework-agnostic Protocol)
+    # Agent orchestration (framework-agnostic Protocol + concrete adapters)
     "AgentOrchestrationAdapter": "pramanix.integrations.agent_orchestration",
+    "LangGraphGuardAdapter": "pramanix.integrations.agent_orchestration",
+    "AutoGenGuardAdapter": "pramanix.integrations.agent_orchestration",
     # FastAPI / ASGI
     "PramanixMiddleware": "pramanix.integrations.fastapi",
     "pramanix_route": "pramanix.integrations.fastapi",

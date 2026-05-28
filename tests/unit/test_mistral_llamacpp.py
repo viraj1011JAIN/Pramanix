@@ -34,11 +34,11 @@ async def test_mistral_extract_calls_single_call() -> None:
     class _Schema(_BaseModel):
         amount: int
 
-    t = MistralTranslator.__new__(MistralTranslator)
-    t.model = "mistral-small"
-    t._api_key = "test-key"
-    t._timeout = 30.0
-    t._client = _MistralClientStub('{"amount": 100}')
+    t = MistralTranslator(
+        "mistral-small",
+        api_key="test-key",
+        _client_override=_MistralClientStub('{"amount": 100}'),
+    )
 
     result = await t.extract("Transfer 100 USD to Alice", _Schema)
     assert isinstance(result, dict)

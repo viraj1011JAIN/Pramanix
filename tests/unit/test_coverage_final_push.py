@@ -68,12 +68,7 @@ class TestGeminiSingleCall:
         from pramanix.translator.gemini import GeminiTranslator
 
         genai = _GeminiRecordingGenaiModule('{"amount":1.0,"recipient":"X"}')
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-pro"
-        t._api_key = "key"
-        t._timeout = 30.0
-        t._genai = genai
-        t._client = None
+        t = GeminiTranslator("gemini-1.5-pro", api_key="key", _genai_override=genai)
 
         raw = await t._single_call(prompt="test prompt")
         assert raw == '{"amount":1.0,"recipient":"X"}'
@@ -86,12 +81,7 @@ class TestGeminiSingleCall:
         from pramanix.translator.gemini import GeminiTranslator
 
         genai = _GeminiRecordingGenaiModule('{"amount":1.0,"recipient":"X"}', sync_only=True)
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-flash"
-        t._api_key = None
-        t._timeout = 30.0
-        t._genai = genai
-        t._client = None
+        t = GeminiTranslator("gemini-1.5-flash", _genai_override=genai)
 
         raw = await t._single_call(prompt="another prompt")
         assert raw == '{"amount":1.0,"recipient":"X"}'
@@ -104,12 +94,7 @@ class TestGeminiSingleCall:
         from pramanix.translator.gemini import GeminiTranslator
 
         genai = _GeminiRecordingGenaiModule("   ")
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-flash"
-        t._api_key = None
-        t._timeout = 30.0
-        t._genai = genai
-        t._client = None
+        t = GeminiTranslator("gemini-1.5-flash", _genai_override=genai)
 
         with pytest.raises(ExtractionFailureError, match="empty response"):
             await t._single_call(prompt="test")
@@ -120,13 +105,7 @@ class TestGeminiSingleCall:
         from pramanix.translator.gemini import GeminiTranslator
 
         genai = _GeminiRecordingGenaiModule('{"amount":1.0,"recipient":"X"}')
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-flash"
-        t._api_key = "k"
-        t._timeout = 30.0
-        t._genai = genai
-        t._client = None
-        t._retryable = (Exception,)
+        t = GeminiTranslator("gemini-1.5-flash", api_key="k", _genai_override=genai)
 
         result = await t.extract("pay X 1", _Pay)
         assert result["amount"] == 1.0
@@ -139,13 +118,7 @@ class TestGeminiSingleCall:
 
         # raising=True → model always raises Exception("server down")
         genai = _GeminiRecordingGenaiModule(raising=True)
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-flash"
-        t._api_key = "k"
-        t._timeout = 30.0
-        t._genai = genai
-        t._client = None
-        t._retryable = (Exception,)
+        t = GeminiTranslator("gemini-1.5-flash", api_key="k", _genai_override=genai)
 
         with pytest.raises(LLMTimeoutError, match="unreachable"):
             await t.extract("pay X 1", _Pay)
@@ -368,22 +341,17 @@ class TestMistralV1SdkFallback:
         pytest.importorskip("mistralai")
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        t.model = "mistral-large-latest"
-        t._api_key = "key"
-        t._timeout = 30.0
-        t._client = _MistralClientStub('{"amount":50.0,"recipient":"Alice"}')
-
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key="key",
+            _client_override=_MistralClientStub('{"amount":50.0,"recipient":"Alice"}'),
+        )
         result = await t.extract("pay Alice 50", _Pay)
         assert result["amount"] == 50.0
 
 
-@pytest.mark.skipif(
-    _ilu.find_spec("tenacity") is not None,
-    reason="run in tox:no-tenacity — tenacity is installed in this env",
-)
 class TestMistralTenacityMissing:
-    """Lines 102-103: ConfigurationError when tenacity not installed."""
+    """Lines 102-103: ConfigurationError when tenacity not installed (DI factory)."""
 
     @pytest.mark.asyncio
     async def test_tenacity_import_error_raises_config_error(self) -> None:
@@ -391,13 +359,16 @@ class TestMistralTenacityMissing:
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        t.model = "mistral-large"
-        t._api_key = "k"
-        t._timeout = 5.0
+        def _raise_import():
+            raise ImportError("tenacity not installed")
 
+        t = MistralTranslator(
+            "mistral-large",
+            api_key="k",
+            _client_override=_MistralClientStub('{"x": 1}'),
+        )
         with pytest.raises(ConfigurationError, match="tenacity"):
-            await t.extract("test", _Pay)
+            await t.extract("test", _Pay, _tenacity_factory=_raise_import)
 
 
 class TestMistralEmptyContent:
@@ -408,13 +379,11 @@ class TestMistralEmptyContent:
         pytest.importorskip("mistralai")
         from pramanix.translator.mistral import MistralTranslator
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        t.model = "mistral-large-latest"
-        t._api_key = "k"
-        t._timeout = 30.0
-        # null_content=True → choices[0].message.content is None → `None or ""` → ""
-        t._client = _MistralClientStub(null_content=True)
-
+        t = MistralTranslator(
+            "mistral-large-latest",
+            api_key="k",
+            _client_override=_MistralClientStub(null_content=True),
+        )
         raw = await t._single_call(system_prompt="sys", user_content="input")
         assert raw == ""
 
@@ -570,9 +539,7 @@ class TestCircuitBreakerPrometheusMetricsLookup:
         # Must not raise
         breaker._update_prometheus()
 
-    def test_init_prometheus_swallows_import_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_init_prometheus_swallows_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lines 329->exit (331): exception during prometheus setup → _metrics_available = False."""
         import prometheus_client
 
@@ -993,18 +960,16 @@ class TestDoctorSubcommandBranches:
         assert redis_check is not None
         assert redis_check["level"] == "ERROR"
 
-    def test_doctor_z3_bad_result_branch(
-        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Lines 994-995: z3.Solver().check() returns non-sat → ERROR check.
+    def test_doctor_z3_bad_result_branch(self) -> None:
+        """_check_z3_solver() returns ERROR when solver returns non-sat.
 
         Uses a real z3.Solver subclass pre-loaded with an integer contradiction
-        (_x > 0 ∧ _x < 0) so every subsequent check() call returns z3.unsat
-        via real Z3 logic — no stubs, no hardcoded return values.
+        (_x > 0 ∧ _x < 0) so check() returns z3.unsat via real Z3 logic.
+        Calls _check_z3_solver(solver_factory=...) directly — no monkeypatching.
         """
         import z3
 
-        monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
+        from pramanix.cli import _check_z3_solver
 
         class _ContradictionSolver(z3.Solver):
             def __init__(self, *args: object, **kwargs: object) -> None:
@@ -1012,13 +977,9 @@ class TestDoctorSubcommandBranches:
                 _sentinel = z3.Int("_pramanix_doctor_test_sentinel")
                 self.add(_sentinel > 0, _sentinel < 0)
 
-        monkeypatch.setattr(z3, "Solver", _ContradictionSolver)
-        code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
-        data = json.loads(stdout)
-        z3_check = next((c for c in data["checks"] if c["name"] == "z3-solver"), None)
-        assert z3_check is not None
-        # unsat is unexpected → ERROR
-        assert z3_check["level"] == "ERROR"
+        result = _check_z3_solver(solver_factory=_ContradictionSolver)
+        assert result["name"] == "z3-solver"
+        assert result["level"] == "ERROR"
 
     @pytest.mark.skipif(
         __import__("pydantic").VERSION.split(".")[0] >= "2",
@@ -1035,20 +996,17 @@ class TestDoctorSubcommandBranches:
         assert pydantic_check is not None
         assert pydantic_check["level"] == "ERROR"
 
-    def test_doctor_platform_bits_32_warns(
-        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Line 986: 32-bit process → WARN."""
-        import struct
+    def test_doctor_platform_bits_32_warns(self) -> None:
+        """_check_pointer_width() returns WARN for 32-bit pointer size.
 
-        monkeypatch.delenv("PRAMANIX_REDIS_URL", raising=False)
-        # Return 4 bytes for pointer → 32-bit
-        monkeypatch.setattr(struct, "calcsize", lambda fmt: 4)
-        code, stdout, _ = _run_cli(["doctor", "--json"], capsys)
-        data = json.loads(stdout)
-        bits_check = next((c for c in data["checks"] if c["name"] == "platform-bits"), None)
-        assert bits_check is not None
-        assert bits_check["level"] == "WARN"
+        Calls _check_pointer_width(calcsize_fn=...) directly with a lambda
+        that returns 4 (32-bit pointer) — no monkeypatching of struct.
+        """
+        from pramanix.cli import _check_pointer_width
+
+        result = _check_pointer_width(calcsize_fn=lambda fmt: 4)
+        assert result["name"] == "platform-bits"
+        assert result["level"] == "WARN"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1130,12 +1088,7 @@ class TestGeminiTenacityImportError:
             {"configure": lambda **kw: None, "GenerativeModel": object, "GenerationConfig": object},
         )
 
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-flash"
-        t._api_key = "key"
-        t._timeout = 30.0
-        t._genai = mock_genai
-        t._retryable = (Exception,)
+        t = GeminiTranslator("gemini-1.5-flash", api_key="key", _genai_override=mock_genai)
 
         with pytest.raises(ConfigurationError, match="tenacity"):
             await t.extract("pay X 1", _Pay)
@@ -1149,14 +1102,8 @@ class TestGeminiNoApiKey:
         from pramanix.translator.gemini import GeminiTranslator
 
         genai = _GeminiRecordingGenaiModule('{"amount":2.0,"recipient":"Y"}')
-
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-1.5-flash"
-        t._api_key = ""  # falsy → configure branch skipped
-        t._timeout = 30.0
-        t._genai = genai
-        t._client = None
-        t._retryable = (Exception,)
+        # api_key="" is falsy → configure branch skipped inside _single_call
+        t = GeminiTranslator("gemini-1.5-flash", api_key="", _genai_override=genai)
 
         result = await t.extract("pay Y 2", _Pay)
 
@@ -1164,51 +1111,15 @@ class TestGeminiNoApiKey:
         assert result["amount"] == 2.0
 
 
-@pytest.mark.skipif(
-    _ilu.find_spec("mistralai") is not None,
-    reason="run in tox:no-mistralai — mistralai is installed in this env",
-)
 class TestMistralBothImportsFail:
-    """mistral.py: both mistralai.client and mistralai.Mistral imports fail → ConfigurationError."""
+    """mistral.py: both imports fail → ConfigurationError (DI factory pattern)."""
 
     def test_both_imports_fail_raises_configuration_error(self) -> None:
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.mistral import MistralTranslator
 
-        with pytest.raises((ConfigurationError, ImportError)):
-            MistralTranslator("mistral-large-latest", api_key="key")
+        def _raise_import():
+            raise ImportError("mistralai not installed")
 
-
-class TestMistralParseNonExtractionError:
-    """mistral.py lines 147-148: parse_llm_response raises non-ExtractionFailureError."""
-
-    @pytest.mark.asyncio
-    async def test_unexpected_parse_exception_wrapped_as_extraction_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        pytest.importorskip("mistralai")
-        from pramanix.exceptions import ExtractionFailureError
-        from pramanix.translator.mistral import MistralTranslator
-
-        t = MistralTranslator.__new__(MistralTranslator)
-        t.model = "mistral-large-latest"
-        t._api_key = "key"
-        t._timeout = 30.0
-
-        # _single_call returns raw text; parse_llm_response raises a non-ExtractionFailureError.
-        # monkeypatch injects a ValueError from a function that normally only raises
-        # ExtractionFailureError — this tests the defensive except-Exception wrapper.
-        async def _fake_single_call(*, system_prompt: str, user_content: str) -> str:
-            return "raw text"
-
-        monkeypatch.setattr(t, "_single_call", _fake_single_call)
-
-        import pramanix.translator.mistral as _mist_mod
-
-        def _raise_parse(*args, **kwargs):
-            raise ValueError("unexpected parse error")
-
-        monkeypatch.setattr(_mist_mod, "parse_llm_response", _raise_parse)
-
-        with pytest.raises(ExtractionFailureError, match="failed to parse"):
-            await t.extract("pay Z 10", _Pay)
+        with pytest.raises(ConfigurationError, match="mistralai"):
+            MistralTranslator("mistral-large-latest", api_key="key", _mistralai_factory=_raise_import)

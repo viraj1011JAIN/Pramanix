@@ -169,6 +169,11 @@ _log = structlog.get_logger("pramanix.guard")
 # Each span is a no-op (contextlib.nullcontext) when the ``otel`` extra is
 # absent, so there is zero overhead on deployments that do not use tracing.
 
+def _noop_span(name: str) -> Any:
+    """No-op span context-manager — always available, used as OTel fallback."""
+    return contextlib.nullcontext()
+
+
 try:
     from opentelemetry import trace as _otel_trace
 
@@ -186,10 +191,7 @@ except ImportError:
         stacklevel=2,
     )
 
-    def _span(name: str) -> Any:
-        """No-op span when opentelemetry is not installed."""
-        return contextlib.nullcontext()
-
+    _span = _noop_span
     _OTEL_AVAILABLE = False
 
 

@@ -86,10 +86,14 @@ class BedrockTranslator:
         profile_name: str | None = None,
         timeout: float = 30.0,
         max_tokens: int = 1024,
+        _boto3_factory: Any = None,
     ) -> None:
         try:
-            import boto3
-            import botocore.config
+            if _boto3_factory is not None:
+                boto3 = _boto3_factory()
+            else:
+                import boto3
+                import botocore.config
         except ImportError as exc:
             raise ImportError(
                 "boto3 is required for BedrockTranslator. "

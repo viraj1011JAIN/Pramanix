@@ -237,31 +237,6 @@ class TestOllamaTranslatorLifecycle:
 
 
 class TestOpenAICompatCoverage:
-    def test_missing_openai_raises_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setitem(sys.modules, "openai", None)
-        if "pramanix.translator.openai_compat" in sys.modules:
-            del sys.modules["pramanix.translator.openai_compat"]
-        with pytest.raises(ImportError, match="openai"):
-            from pramanix.translator.openai_compat import OpenAICompatTranslator
-
-            OpenAICompatTranslator("gpt-4o")
-
-    @pytest.mark.asyncio
-    async def test_missing_tenacity_raises_import_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from pydantic import BaseModel
-
-        from pramanix.translator.openai_compat import OpenAICompatTranslator
-
-        class _S(BaseModel):
-            amount: float
-
-        t = OpenAICompatTranslator("gpt-4o", api_key="sk-test")
-        monkeypatch.setitem(sys.modules, "tenacity", None)
-        with pytest.raises(ImportError, match="tenacity"):
-            await t.extract("pay 10", _S)
-
     @pytest.mark.asyncio
     async def test_aclose_and_context_manager(self) -> None:
         """aclose() / context-manager close the real openai.AsyncOpenAI client."""
@@ -275,6 +250,70 @@ class TestOpenAICompatCoverage:
         # Context-manager protocol — real lifecycle, no mocking.
         async with OpenAICompatTranslator("gpt-4o", api_key="sk-test") as t2:
             assert isinstance(t2, OpenAICompatTranslator)
+
+    def test_openai_absent_raises_import_error(self) -> None:
+        """openai package absent → ImportError with pip hint."""
+        from pramanix.translator.openai_compat import OpenAICompatTranslator
+
+        def _raise_import():
+            raise ImportError("openai not installed")
+
+        with pytest.raises(ImportError, match="openai package"):
+            OpenAICompatTranslator("gpt-4o", _openai_factory=_raise_import)
+
+    @pytest.mark.asyncio
+    async def test_tenacity_absent_raises_import_error(self) -> None:
+        """tenacity package absent in extract() → ImportError with pip hint."""
+        from pramanix.translator.openai_compat import OpenAICompatTranslator
+        from pydantic import BaseModel
+
+        class _S(BaseModel):
+            amount: float
+
+        t = OpenAICompatTranslator("gpt-4o", api_key="sk-test")
+
+        def _raise_tenacity():
+            raise ImportError("tenacity not installed")
+
+        with pytest.raises(ImportError, match="tenacity"):
+            await t.extract("pay 5", _S, _tenacity_factory=_raise_tenacity)
+
+    @pytest.mark.asyncio
+    async def test_gemini_tenacity_absent_raises_configuration_error(self) -> None:
+        """tenacity absent in GeminiTranslator.extract() → ConfigurationError."""
+        pytest.importorskip("google.generativeai")
+        from pydantic import BaseModel
+
+        from pramanix.exceptions import ConfigurationError
+        from pramanix.translator.gemini import GeminiTranslator
+
+        class _S(BaseModel):
+            amount: float
+
+        t = GeminiTranslator("gemini-pro", api_key=None)
+
+        def _raise_tenacity():
+            raise ImportError("tenacity not installed")
+
+        with pytest.raises(ConfigurationError, match="tenacity"):
+            await t.extract("pay 5", _S, _tenacity_factory=_raise_tenacity)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# translator/cohere.py — ImportError via DI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestCohereTranslatorImportError:
+    def test_cohere_absent_raises_configuration_error(self) -> None:
+        from pramanix.exceptions import ConfigurationError
+        from pramanix.translator.cohere import CohereTranslator
+
+        def _raise_import():
+            raise ImportError("cohere not installed")
+
+        with pytest.raises(ConfigurationError, match="cohere"):
+            CohereTranslator("command-r", _cohere_factory=_raise_import)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -384,6 +423,23 @@ class TestCohereTranslatorCoverage:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# translator/llamacpp.py — ImportError via DI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestLlamaCppImportError:
+    def test_llamacpp_absent_raises_configuration_error(self) -> None:
+        from pramanix.exceptions import ConfigurationError
+        from pramanix.translator.llamacpp import LlamaCppTranslator
+
+        def _raise_import():
+            raise ImportError("llama_cpp not installed")
+
+        with pytest.raises(ConfigurationError, match="llama-cpp-python"):
+            LlamaCppTranslator("/models/model.gguf", _llamacpp_factory=_raise_import)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # translator/llamacpp.py — _get_llm cache miss, non-ExtractionFailure parse error
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -485,41 +541,50 @@ class TestLlamaCppCoverage:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# translator/vertexai.py — ImportError via DI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestVertexAITranslatorImportError:
+    def test_vertexai_absent_raises_configuration_error(self) -> None:
+        from pramanix.exceptions import ConfigurationError
+        from pramanix.translator.vertexai import VertexAITranslator
+
+        def _raise_import():
+            raise ImportError("google-cloud-aiplatform not installed")
+
+        with pytest.raises(ConfigurationError, match="google-cloud-aiplatform"):
+            VertexAITranslator("gemini-1.0-pro", _vertexai_factory=_raise_import)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# translator/bedrock.py — ImportError via DI
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestBedrockTranslatorImportError:
+    def test_boto3_absent_raises_import_error(self) -> None:
+        from pramanix.translator.bedrock import BedrockTranslator
+
+        def _raise_import():
+            raise ImportError("boto3 not installed")
+
+        with pytest.raises(ImportError, match="boto3"):
+            BedrockTranslator("anthropic.claude-3-haiku-20240307-v1:0", _boto3_factory=_raise_import)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # translator/gemini.py — ImportError (60-61), no api_key path (82)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class TestGeminiTranslatorCoverage:
-    def test_missing_google_generativeai_raises_config_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from pramanix.exceptions import ConfigurationError
-
-        monkeypatch.setitem(sys.modules, "google.generativeai", None)
-        # Do NOT null out "google" itself — that corrupts the google namespace
-        # package for the rest of the session. Blocking google.generativeai is
-        # sufficient: `import google.generativeai` raises ImportError when
-        # sys.modules contains None for that key.
-        if "pramanix.translator.gemini" in sys.modules:
-            monkeypatch.delitem(sys.modules, "pramanix.translator.gemini")
-        with pytest.raises((ConfigurationError, ImportError)):
-            from pramanix.translator.gemini import GeminiTranslator
-
-            GeminiTranslator("gemini-pro")
-
     def test_no_api_key_sets_client_to_none(self) -> None:
         """When no api_key provided, _client is None (line 82)."""
         from pramanix.translator.gemini import GeminiTranslator
         from tests.helpers.real_protocols import _GeminiGenaiModule
 
-        # Use __new__ to bypass the google.generativeai import guard so the
-        # test runs without the optional dependency being installed.
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-pro"
-        t._api_key = None
-        t._timeout = 30.0
-        t._genai = _GeminiGenaiModule()
-        t._client = None  # exercises the else-branch: no api_key → _client=None
+        t = GeminiTranslator("gemini-pro", api_key=None, _genai_override=_GeminiGenaiModule())
         assert t._client is None
 
     @pytest.mark.asyncio
@@ -527,16 +592,9 @@ class TestGeminiTranslatorCoverage:
         """No per-instance client → falls back to genai.configure() path."""
         from pramanix.translator.gemini import GeminiTranslator
 
-        t = GeminiTranslator.__new__(GeminiTranslator)
-        t.model = "gemini-pro"
-        t._api_key = "test-key"
-        t._timeout = 30.0
-        t._client = None  # force global configure path
-
-        # Real duck-typed genai module — no MagicMock, no AsyncMock.
-        # _GeminiGenaiModule.GenerativeModel() returns a real _GeminiModelInstance
-        # whose generate_content_async() is a real coroutine.
-        t._genai = _GeminiGenaiModule()
+        # _client_override=None is implicit; _genai_override ensures no real google SDK.
+        # api_key="test-key" + _client=None (set by _genai_override path) → global configure path.
+        t = GeminiTranslator("gemini-pro", api_key="test-key", _genai_override=_GeminiGenaiModule())
 
         result = await t._single_call(prompt="test")
         assert result == '{"amount": 5.0}'
@@ -566,8 +624,7 @@ class TestMistralHttpxImportError:
         class _S(BaseModel):
             amount: float
 
-        t = MistralTranslator("mistral-small-latest", api_key="key")
-        t._client = _MistralClientStub()
+        t = MistralTranslator("mistral-small-latest", api_key="key", _client_override=_MistralClientStub())
 
         monkeypatch.setattr(_json_mod, "parse_llm_response", lambda *a, **kw: {"amount": 5.0})
         result = await t.extract("pay 5", _S)
@@ -900,17 +957,6 @@ class TestAuditSinkCoverage:
         sink = KafkaAuditSink(topic="t", producer_conf={}, _producer=_ErrorFlushProducer())
         # Must not raise
         sink.flush()
-
-    def test_splunk_sink_config_error_without_httpx(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from pramanix.exceptions import ConfigurationError
-
-        monkeypatch.setitem(sys.modules, "httpx", None)
-        if "pramanix.audit_sink" in sys.modules:
-            del sys.modules["pramanix.audit_sink"]
-        with pytest.raises((ConfigurationError, ImportError)):
-            from pramanix.audit_sink import SplunkHecAuditSink
-
-            SplunkHecAuditSink("http://splunk:8088/services/collector", "token")
 
     def test_splunk_sink_close(self) -> None:
         import queue

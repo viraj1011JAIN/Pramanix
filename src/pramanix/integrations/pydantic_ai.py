@@ -69,15 +69,20 @@ class PramanixPydanticAIValidator:
         self,
         guard: Guard,
         state_fn: Any | None = None,
+        *,
+        _pydantic_ai_factory: Any = None,
     ) -> None:
         self._guard = guard
         self._state_fn = state_fn
 
         try:
-            import importlib as _il
+            if _pydantic_ai_factory is not None:
+                _pydantic_ai_factory()
+            else:
+                import importlib as _il
 
-            _il.import_module("pydantic_ai")
-            del _il
+                _il.import_module("pydantic_ai")
+                del _il
         except ImportError as exc:
             raise ConfigurationError(
                 "pydantic-ai is required for PramanixPydanticAIValidator. "

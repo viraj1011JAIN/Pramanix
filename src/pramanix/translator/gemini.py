@@ -64,6 +64,8 @@ class GeminiTranslator:
         api_key: str | None = None,
         timeout: float = 30.0,
         _genai_override: Any = None,
+        _genai_factory: Any = None,
+        _protobuf_importer: Any = None,
     ) -> None:
         self.model = model
         self._api_key = api_key or os.environ.get("GOOGLE_API_KEY") or None
@@ -107,17 +109,23 @@ class GeminiTranslator:
                 # attribute is absent and proto/message.py raises AttributeError.
                 # We force-set the attribute here so the import chain always finds it.
                 try:
-                    import google as _g
-                    import google.protobuf as _gp
+                    if _protobuf_importer is not None:
+                        _protobuf_importer()
+                    else:
+                        import google as _g
+                        import google.protobuf as _gp
 
-                    if not hasattr(_g, "protobuf"):
-                        _g.protobuf = _gp
-                    del _gp, _g
+                        if not hasattr(_g, "protobuf"):
+                            _g.protobuf = _gp
+                        del _gp, _g
                 except ImportError:
                     pass
                 # google.generativeai must be in sys.modules before the
                 # genai client is created; this import is the side-effect.
-                import google.generativeai  # noqa: F401 — side-effect only
+                if _genai_factory is not None:
+                    _genai_factory()
+                else:
+                    import google.generativeai  # noqa: F401 — side-effect only
             except ImportError as exc:
                 raise ConfigurationError(
                     "google-generativeai is required for GeminiTranslator. "
@@ -156,6 +164,8 @@ class GeminiTranslator:
         text: str,
         intent_schema: type[BaseModel],
         context: TranslatorContext | None = None,
+        *,
+        _tenacity_factory: Any = None,
     ) -> dict[str, Any]:
         """Extract structured intent from *text* using Gemini.
 
@@ -174,12 +184,17 @@ class GeminiTranslator:
         """
 
         try:
-            from tenacity import (
-                AsyncRetrying,
-                retry_if_exception_type,
-                stop_after_attempt,
-                wait_exponential,
-            )
+            if _tenacity_factory is not None:
+                AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential = (
+                    _tenacity_factory()
+                )
+            else:
+                from tenacity import (
+                    AsyncRetrying,
+                    retry_if_exception_type,
+                    stop_after_attempt,
+                    wait_exponential,
+                )
         except ImportError as exc:
             raise ConfigurationError(
                 "tenacity is required for retry support. "

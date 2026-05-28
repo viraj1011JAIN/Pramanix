@@ -13,65 +13,55 @@ pydantic_ai):
 
 Also covers the AttributeError fallback (line 104).
 
-Strategy: require real optional framework packages via pytest.importorskip,
-reload pramanix.integrations, and verify that __getattr__ resolves each
-integration symbol from the correct submodule without stub injection.
+Strategy: call pramanix.integrations.__getattr__ directly — no sys.modules
+manipulation, no stub injection.  This exercises the same code path as lazy
+attribute access on the module object.
 """
 
 from __future__ import annotations
 
 import importlib
-import sys
 
 import pytest
 
 
-def _reload_integrations() -> object:
-    sys.modules.pop("pramanix.integrations", None)
-    return importlib.import_module("pramanix.integrations")
+def _integrations_getattr(name: str) -> object:
+    """Call the integrations package __getattr__ directly."""
+    mod = importlib.import_module("pramanix.integrations")
+    return mod.__getattr__(name)
 
 
 class TestIntegrationsLazyImports:
     """Each test exercises one branch of integrations/__init__.__getattr__."""
 
     def test_crewai_lazy_import(self) -> None:
-        """PramanixCrewAITool triggers the crewai branch (lines 85-87)."""
+        """PramanixCrewAITool triggers the crewai branch."""
         pytest.importorskip("crewai")
-        sys.modules.pop("pramanix.integrations.crewai", None)
-        integrations = _reload_integrations()
-        obj = integrations.PramanixCrewAITool
+        obj = _integrations_getattr("PramanixCrewAITool")
         assert obj is not None
 
     def test_dspy_lazy_import(self) -> None:
-        """PramanixGuardedModule triggers the dspy branch (lines 89-91)."""
+        """PramanixGuardedModule triggers the dspy branch."""
         pytest.importorskip("dspy")
-        sys.modules.pop("pramanix.integrations.dspy", None)
-        integrations = _reload_integrations()
-        obj = integrations.PramanixGuardedModule
+        obj = _integrations_getattr("PramanixGuardedModule")
         assert obj is not None
 
     def test_haystack_lazy_import(self) -> None:
-        """HaystackGuardedComponent triggers the haystack branch (lines 93-95)."""
+        """HaystackGuardedComponent triggers the haystack branch."""
         pytest.importorskip("haystack")
-        sys.modules.pop("pramanix.integrations.haystack", None)
-        integrations = _reload_integrations()
-        obj = integrations.HaystackGuardedComponent
+        obj = _integrations_getattr("HaystackGuardedComponent")
         assert obj is not None
 
     def test_semantic_kernel_lazy_import(self) -> None:
-        """PramanixSemanticKernelPlugin triggers the sk branch (lines 97-99)."""
+        """PramanixSemanticKernelPlugin triggers the sk branch."""
         pytest.importorskip("semantic_kernel")
-        sys.modules.pop("pramanix.integrations.semantic_kernel", None)
-        integrations = _reload_integrations()
-        obj = integrations.PramanixSemanticKernelPlugin
+        obj = _integrations_getattr("PramanixSemanticKernelPlugin")
         assert obj is not None
 
     def test_pydantic_ai_lazy_import(self) -> None:
-        """PramanixPydanticAIValidator triggers the pydantic_ai branch (lines 101-103)."""
+        """PramanixPydanticAIValidator triggers the pydantic_ai branch."""
         pytest.importorskip("pydantic_ai")
-        sys.modules.pop("pramanix.integrations.pydantic_ai", None)
-        integrations = _reload_integrations()
-        obj = integrations.PramanixPydanticAIValidator
+        obj = _integrations_getattr("PramanixPydanticAIValidator")
         assert obj is not None
 
     def test_unknown_attribute_raises(self) -> None:
@@ -86,8 +76,6 @@ class TestIntegrationStatus:
     """INTEGRATION_STATUS dict must cover every __all__ entry and have valid labels."""
 
     def _get_status(self):
-        import importlib
-
         mod = importlib.import_module("pramanix.integrations")
         return mod.INTEGRATION_STATUS
 
@@ -124,7 +112,8 @@ class TestIntegrationStatus:
         ]
         for name in stubs:
             assert status.get(name) == "beta", (
-                f"Phase F-1 stub {name!r} should be labeled 'beta', " f"got {status.get(name)!r}"
+                f"Phase F-1 stub {name!r} should be labeled 'beta', "
+                f"got {status.get(name)!r}"
             )
 
     def test_core_integrations_are_labeled_stable(self) -> None:

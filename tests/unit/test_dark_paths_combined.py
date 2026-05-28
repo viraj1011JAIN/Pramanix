@@ -155,20 +155,19 @@ class TestInjectionScorerDarkPaths:
         with pytest.raises(IntegrityError, match="HMAC verification failed"):
             CalibratedScorer.load(pkl_path, hmac_key=key)
 
-    @pytest.mark.skipif(
-        _ilu.find_spec("sklearn") is not None,
-        reason="run in tox:no-sklearn — sklearn is installed in this env",
-    )
     def test_sklearn_absent_raises_configuration_error(self, tmp_path: Path) -> None:
-        """lines 295-298: sklearn not installed raises ConfigurationError."""
+        """lines 295-298: sklearn not installed raises ConfigurationError (DI factory)."""
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.injection_scorer import CalibratedScorer
+
+        def _raise_import():
+            raise ImportError("sklearn not installed")
 
         key = b"valid_key_32bytes_abcdefghijk1234"
         pkl_path = self._write_valid_pkl(tmp_path, key)
 
         with pytest.raises(ConfigurationError, match="scikit-learn"):
-            CalibratedScorer.load(pkl_path, hmac_key=key)
+            CalibratedScorer.load(pkl_path, hmac_key=key, _sklearn_factory=_raise_import)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

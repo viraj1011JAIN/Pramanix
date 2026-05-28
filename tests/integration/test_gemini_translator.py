@@ -86,14 +86,14 @@ def test_gemini_network_failure_raises_timeout_error() -> None:
         asyncio.run(translator.extract("transfer 150 USD", TransferIntent))
 
 
-@pytest.mark.skipif(
-    _ilu.find_spec("google.generativeai") is not None,
-    reason="run in tox:no-gemini — google-generativeai is installed in this env",
-)
 def test_gemini_missing_package_raises_configuration_error() -> None:
-    """ConfigurationError when google-generativeai is absent (tox:no-gemini only)."""
+    """ConfigurationError when google-generativeai is absent (DI factory pattern)."""
+
+    def _raise_import():
+        raise ImportError("google-generativeai not installed")
+
     with pytest.raises(ConfigurationError, match="pramanix\\[gemini\\]"):
-        GeminiTranslator("gemini-1.5-flash", api_key="")
+        GeminiTranslator("gemini-1.5-flash", api_key="", _genai_factory=_raise_import)
 
 
 # ── Live tests (require GOOGLE_API_KEY in .env.test) ─────────────────────────

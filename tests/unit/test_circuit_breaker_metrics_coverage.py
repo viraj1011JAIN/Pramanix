@@ -20,7 +20,6 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import sys
 import time
 from decimal import Decimal
 from typing import Any
@@ -66,15 +65,20 @@ class _ErrorCounter:
 # ── TranslatorCircuitBreaker: _register_metrics ImportError (lines 1203-1204) ─
 
 
-class TestTranslatorCBRegisterMetrics:
-    def test_register_metrics_import_error_sets_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 1203-1204: except ImportError sets _metrics_available=False."""
-        monkeypatch.setitem(sys.modules, "prometheus_client", None)  # block import
+class TestTranslatorCBRegisterMetricsImportError:
+    def test_register_metrics_import_error_sets_unavailable(self) -> None:
+        """Lines 1203-1204: ImportError in _register_metrics sets _metrics_available=False."""
         from pramanix.circuit_breaker import TranslatorCircuitBreaker
 
-        cb = TranslatorCircuitBreaker("model-import-err")
-        assert cb._metrics_available is False
+        def _raise_import():
+            raise ImportError("prometheus_client not installed")
 
+        cb = TranslatorCircuitBreaker("model-import-error", _prom_factory=_raise_import)
+        assert cb._metrics_available is False
+        assert cb._state_gauge is None
+
+
+class TestTranslatorCBRegisterMetrics:
     def test_register_metrics_prom_register_none_sets_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Line 1201->exit: when _prom_register returns None, _metrics_available is False."""
         import pramanix.circuit_breaker as _cb_mod
@@ -284,15 +288,41 @@ class TestTranslatorCBCallNoMetrics:
 # ── AdaptiveCircuitBreaker: ImportError in _register_metrics (450-451) ────────
 
 
-class TestAdaptiveCBRegisterMetrics:
-    def test_register_metrics_import_error_sets_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 450-451: prometheus ImportError → _metrics_available=False."""
-        monkeypatch.setitem(sys.modules, "prometheus_client", None)
+class TestAdaptiveCBRegisterMetricsImportError:
+    def test_register_metrics_import_error_sets_unavailable(self) -> None:
+        """Lines 475-476: ImportError in _register_metrics sets _metrics_available=False."""
         from pramanix.circuit_breaker import AdaptiveCircuitBreaker
 
+        def _raise_import():
+            raise ImportError("prometheus_client not installed")
+
         guard = _make_guard()
-        cb = AdaptiveCircuitBreaker(guard)
+        cb = AdaptiveCircuitBreaker(guard, _prom_factory=_raise_import)
         assert cb._metrics_available is False
+        assert cb._state_gauge is None
+        assert cb._pressure_counter is None
+
+
+# ── DistributedCircuitBreaker: ImportError in _register_metrics (796-797) ─────
+
+
+class TestDistributedCBRegisterMetricsImportError:
+    def test_register_metrics_import_error_sets_unavailable(self) -> None:
+        """Lines 826-827: ImportError in _register_metrics sets _metrics_available=False."""
+        from pramanix.circuit_breaker import DistributedCircuitBreaker, InMemoryDistributedBackend
+        import warnings
+
+        def _raise_import():
+            raise ImportError("prometheus_client not installed")
+
+        guard = _make_guard()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            backend = InMemoryDistributedBackend()
+        cb = DistributedCircuitBreaker(guard, backend=backend, _prom_factory=_raise_import)
+        assert cb._metrics_available is False
+        assert cb._state_gauge is None
+        assert cb._pressure_counter is None
 
 
 # ── AdaptiveCircuitBreaker: _increment_pressure_metric exception (472-473) ────
@@ -327,20 +357,6 @@ class TestDistributedCBNoBackend:
 # ── DistributedCircuitBreaker: ImportError in _register_metrics (796-797) ─────
 
 
-class TestDistributedCBRegisterMetrics:
-    def test_register_metrics_import_error_sets_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 796-797: prometheus ImportError → _metrics_available=False."""
-        monkeypatch.setitem(sys.modules, "prometheus_client", None)
-        from pramanix.circuit_breaker import DistributedCircuitBreaker, InMemoryDistributedBackend
-
-        guard = _make_guard()
-        with pytest.warns(UserWarning, match="testing only"):
-            backend = InMemoryDistributedBackend()
-
-        cb = DistributedCircuitBreaker(guard, backend=backend)
-        assert cb._metrics_available is False
-
-
 # ── InMemoryDistributedBackend: production guard (511-513) ────────────────────
 
 
@@ -368,35 +384,37 @@ class TestInMemoryDistributedBackendProductionGuard:
 
 
 class TestIncSyncFailureCounter:
-    def test_prom_register_exception_returns_silently(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 79-86: non-ImportError exception during registration is logged + return."""
-        import pramanix.circuit_breaker as _cb_mod
+    def test_increment_import_error_leaves_counter_none(self) -> None:
+        """Lines 78-98: ImportError from _prom_factory logs warning and returns early."""
+        from pramanix.circuit_breaker import _SyncFailureMetric
 
-        # Reset the global counter so the lazy-init branch is entered.
-        monkeypatch.setattr(_cb_mod, "_CB_SYNC_FAILURE_COUNTER", None)
+        def _raise_import():
+            raise ImportError("prometheus_client not installed")
 
-        def _boom(*a: Any, **kw: Any) -> Any:
-            raise RuntimeError("prom register exploded")
+        metric = _SyncFailureMetric()
+        # Must not raise despite ImportError
+        metric.increment(_prom_factory=_raise_import)
+        assert metric._counter is None  # counter never set
 
-        monkeypatch.setattr(_cb_mod, "_prom_register", _boom)
-        # Must not propagate — the function catches all exceptions.
-        _cb_mod._inc_sync_failure_counter()
+    def test_increment_exception_during_registration_logs_warning(self) -> None:
+        """Lines 91-98: generic Exception from factory is caught and logged."""
+        from pramanix.circuit_breaker import _SyncFailureMetric
 
-    def test_counter_inc_exception_is_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 90-94: exception in counter.inc() is swallowed."""
-        import pramanix.circuit_breaker as _cb_mod
+        def _raise_runtime():
+            raise RuntimeError("unexpected registry failure")
 
-        broken = _ErrorCounter()
-        # Set a counter that raises on inc().
-        monkeypatch.setattr(_cb_mod, "_CB_SYNC_FAILURE_COUNTER", broken)
-        _cb_mod._inc_sync_failure_counter()  # must not raise
+        metric = _SyncFailureMetric()
+        metric.increment(_prom_factory=_raise_runtime)
+        assert metric._counter is None
 
-    def test_counter_none_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """_inc_sync_failure_counter is a no-op when counter is None (prometheus absent)."""
-        import pramanix.circuit_breaker as _cb_mod
+    def test_increment_counter_inc_exception_is_swallowed(self) -> None:
+        """Lines 102-107: exception in counter.inc() is swallowed."""
+        from pramanix.circuit_breaker import _SyncFailureMetric
 
-        # Use a counter object so the lazy-init is skipped and the None guard is hit.
-        monkeypatch.setattr(_cb_mod, "_CB_SYNC_FAILURE_COUNTER", None)
-        # Block prometheus so lazy-init falls back to None.
-        monkeypatch.setitem(sys.modules, "prometheus_client", None)
-        _cb_mod._inc_sync_failure_counter()  # must not raise
+        class _BoomCounter:
+            def inc(self) -> None:
+                raise RuntimeError("counter boom")
+
+        metric = _SyncFailureMetric()
+        metric._counter = _BoomCounter()  # pre-set counter that raises on inc()
+        metric.increment()  # must not raise
