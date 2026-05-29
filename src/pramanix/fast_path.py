@@ -113,7 +113,10 @@ class SemanticFastPath:
             if val is None:
                 return None
             try:
-                if Decimal(str(val)) < Decimal("0"):
+                d = Decimal(str(val))
+                if not d.is_finite():
+                    return f"Non-finite {field_name!r} value {val!r} is not a valid amount"
+                if d < Decimal("0"):
                     return f"Amount must be non-negative (got {val})"
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
@@ -124,10 +127,7 @@ class SemanticFastPath:
                     type(_exc).__name__,
                     _exc,
                 )
-                return (
-                    f"Malformed {field_name!r} value:"
-                    f" {val!r} is not a valid number"
-                )
+                return f"Malformed {field_name!r} value:" f" {val!r} is not a valid number"
             return None
 
         _rule.__name__ = _rule_name
@@ -143,7 +143,10 @@ class SemanticFastPath:
             if val is None:
                 return None
             try:
-                if Decimal(str(val)) <= Decimal("0"):
+                d = Decimal(str(val))
+                if not d.is_finite():
+                    return f"Non-finite {field_name!r} balance {val!r} is not a valid amount"
+                if d <= Decimal("0"):
                     return "Account balance is zero or negative"
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
@@ -155,10 +158,7 @@ class SemanticFastPath:
                     type(_exc).__name__,
                     _exc,
                 )
-                return (
-                    f"Malformed {field_name!r} balance:"
-                    f" {val!r} is not a valid number"
-                )
+                return f"Malformed {field_name!r} balance:" f" {val!r} is not a valid number"
             return None
 
         _rule.__name__ = _rule_name
@@ -191,7 +191,10 @@ class SemanticFastPath:
             if val is None:
                 return None
             try:
-                if Decimal(str(val)) > cap_decimal:
+                d = Decimal(str(val))
+                if not d.is_finite():
+                    return f"Non-finite {amount_field!r} value {val!r} is not a valid amount"
+                if d > cap_decimal:
                     return f"Amount exceeds hard cap of {cap}"
             except Exception as _exc:
                 _inc_parse_failure(_rule_name)
@@ -202,10 +205,7 @@ class SemanticFastPath:
                     type(_exc).__name__,
                     _exc,
                 )
-                return (
-                    f"Malformed {amount_field!r} value:"
-                    f" {val!r} is not a valid number"
-                )
+                return f"Malformed {amount_field!r} value:" f" {val!r} is not a valid number"
             return None
 
         _rule.__name__ = _rule_name
@@ -231,6 +231,12 @@ class SemanticFastPath:
             try:
                 amount = Decimal(str(amount_val))
                 balance = Decimal(str(balance_val))
+                if not amount.is_finite():
+                    return f"Non-finite {amount_field!r} value {amount_val!r} is not a valid amount"
+                if not balance.is_finite():
+                    return (
+                        f"Non-finite {balance_field!r} value {balance_val!r} is not a valid balance"
+                    )
                 if amount > balance:
                     return "Insufficient balance for transfer"
             except Exception as _exc:

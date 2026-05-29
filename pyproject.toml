@@ -296,6 +296,8 @@ ignore = [
 "src/pramanix/primitives/*.py" = ["N802"]
 # Public API functions E, ForAll, Exists, DatetimeField are PascalCase by design.
 "src/pramanix/expressions.py" = ["N802"]
+# Adversarial test vectors use single uppercase letters (A, B, C…) as taxonomy labels.
+"tests/adversarial/test_adversarial_numeric_boundary.py" = ["N802"]
 # Integration tests use print() for latency measurement output; T20 not applicable here.
 # Tests also use ConstraintExpr at runtime (not just type-checking) via invariants() return type.
 # S105/S108 in integration tests are false positives on test fixture values and path strings.
