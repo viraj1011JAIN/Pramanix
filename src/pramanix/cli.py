@@ -91,8 +91,10 @@ def main() -> int:
         required=True,
         metavar="POLICY_FILE",
         help=(
-            "Path to a Python (.py) file that defines a Policy object.  "
-            "Use --policy-var to specify the variable name (default: 'policy')."
+            "Path to a policy file. Supported formats: "
+            ".py (Python — use --policy-var to name the variable, default: 'policy'), "
+            ".yaml/.yml (YAML DSL), .toml (TOML DSL). "
+            "--policy-var is ignored for YAML/TOML files."
         ),
     )
     _intent_grp = sim.add_mutually_exclusive_group(required=True)
@@ -121,7 +123,10 @@ def main() -> int:
         "--policy-var",
         default="policy",
         metavar="VAR",
-        help="Name of the Policy variable in the Python file (default: 'policy').",
+        help=(
+            "Name of the Policy variable in a Python policy file (default: 'policy'). "
+            "Ignored for YAML/TOML."
+        ),
     )
     sim.add_argument(
         "--suggest-fix",
@@ -370,6 +375,52 @@ def main() -> int:
         help="Exit 1 on warnings as well as errors.",
     )
 
+    # coverage subcommand — run test cases through a policy and report coverage
+    cov_cmd = sub.add_parser(
+        "coverage",
+        help="Run a set of test-case intents through a policy and report coverage statistics.",
+    )
+    cov_cmd.add_argument(
+        "--policy",
+        required=True,
+        metavar="POLICY_FILE",
+        help=(
+            "Path to a policy file (.py, .yaml/.yml, .toml). "
+            "For Python files, --policy-var selects the variable (default: 'policy')."
+        ),
+    )
+    cov_cmd.add_argument(
+        "--policy-var",
+        default="policy",
+        metavar="VAR",
+        help=(
+            "Name of the Policy variable in a Python policy file (default: 'policy'). "
+            "Ignored for YAML/TOML."
+        ),
+    )
+    cov_cmd.add_argument(
+        "--test-cases",
+        required=True,
+        metavar="FILE",
+        help=(
+            "Path to a JSONL file where each line is a JSON object with an "
+            "'intent' key (required) and an optional 'state' key."
+        ),
+    )
+    cov_cmd.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output the coverage report as JSON.",
+    )
+    cov_cmd.add_argument(
+        "--fail-under",
+        metavar="N",
+        type=float,
+        default=None,
+        help="Exit 1 if total_verifications < N.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "verify-proof":
@@ -401,6 +452,9 @@ def main() -> int:
 
     if args.command == "lint-policy":
         return _cmd_lint_policy(args)
+
+    if args.command == "coverage":
+        return _cmd_coverage(args)
 
     parser.print_help()
     return 2
@@ -890,32 +944,47 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             print("ERROR: --state-file must be a JSON object.", file=sys.stderr)
             return 2
 
-    # ── Load policy from Python file ──────────────────────────────────────────
+    # ── Load policy (Python, YAML, or TOML) ───────────────────────────────────
+    import pathlib as _pathlib
+
     policy_path = args.policy
     policy_var = getattr(args, "policy_var", "policy")
+    _suffix = _pathlib.Path(policy_path).suffix.lower()
 
-    try:
-        spec = importlib.util.spec_from_file_location("_pramanix_sim_policy", policy_path)
-        if spec is None or spec.loader is None:
-            print(f"ERROR: Cannot load module spec from {policy_path}", file=sys.stderr)
+    if _suffix in (".yaml", ".yml", ".toml"):
+        try:
+            from pramanix.natural_policy.yaml_loader import load_policy_file
+
+            policy = load_policy_file(policy_path)
+        except FileNotFoundError:
+            print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
             return 2
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    except FileNotFoundError:
-        print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
-        return 2
-    except Exception as exc:
-        print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
-        return 2
+        except Exception as exc:
+            print(f"ERROR: Failed to compile policy file: {exc}", file=sys.stderr)
+            return 2
+    else:
+        try:
+            spec = importlib.util.spec_from_file_location("_pramanix_sim_policy", policy_path)
+            if spec is None or spec.loader is None:
+                print(f"ERROR: Cannot load module spec from {policy_path}", file=sys.stderr)
+                return 2
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except FileNotFoundError:
+            print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
+            return 2
 
-    policy = getattr(module, policy_var, None)
-    if policy is None:
-        print(
-            f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
-            f"Use --policy-var to specify the correct name.",
-            file=sys.stderr,
-        )
-        return 2
+        policy = getattr(module, policy_var, None)
+        if policy is None:
+            print(
+                f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
+                f"Use --policy-var to specify the correct name.",
+                file=sys.stderr,
+            )
+            return 2
 
     meta = getattr(policy, "Meta", None)
     intent_model = getattr(meta, "intent_model", None)
@@ -2396,6 +2465,174 @@ def _collect_field_refs(node: Any, out: set[str]) -> None:
         for operand in node.operands:
             _collect_field_refs(operand, out)
         return
+
+
+def _cmd_coverage(args: argparse.Namespace) -> int:
+    """Run a JSONL test-case file through a policy and report coverage statistics.
+
+    Each line of the JSONL file must be a JSON object with an ``intent`` key
+    (required) and an optional ``state`` key.  The command constructs a real
+    Guard (sync mode, no translator), runs every test case, and prints the
+    ``PolicyCoverageReport`` produced by ``Guard.coverage_report()``.
+
+    Exit codes:
+        0 — all test cases processed; coverage threshold met (if --fail-under given)
+        1 — coverage below --fail-under threshold
+        2 — usage error (bad file, import failure, malformed JSONL)
+    """
+    import importlib.util
+    import json as _json_mod
+    import pathlib
+
+    policy_path = pathlib.Path(args.policy)
+    policy_var = getattr(args, "policy_var", "policy")
+    suffix = policy_path.suffix.lower()
+
+    # ── Load policy ───────────────────────────────────────────────────────────
+    if suffix in (".yaml", ".yml", ".toml"):
+        try:
+            from pramanix.natural_policy.yaml_loader import load_policy_file
+
+            policy = load_policy_file(policy_path)
+        except FileNotFoundError:
+            print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"ERROR: Failed to compile policy file: {exc}", file=sys.stderr)
+            return 2
+    else:
+        try:
+            spec = importlib.util.spec_from_file_location("_pramanix_cov_policy", policy_path)
+            if spec is None or spec.loader is None:
+                print(f"ERROR: Cannot load module spec from {policy_path}", file=sys.stderr)
+                return 2
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except FileNotFoundError:
+            print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
+            return 2
+
+        policy = getattr(module, policy_var, None)
+        if policy is None:
+            print(
+                f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
+                f"Use --policy-var to specify the correct name.",
+                file=sys.stderr,
+            )
+            return 2
+
+    # ── Load test cases from JSONL ────────────────────────────────────────────
+    test_cases_path = pathlib.Path(args.test_cases)
+    try:
+        raw_lines = test_cases_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        print(f"ERROR: Test cases file not found: {test_cases_path}", file=sys.stderr)
+        return 2
+
+    test_cases: list[tuple[dict, dict]] = []
+    for line_no, line in enumerate(raw_lines, start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            obj = _json_mod.loads(line)
+        except _json_mod.JSONDecodeError as exc:
+            print(
+                f"ERROR: Line {line_no} of {test_cases_path} is not valid JSON: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        if not isinstance(obj, dict) or "intent" not in obj:
+            print(
+                f"ERROR: Line {line_no} must be a JSON object with an 'intent' key.",
+                file=sys.stderr,
+            )
+            return 2
+        intent = obj["intent"]
+        state = obj.get("state", {})
+        if not isinstance(intent, dict):
+            print(f"ERROR: Line {line_no} 'intent' must be a JSON object.", file=sys.stderr)
+            return 2
+        test_cases.append((intent, state))
+
+    if not test_cases:
+        print("ERROR: No test cases found in JSONL file.", file=sys.stderr)
+        return 2
+
+    # ── Build guard and run all test cases ───────────────────────────────────
+    try:
+        from pramanix.guard import Guard
+        from pramanix.guard_config import GuardConfig
+
+        guard = Guard(policy=policy, config=GuardConfig(execution_mode="sync"))
+    except Exception as exc:
+        print(f"ERROR: Failed to construct Guard: {exc}", file=sys.stderr)
+        return 2
+
+    errors: list[str] = []
+    for i, (intent, state) in enumerate(test_cases, start=1):
+        try:
+            guard.verify(intent=intent, state=state)
+        except Exception as exc:
+            errors.append(f"Test case {i}: {exc}")
+
+    if errors:
+        for msg in errors:
+            print(f"WARNING: {msg}", file=sys.stderr)
+
+    # ── Collect and emit coverage report ─────────────────────────────────────
+    report = guard.coverage_report()
+    as_json = getattr(args, "as_json", False)
+    fail_under = getattr(args, "fail_under", None)
+
+    invariants_hit = sorted(
+        label for label, count in report.invariant_violations.items() if count > 0
+    )
+    invariants_missed = sorted(
+        label
+        for label in report.declared_invariants
+        if report.invariant_violations.get(label, 0) == 0
+    )
+
+    if as_json:
+        print(
+            _json.dumps(
+                {
+                    "policy": str(policy_path),
+                    "test_cases_file": str(test_cases_path),
+                    "total_test_cases": len(test_cases),
+                    "total_verifications": report.total_verifications,
+                    "invariant_violations": report.invariant_violations,
+                    "invariants_hit": invariants_hit,
+                    "invariants_missed": invariants_missed,
+                    "fields_seen": report.fields_seen,
+                    "coverage_pct": report.coverage_pct,
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(f"Policy:          {policy_path}")
+        print(f"Test cases:      {len(test_cases)}")
+        print(f"Verifications:   {report.total_verifications}")
+        print(f"Coverage:        {report.coverage_pct:.1f}%")
+        if invariants_hit:
+            print(f"Invariants hit:  {', '.join(invariants_hit)}")
+        if invariants_missed:
+            print(f"Invariants missed: {', '.join(invariants_missed)}")
+
+    if fail_under is not None and report.total_verifications < fail_under:
+        if not as_json:
+            print(
+                f"\nFAIL: total_verifications ({report.total_verifications}) "
+                f"< --fail-under ({fail_under})",
+                file=sys.stderr,
+            )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
