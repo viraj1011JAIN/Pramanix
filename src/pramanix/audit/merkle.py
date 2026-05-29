@@ -43,7 +43,9 @@ Usage (persistent checkpointing)::
 
 from __future__ import annotations
 
+import atexit
 import hashlib
+import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -211,6 +213,23 @@ class PersistentMerkleAnchor(MerkleAnchor):
         self._checkpoint_every = checkpoint_every
         self._callback = checkpoint_callback
         self._last_checkpoint_count: int = 0
+        # Auto-flush at process exit so trailing leaves added since the last
+        # periodic checkpoint are never silently dropped. A weak reference is
+        # used so the anchor can still be garbage-collected normally during the
+        # program's lifetime; at interpreter shutdown the object is still alive
+        # and _ref() returns it for the final flush.
+        _ref: weakref.ref[PersistentMerkleAnchor] = weakref.ref(self)
+
+        def _atexit_flush(_r: weakref.ref[PersistentMerkleAnchor] = _ref) -> None:
+            anchor = _r()
+            if anchor is not None:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    anchor.flush()
+
+        atexit.register(_atexit_flush)
+        self._atexit_flush = _atexit_flush  # keep reference alive for testing
 
     def add(self, decision_id: str) -> None:
         """Add a decision ID and checkpoint if the interval threshold is reached."""
