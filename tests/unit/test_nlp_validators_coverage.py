@@ -6,9 +6,9 @@
 """Coverage tests for nlp/validators failure paths (§4.14/34).
 
 Coverage targets:
-  _try_detoxify_scorer(): failure path — returns None, emits WARNING,
+  _try_detoxify_scorer(): failure path — returns None, emits ERROR,
                           sets pramanix_nlp_model_available{model="detoxify"} = 0
-  _try_sentence_transformer(): failure path — returns None, emits WARNING,
+  _try_sentence_transformer(): failure path — returns None, emits ERROR,
                                sets pramanix_nlp_model_available{model="sentence_transformer"} = 0
   _try_detoxify_scorer(): success path — returns callable, gauge set to 1
   _try_sentence_transformer(): success path — returns model, gauge set to 1
@@ -52,17 +52,17 @@ def _gauge_value(model_label: str) -> float | None:
 def test_try_detoxify_scorer_failure_returns_none_and_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When detoxify import fails, _try_detoxify_scorer returns None and emits WARNING."""
+    """When detoxify import fails, _try_detoxify_scorer returns None and emits ERROR."""
     import pramanix.nlp.validators as _nlp_mod
 
-    with caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"):
+    with caplog.at_level(logging.ERROR, logger="pramanix.nlp.validators"):
         result = _nlp_mod._try_detoxify_scorer()
 
     assert result is None, "_try_detoxify_scorer must return None on import failure"
     assert any(
-        "detoxify" in record.message.lower() and record.levelno == logging.WARNING
+        "detoxify" in record.message.lower() and record.levelno == logging.ERROR
         for record in caplog.records
-    ), "Expected WARNING mentioning 'detoxify' — operators must be notified of degraded state"
+    ), "Expected ERROR mentioning 'detoxify' — operators must be notified of degraded state"
 
 
 def test_try_detoxify_scorer_failure_sets_gauge_to_zero() -> None:
@@ -116,17 +116,17 @@ def test_try_detoxify_scorer_success_sets_gauge_to_one() -> None:
 def test_try_sentence_transformer_failure_returns_none_and_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When sentence_transformers import fails, returns None and emits WARNING."""
+    """When sentence_transformers import fails, returns None and emits ERROR."""
     import pramanix.nlp.validators as _nlp_mod
 
-    with caplog.at_level(logging.WARNING, logger="pramanix.nlp.validators"):
+    with caplog.at_level(logging.ERROR, logger="pramanix.nlp.validators"):
         result = _nlp_mod._try_sentence_transformer()
 
     assert result is None, "_try_sentence_transformer must return None on import failure"
     assert any(
-        "sentence" in record.message.lower() and record.levelno == logging.WARNING
+        "sentence" in record.message.lower() and record.levelno == logging.ERROR
         for record in caplog.records
-    ), "Expected WARNING mentioning 'sentence' — operators must be notified of degraded state"
+    ), "Expected ERROR mentioning 'sentence' — operators must be notified of degraded state"
 
 
 def test_try_sentence_transformer_failure_sets_gauge_to_zero() -> None:
@@ -210,9 +210,9 @@ def test_injection_filter_re2_is_enforced() -> None:
     )
     import re2 as _re2
 
-    assert _f._re_engine is _re2, (
-        "injection_filter._re_engine must be the re2 module, not stdlib re"
-    )
+    assert (
+        _f._re_engine is _re2
+    ), "injection_filter._re_engine must be the re2 module, not stdlib re"
 
 
 # ── _get_nlp_gauge: resilience when prometheus_client absent ───────────────────

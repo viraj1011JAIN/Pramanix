@@ -139,7 +139,7 @@ def _get_nlp_gauge() -> Any:
 def _try_detoxify_scorer() -> Any:
     """Return a Detoxify-backed score function, or None if unavailable.
 
-    On failure, emits a WARNING log and sets the
+    On failure, emits an ERROR log and sets the
     ``pramanix_nlp_model_available{model="detoxify"}`` gauge to 0 so
     operators can alert before the first request reaches the safety scorer.
     """
@@ -158,7 +158,7 @@ def _try_detoxify_scorer() -> Any:
                 g.labels(model="detoxify").set(1)
         return _score
     except Exception as _exc:
-        _log.warning(
+        _log.error(
             "pramanix.nlp.validators: Detoxify model failed to load (%s: %s) — "
             "toxicity scoring is DISABLED. Injection attacks and toxic prompts "
             "will NOT be caught by this safety layer. "
@@ -176,7 +176,7 @@ def _try_detoxify_scorer() -> Any:
 def _try_sentence_transformer() -> Any:
     """Return a SentenceTransformer model, or None if unavailable.
 
-    On failure, emits a WARNING log and sets the
+    On failure, emits an ERROR log and sets the
     ``pramanix_nlp_model_available{model="sentence_transformer"}`` gauge to 0.
     """
     try:
@@ -189,7 +189,7 @@ def _try_sentence_transformer() -> Any:
                 g.labels(model="sentence_transformer").set(1)
         return model
     except Exception as _exc:
-        _log.warning(
+        _log.error(
             "pramanix.nlp.validators: SentenceTransformer model failed to load (%s: %s) — "
             "semantic injection detection is DISABLED. Prompt-injection attacks that "
             "alter intent semantically will NOT be detected by this safety layer. "
