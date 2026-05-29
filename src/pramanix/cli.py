@@ -1825,10 +1825,33 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         _check("async-engine", "SKIP", "Production profile not enabled — async check skipped")
 
     # ── 17. Policy YAML quick lint (deployment gate) ─────────────────────────
-    _yaml_globs = ("**/*policy*.yaml", "**/*policy*.yml", "**/mesh_policy_ir.yaml")
+    # Use os.walk (followlinks=False) instead of pathlib.glob(**) to avoid
+    # following symlinks into .venv/Scripts on Windows, which causes the scan
+    # to walk thousands of stdlib files and appear to hang indefinitely.
+    import fnmatch as _fnmatch
+
+    _YAML_NAMES = ("*policy*.yaml", "*policy*.yml", "mesh_policy_ir.yaml")
+    _SKIP_DIRS = frozenset(
+        {
+            ".venv",
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".tox",
+            ".mypy_cache",
+            "dist",
+            "build",
+            ".eggs",
+            ".pytest_cache",
+            ".ruff_cache",
+        }
+    )
     policy_files: set[pathlib.Path] = set()
-    for pattern in _yaml_globs:
-        policy_files.update(pathlib.Path.cwd().glob(pattern))
+    for _root, _dirs, _files in os.walk(pathlib.Path.cwd(), followlinks=False):
+        _dirs[:] = [d for d in _dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+        for _fname in _files:
+            if any(_fnmatch.fnmatch(_fname, pat) for pat in _YAML_NAMES):
+                policy_files.add(pathlib.Path(_root) / _fname)
 
     if not policy_files:
         _check(
