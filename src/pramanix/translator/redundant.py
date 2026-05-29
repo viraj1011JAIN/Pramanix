@@ -176,6 +176,11 @@ def _semantic_field_equal(
         try:
             dec_a = Decimal(str(val_a).strip())
             dec_b = Decimal(str(val_b).strip())
+            # Both NaN → in agreement (same "missing value" sentinel); NaN vs
+            # non-NaN → disagree.  sNaN comparison raises InvalidOperation, so
+            # it falls through to the except branch below.
+            if dec_a.is_nan() or dec_b.is_nan():
+                return dec_a.is_nan() and dec_b.is_nan()
             return dec_a == dec_b
         except InvalidOperation:
             if _raw_strings_agree(str(val_a), str(val_b)):

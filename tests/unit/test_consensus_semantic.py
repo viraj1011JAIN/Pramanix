@@ -215,11 +215,11 @@ class TestSemanticFieldEqualBoundaryStrings:
     the casefold fallback is taken.
     """
 
-    # ── NaN semantics (IEEE 754: NaN ≠ NaN) ──────────────────────────────────
+    # ── NaN semantics — same NaN → agree, NaN vs. non-NaN → disagree ─────────
 
-    def test_nan_vs_nan_is_false(self) -> None:
-        """Decimal('NaN') == Decimal('NaN') is False per IEEE 754."""
-        assert _semantic_field_equal("NaN", "NaN") is False
+    def test_nan_vs_nan_is_true(self) -> None:
+        """Two translators both returning 'NaN' for a field are in agreement."""
+        assert _semantic_field_equal("NaN", "NaN") is True
 
     def test_nan_vs_numeric_is_false(self) -> None:
         assert _semantic_field_equal("NaN", "1.0") is False
@@ -357,23 +357,14 @@ class TestSemanticFieldEqualProperties:
     @given(st.text())
     @settings(max_examples=300)
     def test_reflexive_for_same_string(self, s: str) -> None:
-        """_semantic_field_equal(s, s) must be True for any non-NaN string.
+        """_semantic_field_equal(s, s) must be True for every string.
 
-        NaN is the only standard exception: Decimal('NaN') != Decimal('NaN').
-        For all other strings, the function must agree with itself.
+        NaN strings are now reflexive: two translators both returning "NaN"
+        for the same field are in agreement (same "missing value" sentinel).
         """
-        from decimal import Decimal, InvalidOperation
-
-        try:
-            d = Decimal(s.strip())
-            is_nan = d.is_nan()
-        except InvalidOperation:
-            is_nan = False
-
         result = _semantic_field_equal(s, s)
         assert isinstance(result, bool)
-        if not is_nan:
-            assert result is True, f"Expected True for ({s!r}, {s!r}), got False"
+        assert result is True, f"Expected True for ({s!r}, {s!r}), got False"
 
     @given(st.text(), st.text())
     @settings(max_examples=500)
