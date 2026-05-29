@@ -8,7 +8,7 @@
 
 Version: `1.0.0` | License: `AGPL-3.0-only` (Community) / Commercial (Enterprise)
 Language: Python ≥ 3.11,<4.0 | CI-tested: Python 3.13 only
-Status: Beta → GA-in-progress | Source files: 111 production + 204 test files
+Status: Beta → GA-in-progress | Source files: 112 production + 205 test files
 
 ---
 
@@ -171,13 +171,13 @@ Raw text (untrusted)
 Guard.verify(extracted_intent, state)  ←── main pipeline above
 ```
 
-### Package Structure (111 production files)
+### Package Structure (112 production files)
 
 ```
 src/pramanix/
 │
 ├── ── CORE VERIFICATION ─────────────────────────────────────────────────────
-│   ├── guard.py              # Guard class (~1897 lines) — SDK entry point
+│   ├── guard.py              # Guard class (~1896 lines) — SDK entry point
 │   ├── policy.py             # Policy base class, Meta, fields(), invariants()
 │   ├── expressions.py        # Field, E(), all AST node types
 │   ├── transpiler.py         # DSL AST → Z3 AST (no eval/exec)
@@ -191,7 +191,7 @@ src/pramanix/
 │   ├── worker.py             # Thread+Process worker pool, HMAC IPC
 │   ├── resolvers.py          # ResolverRegistry singleton
 │   ├── governance_config.py  # GovernanceConfig dataclass
-│   └── exceptions.py         # 22 exception types, full hierarchy
+│   └── exceptions.py         # 31 exception types, full hierarchy
 │
 ├── ── TRANSLATOR STACK ──────────────────────────────────────────────────────
 │   └── translator/
@@ -260,7 +260,7 @@ src/pramanix/
 │
 ├── ── PRIMITIVES ────────────────────────────────────────────────────────────
 │   └── primitives/
-│       ├── fintech.py        # 10 factories (AntiStructuring, WashSale, etc.)
+│       ├── fintech.py        # 11 factories (SufficientBalance, VelocityCheck, AntiStructuring, WashSale, etc.)
 │       ├── finance.py        # General financial constraints
 │       ├── healthcare.py     # HIPAA/clinical constraints
 │       ├── rbac.py           # Role-based access control
@@ -537,12 +537,12 @@ Source: [src/pramanix/expressions.py](src/pramanix/expressions.py), [src/pramani
 ### Field Descriptor
 
 ```python
-# expressions.py — Field is a frozen NamedTuple
-class Field(NamedTuple):
-    name: str                           # Dictionary key name
+# expressions.py — Field is a frozen dataclass (3 fields; no source tag)
+@dataclass(frozen=True)
+class Field:
+    name: str                           # Key in the values dict passed to Guard.verify()
     python_type: type                   # Python type (Decimal, bool, str, int, ...)
     z3_type: Literal["Real","Int","Bool","String"]  # Z3 sort
-    source: Literal["intent","state"]   # Which dict the value comes from
 ```
 
 `z3_type` controls the Z3 sort for the symbolic variable. The mapping rules are:
@@ -638,12 +638,15 @@ class PaymentPolicy(Policy):
         state_model = AccountState     # Optional Pydantic model for validation
 
     # Field declarations — class attributes, not instance attributes
-    amount     = Field("amount",     Decimal, "Real",   "intent")
-    balance    = Field("balance",    Decimal, "Real",   "state")
-    daily_sent = Field("daily_sent", Decimal, "Real",   "state")
-    daily_limit = Field("daily_limit", Decimal, "Real", "state")
-    is_frozen  = Field("is_frozen",  bool,    "Bool",   "state")
-    status     = StringEnumField("status", ["active","suspended","closed"], "state")
+    # Field(name, python_type, z3_type) — exactly 3 args; no source tag
+    amount      = Field("amount",      Decimal, "Real")
+    balance     = Field("balance",     Decimal, "Real")
+    daily_sent  = Field("daily_sent",  Decimal, "Real")
+    daily_limit = Field("daily_limit", Decimal, "Real")
+    is_frozen   = Field("is_frozen",   bool,    "Bool")
+    # StringEnumField(name, values) — 2 args; use .field to get the Int Field
+    _status_enum = StringEnumField("status", ["active", "suspended", "closed"])
+    status       = _status_enum.field   # Int-sorted Field backed by the enum
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
@@ -675,8 +678,8 @@ Every `ConstraintExpr` **must** have a unique string label via `.named()`. Missi
 ```python
 @invariant_mixin
 class AmlMixin:
-    daily_limit = Field("daily_limit", Decimal, "Real", "state")
-    daily_sent  = Field("daily_sent",  Decimal, "Real", "state")
+    daily_limit = Field("daily_limit", Decimal, "Real")
+    daily_sent  = Field("daily_sent",  Decimal, "Real")
 
     @classmethod
     def invariants(cls) -> list[ConstraintExpr]:
@@ -697,22 +700,26 @@ Mixin invariants are appended in decoration order. Duplicate labels across mixin
 Source: [src/pramanix/natural_policy/yaml_loader.py](src/pramanix/natural_policy/yaml_loader.py)
 
 ```yaml
-policy:
+meta:
   name: PaymentPolicy
   version: "1.0.0"
-  fields:
-    amount:
-      z3_type: Real
-      source: intent
-    balance:
-      z3_type: Real
-      source: state
-  invariants:
-    - label: positive_amount
-      expr: "amount > 0"
-    - label: sufficient_balance
-      expr: "amount <= balance"
+
+fields:
+  amount:
+    z3_type: Real      # Real | Int | Bool | String (required)
+    type: Decimal      # Python type hint (optional)
+  balance:
+    z3_type: Real
+
+invariants:
+  - name: positive_amount
+    expr: "amount > 0"
+  - name: sufficient_balance
+    expr: "amount <= balance"
+    explain: "Overdraft: balance={balance}, amount={amount}"
 ```
+
+**Note:** The YAML DSL has no `source:` key — fields are looked up across the merged `{**intent, **state}` dict at solve time. The top-level key is `meta:` (not `policy:`), and invariant identifiers use `name:` (not `label:`).
 
 **Safe AST visitor implementation**: The YAML loader calls `ast.parse(expr_string)` on each invariant expression, then walks the AST with a custom `_SafeExprVisitor`. Only a whitelist of AST node types is permitted:
 
@@ -901,7 +908,7 @@ def analyze_string_promotions(invariants: list[ConstraintExpr]) -> dict[str, dic
 
 Promoted field example:
 ```python
-status = Field("status", str, "String", "state")
+status = Field("status", str, "String")
 E(status).in_(["active", "suspended", "closed"]).named("valid_status")
 ```
 
@@ -2571,11 +2578,11 @@ Source: [tests/](tests/)
 ### Statistics
 
 ```
-Total test files:   204
-Total test cases:   5,066+ (collected; varies with optional deps)
+Total test files:   205
+Total test cases:   5,109 (collected; pytest --collect-only -q 2026-05-29)
 Coverage target:    ≥ 98% branch coverage (fail_under = 98)
-Test runner:        pytest 8.3, pytest-asyncio 0.23 (asyncio_mode = "auto")
-Property tests:     hypothesis 6.100
+Test runner:        pytest 8.4, pytest-asyncio 0.23 (asyncio_mode = "auto")
+Property tests:     hypothesis 6.100+
 Performance tests:  excluded from default run (addopts = "--ignore=tests/perf")
 ```
 
@@ -2583,11 +2590,12 @@ Performance tests:  excluded from default run (addopts = "--ignore=tests/perf")
 
 ```
 tests/
-├── unit/         # ~140 files — no external services, fast
-├── integration/  # ~20 files — testcontainers: Redis, Kafka, Postgres, Vault
-├── adversarial/  # 7 files — security-focused attack vectors
-├── property/     # 3 files — Hypothesis property-based tests
-└── perf/         # 2 files — memory stability, latency (excluded from default)
+├── unit/         # 151 files — no external services, fast
+├── integration/  # 32 files — testcontainers: Redis, Kafka, Postgres, Vault
+├── adversarial/  # 10 files — security-focused attack vectors
+├── property/     # 4 files — Hypothesis property-based tests
+├── helpers/      # 3 files — shared test utilities (RaisingSolverStub, etc.)
+└── perf/         # 3 files — memory stability, latency (excluded from default)
 ```
 
 ### Unit Tests — Key Files
@@ -2851,11 +2859,12 @@ The `license-scan` job enforces an allowlist of SPDX license identifiers. Any de
 class BenchmarkPolicy(Policy):
     class Meta:
         version = "1.0.0"
-    amount     = Field("amount",     Decimal, "Real", "intent")
-    balance    = Field("balance",    Decimal, "Real", "state")
-    daily_limit = Field("daily_limit", Decimal, "Real", "state")
-    is_frozen  = Field("is_frozen",  bool,    "Bool", "state")
-    status     = StringEnumField("status", ["active","suspended"], "state")
+    amount      = Field("amount",      Decimal, "Real")
+    balance     = Field("balance",     Decimal, "Real")
+    daily_limit = Field("daily_limit", Decimal, "Real")
+    is_frozen   = Field("is_frozen",   bool,    "Bool")
+    _st         = StringEnumField("status", ["active", "suspended"])
+    status      = _st.field  # Int-sorted field backed by the enum
 
     @classmethod
     def invariants(cls):
@@ -3447,7 +3456,7 @@ Status labels used:
 | Z3 solver | IMPLEMENTED | `solver.py` | Thread-local ctx; `rlimit`; per-invariant violation |
 | Z3 string optimization | IMPLEMENTED | `transpiler.py` | Enum-style String → Int promotion |
 | `Decision` | IMPLEMENTED | `decision.py` | Immutable; `allowed ↔ SAFE` enforced |
-| `SolverStatus` | IMPLEMENTED | `decision.py` | 10 values: SAFE, UNSAFE, TIMEOUT, ERROR, STALE_STATE, VALIDATION_FAILURE, INJECTION_BLOCKED, CONSENSUS_FAILURE, FLOW_VIOLATION, PRIVILEGE_BLOCKED |
+| `SolverStatus` | IMPLEMENTED | `decision.py` | 10 values: SAFE, UNSAFE, TIMEOUT, ERROR, STALE_STATE, VALIDATION_FAILURE, RATE_LIMITED, CONSENSUS_FAILURE, CACHE_HIT, GOVERNANCE_BLOCKED |
 | Worker pool (thread) | IMPLEMENTED | `worker.py` | `ThreadPoolExecutor`; warmup; HMAC-sealed IPC |
 | Worker pool (process) | IMPLEMENTED | `worker.py` | `ProcessPoolExecutor` with `spawn`; `model_dump()` before submit |
 | `fast_path.py` | IMPLEMENTED | `fast_path.py` | Fail-closed numeric fast path; `rlimit` |
@@ -3625,18 +3634,25 @@ PramanixError
 
 All values from `src/pramanix/decision.py` `SolverStatus(enum.StrEnum)`:
 
-| Value | `allowed` | Meaning |
-|---|---|---|
-| `SAFE` | `True` | Z3 proved all invariants hold — the only ALLOW status |
-| `UNSAFE` | `False` | Z3 found a counterexample; `violated_invariants` lists which |
-| `TIMEOUT` | `False` | Z3 exceeded `solver_timeout_ms` on at least one invariant |
-| `ERROR` | `False` | Unexpected internal error in the Guard or solver |
-| `STALE_STATE` | `False` | `state_version` mismatch between state data and `Policy.Meta.version` |
-| `VALIDATION_FAILURE` | `False` | Pydantic model validation failed for intent or state |
-| `INJECTION_BLOCKED` | `False` | Pre-LLM injection scorer returned score ≥ `injection_threshold` |
-| `CONSENSUS_FAILURE` | `False` | Dual-model consensus failed (`ExtractionMismatchError`) |
-| `FLOW_VIOLATION` | `False` | IFC `FlowEnforcer` blocked a disallowed information flow |
-| `PRIVILEGE_BLOCKED` | `False` | Privilege gate: required scope not in capability manifest |
+| Value | `allowed` | Classification | Meaning |
+|---|---|---|---|
+| `SAFE` | `True` | SAFE | Z3 proved all invariants hold — the only ALLOW status |
+| `UNSAFE` | `False` | BLOCKING | Z3 found a counterexample; `violated_invariants` lists which |
+| `TIMEOUT` | `False` | BLOCKING | Z3 exceeded `solver_timeout_ms` (or rlimit) on at least one invariant |
+| `ERROR` | `False` | BLOCKING | Unexpected internal error in the Guard or solver |
+| `STALE_STATE` | `False` | BLOCKING | `state_version` mismatch between state data and `Policy.Meta.version` |
+| `VALIDATION_FAILURE` | `False` | BLOCKING | Pydantic model validation failed for intent or state |
+| `RATE_LIMITED` | `False` | BLOCKING | Request shed by adaptive load limiter (fail-safe: always blocks) |
+| `CONSENSUS_FAILURE` | `False` | BLOCKING | Dual-model consensus failed (`ExtractionMismatchError`) |
+| `GOVERNANCE_BLOCKED` | `False` | BLOCKING | Post-Z3 governance gate denied the action (privilege / oversight / IFC) |
+| `CACHE_HIT` | observability | OBSERVABILITY | Decorates an existing SAFE/UNSAFE decision; Z3 still ran |
+
+**Three-way taxonomy** (enforced via `_BLOCKED_STATUSES` in `decision.py`):
+- **SAFE** — the sole path to `allowed=True`
+- **BLOCKING** — 8 statuses in `_BLOCKED_STATUSES`; `allowed=False` enforced in `__post_init__`
+- **OBSERVABILITY** — `CACHE_HIT` decorates an existing outcome; neither safe nor blocking on its own
+
+Note: `InjectionBlockedError`, `FlowViolationError`, and `PrivilegeEscalationError` are *exceptions* (in `exceptions.py`) — they map to `GOVERNANCE_BLOCKED` or `ERROR` status, not to distinct `SolverStatus` values.
 
 Invariant enforced in `Decision.__post_init__`: `allowed=True` iff `status == SolverStatus.SAFE`. Any other combination raises `ValueError` at construction time.
 
