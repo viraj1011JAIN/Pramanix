@@ -169,6 +169,7 @@ _log = structlog.get_logger("pramanix.guard")
 # Each span is a no-op (contextlib.nullcontext) when the ``otel`` extra is
 # absent, so there is zero overhead on deployments that do not use tracing.
 
+
 def _noop_span(name: str) -> Any:
     """No-op span context-manager — always available, used as OTel fallback."""
     return contextlib.nullcontext()
@@ -691,6 +692,21 @@ class GuardConfig:
                 "deployment without a durable audit trail fails SOC 2 / HIPAA compliance. "
                 "Add at least one AuditSink (e.g. S3AuditSink, KafkaAuditSink)."
             )
+        # ── Production safety: InMemory audit sinks are not durable ──────────
+        if _is_prod and self.audit_sinks:
+            _inmem_names = [
+                type(s).__name__
+                for s in self.audit_sinks
+                if type(s).__name__.startswith("InMemory")
+            ]
+            if _inmem_names:
+                raise ConfigurationError(
+                    f"InMemory audit sinks {_inmem_names} are not permitted in production "
+                    "(PRAMANIX_ENV=production). InMemory sinks lose all audit data on "
+                    "process restart, making forensic investigation and compliance "
+                    "attestation impossible. Replace with a durable sink "
+                    "(S3AuditSink, KafkaAuditSink, PostgresAuditSink)."
+                )
         # ── Production safety: resource limits disabled ────────────────────────
         if _is_prod and self.solver_rlimit == 0:
             _msg = (
