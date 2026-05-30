@@ -824,7 +824,7 @@ class TestCalibrateHmacKeyPaths:
         self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lines 928->931: --hmac-key-hex provided → skip env lookup, use directly."""
-        pytest.importorskip("sklearn")
+        pytest.importorskip("sklearn", exc_type=ImportError)
         monkeypatch.delenv("PRAMANIX_SCORER_HMAC_KEY_HEX", raising=False)
         dataset_path = _make_calibrate_dataset(tmp_path)
         output_path = tmp_path / "scorer.pkl"
@@ -847,7 +847,7 @@ class TestCalibrateHmacKeyPaths:
         self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lines 932-938: non-hex value → bytes.fromhex raises ValueError → exit 2."""
-        pytest.importorskip("sklearn")
+        pytest.importorskip("sklearn", exc_type=ImportError)
         monkeypatch.delenv("PRAMANIX_SCORER_HMAC_KEY_HEX", raising=False)
         dataset_path = _make_calibrate_dataset(tmp_path)
         output_path = tmp_path / "scorer.pkl"
@@ -870,7 +870,7 @@ class TestCalibrateHmacKeyPaths:
         self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lines 940-946: valid hex but < 16 bytes → exit 2 with error message."""
-        pytest.importorskip("sklearn")
+        pytest.importorskip("sklearn", exc_type=ImportError)
         monkeypatch.delenv("PRAMANIX_SCORER_HMAC_KEY_HEX", raising=False)
         dataset_path = _make_calibrate_dataset(tmp_path)
         output_path = tmp_path / "scorer.pkl"

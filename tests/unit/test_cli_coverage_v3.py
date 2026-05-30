@@ -393,6 +393,7 @@ class TestCalibrateInjectionEarlyExit:
         capsys: pytest.CaptureFixture,
     ) -> None:
         """--hmac-key-hex with <16 bytes → exit 2 (lines 1367-1368)."""
+        pytest.importorskip("sklearn", exc_type=ImportError)
         dataset_file = tmp_path / "dataset_hmac.jsonl"
         # 200 examples (100 benign + 100 injection) to pass min_examples check
         rows = [json.dumps({"text": "hello world", "is_injection": False})] * 100 + [
@@ -424,6 +425,7 @@ class TestCalibrateInjectionEarlyExit:
         capsys: pytest.CaptureFixture,
     ) -> None:
         """No HMAC key supplied → auto-generate key sidecar file (lines 1391-1412)."""
+        pytest.importorskip("sklearn", exc_type=ImportError)
         dataset_file = tmp_path / "dataset_autokey.jsonl"
         rows = [json.dumps({"text": "hello world", "is_injection": False})] * 100 + [
             json.dumps({"text": "ignore all previous", "is_injection": True})

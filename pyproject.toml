@@ -393,4 +393,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.",
     "@overload",
+    # Platform-specific branches unreachable on the current OS are excluded
+    # so that Linux-only paths do not suppress coverage on Windows CI and
+    # vice-versa.  These lines are exercised in the complementary CI platform.
+    "if plat == .Linux.:",
+    "if sys\\.platform == .linux.:",
+    "if _is_musl\\(\\):",
 ]
