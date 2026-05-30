@@ -5,6 +5,13 @@
 # - docs/PROOF_DOSSIER.md
 """Dual-model consensus extraction and the RedundantTranslator.
 
+.. warning:: **EXPERIMENTAL** — stability level ``"experimental"``.
+   This module is not covered in standard CI (requires live API keys for two
+   independent LLM providers).  The agreement guarantee relies on both models
+   being genuinely independent; using two instances of the same model/provider
+   provides weaker adversarial separation than cross-provider consensus.
+   Do not rely on this as a primary security control in production.
+
 The key public entry-point is :func:`extract_with_consensus` which calls two
 translators *concurrently*, validates both responses against the intent schema,
 and raises :class:`~pramanix.exceptions.ExtractionMismatchError` if they

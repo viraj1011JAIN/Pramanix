@@ -28,6 +28,9 @@ __stability__: dict[str, str] = {
     "worker": "stable",  # async-process execution backend
     "primitives": "stable",  # fintech, healthcare, finance, rbac, time, infra
     "translator": "beta",  # LLM translation stack (httpx/openai/anthropic)
+    # RedundantTranslator / extract_with_consensus — requires dual API keys;
+    # not covered in standard CI.  Same-provider use provides weaker guarantees.
+    "consensus": "experimental",
     "integrations": "beta",  # LangChain, LlamaIndex, AutoGen, FastAPI adapters
     "fast_path": "beta",  # fast-path cache (GuardConfig.fast_path_enabled)
     "ifc": "beta",  # information-flow control (TrustLabel, FlowPolicy, FlowEnforcer)

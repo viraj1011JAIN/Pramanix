@@ -2,12 +2,21 @@
 # Copyright (C) 2026 Viraj Jain
 """LLM consensus integration test — Issue #3.
 
+.. warning::
+   This module exercises the EXPERIMENTAL consensus feature.  The test suite
+   uses **two instances of the same OpenAI model** (``gpt-4o-mini``) rather
+   than two genuinely independent providers.  Same-provider consensus offers
+   weaker adversarial separation than cross-provider consensus.
+
+   This test is skipped in standard CI (requires ``OPENAI_API_KEY``).
+   Full cross-provider coverage is a known gap.
+
 Tests the dual-model consensus pathway (``extract_with_consensus``) with
 a real OpenAI API call, authenticated via OPENAI_API_KEY in .env.test.
 
 What this validates beyond unit tests:
 - Real HTTP round-trip to the OpenAI v1 chat completions endpoint.
-- Actual JSON extraction by two independent translator instances.
+- JSON extraction by two same-provider translator instances.
 - Consensus agreement on all fields (``strict_keys`` mode).
 - Injection gate: a malicious prompt is blocked end-to-end.
 
