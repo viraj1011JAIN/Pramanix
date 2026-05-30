@@ -358,13 +358,12 @@ class TestForceKillProcesses:
         """
         proc = multiprocessing.Process(target=_noop)
         proc.start()
-        # Poll until dead — more robust than a fixed join timeout under load on
-        # Windows where spawning a new Python interpreter can take several seconds.
-        # 120 s covers even the slowest coverage-instrumented full-suite runs.
-        deadline = time.monotonic() + 120.0
-        while proc.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert not proc.is_alive(), "No-op process did not exit within 120 s"
+        # join() blocks until the process exits — more reliable than polling.
+        # 300 s covers coverage-instrumented full-suite runs on Windows where
+        # spawning a new Python interpreter can take significantly longer than
+        # on Linux (it must load coverage, pyproject, etc.).
+        proc.join(timeout=300)
+        assert not proc.is_alive(), "No-op process did not exit within 300 s"
 
         container = types.SimpleNamespace(_processes={proc.pid: proc})
         _force_kill_processes(container)  # type: ignore[arg-type]  # Must not raise

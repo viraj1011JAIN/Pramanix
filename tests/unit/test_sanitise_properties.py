@@ -41,7 +41,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from pramanix.exceptions import InputTooLongError
@@ -137,7 +137,11 @@ _short_text = st.text(max_size=100)
     warnings=_warnings(),
     sub_penny_threshold=_sub_penny_threshold,
 )
-@settings(max_examples=500, deadline=timedelta(milliseconds=500))
+@settings(
+    max_examples=500,
+    deadline=timedelta(milliseconds=500),
+    suppress_health_check=[HealthCheck.too_slow],
+)
 def test_score_always_in_unit_interval(
     user_input: str,
     extracted_intent: dict,

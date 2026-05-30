@@ -130,7 +130,9 @@ class TestTradeWindowGuardIntegration:
     def test_just_at_boundary_allowed(self) -> None:
         guard = _make_trade_window_guard(3600)
         now = datetime.now(UTC)
-        boundary = now - timedelta(seconds=3598)  # leave 2s margin for test execution
+        # 30s margin covers full-suite coverage-instrumented runs on Windows
+        # where Z3 cold-start + coverage overhead can exceed 2s.
+        boundary = now - timedelta(seconds=3570)
         d = guard.verify(intent={"trade_time": boundary}, state={})
         assert d.allowed is True
 

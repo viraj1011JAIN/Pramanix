@@ -240,14 +240,16 @@ class TestSemanticFieldEqual:
         result = _semantic_field_equal(val, val)
         assert isinstance(result, bool)
 
-    def test_nan_string_self_equality_is_false(self) -> None:
-        """§35: Decimal("NaN") == Decimal("NaN") is False (IEEE 754 NaN semantics).
+    def test_nan_string_self_equality_is_true(self) -> None:
+        """§35: Decimal("NaN") == Decimal("NaN") is True under semantic equality.
 
-        _semantic_field_equal takes the Decimal comparison path for two strings
-        that both parse as Decimal NaN — the result is False, not True.
-        Explicit test so the counter-intuitive behaviour is pinned by CI.
+        Commit 9037ce8 deliberately changed _semantic_field_equal to return True
+        when both sides are NaN, because in the consensus context two models
+        that both output NaN AGREE with each other — they should not be flagged
+        as a mismatch.  This diverges from IEEE 754 (where NaN != NaN) but is
+        the correct behaviour for the dual-model consensus use-case.
         """
-        assert _semantic_field_equal("NaN", "NaN") is False
+        assert _semantic_field_equal("NaN", "NaN") is True
 
     def test_nan_string_vs_numeric_is_false(self) -> None:
         """§35: "NaN" must not compare equal to any real number."""
