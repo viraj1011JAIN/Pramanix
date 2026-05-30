@@ -221,14 +221,17 @@ class TestFastPathEvaluator:
         )
         assert result.blocked is False
 
-    def test_rule_exception_is_swallowed(self):
+    def test_rule_exception_blocks_fail_closed(self):
         def bad_rule(intent, state):
             raise RuntimeError("internal error")
 
         ev = FastPathEvaluator([bad_rule])
-        # Must not raise — exception is swallowed, evaluation continues
+        # Exception in a fast-path rule → fail-closed BLOCK (not pass-through).
+        # No exception must propagate to the caller, but the result must be blocked.
         result = ev.evaluate({}, {})
-        assert result.blocked is False
+        assert result.blocked is True
+        assert "fail-closed" in result.reason
+        assert "bad_rule" in result.rule_name
 
     def test_rule_count(self):
         rules = [

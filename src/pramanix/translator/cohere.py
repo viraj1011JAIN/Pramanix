@@ -13,7 +13,6 @@ If the package is not installed, instantiation raises
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 from typing import TYPE_CHECKING, Any
 
