@@ -874,7 +874,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 | P3.4 | `pytest.mark.xfail(strict=True)` for known failing real-LLM tests instead of `skipif` | Low |
 | P3.5 | Built-in compliance mapping library (pre-built SOC2, HIPAA, EU AI Act control sets) | High |
 | P3.6 | Compliance report CLI exporter — `pramanix report compliance.json --format pdf` | High |
-| P3.7 | Move `_warn_unclosed()` bare-return in `circuit_breaker.py:79` to WARNING log | Low |
+| ~~P3.7~~ | ~~Move `_warn_unclosed()` bare-return in `circuit_breaker.py:79` to WARNING log~~ | ✅ **FIXED** — `_warn_unclosed()` already emits `log.warning()` when `client_cell[0]` is not None; added `TestRedisDistributedBackendWarnUnclosed` (2 tests) to verify both the warning path and the no-warn-on-close path |
 | P3.8 | Sample warmup constraints from deployed policy, not hardcoded patterns | Medium |
 
 ---

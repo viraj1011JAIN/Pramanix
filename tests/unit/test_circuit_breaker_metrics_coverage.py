@@ -418,3 +418,44 @@ class TestIncSyncFailureCounter:
         metric = _SyncFailureMetric()
         metric._counter = _BoomCounter()  # pre-set counter that raises on inc()
         metric.increment()  # must not raise
+
+
+# ── RedisDistributedBackend._warn_unclosed finalizer (P3.7) ──────────────────
+
+
+class TestRedisDistributedBackendWarnUnclosed:
+    """P3.7 — _warn_unclosed() must emit WARNING when a live client is GC'd.
+
+    The finalizer is registered via weakref.finalize() in __init__; this test
+    calls the static method directly so no Redis connection is required.
+    """
+
+    def test_warn_emitted_when_client_is_open(self, caplog: pytest.LogCaptureFixture) -> None:
+        """cell[0] is not None → WARNING is emitted about the unclosed connection."""
+        import logging
+
+        from pramanix.circuit_breaker import RedisDistributedBackend
+
+        cell: list[object] = [object()]  # non-None sentinel — simulates open client
+        with caplog.at_level(logging.WARNING, logger="pramanix.circuit_breaker"):
+            RedisDistributedBackend._warn_unclosed(cell)
+
+        assert any(
+            "GC" in r.message and "open Redis connection" in r.message
+            for r in caplog.records
+        ), f"Expected unclosed-connection WARNING but got: {[r.message for r in caplog.records]}"
+
+    def test_no_warn_when_client_is_already_closed(self, caplog: pytest.LogCaptureFixture) -> None:
+        """cell[0] is None → connection already closed; no WARNING should be emitted."""
+        import logging
+
+        from pramanix.circuit_breaker import RedisDistributedBackend
+
+        cell: list[object] = [None]  # None sentinel — simulates already-closed client
+        with caplog.at_level(logging.WARNING, logger="pramanix.circuit_breaker"):
+            RedisDistributedBackend._warn_unclosed(cell)
+
+        assert not caplog.records, (
+            "Unexpected WARNING emitted when client_cell was already None: "
+            f"{[r.message for r in caplog.records]}"
+        )
