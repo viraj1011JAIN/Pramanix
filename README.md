@@ -2946,9 +2946,9 @@ This section catalogs every known gap, flaw, and deliberate limitation found in 
 
 `validator.py` contains `ShadowEvaluator` for A/B policy comparison. Its `_results` list grows unboundedly in the current process. There is no flush-to-file, flush-to-database, flush-to-metrics, or background drain. In a long-running process handling millions of decisions, this will consume unbounded memory. There is no export API.
 
-**HIGH-8: `fast_path.py` `_extract_numeric` uses `eval()` for numeric parsing.**
+**HIGH-8: ~~`fast_path.py` uses `eval()` for numeric parsing~~ — DEBUNKED.**
 
-`fast_path.py` is described as fail-closed. The function `_extract_numeric` parses user-supplied strings. If it encounters a string that cannot be parsed as a number, it returns a block-reason string (fail-closed). However, the internal mechanism must be verified — `eval()` on any user-supplied string would be a critical vulnerability. Source verification is required before claiming this path is safe.
+Source-verified as of 2026-05-30: `fast_path.py` uses `Decimal(str(val))` exclusively for numeric parsing. There is no `eval()`, `exec()`, or `ast.literal_eval()` in the file. The claim was a false positive from the initial audit. The numeric parsing path is fail-closed: any `Exception` from `Decimal(str(val))` returns a block-reason string, not `None`. Additionally, as of commit `6f73fa2`, rule exceptions in `FastPathEvaluator.evaluate()` now block immediately (fail-closed) rather than continuing to Z3.
 
 ---
 
@@ -3459,7 +3459,7 @@ Status labels used:
 | `SolverStatus` | IMPLEMENTED | `decision.py` | 10 values: SAFE, UNSAFE, TIMEOUT, ERROR, STALE_STATE, VALIDATION_FAILURE, RATE_LIMITED, CONSENSUS_FAILURE, CACHE_HIT, GOVERNANCE_BLOCKED |
 | Worker pool (thread) | IMPLEMENTED | `worker.py` | `ThreadPoolExecutor`; warmup; HMAC-sealed IPC |
 | Worker pool (process) | IMPLEMENTED | `worker.py` | `ProcessPoolExecutor` with `spawn`; `model_dump()` before submit |
-| `fast_path.py` | IMPLEMENTED | `fast_path.py` | Fail-closed numeric fast path; `rlimit` |
+| `fast_path.py` | IMPLEMENTED | `fast_path.py` | Fail-closed numeric fast path; rule exceptions block immediately (fail-closed), not continue-to-Z3 |
 | Circuit breaker | IMPLEMENTED | `circuit_breaker.py` | Full state machine; CLOSED/OPEN/HALF_OPEN/ISOLATED |
 | Circuit breaker Redis backend | PARTIAL | `circuit_breaker.py` | `InMemoryDistributedBackend` warns in production; split-brain risk |
 | `AnthropicTranslator` | IMPLEMENTED | `translator/anthropic.py` | Streaming; tenacity retry |
@@ -3471,7 +3471,7 @@ Status labels used:
 | `LlamaCppTranslator` | IMPLEMENTED | `translator/llamacpp.py` | Local llama.cpp |
 | `BedrockTranslator` | IMPLEMENTED | `translator/bedrock.py` | Claude/Titan/Llama/Converse routing |
 | `VertexAITranslator` | IMPLEMENTED | `translator/vertexai.py` | Gemini/PaLM2 on Vertex |
-| Redundant dual-model consensus | IMPLEMENTED | `translator/redundant.py` | `ConsensusStrictness` semantic/strict |
+| Redundant dual-model consensus | EXPERIMENTAL | `translator/redundant.py` | `ConsensusStrictness` semantic/strict; stability `"experimental"`; live API keys required for CI coverage; same-provider instances provide weaker adversarial separation |
 | `BuiltinScorer` injection heuristic | IMPLEMENTED | `translator/injection_scorer.py` | RE2-based; no sklearn |
 | `CalibratedScorer` ML injection | IMPLEMENTED | `translator/injection_scorer.py` | TF-IDF + LR; HMAC-sealed `.npz`; no pickle |
 | `calibrate-injection` CLI | IMPLEMENTED | `cli.py` | Fits and saves `CalibratedScorer` from CSV |
@@ -3481,12 +3481,12 @@ Status labels used:
 | LangGraph node guard | IMPLEMENTED | `integrations/langgraph.py` | `PramanixLangGraphGuard.as_node()` |
 | LlamaIndex callback | IMPLEMENTED | `integrations/llamaindex.py` | `PramanixLlamaIndexCallbackHandler` |
 | AutoGen group chat guard | IMPLEMENTED | `integrations/autogen.py` | Message-level guard hook |
-| DSPy module guard | IMPLEMENTED | `integrations/dspy.py` | `PramanixDSPyModule` |
-| CrewAI task guard | IMPLEMENTED | `integrations/crewai.py` | `PramanixCrewAITaskGuard` |
+| DSPy module guard | IMPLEMENTED | `integrations/dspy.py` | `PramanixGuardedModule`; requires `dspy` installed — raises `ImportError` if absent |
+| CrewAI task guard | IMPLEMENTED | `integrations/crewai.py` | `PramanixCrewAITool`; requires `crewai` installed — raises `ImportError` if absent |
 | PydanticAI validator | IMPLEMENTED | `integrations/pydantic_ai.py` | `check`, `check_async`, `@guard_tool` |
 | Semantic Kernel filter | IMPLEMENTED | `integrations/semantic_kernel.py` | `PramanixSemanticKernelFilter` |
 | Haystack component | IMPLEMENTED | `integrations/haystack.py` | `PramanixHaystackComponent` |
-| gRPC interceptor | PARTIAL | `interceptors/grpc.py` | No TLS docs; no integration test vs real gRPC |
+| gRPC interceptor | PARTIAL | `interceptors/grpc.py` | Requires `grpcio` — raises `ImportError` if absent; no TLS docs; no integration test vs real gRPC |
 | Kafka interceptor | PARTIAL | `interceptors/kafka.py` | No TLS docs; no integration test vs real broker |
 | K8s admission webhook | PARTIAL | `k8s/webhook.py` | No mTLS client validation documented |
 | Merkle audit log | PARTIAL | `audit/merkle.py` | In-memory; no persistence across restarts |
