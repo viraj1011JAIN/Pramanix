@@ -289,11 +289,16 @@ class FastPathEvaluator:
                         rule_name=rule_name,
                     )
             except Exception as e:
+                rule_name = getattr(rule, "__name__", "unknown_rule")
                 log.warning(
-                    "Fast-path rule raised exception — continuing to Z3",
-                    extra={"rule": getattr(rule, "__name__", "?"), "error": str(e)},
+                    "Fast-path rule raised exception — blocking fail-closed (rule=%s, error=%s)",
+                    rule_name,
+                    e,
                 )
-                continue
+                return FastPathResult.block(
+                    reason=f"Fast-path rule error (fail-closed): rule={rule_name}",
+                    rule_name=rule_name,
+                )
 
         return FastPathResult.pass_through()
 

@@ -315,8 +315,8 @@ class TestFastPathEvaluatorOrdering:
         evaluator = FastPathEvaluator(rules)
         assert evaluator.rule_count == 3
 
-    def test_evaluator_exception_in_rule_continues_to_next(self) -> None:
-        """A rule that raises an exception is skipped; evaluation continues."""
+    def test_evaluator_exception_in_rule_blocks_fail_closed(self) -> None:
+        """A rule that raises an exception causes fail-closed BLOCK; subsequent rules skipped."""
 
         def _buggy_rule(intent, state):
             raise RuntimeError("simulated rule crash")
@@ -327,7 +327,8 @@ class TestFastPathEvaluatorOrdering:
         evaluator = FastPathEvaluator([_buggy_rule, _safe_rule])
         result = evaluator.evaluate({}, {})
         assert result.blocked
-        assert result.reason == "blocked by safe rule"
+        assert "fail-closed" in result.reason
+        assert result.rule_name == "_buggy_rule"
 
     def test_evaluator_infinity_blocked_by_combined_rules(self) -> None:
         """Infinity amount blocked at first applicable rule in a multi-rule evaluator."""
