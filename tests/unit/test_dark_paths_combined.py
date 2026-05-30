@@ -18,11 +18,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import importlib.util as _ilu
 import pickle
-import sys
 from decimal import Decimal
 from pathlib import Path
+
 import pytest
 
 from pramanix.decision import Decision, SolverStatus, _build_decision_canonical
@@ -386,6 +385,11 @@ class TestAsyncProcessNonPicklable:
             decision = await guard.verify_async(intent=intent, state={})
             assert not decision.allowed
             assert decision.status == SolverStatus.ERROR
-            assert "unpicklable" in decision.explanation.lower()
+            # C-3a type-safety check fires first (ipc_type_violation) for non-primitive
+            # types; C-3b pickle check fires for types that pass C-3a but fail pickle.
+            assert (
+                "ipc_type_violation" in decision.explanation
+                or "unpicklable" in decision.explanation.lower()
+            )
         finally:
             await guard.shutdown()
