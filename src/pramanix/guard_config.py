@@ -188,7 +188,7 @@ except ImportError:
     warnings.warn(
         "opentelemetry is not installed — OTel spans will be no-ops. "
         "Install tracing support with: pip install 'pramanix[otel]'",
-        ImportWarning,
+        UserWarning,
         stacklevel=2,
     )
 
@@ -255,7 +255,7 @@ except ImportError:
     warnings.warn(
         "prometheus_client is not installed — Prometheus metrics will be disabled. "
         "Install metrics support with: pip install 'pramanix[metrics]'",
-        ImportWarning,
+        UserWarning,
         stacklevel=2,
     )
 except ValueError as _prom_val_err:

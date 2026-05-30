@@ -128,7 +128,13 @@ try:
 
     _worker_prometheus_register_all()
 except ImportError:
-    pass  # prometheus_client not installed — metrics silently disabled
+    import logging as _prom_log
+
+    _prom_log.getLogger(__name__).warning(
+        "pramanix.worker: prometheus_client is not installed — worker metrics "
+        "(warmup_failures_total, watchdog_errors_total) are unavailable. "
+        "Install with: pip install 'pramanix[observability]'"
+    )
 
 
 # ── Phase 10.4: Adaptive Concurrency Limiter ──────────────────────────────────

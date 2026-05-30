@@ -68,7 +68,9 @@ class TestProcessPickleSafety:
             state={"balance": Decimal("500")},
         )
         assert d.allowed is False
-        assert "unpicklable_intent" in d.explanation
+        # Either the type-safety check (ipc_type_violation) or the picklability
+        # check (unpicklable_intent) catches this — both are fail-closed errors.
+        assert "ipc_type_violation" in d.explanation or "unpicklable_intent" in d.explanation
 
     @pytest.mark.asyncio
     async def test_non_picklable_state_returns_error_decision(self, process_guard: Guard) -> None:
@@ -77,18 +79,18 @@ class TestProcessPickleSafety:
             state={"balance": _NON_PICKLABLE},
         )
         assert d.allowed is False
-        assert "unpicklable_intent" in d.explanation
+        assert "ipc_type_violation" in d.explanation or "unpicklable_intent" in d.explanation
 
     @pytest.mark.asyncio
     async def test_pickling_error_never_propagates(self, process_guard: Guard) -> None:
-        """PicklingError must be caught — never bubble up to the caller."""
+        """Non-primitive or unpicklable values must be caught — never bubble up to the caller."""
         try:
             d = await process_guard.verify_async(
                 intent={"amount": _NON_PICKLABLE},
                 state={"balance": Decimal("500")},
             )
         except Exception as exc:
-            pytest.fail(f"PicklingError propagated to caller: {exc}")
+            pytest.fail(f"Serialization error propagated to caller: {exc}")
         assert d.allowed is False
 
     @pytest.mark.asyncio
@@ -114,7 +116,8 @@ class TestProcessPickleSafety:
             intent={"amount": Decimal("100")},
             state={"balance": Decimal("500")},
         )
-        # May be SAFE or any solver outcome — but NOT an unpicklable_intent error.
+        # May be SAFE or any solver outcome — but NOT an IPC serialization error.
+        assert "ipc_type_violation" not in d.explanation
         assert "unpicklable_intent" not in d.explanation
 
 
@@ -168,3 +171,100 @@ class TestAssertProcessSafe:
         msg = str(exc_info.value)
         assert "amount" in msg
         assert "balance" in msg
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# C-3b: _check_ipc_type_safety and _is_ipc_safe_value unit tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestIpcTypeSafetyHelpers:
+    """Direct unit tests for _check_ipc_type_safety / _is_ipc_safe_value.
+
+    These functions gate the process-mode dispatch path, rejecting custom
+    objects with __reduce__ methods before they reach pickle.  The tests
+    cover every branch of the allowlist logic.
+    """
+
+    def test_all_primitives_safe(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        safe = {
+            "a": Decimal("10"),
+            "b": True,
+            "c": "hello",
+            "d": 42,
+            "e": 3.14,
+            "f": None,
+        }
+        assert _check_ipc_type_safety(safe) == []
+
+    def test_nested_list_of_primitives_safe(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        assert _check_ipc_type_safety({"x": [1, Decimal("2"), "three"]}) == []
+
+    def test_nested_dict_of_primitives_safe(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        assert _check_ipc_type_safety({"x": {"y": "z", "n": 0}}) == []
+
+    def test_lock_is_unsafe(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        assert _check_ipc_type_safety({"lock": _NON_PICKLABLE}) == ["lock"]
+
+    def test_custom_object_with_reduce_is_unsafe(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        class Evil:
+            def __reduce__(self) -> tuple:
+                return (eval, ("1+1",))
+
+        assert _check_ipc_type_safety({"x": Evil()}) == ["x"]
+
+    def test_nested_unsafe_in_list_is_caught(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        assert _check_ipc_type_safety({"x": [_NON_PICKLABLE]}) == ["x"]
+
+    def test_nested_unsafe_in_dict_is_caught(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        assert _check_ipc_type_safety({"x": {"y": _NON_PICKLABLE}}) == ["x"]
+
+    def test_empty_dict_is_safe(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        assert _check_ipc_type_safety({}) == []
+
+    def test_multiple_unsafe_fields_all_returned(self) -> None:
+        from pramanix.guard import _check_ipc_type_safety
+
+        unsafe = _check_ipc_type_safety({"a": _NON_PICKLABLE, "b": _NON_PICKLABLE, "c": "ok"})
+        assert set(unsafe) == {"a", "b"}
+
+    def test_is_ipc_safe_value_leaf_types(self) -> None:
+        from pramanix.guard import _is_ipc_safe_value
+
+        assert _is_ipc_safe_value(Decimal("1"))
+        assert _is_ipc_safe_value(True)
+        assert _is_ipc_safe_value("hello")
+        assert _is_ipc_safe_value(42)
+        assert _is_ipc_safe_value(3.14)
+        assert _is_ipc_safe_value(None)
+
+    def test_is_ipc_safe_value_rejects_object(self) -> None:
+        from pramanix.guard import _is_ipc_safe_value
+
+        assert not _is_ipc_safe_value(_NON_PICKLABLE)
+
+    def test_is_ipc_safe_value_empty_list_safe(self) -> None:
+        from pramanix.guard import _is_ipc_safe_value
+
+        assert _is_ipc_safe_value([])
+
+    def test_is_ipc_safe_value_empty_dict_safe(self) -> None:
+        from pramanix.guard import _is_ipc_safe_value
+
+        assert _is_ipc_safe_value({})

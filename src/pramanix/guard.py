@@ -180,6 +180,35 @@ class PolicyCoverageReport:
 check_platform()
 
 
+from decimal import Decimal as _Decimal
+
+# Primitive leaf types that are safe to carry across the process boundary.
+# Anything outside this set could carry __reduce__ gadgets that execute code
+# during deserialization in the worker process.
+_SAFE_IPC_LEAF_TYPES: tuple[type, ...] = (str, int, float, bool, _Decimal, type(None))
+
+
+def _is_ipc_safe_value(v: Any) -> bool:
+    """Recursively verify *v* consists only of safe primitive types."""
+    if isinstance(v, _SAFE_IPC_LEAF_TYPES):
+        return True
+    if isinstance(v, list):
+        return all(_is_ipc_safe_value(item) for item in v)
+    if isinstance(v, dict):
+        return all(isinstance(k, str) and _is_ipc_safe_value(val) for k, val in v.items())
+    return False
+
+
+def _check_ipc_type_safety(values: dict[str, Any]) -> list[str]:
+    """Return keys whose values are not IPC-safe primitive types.
+
+    Called before the process-mode pickle step so that custom objects with
+    ``__reduce__`` methods are rejected before they can execute code in the
+    worker process during deserialization.
+    """
+    return [k for k, v in values.items() if not _is_ipc_safe_value(v)]
+
+
 def _is_picklable(obj: Any) -> bool:
     """Return True if *obj* can be round-tripped through pickle."""
     import logging as _log_pickle
@@ -276,8 +305,8 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
     which fields appear in real requests versus which are declared in policy
     but never exercised.
 
-    Silently no-ops when prometheus_client is not installed or the counter
-    cannot be registered.
+    Logs a WARNING and no-ops when prometheus_client is not installed or the
+    counter cannot be registered.
     """
     global _FIELD_SEEN_COUNTER
     if _FIELD_SEEN_COUNTER is None:
@@ -1462,9 +1491,31 @@ class Guard:
             return await _timed(self._sign_decision(decision))
 
         if mode == "async-process":
-            # C-3: Pre-flight picklability check. The values dict crosses the
-            # process boundary via pickle. Catch non-picklable objects here so
-            # the caller gets a clean Decision instead of a cryptic PicklingError.
+            # C-3a: Type-safety check — reject non-primitive values BEFORE pickle.
+            # ProcessPoolExecutor serialises arguments via pickle.  Custom objects
+            # with __reduce__ methods could execute arbitrary code in the worker
+            # process during deserialization.  Enforce a strict allowlist of safe
+            # primitive types (str, int, float, bool, Decimal, None, list, dict)
+            # so that no pickle gadget can cross the process boundary.
+            _unsafe_fields = _check_ipc_type_safety(values)
+            if _unsafe_fields:
+                return await _timed(
+                    self._sign_decision(
+                        Decision.error(
+                            reason=(
+                                f"ipc_type_violation: fields contain non-primitive types "
+                                f"that cannot be safely serialized across the process "
+                                f"boundary: {_unsafe_fields}. "
+                                "Call model_dump() on your intent/state before passing "
+                                "to verify_async()."
+                            )
+                        )
+                    )
+                )
+
+            # C-3b: Picklability check — catch remaining non-picklable primitives
+            # (e.g. generators, lambdas) that passed the type allowlist but would
+            # still cause a cryptic PicklingError at dispatch time.
             import pickle as _pickle
 
             from pramanix.worker import (

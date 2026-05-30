@@ -181,10 +181,10 @@ Four classes ship in production with dev-mode guards:
 
 | Class | File | Guard | Verdict |
 |-------|------|-------|---------|
-| `InMemoryAuditSink` | `audit_sink.py:100` | `PRAMANIX_ENV=production` → `UserWarning` | ✅ Correct — dev/test convenience class, warning fires in prod |
-| `InMemoryDistributedBackend` | `circuit_breaker.py:491` | `PRAMANIX_ENV=production` → `UserWarning` + raises `ConfigurationError` | ✅ Correct |
-| `InMemoryExecutionTokenVerifier` | `execution_token.py:439` | `PRAMANIX_ENV=production` → `UserWarning` | ✅ Correct |
-| `InMemoryApprovalWorkflow` | `oversight/workflow.py` | `PRAMANIX_ENV=production` → `UserWarning` | ✅ Correct |
+| `InMemoryAuditSink` | `audit_sink.py:100` | `PRAMANIX_ENV=production` → raises `ConfigurationError` | ✅ Correct — hard block in prod |
+| `InMemoryDistributedBackend` | `circuit_breaker.py:516` | `PRAMANIX_ENV=production` → raises `ConfigurationError` | ✅ Correct |
+| `InMemoryExecutionTokenVerifier` | `execution_token.py:439` | `PRAMANIX_ENV=production` → raises `ConfigurationError` (checked FIRST, before multi-worker signals) | ✅ Fixed 2026-05-30 — prior `elif` ordering bug allowed multi-worker signals to bypass the production block |
+| `InMemoryApprovalWorkflow` | `oversight/workflow.py` | `PRAMANIX_ENV=production` → raises `ConfigurationError` | ✅ Correct — hard block in prod |
 
 ### 4.5 Integration Stub Fallback Classes
 
@@ -192,15 +192,27 @@ When optional dependencies are absent, several integration modules define stub b
 
 | Location | Stub | Risk |
 |----------|------|------|
-| `k8s/webhook.py:51` | `class FastAPI: ...` | Route registration silently no-ops if `fastapi` absent |
-| `integrations/langchain.py:33` | `class BaseTool: ...` | `_run`/`_arun` now raise `ConfigurationError` ✅ |
-| `integrations/llamaindex.py:58,67` | `class ToolMetadata:`, `class ToolOutput:` | Structurally incorrect objects exported; downstream importer gets wrong types with no error |
-| `integrations/crewai.py:82` | `class PramanixCrewAITool(_CrewAIBase)` | Inherits from stub or real base |
-| `integrations/dspy.py:79` | `class PramanixGuardedModule(_ModuleBase)` | Same pattern |
-| `interceptors/grpc.py:55` | `class PramanixGrpcInterceptor(_InterceptorBase)` | Real gRPC interceptor or fallback |
-| `translator/mistral.py:58` | Fallback `_Mistral` class | Structurally incompatible if v1 SDK absent |
+| `k8s/webhook.py:51` | `class _FastAPIFallback: ...` | Raises `ConfigurationError` on instantiation ✅ — verified 2026-05-30 |
+| `integrations/langchain.py:33` | `class BaseTool: ...` | `_run`/`_arun` raise `ConfigurationError` ✅ |
+| `integrations/llamaindex.py:58,67` | `class ToolMetadata:`, `class ToolOutput:` | Raises `ImportError`/`ConfigurationError` on instantiation ✅ — fixed 2026-05-30 |
+| `integrations/crewai.py:130` | `_CrewAIBase = object` fallback | `PramanixCrewAITool.__init__` raises `ImportError` when `_CREWAI_AVAILABLE=False` ✅ — verified 2026-05-30 |
+| `integrations/dspy.py:118` | `_ModuleBase = object` fallback | `PramanixGuardedModule.__init__` raises `ImportError` when `_DSPY_AVAILABLE=False` ✅ — verified 2026-05-30 |
+| `interceptors/grpc.py:88` | `_InterceptorBase = object` fallback | `PramanixGrpcInterceptor.__init__` raises `ImportError` when `_GRPC_AVAILABLE=False` ✅ — verified 2026-05-30 |
+| `translator/mistral.py:82` | `except ImportError as exc` in `__init__` | Raises `ConfigurationError` chaining the import error ✅ — verified 2026-05-30 |
 
-**✅ Fixed 2026-05-30**: `integrations/llamaindex.py` — `_ToolMetadataFallback` and `_ToolOutputFallback` both raise `ImportError` on instantiation, chaining the original import error. `PramanixFunctionTool` and `PramanixQueryEngineTool` both raise `ConfigurationError` in `__init__` when `_LLAMA_AVAILABLE=False`. No silent silent export remains.
+**✅ All integration stub fallbacks are correctly hardened** (2026-05-30): Every integration class raises a clear error (`ImportError` or `ConfigurationError`) at instantiation time when the optional dependency is absent. Verified for k8s/webhook.py, langchain.py, llamaindex.py, crewai.py, dspy.py, grpc.py, and mistral.py. No silent no-op exports remain.
+
+### 4.5a IPC Type Safety (process-mode)
+
+**✅ Fixed 2026-05-30** — Added `_check_ipc_type_safety(values)` and `_is_ipc_safe_value(v)` to `guard.py`. Before the existing pickle pre-flight check, all values are validated against a strict type allowlist `(str, int, float, bool, Decimal, None, list, dict)`. Custom objects with `__reduce__` methods are rejected with `Decision.error(reason="ipc_type_violation: ...")`. This prevents pickle gadget code-execution in the worker process even if non-primitive values somehow bypass Pydantic validation. 15 direct unit tests in `TestIpcTypeSafetyHelpers` in `test_process_pickle.py`.
+
+### 4.5b ImportWarning → UserWarning in guard_config.py
+
+**✅ Fixed 2026-05-30** — Both `guard_config.py` import-error warnings (`opentelemetry is not installed` and `prometheus_client is not installed`) changed from `ImportWarning` (filtered by Python by default — operators never see it) to `UserWarning` (visible by default). Both paths now exercise real warning visibility.
+
+### 4.5c worker.py Prometheus import silence
+
+**✅ Fixed 2026-05-30** — `worker.py` no longer silently `pass`es when `prometheus_client` is not installed. The `except ImportError` block now logs a `WARNING` via `logging.getLogger(__name__)` so operators see that worker metrics are unavailable.
 
 ### 4.6 Threading Model
 
@@ -387,7 +399,7 @@ Competitors: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVIDIA NeMo Guar
 | **GA-2** | Validators | 4 NLP validator types vs GrAI 200+ validators | 🔴 Critical | ✅ Fixed 2026-05-26 | Added 7 new stdlib-only validators: `StringLengthValidator`, `NumericRangeValidator`, `DateValidator`, `URLValidator`, `EmailValidator` (RE2-backed), `JSONSchemaValidator`, `ProfanityDetector`. Full test coverage in `test_nlp_validators_extended.py` (57 tests). |
 | **GA-3** | Policy DSL | No YAML/TOML policy authoring | 🟠 High | ✅ Fixed 2026-05-26 | Added `pramanix.natural_policy.yaml_loader` — safe AST-based YAML/TOML compiler (never calls eval/exec). Functions: `load_policy_yaml`, `load_policy_toml`, `load_policy_string`, `load_policy_file`. Full test coverage in `test_yaml_dsl.py` (35 tests). |
 | **GA-4** | UX | No policy linter with plain-English errors | 🟠 High | ✅ Fixed 2026-05-26 | Added `pramanix lint-policy <file>` CLI subcommand. Codes: E001 (missing label), E002 (duplicate), E003 (empty), E004 (load failure), W001–W005. Supports `--json`, `--strict`, `--policy-var`. Full test coverage in `test_cli_lint_policy.py` (32 tests). |
-| **GA-5** | LLM CI | Layer 4 consensus uses stubs in CI | 🟠 High | 🔴 Open | Add CI integration tests with containerised Ollama or real (rate-limited) API calls for consensus and injection detection |
+| **GA-5** | LLM CI | Layer 4 consensus uses stubs in CI | 🟠 High | ✅ Fixed 2026-05-30 | Added 3 real Ollama consensus tests to `tests/integration/test_ollama_translator.py`: `test_ollama_live_consensus_two_same_model_instances` (lenient mode), `test_ollama_live_consensus_strict_keys_mode` (strict), `test_ollama_live_consensus_injection_blocked` (injection pipeline with `threshold=0.3`). All gated by `@requires_ollama` and run in the `ollama-live` CI job against a real local model. Import: `from pramanix.translator.redundant import extract_with_consensus`. |
 | **GA-6** | Integrations | LlamaIndex stub ToolMetadata/ToolOutput silently exported | 🟠 High | ✅ Fixed 2026-05-30 | `_ToolMetadataFallback.__init__()` and `_ToolOutputFallback.__init__()` now raise `ImportError` chaining the original exception. `PramanixFunctionTool.__init__()` and `PramanixQueryEngineTool.__init__()` raise `ConfigurationError("llama_index is not installed")` when `_LLAMA_AVAILABLE=False`. Confirmed by grep. |
 | **GA-7** | Streaming | No streaming validation pipeline | 🟠 High | ✅ Fixed 2026-05-26 | Added `Guard.verify_stream(tokens, state, *, verify_every_n_tokens=20, max_tokens=4096)` — async generator over token strings, accumulates JSON buffer, verifies at checkpoints, stops on BLOCK. Full test coverage in `test_guard_stream_coverage.py` (7 async tests). |
 | **GA-8** | Orchestration | No graph/multi-agent workflow support | 🟠 High | ✅ Fixed 2026-05-30 | Added `integrations/agent_orchestration.py` — `AgentOrchestrationAdapter` `@runtime_checkable` Protocol; `LangGraphGuardAdapter` and `AutoGenGuardAdapter` concrete implementations. Full integration tests in `tests/integration/test_agent_orchestration_adapters.py` with real Z3 solver. Fail-closed verified via `RaisingSolverStub`. |

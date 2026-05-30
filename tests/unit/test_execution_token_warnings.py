@@ -2,9 +2,9 @@
 # Copyright (C) 2026 Viraj Jain
 """Tests for InMemoryExecutionTokenVerifier tiered warning/error logic — Issue #16.
 
-Three tiers:
-1. Multi-worker env vars present       → RuntimeWarning
-2. PRAMANIX_ENV=production (single)    → ConfigurationError (hard block)
+Three tiers (evaluated in priority order):
+1. PRAMANIX_ENV=production (any)       → ConfigurationError (hard block, highest priority)
+2. Multi-worker env vars present       → RuntimeWarning
 3. Neither                             → UserWarning
 """
 
@@ -78,14 +78,21 @@ class TestInMemoryWarningTiers:
         with pytest.raises(ConfigurationError, match="not permitted when PRAMANIX_ENV=production"):
             InMemoryExecutionTokenVerifier(secret_key=_SECRET)
 
-    def test_multi_worker_takes_priority_over_production_env(
+    def test_production_env_takes_priority_over_multi_worker(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Multi-worker signals fire tier-1 RuntimeWarning regardless of PRAMANIX_ENV."""
+        """PRAMANIX_ENV=production always raises ConfigurationError, even with multi-worker signals.
+
+        Both conditions indicate "not safe for this deployment", but the production
+        environment flag is the authoritative hard gate — it must not be bypassed by
+        the presence of multi-worker signals.  Prior to this fix, the elif chain meant
+        that WEB_CONCURRENCY=N caused only a RuntimeWarning when PRAMANIX_ENV=production,
+        silently allowing initialization that should have been blocked.
+        """
         monkeypatch.setenv("WEB_CONCURRENCY", "8")
         monkeypatch.setenv("PRAMANIX_ENV", "production")
 
-        with pytest.warns(RuntimeWarning, match="multi-worker"):
+        with pytest.raises(ConfigurationError, match="not permitted when PRAMANIX_ENV=production"):
             InMemoryExecutionTokenVerifier(secret_key=_SECRET)
 
     def test_web_concurrency_one_is_not_multi_worker(self, monkeypatch: pytest.MonkeyPatch) -> None:

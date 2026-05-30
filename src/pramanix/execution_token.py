@@ -479,17 +479,7 @@ class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
             v and v not in ("", "1") for v in _multi_worker_signals[:1]
         ) or any(v for v in _multi_worker_signals[1:])
 
-        if _is_likely_multi_worker:
-            warnings.warn(
-                "InMemoryExecutionTokenVerifier is not safe for multi-worker "
-                "deployments. Each worker has an independent token registry — "
-                "tokens consumed on one worker are NOT tracked by other workers, "
-                "enabling replay attacks. Switch to RedisExecutionTokenVerifier "
-                "or SQLiteExecutionTokenVerifier for distributed enforcement.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        elif os.environ.get("PRAMANIX_ENV", "").lower() == "production":
+        if os.environ.get("PRAMANIX_ENV", "").lower() == "production":
             from pramanix.exceptions import ConfigurationError as _CE
 
             raise _CE(
@@ -500,6 +490,16 @@ class InMemoryExecutionTokenVerifier(ExecutionTokenVerifier):
                 "Switch to RedisExecutionTokenVerifier or "
                 "SQLiteExecutionTokenVerifier for durable, multi-worker-safe "
                 "token storage."
+            )
+        elif _is_likely_multi_worker:
+            warnings.warn(
+                "InMemoryExecutionTokenVerifier is not safe for multi-worker "
+                "deployments. Each worker has an independent token registry — "
+                "tokens consumed on one worker are NOT tracked by other workers, "
+                "enabling replay attacks. Switch to RedisExecutionTokenVerifier "
+                "or SQLiteExecutionTokenVerifier for distributed enforcement.",
+                RuntimeWarning,
+                stacklevel=2,
             )
         else:
             warnings.warn(
