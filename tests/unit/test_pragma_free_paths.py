@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib.util as _ilu
 import sys
 from decimal import Decimal
+from unittest.mock import patch
 import pytest
 import z3
 
@@ -419,6 +420,9 @@ def _load_guard_config_fresh(private_name: str, *, block_otel: bool, block_prom:
 
     Never modifies sys.modules["pramanix.guard_config"].  The caller must
     remove private_name from sys.modules in a finally block.
+
+    Applies import blocks via patch.dict so they are automatically reverted
+    after exec_module — no permanent sys.modules mutation.
     """
     import importlib.util
     from pathlib import Path
@@ -429,7 +433,7 @@ def _load_guard_config_fresh(private_name: str, *, block_otel: bool, block_prom:
     spec = importlib.util.spec_from_file_location(private_name, src_path)
     fresh = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
 
-    overrides: dict = {}
+    overrides: dict[str, None] = {}
     if block_otel:
         # Block the top-level package AND the common sub-module so that
         # "from opentelemetry import trace" raises ImportError.
@@ -440,7 +444,8 @@ def _load_guard_config_fresh(private_name: str, *, block_otel: bool, block_prom:
 
     sys.modules[private_name] = fresh
     try:
-        spec.loader.exec_module(fresh)  # type: ignore[union-attr]
+        with patch.dict(sys.modules, overrides):
+            spec.loader.exec_module(fresh)  # type: ignore[union-attr]
     except Exception:
         sys.modules.pop(private_name, None)
         raise
@@ -448,10 +453,6 @@ def _load_guard_config_fresh(private_name: str, *, block_otel: bool, block_prom:
     return fresh
 
 
-@pytest.mark.skipif(
-    _ilu.find_spec("opentelemetry") is not None or _ilu.find_spec("prometheus_client") is not None,
-    reason="run in tox:no-otel-no-prometheus — otel/prometheus installed in this env",
-)
 class TestGuardConfigImportErrorBranches:
     def test_span_returns_nullcontext_when_otel_absent(self) -> None:
         """guard_config._span() returns contextlib.nullcontext() when opentelemetry is absent."""
