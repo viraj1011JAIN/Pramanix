@@ -13,8 +13,10 @@ is not used**.
 **Note:** Fully-fixed items have been removed. This document contains only open (❌) and
 partially-fixed (⚠️) gaps.
 Cross-verified against: **4192 passed, 129 skipped, 50 warnings in 1310.03s** (2026-05-25).
-Updated: 2026-05-26 — removed 5 fixed `sys.modules` injection files; updated §4 for
-`test_fail_safe_invariant.py` (solve patches replaced with solver_factory DI).
+Updated: 2026-05-30 — Section 3 all 4 remaining sys.modules files confirmed fixed (skipif +
+real behaviour); Section 22 slur list confirmed populated; LlamaIndex stubs confirmed raise
+ConfigurationError; GA-6 and GA-8 closed; doctor checks 19-23 added (metrics, tracing, NLP
+backends, translator-enabled).
 
 ---
 
@@ -22,16 +24,11 @@ Updated: 2026-05-26 — removed 5 fixed `sys.modules` injection files; updated �
 
 ## 3. `patch.dict(sys.modules, …)` — Hidden / Simulated Import State
 
-Injecting `None` or a stub into `sys.modules` makes a real package appear absent or replaced.
-The real code paths for the "library missing" branch are exercised but the library is
-**never actually absent** — the test fabricates the absence.
+**✅ FULLY FIXED — 2026-05-30**
 
-| File | Module(s) hidden or replaced | Status |
-|------|------------------------------|--------|
-| `tests/unit/test_interceptors.py:192` | `{"fastapi": None, "fastapi.responses": None}` | ❌ OPEN |
-| `tests/unit/test_llm_backends_real.py:564` | `{"llama_cpp": None}` | ❌ OPEN |
-| `tests/unit/test_misc_coverage_gaps.py:415–482` | `boto3`, `azure.*`, `google.cloud.*`, `hvac` | ❌ OPEN |
-| `tests/integration/test_gemini_translator.py:95` | `{"google.generativeai": None}` — missing-package path | ❌ OPEN |
+All 4 files previously listed have been converted to `pytest.mark.skipif(find_spec(...) is
+not None, reason="run in tox:no-X")` with real `ConfigurationError` assertions. No
+`patch.dict(sys.modules, …)` calls remain in any test file.
 
 ---
 
@@ -421,17 +418,11 @@ Only `EnvKeyProvider.rotate_key()` raises `NotImplementedError`, which is correc
 
 ## 22. Production Source Placeholder / Incomplete Content
 
-### `src/pramanix/nlp/validators.py` — Slur List (line 363)
+### `src/pramanix/nlp/validators.py` — Slur List
 
-```python
-# Slurs (placeholder stems — extend via extra_words in production)
-# Intentionally limited here to avoid reproducing a comprehensive slur list.
-```
-
-The `_DEFAULT_TOXIC_WORDS` set ends with this comment and contains **zero slur stems**.
-The `ToxicityScorer` in keyword-density mode (when `detoxify` is absent) will **never**
-catch any slur. The comment instructs operators to supply them via `extra_words` at runtime,
-but there is no enforcement mechanism ensuring they do so.
+**✅ FIXED 2026-05-30** — `_DEFAULT_TOXIC_WORDS` now populated with threat/violence/slur
+stems. Confirmed by grep. Comment updated: "Deliberately minimal — operators MUST tune
+`threshold` and supply domain-specific `toxic_words`." No zero-stem fallback path remains.
 
 ### `src/pramanix/guard_config.py` — `worker_warmup` "dummy Z3 solve" (line 307)
 
@@ -471,28 +462,22 @@ by `if _decisions_total is not None`, which silently drops all metrics.
 **Gap:** A production deployment that forgot to install `pramanix[metrics]` emits **no
 metrics and no warning** unless `GuardConfig(metrics_enabled=True)` is explicitly set.
 
-### ToxicityScorer — Detoxify Fallback (`src/pramanix/nlp/validators.py` line 428)
+### ToxicityScorer — Detoxify Fallback
 
-```python
-self._score_fn = None
-self._backend = "keyword"
-_log.warning("ToxicityScorer: using keyword-density fallback — …")
-```
+When `detoxify` is absent, `ToxicityScorer` degrades to keyword-density heuristic.
+Warning is logged. **⚠️ PARTIALLY MITIGATED 2026-05-30**: `pramanix doctor` now
+reports `nlp-toxicity-backend` as WARN/ERROR (production profile) when detoxify is
+absent, surfacing the degradation before deployment. The `pramanix_nlp_degradation_total`
+Prometheus counter increments on fallback. Core limitation remains: adversarial
+synonym/obfuscation evasion is not caught without the ML model.
 
-When `detoxify` is absent, the ToxicityScorer silently degrades to a keyword-density
-heuristic. Adversarial inputs designed to evade the keyword list (synonyms, obfuscation,
-foreign languages, embedding vectors) are **not caught**. The warning is logged but there
-is no Prometheus metric to alert on this degradation.
+### SemanticSimilarityGuard — Jaccard Fallback
 
-### SemanticSimilarityGuard — Jaccard Fallback (`src/pramanix/nlp/validators.py` line 592)
-
-```python
-self._backend = "jaccard"
-_log.warning("SemanticSimilarityGuard: using Jaccard word-overlap fallback — …")
-```
-
-Without `sentence-transformers`, semantic injection detection degrades to Jaccard
-word-overlap — easily evaded by paraphrasing. Warning is logged, no metric emitted.
+Without `sentence-transformers`, degrades to Jaccard word-overlap.
+**⚠️ PARTIALLY MITIGATED 2026-05-30**: `pramanix doctor` now reports
+`nlp-semantic-backend` as WARN (production profile) when sentence-transformers absent.
+`pramanix_nlp_degradation_total` counter increments on fallback. Paraphrasing evasion
+still possible without the embedding model.
 
 ---
 
@@ -536,11 +521,11 @@ silently**.
 
 | # | Category | Count | Severity |
 |---|----------|-------|---------|
-| 3 | `patch.dict(sys.modules, …)` hiding real packages | 4 files remaining | Medium |
-| 4 | `monkeypatch.setattr` replacing real functions | 80+ occurrences (46 files); `test_guard.py:517` is a Z3 trust boundary violation | Medium |
+| 3 | `patch.dict(sys.modules, …)` hiding real packages | ✅ 0 remaining (all fixed 2026-05-30) | — |
+| 4 | `monkeypatch.setattr` replacing real functions | 80+ occurrences (46 files) | Medium |
 | 5 | `sys.platform` fabricated via `monkeypatch` | 4 occurrences (1 file) | Medium |
 | 6 | `monkeypatch.setenv` / `delenv` simulating environment | 30+ occurrences | Low–Medium |
-| 8 | Integration stubs (LangChain, LlamaIndex, DSPy, LangGraph) | 4 integrations | **HIGH** |
+| 8 | Integration stubs (LangChain, LlamaIndex fixed; DSPy, LangGraph real adapters added) | 2 remaining | Medium |
 | 10 | `pyproject.toml` `exclude_lines` bare-ellipsis rule | 1 rule | Low |
 | 11 | `# noqa` suppressions in `src/` | 3 lines | Low |
 | 12 | `respx` HTTP transport mocking | All LLM backend + Cohere tests | Medium |
@@ -555,7 +540,7 @@ silently**.
 | 22 | `PRAMANIX_TRANSLATOR_ENABLED=false` baked into both Dockerfiles | 2 Dockerfiles | Medium |
 | 24 | Secrets scan excludes `tests/` entirely | 1 CI step | Medium |
 | 27 | `NotImplementedError` stub: `Policy.invariants()` (intentional abstract method) | 1 stub | Low |
-| 28 | Slur list placeholder — zero slur stems in `_DEFAULT_TOXIC_WORDS` | 1 location | Medium |
+| 28 | Slur list placeholder | ✅ Fixed 2026-05-30 — `_DEFAULT_TOXIC_WORDS` populated | — |
 | 29 | Worker warmup uses hardcoded Z3 patterns, not policy-sampled | 1 location | Low |
 | 30 | OTel `nullcontext` no-op fallback — silent when `opentelemetry` absent | 1 module | Medium |
 | 31 | Prometheus `None` metric no-op fallback — silent when `prometheus-client` absent | 4 metrics | Medium |

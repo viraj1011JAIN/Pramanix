@@ -2018,6 +2018,115 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 f"Translator API key(s) configured: {', '.join(_present_keys)}",
             )
 
+    # ── 19. Prometheus metrics availability ───────────────────────────────────
+    if _has("prometheus_client"):
+        _check("metrics-prometheus", "OK", "prometheus_client installed — /metrics endpoint supported")
+    elif is_production_profile:
+        _check(
+            "metrics-prometheus",
+            "ERROR",
+            "prometheus_client not installed — all Pramanix decision metrics are silently dropped. "
+            "Operators have no visibility into ALLOW/BLOCK rates, latency, or timeouts.",
+            hint="pip install 'pramanix[metrics]' and expose /metrics.",
+        )
+    else:
+        _check(
+            "metrics-prometheus",
+            "WARN",
+            "prometheus_client not installed — decision metrics unavailable",
+            hint="pip install 'pramanix[metrics]'",
+        )
+
+    # ── 20. OpenTelemetry tracing availability ────────────────────────────────
+    if _has("opentelemetry.sdk"):
+        _check("tracing-otel", "OK", "opentelemetry-sdk installed — distributed tracing active")
+    elif is_production_profile:
+        _check(
+            "tracing-otel",
+            "WARN",
+            "opentelemetry-sdk not installed — all Guard.verify() spans are no-ops. "
+            "Decision IDs cannot be correlated with downstream traces.",
+            hint="pip install 'pramanix[otel]' and configure OTEL_EXPORTER_OTLP_ENDPOINT.",
+        )
+    else:
+        _check(
+            "tracing-otel",
+            "SKIP",
+            "opentelemetry-sdk not installed (optional for non-production)",
+            hint="pip install 'pramanix[otel]'",
+        )
+
+    # ── 21. NLP toxicity scorer backend (detoxify) ────────────────────────────
+    if _has("detoxify"):
+        _check(
+            "nlp-toxicity-backend",
+            "OK",
+            "detoxify installed — ToxicityScorer uses ML model backend",
+        )
+    elif is_production_profile:
+        _check(
+            "nlp-toxicity-backend",
+            "WARN",
+            "detoxify not installed — ToxicityScorer falls back to keyword-density heuristic. "
+            "Adversarial inputs using synonyms, obfuscation, or non-English content "
+            "will not be caught. pramanix_nlp_degradation_total counter will increment.",
+            hint="pip install detoxify  (or pip install 'pramanix[nlp]')",
+        )
+    else:
+        _check(
+            "nlp-toxicity-backend",
+            "SKIP",
+            "detoxify not installed (keyword fallback active — acceptable for non-production)",
+            hint="pip install detoxify for production-grade toxicity scoring",
+        )
+
+    # ── 22. Semantic similarity backend (sentence-transformers) ───────────────
+    if _has("sentence_transformers"):
+        _check(
+            "nlp-semantic-backend",
+            "OK",
+            "sentence-transformers installed — SemanticSimilarityGuard uses embedding model",
+        )
+    elif is_production_profile:
+        _check(
+            "nlp-semantic-backend",
+            "WARN",
+            "sentence-transformers not installed — SemanticSimilarityGuard falls back to "
+            "Jaccard word-overlap (easily evaded by paraphrasing). "
+            "pramanix_nlp_degradation_total counter will increment.",
+            hint="pip install sentence-transformers  (or pip install 'pramanix[nlp]')",
+        )
+    else:
+        _check(
+            "nlp-semantic-backend",
+            "SKIP",
+            "sentence-transformers not installed (Jaccard fallback active — acceptable for non-production)",
+            hint="pip install sentence-transformers for production-grade semantic similarity",
+        )
+
+    # ── 23. Translator enabled flag ───────────────────────────────────────────
+    _translator_enabled = os.environ.get("PRAMANIX_TRANSLATOR_ENABLED", "true").strip().lower()
+    if _translator_enabled in ("false", "0", "no", "off"):
+        if is_production_profile:
+            _check(
+                "translator-enabled",
+                "WARN",
+                "PRAMANIX_TRANSLATOR_ENABLED=false — LLM intent translation is globally "
+                "disabled. All parse_and_verify() calls will skip the NLP extraction phase. "
+                "Only pre-structured guard.verify(intent, state) calls are active.",
+                hint="Remove PRAMANIX_TRANSLATOR_ENABLED=false or set to 'true' if LLM "
+                "translation is required in production.",
+            )
+        else:
+            _check(
+                "translator-enabled",
+                "WARN",
+                "PRAMANIX_TRANSLATOR_ENABLED=false — LLM translation disabled",
+                hint="Set PRAMANIX_TRANSLATOR_ENABLED=true to enable parse_and_verify()",
+            )
+    else:
+        _check("translator-enabled", "OK", "PRAMANIX_TRANSLATOR_ENABLED is active (default)")
+
     # ── Render results ────────────────────────────────────────────────────────
     has_error = any(c["level"] == "ERROR" for c in checks)
     has_warn = any(c["level"] == "WARN" for c in checks)

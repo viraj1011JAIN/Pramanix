@@ -455,3 +455,297 @@ class TestDoctorProductionProfile:
         assert checks["audit-sink-policy"]["level"] == "WARN"
         # In production profile, warnings are deployment blockers.
         assert exit_code == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Observability checks (19-20): Prometheus + OTel
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDoctorObservabilityChecks:
+    def _checks_by_name(self, capsys: pytest.CaptureFixture) -> dict[str, dict]:
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        return {c["name"]: c for c in data["checks"]}
+
+    def test_metrics_prometheus_check_present(self, capsys: pytest.CaptureFixture) -> None:
+        checks = self._checks_by_name(capsys)
+        assert "metrics-prometheus" in checks
+
+    def test_metrics_prometheus_ok_when_installed(self, capsys: pytest.CaptureFixture) -> None:
+        # prometheus_client is a required dep — must be OK in the test environment.
+        pytest.importorskip("prometheus_client")
+        checks = self._checks_by_name(capsys)
+        assert checks["metrics-prometheus"]["level"] == "OK"
+        assert "prometheus_client" in checks["metrics-prometheus"]["detail"]
+
+    def test_metrics_prometheus_warn_when_missing_default_profile(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulate missing prometheus_client in default (non-production) profile → WARN."""
+        real_find_spec = importlib.util.find_spec
+
+        def _hide_prometheus(name: str, *args, **kwargs):
+            if name == "prometheus_client":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _hide_prometheus)
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["metrics-prometheus"]["level"] == "WARN"
+        assert checks["metrics-prometheus"].get("hint")
+
+    def test_metrics_prometheus_error_when_missing_production_profile(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing prometheus_client in --production mode → ERROR (decision metrics silently dropped)."""
+        real_find_spec = importlib.util.find_spec
+
+        def _hide_prometheus(name: str, *args, **kwargs):
+            if name == "prometheus_client":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _hide_prometheus)
+        _, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["metrics-prometheus"]["level"] == "ERROR"
+        assert checks["metrics-prometheus"].get("hint")
+
+    def test_tracing_otel_check_present(self, capsys: pytest.CaptureFixture) -> None:
+        checks = self._checks_by_name(capsys)
+        assert "tracing-otel" in checks
+
+    def test_tracing_otel_ok_when_installed(self, capsys: pytest.CaptureFixture) -> None:
+        pytest.importorskip("opentelemetry.sdk")
+        checks = self._checks_by_name(capsys)
+        assert checks["tracing-otel"]["level"] == "OK"
+        assert "opentelemetry" in checks["tracing-otel"]["detail"].lower()
+
+    def test_tracing_otel_skip_when_missing_default_profile(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing opentelemetry.sdk in default profile → SKIP (optional for non-production)."""
+        real_find_spec = importlib.util.find_spec
+
+        def _hide_otel(name: str, *args, **kwargs):
+            if name in ("opentelemetry.sdk", "opentelemetry"):
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _hide_otel)
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["tracing-otel"]["level"] == "SKIP"
+        assert checks["tracing-otel"].get("hint")
+
+    def test_tracing_otel_warn_when_missing_production_profile(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing opentelemetry.sdk in --production mode → WARN (decision spans are no-ops)."""
+        real_find_spec = importlib.util.find_spec
+
+        def _hide_otel(name: str, *args, **kwargs):
+            if name in ("opentelemetry.sdk", "opentelemetry"):
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _hide_otel)
+        _, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["tracing-otel"]["level"] == "WARN"
+        assert checks["tracing-otel"].get("hint")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NLP backend checks (21-22): detoxify + sentence-transformers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDoctorNLPBackendChecks:
+    def test_nlp_toxicity_backend_check_present(self, capsys: pytest.CaptureFixture) -> None:
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert "nlp-toxicity-backend" in checks
+
+    def test_nlp_toxicity_backend_ok_when_detoxify_installed(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulate detoxify installed → nlp-toxicity-backend OK."""
+        real_find_spec = importlib.util.find_spec
+
+        def _expose_detoxify(name: str, *args, **kwargs):
+            if name == "detoxify":
+                return object()  # non-None sentinel = "installed"
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _expose_detoxify)
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["nlp-toxicity-backend"]["level"] == "OK"
+        assert "detoxify" in checks["nlp-toxicity-backend"]["detail"]
+
+    def test_nlp_toxicity_backend_skip_when_missing_default_profile(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        """detoxify is not in requirements; in default profile this must be SKIP, not ERROR."""
+        # Relies on detoxify actually being absent from the test venv.
+        if importlib.util.find_spec("detoxify") is not None:
+            pytest.skip("detoxify is installed — cannot test SKIP path")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["nlp-toxicity-backend"]["level"] == "SKIP"
+        assert checks["nlp-toxicity-backend"].get("hint")
+
+    def test_nlp_toxicity_backend_warn_when_missing_production_profile(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing detoxify in --production mode → WARN (keyword fallback is evadable)."""
+        real_find_spec = importlib.util.find_spec
+
+        def _hide_detoxify(name: str, *args, **kwargs):
+            if name == "detoxify":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _hide_detoxify)
+        _, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["nlp-toxicity-backend"]["level"] == "WARN"
+        assert "keyword" in checks["nlp-toxicity-backend"]["detail"].lower()
+        assert checks["nlp-toxicity-backend"].get("hint")
+
+    def test_nlp_semantic_backend_check_present(self, capsys: pytest.CaptureFixture) -> None:
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert "nlp-semantic-backend" in checks
+
+    def test_nlp_semantic_backend_ok_when_sentence_transformers_installed(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Simulate sentence-transformers installed → nlp-semantic-backend OK."""
+        real_find_spec = importlib.util.find_spec
+
+        def _expose_st(name: str, *args, **kwargs):
+            if name == "sentence_transformers":
+                return object()
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _expose_st)
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["nlp-semantic-backend"]["level"] == "OK"
+        assert "sentence-transformers" in checks["nlp-semantic-backend"]["detail"]
+
+    def test_nlp_semantic_backend_skip_when_missing_default_profile(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        """sentence-transformers absent from test venv → SKIP in default profile."""
+        if importlib.util.find_spec("sentence_transformers") is not None:
+            pytest.skip("sentence-transformers is installed — cannot test SKIP path")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["nlp-semantic-backend"]["level"] == "SKIP"
+        assert checks["nlp-semantic-backend"].get("hint")
+
+    def test_nlp_semantic_backend_warn_when_missing_production_profile(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing sentence-transformers in --production mode → WARN (Jaccard is evadable)."""
+        real_find_spec = importlib.util.find_spec
+
+        def _hide_st(name: str, *args, **kwargs):
+            if name == "sentence_transformers":
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib.util, "find_spec", _hide_st)
+        _, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["nlp-semantic-backend"]["level"] == "WARN"
+        assert "jaccard" in checks["nlp-semantic-backend"]["detail"].lower()
+        assert checks["nlp-semantic-backend"].get("hint")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Translator enabled flag check (23)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDoctorTranslatorEnabledCheck:
+    def test_translator_enabled_check_present(self, capsys: pytest.CaptureFixture) -> None:
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert "translator-enabled" in checks
+
+    def test_translator_enabled_ok_by_default(self, capsys: pytest.CaptureFixture) -> None:
+        """Default env (no PRAMANIX_TRANSLATOR_ENABLED) → OK."""
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-enabled"]["level"] == "OK"
+        assert "active" in checks["translator-enabled"]["detail"]
+
+    def test_translator_enabled_ok_when_explicitly_true(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PRAMANIX_TRANSLATOR_ENABLED", "true")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-enabled"]["level"] == "OK"
+
+    def test_translator_enabled_warn_when_false(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PRAMANIX_TRANSLATOR_ENABLED", "false")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-enabled"]["level"] == "WARN"
+        assert checks["translator-enabled"].get("hint")
+
+    def test_translator_enabled_warn_when_zero(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAMANIX_TRANSLATOR_ENABLED=0 is treated as disabled → WARN."""
+        monkeypatch.setenv("PRAMANIX_TRANSLATOR_ENABLED", "0")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-enabled"]["level"] == "WARN"
+
+    def test_translator_enabled_warn_when_off(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAMANIX_TRANSLATOR_ENABLED=off is treated as disabled → WARN."""
+        monkeypatch.setenv("PRAMANIX_TRANSLATOR_ENABLED", "off")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-enabled"]["level"] == "WARN"
+
+    def test_translator_enabled_warn_production_profile_when_false(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAMANIX_TRANSLATOR_ENABLED=false in --production mode → WARN with stronger message."""
+        monkeypatch.setenv("PRAMANIX_TRANSLATOR_ENABLED", "false")
+        _, stdout, _ = _run_cli(["doctor", "--production", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-enabled"]["level"] == "WARN"
+        assert "parse_and_verify" in checks["translator-enabled"]["detail"]
