@@ -1690,7 +1690,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     if _has("cryptography"):
         try:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-                Ed25519PrivateKey,  # noqa: F401
+                Ed25519PrivateKey,  # noqa: F401 — availability probe only
             )
 
             _check("cryptography", "OK", "cryptography — Ed25519 available")
