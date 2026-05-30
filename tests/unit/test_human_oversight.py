@@ -347,3 +347,32 @@ class TestInMemoryApprovalWorkflow:
             wf.request_approval(principal_id="a", action="b", reason="r")
         assert exc_info.value.request_id
         assert exc_info.value.action == "b"
+
+
+# ── InMemoryApprovalWorkflow: PRAMANIX_ENV=production guard (P1.9 parity) ────
+
+
+class TestInMemoryApprovalWorkflowProductionGuard:
+    """InMemoryApprovalWorkflow must raise ConfigurationError in production
+    and emit UserWarning in non-production — matching InMemoryAuditSink
+    and InMemoryDistributedBackend behaviour (P1.9 parity test).
+    """
+
+    def test_production_env_raises_configuration_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PRAMANIX_ENV=production must raise ConfigurationError immediately."""
+        from pramanix.exceptions import ConfigurationError
+
+        monkeypatch.setenv("PRAMANIX_ENV", "production")
+        with pytest.raises(ConfigurationError, match="PRAMANIX_ENV=production"):
+            InMemoryApprovalWorkflow()
+
+    def test_non_production_env_emits_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """In non-production InMemoryApprovalWorkflow emits a UserWarning."""
+        monkeypatch.delenv("PRAMANIX_ENV", raising=False)
+        with pytest.warns(UserWarning, match="testing only"):
+            wf = InMemoryApprovalWorkflow()
+        assert wf is not None
