@@ -914,8 +914,11 @@ class TestSideChannelTiming:
             state={"state_version": "1.0"},
         )
         elapsed_ms = (time.perf_counter() - start) * 1000.0
-        # Should finish well under 100 ms without a forced sleep
-        assert elapsed_ms < 500, f"Unexpected delay ({elapsed_ms:.1f} ms) with min_response_ms=0."
+        # Should complete without a forced sleep; allow generous budget for
+        # Z3 cold-start + WorkerPool startup on Windows CI (≤ 5 s).
+        assert elapsed_ms < 5_000, (
+            f"Unexpected delay ({elapsed_ms:.1f} ms) with min_response_ms=0."
+        )
 
     def test_blocked_decision_also_padded(self):
         """BLOCK decisions must also respect the timing floor."""

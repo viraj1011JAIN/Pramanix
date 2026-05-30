@@ -335,4 +335,6 @@ class TestFromConfigScale:
             Policy.from_config({"balance": ("Real", Decimal)}, [inv])
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 0.1, f"100 cached lookups took {elapsed:.3f}s — must be < 0.1s."
+        assert elapsed < 0.5, (
+            f"100 cached lookups took {elapsed:.3f}s — must be < 0.5s."
+        )

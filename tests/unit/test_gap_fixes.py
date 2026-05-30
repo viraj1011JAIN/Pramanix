@@ -259,22 +259,30 @@ def test_decision_repr_safe_includes_allowed_true() -> None:
 def test_evict_expired_reduces_consumed_count() -> None:
     """Expired token IDs must be evicted so consumed_count does not grow forever."""
     key = secrets.token_bytes(32)
-    signer = ExecutionTokenSigner(secret_key=key, ttl_seconds=0.05)  # 50 ms TTL
+    # Long TTL so all 5 tokens survive the consume loop even on slow Windows CI
+    # (each mint+consume can take 100-300 ms when Z3 is cold).
+    long_signer = ExecutionTokenSigner(secret_key=key, ttl_seconds=60)
     verifier = ExecutionTokenVerifier(secret_key=key)
 
-    # Mint and consume several tokens with very short TTL
     for _ in range(5):
         safe_decision = Decision.safe(intent_dump={"x": 1})
-        token = signer.mint(safe_decision)
+        token = long_signer.mint(safe_decision)
         verifier.consume(token)
 
     assert verifier.consumed_count() == 5
 
-    # Wait for TTL to expire, then force eviction explicitly
-    time.sleep(0.1)
+    # Add one short-lived token (50 ms TTL) to verify evict_expired() works.
+    short_signer = ExecutionTokenSigner(secret_key=key, ttl_seconds=0.05)
+    short_token = short_signer.mint(Decision.safe(intent_dump={"x": 99}))
+    verifier.consume(short_token)
+    assert verifier.consumed_count() == 6
+
+    time.sleep(0.15)  # outlast the 50 ms TTL
     evicted = verifier.evict_expired()
-    assert evicted == 5, f"Expected 5 evictions, got {evicted}"
-    assert verifier.consumed_count() == 0, "consumed_count should be 0 after full eviction"
+    assert evicted == 1, f"Expected 1 eviction (short-TTL token), got {evicted}"
+    assert verifier.consumed_count() == 5, (
+        "Only the short-TTL token should be evicted"
+    )
 
 
 def test_consumed_count_lazy_eviction_via_consume() -> None:
