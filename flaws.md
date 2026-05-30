@@ -283,7 +283,7 @@ Competitors: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVIDIA NeMo Guar
 | **Streaming validation** | ✅ | 🟡 | 🟡 | ✅ | 🟡 | 🟡 | `Guard.verify_stream()` added — async generator, JSON accumulation, verify-at-checkpoint, stops on BLOCK (GA-7, fixed 2026-05-26) | — |
 | **Injection detection** | ✅ | 🟡 | 🔵 | ✅ | 🟡 | 🔵 | `injection_scorer.py` + `injection_filter.py` — production-grade prompt injection detection with RE2 | — |
 | **Dual-model consensus** | ✅ | 🔵 | 🔵 | 🟡 | 🔵 | 🔵 | `redundant.py` — production consensus translator; unique to Pramanix | — |
-| **Real LLM CI coverage** | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | 🔵 | Layer 4 consensus uses stub translators in CI; not validated against live model outputs | High |
+| **Real LLM CI coverage** | ✅ | 🟡 | 🟡 | ✅ | 🟡 | 🔵 | GA-5 fixed 2026-05-30: 3 real Ollama consensus tests in `test_ollama_translator.py`, gated by `@requires_ollama`, run in `ollama-live` CI job against real tinyllama model. | — |
 
 ---
 
@@ -329,8 +329,8 @@ Competitors: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVIDIA NeMo Guar
 | LangChain | ✅ | `langchain.py` — `BaseTool` subclass |
 | LangGraph | ✅ | `langgraph.py` |
 | LlamaIndex | ✅ | `llamaindex.py` — stubs raise `ConfigurationError`/`ImportError` on instantiation when dep absent. GA-6 fixed 2026-05-30. |
-| CrewAI | 🟡 | `crewai.py` — stub fallback base |
-| DSPy | 🟡 | `dspy.py` — stub fallback base |
+| CrewAI | ✅ | `crewai.py` — `PramanixCrewAITool.__init__` raises `ImportError` when crewai absent. Verified 2026-05-30. |
+| DSPy | ✅ | `dspy.py` — `PramanixGuardedModule.__init__` raises `ImportError` when dspy absent. Verified 2026-05-30. |
 | AutoGen | ✅ | `autogen.py` |
 | FastAPI | ✅ | `integrations/fastapi.py` + `k8s/webhook.py` |
 | Haystack | ✅ | `haystack.py` |
@@ -347,7 +347,7 @@ Competitors: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVIDIA NeMo Guar
 | Area | Pramanix | GrAI | NeMo | Gap | Priority |
 |------|----------|------|------|-----|----------|
 | **Policy authoring for Python engineers** | ✅ | ✅ | 🟡 | None | — |
-| **Policy authoring for non-engineers** | 🟡 | ✅ | ✅ | YAML DSL absent | High |
+| **Policy authoring for non-engineers** | ✅ | ✅ | ✅ | YAML/TOML DSL added (`natural_policy/yaml_loader.py`) — safe AST-based compiler, no eval/exec. GA-3 fixed 2026-05-26. | — |
 | **CLI tooling** | ✅ | 🟡 | 🟡 | Full CLI: compile, simulate, verify-proof, schema-export, calibrate | — |
 | **Policy linter / plain-English errors** | ✅ | ✅ | 🟡 | `pramanix lint-policy` — E001-E004, W001-W005 codes; `--json`, `--strict`, `--policy-var`. GA-4 fixed 2026-05-26. | — |
 | **Interactive dry-run mode** | ✅ | 🟡 | 🔵 | `dry_run.py` — full dry-run with counterfactual | — |
