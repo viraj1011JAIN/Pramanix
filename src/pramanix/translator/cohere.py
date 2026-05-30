@@ -54,7 +54,22 @@ class CohereTranslator:
         api_key: str | None = None,
         timeout: float = 30.0,
         _cohere_factory: Any = None,
+        _client_override: Any = None,
+        _cohere_module: Any = None,
     ) -> None:
+        self.model = model
+        self._api_key = api_key or os.environ.get("COHERE_API_KEY") or None
+        self._timeout = timeout
+
+        if _client_override is not None:
+            # DI path: caller supplies a duck-typed client (tests only).
+            # Bypasses the cohere import entirely so tests can run without the
+            # package installed and without __new__() bypasses.
+            self._client: Any = _client_override
+            self._cohere: Any = _cohere_module
+            self._retryable: tuple[type[Exception], ...] = (Exception,)
+            return
+
         try:
             if _cohere_factory is not None:
                 cohere = _cohere_factory()
@@ -66,17 +81,14 @@ class CohereTranslator:
                 "Install it with: pip install 'pramanix[cohere]'"
             ) from exc
 
-        self.model = model
-        self._api_key = api_key or os.environ.get("COHERE_API_KEY") or None
-        self._timeout = timeout
-        self._client: Any = (
+        self._client = (
             cohere.AsyncClientV2(api_key=self._api_key)
             if hasattr(cohere, "AsyncClientV2")
             else cohere.AsyncClient(api_key=self._api_key)
         )
         self._cohere = cohere
         try:
-            self._retryable: tuple[type[Exception], ...] = (
+            self._retryable = (
                 cohere.errors.TooManyRequestsError,
                 cohere.errors.ServiceUnavailableError,
                 cohere.errors.GatewayTimeoutError,
@@ -179,6 +191,9 @@ class CohereTranslator:
         httpx.AsyncClient emits ``RuntimeWarning: coroutine 'AsyncClient.aclose'
         was never awaited`` when GC destroys the client without an awaited close.
         We close the underlying transport synchronously here to prevent that.
+
+        Uses bare try/except instead of contextlib.suppress() because __del__ may
+        run during interpreter shutdown when module-level globals are set to None.
         """
         client = getattr(self, "_client", None)
         if client is None:
@@ -188,15 +203,23 @@ class CohereTranslator:
             getattr(client, "_base_client", None), "_transport", None
         )
         if transport is not None and hasattr(transport, "close"):
-            with contextlib.suppress(Exception):
+            try:
                 transport.close()
+            except Exception:
+                pass
             return
         # Fallback: if no running loop, run aclose() in a fresh loop.
-        with contextlib.suppress(RuntimeError):
+        try:
             asyncio.get_running_loop()
             return  # running loop — can't call asyncio.run(); skip silently
-        with contextlib.suppress(Exception):
+        except RuntimeError:
+            pass
+        except Exception:
+            return  # asyncio module may be None during interpreter shutdown
+        try:
             asyncio.run(self.aclose())
+        except Exception:
+            pass
 
     async def __aenter__(self) -> CohereTranslator:
         return self

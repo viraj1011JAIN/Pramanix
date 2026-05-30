@@ -390,10 +390,8 @@ class TestCohereTranslatorCoverage:
         """aclose() falls back to sync close() when aclose is absent."""
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        # _SyncCloseClient has close() but no aclose attribute — tests the fallback.
         client = _SyncCloseClient()
-        t._client = client
+        t = CohereTranslator("command-r", api_key="key", _client_override=client)
         await t.aclose()
         assert client.close_called, "sync close() must be called when aclose is absent"
 
@@ -402,10 +400,8 @@ class TestCohereTranslatorCoverage:
         """aclose() awaits the async aclose() when available."""
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        # _AsyncCloseClient has a real coroutine aclose() — tests the async path.
         client = _AsyncCloseClient()
-        t._client = client
+        t = CohereTranslator("command-r", api_key="key", _client_override=client)
         await t.aclose()
         assert client.aclose_called, "async aclose() must be awaited"
 
@@ -414,9 +410,8 @@ class TestCohereTranslatorCoverage:
         """__aexit__ calls aclose() which awaits the async close."""
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
         client = _AsyncCloseClient()
-        t._client = client
+        t = CohereTranslator("command-r", api_key="key", _client_override=client)
         async with t as ctx:
             assert ctx is t
         assert client.aclose_called, "aclose() must be called on context exit"

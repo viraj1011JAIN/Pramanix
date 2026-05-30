@@ -399,19 +399,13 @@ class TestCohereAttributeErrorFallback:
     @pytest.mark.asyncio
     async def test_attribute_error_sets_exception_retryable(self) -> None:
         pytest.importorskip("cohere")
-        import cohere as _cohere
-
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        t.model = "command-r"
-        t._api_key = "key"
-        t._timeout = 30.0
-        t._retryable = (Exception,)
-        # Real Cohere v5 client stub — _single_call uses self._client.chat(...)
-        t._client = _CohereChatV5Stub('{"amount":10.0,"recipient":"B"}')
-        t._cohere = _cohere
-
+        t = CohereTranslator(
+            "command-r",
+            api_key="key",
+            _client_override=_CohereChatV5Stub('{"amount":10.0,"recipient":"B"}'),
+        )
         result = await t.extract("pay B 10", _Pay)
         assert result["amount"] == 10.0
 
@@ -424,15 +418,13 @@ class TestCohereOldSdkTypeErrorFallback:
         pytest.importorskip("cohere")
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        t.model = "command-r"
-        t._api_key = "key"
-        t._timeout = 30.0
-        # async client raises TypeError → falls back to self._cohere.Client().chat()
-        t._client = _CohereTypeErrorChatClient()
-        # legacy module: Client() returns sync client with .text response (no .message)
-        t._cohere = _CohereLegacyModule('{"amount":99.0,"recipient":"C"}')
-
+        t = CohereTranslator(
+            "command-r",
+            api_key="key",
+            # async client raises TypeError → falls back to _cohere_module.Client().chat()
+            _client_override=_CohereTypeErrorChatClient(),
+            _cohere_module=_CohereLegacyModule('{"amount":99.0,"recipient":"C"}'),
+        )
         raw = await t._single_call(system_prompt="sys", text="pay C 99")
         assert "99" in raw
 
@@ -445,14 +437,12 @@ class TestCohereResponseTextFallback:
         pytest.importorskip("cohere")
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        t.model = "command-r"
-        t._api_key = "key"
-        t._timeout = 30.0
-        # async client returns response with no .message → fallback to .text
-        t._client = _CohereNoMessageChatClient('{"amount":77.0,"recipient":"D"}')
-        t._cohere = None  # unused when async client returns directly
-
+        t = CohereTranslator(
+            "command-r",
+            api_key="key",
+            # async client returns response with no .message → fallback to .text
+            _client_override=_CohereNoMessageChatClient('{"amount":77.0,"recipient":"D"}'),
+        )
         raw = await t._single_call(system_prompt="sys", text="pay D 77")
         assert "77" in raw
 
@@ -1026,14 +1016,12 @@ class TestCohereTenacityImportError:
         from pramanix.exceptions import ConfigurationError
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        t.model = "command-r"
-        t._api_key = "key"
-        t._timeout = 30.0
-        t._retryable = (Exception,)
-        t._client = object()
-        t._cohere = object()
-
+        t = CohereTranslator(
+            "command-r",
+            api_key="key",
+            _client_override=object(),
+            _cohere_module=object(),
+        )
         with pytest.raises(ConfigurationError, match="tenacity"):
             await t.extract("pay B 10", _Pay)
 
@@ -1048,11 +1036,6 @@ class TestCohereStrResponseFallback:
 
         from pramanix.translator.cohere import CohereTranslator
 
-        t = CohereTranslator.__new__(CohereTranslator)
-        t.model = "command-r"
-        t._api_key = "key"
-        t._timeout = 30.0
-
         # Plain object with neither .message nor .text → str() fallback is used
         class _BareResponse:
             def __str__(self) -> str:
@@ -1063,9 +1046,11 @@ class TestCohereStrResponseFallback:
         async def _bare_chat(**kw: Any) -> Any:
             return _resp
 
-        t._client = types.SimpleNamespace(chat=_bare_chat)
-        t._cohere = None
-
+        t = CohereTranslator(
+            "command-r",
+            api_key="key",
+            _client_override=types.SimpleNamespace(chat=_bare_chat),
+        )
         raw = await t._single_call(system_prompt="sys", text="pay E 5")
         assert "5.0" in raw or "E" in raw
 

@@ -104,19 +104,24 @@ Four `# noqa` suppressions in production source — each is documented below:
 
 ### 2.4 filterwarnings Suppressions in pyproject.toml
 
-Seven warning categories are silenced in `[tool.pytest.ini_options]`:
+**✅ ACCURATE AS OF 2026-05-30 — Prior audit overstated scope**
+
+`pyproject.toml` (`[tool.pytest.ini_options]`) contains exactly **3** suppressions, all acceptable:
 
 | Warning | Verdict |
 |---------|---------|
-| `pydantic.warnings.PydanticDeprecatedSince20` | ⚠️ Cohere SDK V1 API deprecation swallowed; upgrade Cohere SDK to V2 native API |
-| `google.generativeai.*:FutureWarning` | ⚠️ Google SDK self-deprecation swallowed; monitor google-generativeai release notes |
-| `coroutine 'AsyncClient.aclose' was never awaited:RuntimeWarning` | ⚠️ Potential resource leak masked; confirm aclose() is properly called in teardown |
-| `GuardConfig:UserWarning` | ✅ Acceptable — production advisory silenced for tests; InMemory classes intentionally used in tests |
-| `urllib3.*doesn't match a supported version` | ✅ Acceptable — transitive dep version mismatch, not actionable |
-| `chardet.*doesn't match a supported version` | ✅ Acceptable — same |
-| `Non-linear arithmetic detected:UserWarning` | ⚠️ Z3 non-linear arithmetic advisory silenced; surfaces when constraints exit the decidable linear fragment — should be logged at WARNING in production, not suppressed globally |
+| `ignore:GuardConfig:UserWarning` | ✅ Acceptable — production advisory silenced for tests; InMemory classes intentionally used in tests |
+| `ignore:urllib3.*doesn't match a supported version` | ✅ Acceptable — transitive dep version mismatch, not actionable |
+| `ignore:chardet.*doesn't match a supported version` | ✅ Acceptable — same |
 
-**Not suppressed (production-safety advisories remain intentionally visible)**:
+The 4 suppression concerns from the prior audit (`PydanticDeprecatedSince20`, `google.generativeai FutureWarning`, `aclose() RuntimeWarning`, `Z3 non-linear arithmetic`) were **never added to `pyproject.toml`**. The Pydantic and Google SDK suppressions are scoped correctly in `conftest.py` files at directory level:
+
+- `tests/unit/conftest.py`: `PydanticDeprecatedSince20` — Cohere SDK v5 upstream issue, scoped to unit tests only
+- `tests/integration/conftest.py`: `PydanticDeprecatedSince20` + `google.generativeai FutureWarning/DeprecationWarning` — scoped to integration tests only
+
+The `aclose() RuntimeWarning` and `Z3 non-linear arithmetic` suppressions do not exist anywhere in the test infrastructure — `CohereTranslator.__del__` was fixed to close transports synchronously (no unawaitied coroutine), and no Z3 non-linear arithmetic suppression was ever added.
+
+**Production-safety advisories remain intentionally visible** (not suppressed anywhere):
 - `InMemoryAuditSink:UserWarning` (×12 per test run)
 - `InMemoryApprovalWorkflow:UserWarning` (×19 per test run)
 - `InMemoryExecutionTokenVerifier:UserWarning` (×10 per test run)
@@ -391,7 +396,7 @@ Competitors: **LC** = LangChain, **LG** = LangGraph, **NeMo** = NVIDIA NeMo Guar
 | **GA-11** | Benchmarks | v0.8.0 consumer HW benchmarks are outdated | 🟡 Medium | 🔴 Open | Re-run all benchmarks on v1.0.0 on server-class hardware (8-core, 32 GB RAM); publish updated PROOF_DOSSIER.md |
 | **GA-12** | Policy Hub | No policy sharing mechanism | 🟡 Medium | 🔴 Open | Design and implement Pramanix Hub registry (could be GitHub-based initially); allow `pramanix install finance/soc2-policy` |
 | **GA-13** | Completeness | No policy coverage metric | 🟡 Medium | ✅ Fixed 2026-05-26 | Added `Guard.coverage_report()` → `PolicyCoverageReport` (frozen dataclass). Tracks: `total_verifications`, `invariant_violations` (per-label), `fields_seen`, `coverage_pct` (% of invariants violated ≥1×). Thread-safe via `threading.Lock`. `to_dict()` is JSON-serialisable. Full test coverage in `test_guard_stream_coverage.py` (14 tests). |
-| **GA-14** | Warnings | 4 pyproject.toml suppressed warnings need attention | 🟡 Medium | ⚠️ Partial | Audit Cohere V1 deprecation, Google SDK FutureWarning, aclose() resource leak, Z3 non-linear arithmetic warning — resolve or document explicitly |
+| **GA-14** | Warnings | filterwarnings audit | 🟡 Medium | ✅ Fixed 2026-05-30 | `pyproject.toml` has exactly 3 suppressions (all acceptable: GuardConfig UserWarning, urllib3 mismatch, chardet mismatch). Pydantic/Google SDK suppressions are scoped to conftest.py at directory level. `aclose()` RuntimeWarning resolved via `CohereTranslator.__del__` sync-transport-close fix. Z3 non-linear arithmetic warning was never suppressed anywhere. |
 | **GA-15** | Community | Zero external tutorials / community content | 🟡 Medium | 🔴 Open | Publish quickstart tutorial, blog post, YouTube demo; submit to Awesome-LLM-Safety list; reach out to AI safety community |
 | **GA-16** | DX | Missing cloud translators in stub tests | 🟡 Medium | ⚠️ Partial | 9 module stubs in `real_protocols.py` cannot reproduce real transport errors; add testcontainers-based LocalStack tests for AWS paths |
 

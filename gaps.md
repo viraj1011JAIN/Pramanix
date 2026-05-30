@@ -16,7 +16,10 @@ Cross-verified against: **4192 passed, 129 skipped, 50 warnings in 1310.03s** (2
 Updated: 2026-05-30 — Section 3 all 4 remaining sys.modules files confirmed fixed (skipif +
 real behaviour); Section 22 slur list confirmed populated; LlamaIndex stubs confirmed raise
 ConfigurationError; GA-6 and GA-8 closed; doctor checks 19-23 added (metrics, tracing, NLP
-backends, translator-enabled).
+backends, translator-enabled); Section 15 all white-box state mutations eliminated (Gemini
+`__new__()`, CohereTranslator `__new__()`, `_queue_depth`, `_OVERFLOW_COUNTER`, `_api_key`
+injection — all replaced with DI constructor params); Section 19 secrets scan stale entry
+corrected (tests/ IS scanned).
 
 ---
 
@@ -164,9 +167,12 @@ Stub types substituted when `llama_index` is absent.
 
 ### `src/pramanix/integrations/dspy.py` (line 51)
 
-Comment: *"Type stand-in for dspy.Module (no dspy stubs available)"*.
+The stub class `_DspyModuleBase` is used only as a type stand-in for `dspy.Module`
+when `_DSPY_AVAILABLE=False`. `PramanixGuardedModule.__init__()` raises `ImportError`
+immediately when dspy is absent — no silent stub export.
 
-**Gap:** Real DSPy module execution against a real language model pipeline never tested.
+**Remaining gap:** Real DSPy module execution against a real language model pipeline is
+never tested end-to-end in any test.
 
 ### `src/pramanix/integrations/langgraph.py` (line 60)
 
@@ -282,22 +288,20 @@ hardcoded dicts.
 
 ## 15. White-Box State Mutation (Bypassing Real Interfaces)
 
-Tests directly mutate private attributes to simulate conditions that the real system
-would reach only through internal state transitions.
+**✅ FULLY FIXED — 2026-05-30**
 
-| File | Line | Mutation | Gap |
-|------|------|----------|-----|
-| `tests/unit/test_audit_sink_full_coverage.py` | 121 | `_sink_mod._OVERFLOW_COUNTER = None` | Module-level Prometheus counter forcibly set to `None` |
-| `tests/unit/test_audit_sink_full_coverage.py` | 184 | `sink._queue_depth = 1` | Comment: *"white-box unit test: simulate full queue"* |
-| `tests/unit/test_circuit_breaker_and_guard_paths.py` | 551 | `sink._queue_depth = 0` | Same pattern |
-| `tests/unit/test_enterprise_audit_sinks.py` | 80 | `sink._queue_depth = 0` | Same pattern |
-| `tests/unit/test_translator_and_interceptor_paths.py` | 872 | `sink._queue_depth = 0` | Same pattern |
-| `tests/unit/test_coverage_final_push.py` | 73, 91, 109, etc. | `t._api_key = "key"` | Private translator attribute injected directly |
-| `tests/integration/test_gemini_translator.py` | 46–50 | `GeminiTranslator.__new__()` + `t.model = "…"`, `t._api_key = "test-key"`, `t._client = None` | Constructor bypassed entirely; every private field manually injected |
+All white-box `__new__()`-bypass and private-attribute-injection patterns have been
+eliminated. Confirmed by exhaustive grep (zero occurrences of each pattern):
 
-The Gemini integration test case is the most severe: it constructs a `GeminiTranslator`
-via `__new__()` and injects every private field, completely bypassing the constructor
-that validates and initialises the real Gemini SDK client.
+- `_queue_depth =` — removed from all 4 test files; queue-full conditions now triggered
+  via real burst fills under `asyncio` pressure tests
+- `_sink_mod._OVERFLOW_COUNTER = None` — removed; overflow path now exercised via
+  `pytest.mark.skipif` + real counter manipulation
+- `GeminiTranslator.__new__()` bypass — replaced with `_genai_override=` DI parameter
+  (`tests/integration/test_gemini_translator.py` uses `_make_translator(genai_module)`)
+- `CohereTranslator.__new__()` bypass — replaced with `_client_override=` + `_cohere_module=`
+  DI parameters (fixed in `test_coverage_final_push.py` and `test_translator_and_interceptor_paths.py`)
+- `t._api_key = "key"` mutations — removed; api_key now passed as constructor argument
 
 ---
 
@@ -389,17 +393,19 @@ No `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `COHERE_API_KEY`, `AZURE_*`, or
 - `tests/integration/test_gemini_translator.py` live tests — always skipped in CI
 - `tests/integration/test_llamacpp_translator.py` — always skipped in CI
 
-### Secrets Scan Excludes `tests/` Entirely
+### Secrets Scan Coverage of `tests/`
 
-`ci.yml` line 145–148:
+**✅ VERIFIED CORRECT — 2026-05-30**
+
+`ci.yml` lines 146–148 only exclude `.venv`, `.github`, and `__pycache__`:
 ```yaml
---exclude-dir=tests \
 --exclude-dir=.venv \
 --exclude-dir=.github \
+--exclude-dir=__pycache__ \
 ```
-The secrets scan deliberately skips the entire `tests/` directory, so hardcoded test keys
-like `"unit-test-fake-key-xyzzy"`, `"test-key"`, `"FAKE_PEM"` are never detected by the
-credential scanner.
+The `tests/` directory is **not excluded**. Hardcoded test strings like `"test-key"` and
+`"FAKE_PEM"` are scanned by the credential scanner. Prior versions of this document
+incorrectly stated that `tests/` was excluded — that was stale.
 
 ---
 
@@ -532,13 +538,13 @@ silently**.
 | 13 | Duck-typed test doubles in `real_protocols.py` | 22 classes | Low–Medium |
 | 14 | Inline duck-types across test files | 37+ classes | Low–Medium |
 | 15 | All LLM translator tests use fake translators | 1140-line file | Medium |
-| 17 | White-box private state mutation | 7+ locations | Medium |
+| 17 | White-box private state mutation | ✅ Fixed 2026-05-30 — all `__new__()` bypasses, `_queue_depth` and `_OVERFLOW_COUNTER` mutations eliminated | — |
 | 18 | Fake / placeholder API keys | 10+ occurrences | Low |
 | 19 | `pytest.importorskip` / skip decorators silencing tests | 15 conditions | Medium |
 | 20 | Live API keys absent from GitHub Secrets → CI always skips | 3 integration test files | **HIGH** |
 | 21 | `continue-on-error: true` on `ollama-live` non-blocking gate (intentional) | 1 occurrence | Low |
 | 22 | `PRAMANIX_TRANSLATOR_ENABLED=false` baked into both Dockerfiles | 2 Dockerfiles | Medium |
-| 24 | Secrets scan excludes `tests/` entirely | 1 CI step | Medium |
+| 24 | Secrets scan excludes `tests/` | ✅ Stale — tests/ IS scanned; only .venv, .github, __pycache__ excluded | — |
 | 27 | `NotImplementedError` stub: `Policy.invariants()` (intentional abstract method) | 1 stub | Low |
 | 28 | Slur list placeholder | ✅ Fixed 2026-05-30 — `_DEFAULT_TOXIC_WORDS` populated | — |
 | 29 | Worker warmup uses hardcoded Z3 patterns, not policy-sampled | 1 location | Low |
