@@ -5,10 +5,10 @@
 # - docs/PROOF_DOSSIER.md
 """Real integration tests for PramanixCrewAITool.
 
-Core logic tests run WITHOUT crewai installed (graceful-degradation mode),
-so the guard pipeline — which is framework-independent — is always exercised.
-The CrewAI-specific hierarchy test at the bottom is skipped when crewai is
-not installed.
+All tests require crewai to be installed — PramanixCrewAITool raises
+ImportError at instantiation when crewai is absent (honest failure, no
+silent fake-class fallback).  The suite is skipped automatically when
+crewai is not in the environment.
 """
 
 from __future__ import annotations
@@ -17,8 +17,10 @@ from decimal import Decimal
 
 import pytest
 
-from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.integrations.crewai import PramanixCrewAITool
+pytest.importorskip("crewai", reason="crewai not installed — skipping CrewAI adapter tests")
+
+from pramanix import E, Field, Guard, GuardConfig, Policy  # noqa: E402
+from pramanix.integrations.crewai import PramanixCrewAITool  # noqa: E402
 
 # ── Shared policies ──────────────────────────────────────────────────────────
 

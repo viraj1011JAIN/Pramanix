@@ -89,8 +89,8 @@ class _PramanixState:
 class PramanixGuardedModule(_ModuleBase):
     """DSPy ``Module`` wrapper with Z3 formal verification gate.
 
-    If DSPy is **not** installed the class functions as a plain callable
-    wrapper suitable for testing without the framework installed.
+    Requires ``dspy-ai`` to be installed; raises :exc:`ImportError` at
+    instantiation time when dspy is absent.
 
     The verification happens **before** the underlying module's ``forward``
     call.  If the guard blocks, :exc:`~pramanix.exceptions.GuardViolationError`
@@ -115,8 +115,12 @@ class PramanixGuardedModule(_ModuleBase):
         intent_builder: Callable[..., dict[str, Any]],
         state_provider: Callable[[], dict[str, Any]],
     ) -> None:
-        if _DSPY_AVAILABLE:
-            super().__init__()
+        if not _DSPY_AVAILABLE:
+            raise ImportError(
+                "PramanixGuardedModule requires 'dspy-ai': "
+                "pip install 'pramanix[dspy]'"
+            )
+        super().__init__()
         # Store all guard state in a single plain-Python container.  One
         # object.__setattr__ bypass is narrower than four separate ones and
         # survives DSPy / Pydantic upstream changes more robustly.

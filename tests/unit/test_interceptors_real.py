@@ -429,8 +429,8 @@ class TestGrpcInterceptorRealPaths:
         assert ctx.aborted
         assert ctx.abort_code == _grpc.StatusCode.INTERNAL
 
-    def test_grpc_import_fallback_lines_47_49(self):
-        """Lines 47-49: _GRPC_AVAILABLE=False path in constructor."""
+    def test_grpc_import_fallback_raises_import_error(self):
+        """When grpcio is absent, instantiating PramanixGrpcInterceptor raises ImportError."""
         import pramanix.interceptors.grpc as grpc_mod
 
         original = grpc_mod._GRPC_AVAILABLE
@@ -438,13 +438,11 @@ class TestGrpcInterceptorRealPaths:
             grpc_mod._GRPC_AVAILABLE = False
             from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-            interceptor = PramanixGrpcInterceptor(
-                guard=_GUARD,
-                intent_extractor=lambda hcd, req: {},
-                state_provider=lambda: {},
-                denied_status_code="DENY",
-            )
-            # denied_code comes from the kwarg when grpc not available
-            assert interceptor._denied_code == "DENY"
+            with pytest.raises(ImportError, match="grpcio"):
+                PramanixGrpcInterceptor(
+                    guard=_GUARD,
+                    intent_extractor=lambda hcd, req: {},
+                    state_provider=lambda: {},
+                )
         finally:
             grpc_mod._GRPC_AVAILABLE = original

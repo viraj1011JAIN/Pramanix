@@ -5,9 +5,10 @@
 # - docs/PROOF_DOSSIER.md
 """Real integration tests for PramanixGuardedModule (DSPy adapter).
 
-Core logic tests run WITHOUT dspy installed (graceful-degradation mode) because
-the guard pipeline is framework-independent.  The DSPy hierarchy test is skipped
-when dspy is not installed.
+All tests require dspy to be installed — PramanixGuardedModule raises
+ImportError at instantiation when dspy is absent (honest failure, no
+silent fake-class fallback).  The suite is skipped automatically when
+dspy is not in the environment.
 """
 
 from __future__ import annotations
@@ -16,9 +17,11 @@ from decimal import Decimal
 
 import pytest
 
-from pramanix import E, Field, Guard, GuardConfig, Policy
-from pramanix.exceptions import GuardViolationError
-from pramanix.integrations.dspy import PramanixGuardedModule
+pytest.importorskip("dspy", reason="dspy not installed — skipping DSPy adapter tests")
+
+from pramanix import E, Field, Guard, GuardConfig, Policy  # noqa: E402
+from pramanix.exceptions import GuardViolationError  # noqa: E402
+from pramanix.integrations.dspy import PramanixGuardedModule  # noqa: E402
 
 # ── Shared policies ──────────────────────────────────────────────────────────
 
@@ -221,14 +224,9 @@ class TestEdgeCases:
         assert "blocked" in str(exc_info.value).lower() or str(exc_info.value)
 
 
-# ── DSPy framework hierarchy (skipped when dspy not installed) ────────────────
-
-import importlib.util as _ilu
-
-_DSPY_AVAILABLE = _ilu.find_spec("dspy") is not None
+# ── DSPy framework hierarchy ──────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(not _DSPY_AVAILABLE, reason="dspy not installed")
 class TestDSPyHierarchy:
     def test_is_subclass_of_dspy_module(self):
         """With dspy installed PramanixGuardedModule must subclass dspy.Module."""

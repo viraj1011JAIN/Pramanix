@@ -127,12 +127,13 @@ class PramanixCrewAITool(_CrewAIBase):
         underlying_fn: Callable[[dict[str, Any]], str] | None = None,
         block_message: str | None = None,
     ) -> None:
-        if _CREWAI_AVAILABLE:
-            # Let CrewAI's Pydantic model handle field assignment.
-            super().__init__(name=name, description=description)
-        else:
-            self.name = name
-            self.description = description
+        if not _CREWAI_AVAILABLE:
+            raise ImportError(
+                "PramanixCrewAITool requires 'crewai': "
+                "pip install 'pramanix[crewai]'"
+            )
+        # Let CrewAI's Pydantic model handle field assignment.
+        super().__init__(name=name, description=description)
 
         # Store all guard state in a single plain-Python container.  One
         # object.__setattr__ bypass is narrower than five separate ones and

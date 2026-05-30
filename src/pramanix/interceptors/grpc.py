@@ -85,16 +85,17 @@ class PramanixGrpcInterceptor(_InterceptorBase):
         state_provider: Callable[[], dict[str, Any]],
         denied_status_code: Any | None = None,
     ) -> None:
+        if not _GRPC_AVAILABLE:
+            raise ImportError(
+                "PramanixGrpcInterceptor requires 'grpcio': "
+                "pip install 'pramanix[grpc]'"
+            )
+        import grpc as _grpc
+
         self._guard = guard
         self._intent_extractor = intent_extractor
         self._state_provider = state_provider
-
-        if _GRPC_AVAILABLE:
-            import grpc as _grpc
-
-            self._denied_code = denied_status_code or _grpc.StatusCode.PERMISSION_DENIED
-        else:
-            self._denied_code = denied_status_code
+        self._denied_code = denied_status_code or _grpc.StatusCode.PERMISSION_DENIED
 
     # ── grpc.ServerInterceptor protocol ──────────────────────────────────────
 
