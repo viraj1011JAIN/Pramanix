@@ -8,7 +8,7 @@
 
 Version: `1.0.0` | License: `AGPL-3.0-only` (Community) / Commercial (Enterprise)
 Language: Python ≥ 3.11,<4.0 | CI-tested: Python 3.13 only
-Status: Beta → GA-in-progress | Source files: 112 production + 205 test files
+Status: Beta → GA-in-progress | Source files: 112 production + 211 test files (204 non-init)
 
 ---
 
@@ -177,7 +177,7 @@ Guard.verify(extracted_intent, state)  ←── main pipeline above
 src/pramanix/
 │
 ├── ── CORE VERIFICATION ─────────────────────────────────────────────────────
-│   ├── guard.py              # Guard class (~1896 lines) — SDK entry point
+│   ├── guard.py              # Guard class (~1947 lines) — SDK entry point
 │   ├── policy.py             # Policy base class, Meta, fields(), invariants()
 │   ├── expressions.py        # Field, E(), all AST node types
 │   ├── transpiler.py         # DSL AST → Z3 AST (no eval/exec)
@@ -299,7 +299,7 @@ src/pramanix/
 │   ├── cli.py                # pramanix CLI (compile, lint, simulate, etc.)
 │   ├── logging_helpers.py    # structlog configuration helpers
 │   ├── _platform.py          # check_platform() — Alpine/musl ban
-│   └── testing.py            # InMemoryExecutionTokenVerifier (test-only)
+│   └── testing.py            # Re-exports InMemoryExecutionTokenVerifier for test convenience
 ```
 
 ---
@@ -1454,10 +1454,10 @@ class ExecutionTokenVerifier (Protocol):
 
 | Backend | File | Atomicity | Multi-replica safe |
 |---|---|---|---|
-| `InMemoryExecutionTokenVerifier` | `testing.py` | `threading.Lock` | No — per-process only |
-| `SQLiteExecutionTokenVerifier` | `execution_token.py` | SQLite UNIQUE constraint | No — single-process |
+| `InMemoryExecutionTokenVerifier` | `execution_token.py` (re-exported from `testing.py`) | `threading.Lock` | No — per-process only |
+| `SQLiteExecutionTokenVerifier` | `execution_token.py` | SQLite UNIQUE constraint | No — single-host only |
+| `RedisExecutionTokenVerifier` | `execution_token.py` | `SET … NX EX` (SETNX with TTL) | Yes |
 | `PostgresExecutionTokenVerifier` | `execution_token.py` | `asyncpg` + UNIQUE constraint | Yes |
-| `RedisExecutionTokenVerifier` | `execution_token.py` | `SETNX` (SET if Not eXists) | Yes |
 
 **Critical production gap**: The default configuration uses no token signer/verifier at all — `GuardConfig.token_signer=None`. Callers must explicitly configure an `ExecutionTokenSigner` and wire a multi-replica-safe verifier into the action executor. This is not automatic. The TOCTOU protection is an opt-in, not a default.
 
@@ -2001,7 +2001,12 @@ try:
     _OTEL_AVAILABLE = True
 
 except ImportError:
-    warnings.warn("opentelemetry is not installed — OTel spans will be no-ops.", ImportWarning)
+    warnings.warn(
+        "opentelemetry is not installed — OTel spans will be no-ops. "
+        "Install tracing support with: pip install 'pramanix[otel]'",
+        UserWarning,
+        stacklevel=2,
+    )
     _span = lambda name: contextlib.nullcontext()
     _OTEL_AVAILABLE = False
 ```
@@ -2014,19 +2019,20 @@ OTel spans are created at two levels:
 
 **Known gap**: There is no propagation of the **caller's** trace context into Pramanix spans. If an LLM agent is instrumented with OTel and calls `guard.verify()`, the resulting Pramanix spans appear as a separate root trace, not as children of the agent's span. Callers must manually propagate `traceparent` / `tracestate` headers and inject them into the OTel context before calling `verify()`.
 
-### ImportWarnings — An Operational Nuisance
+### Missing-Optional-Dependency Warnings
 
-When `prometheus-client` or `opentelemetry-sdk` are not installed, Pramanix emits `ImportWarning` at module import time (in `guard_config.py`). This can pollute test output in CI environments that do not install these extras. The warnings are not suppressable via `pytest.ini_options.filterwarnings` without explicit patterns.
+When `prometheus-client` or `opentelemetry-sdk` are not installed, Pramanix emits `UserWarning` at module import time (in `guard_config.py`). This can pollute test output in CI environments that do not install these extras.
 
 ```python
 # guard_config.py — emitted at import time, not at use time
 warnings.warn(
-    "prometheus_client is not installed — Prometheus metrics will be disabled.",
-    ImportWarning, stacklevel=2,
+    "prometheus_client is not installed — Prometheus metrics will be disabled. "
+    "Install metrics support with: pip install 'pramanix[metrics]'",
+    UserWarning, stacklevel=2,
 )
 ```
 
-This is a design choice: early warning at import time gives operators visibility into missing observability. The downside is that library users who intentionally omit these extras (test environments, minimal deployments) get warning noise they cannot easily suppress.
+`UserWarning` (not `ImportWarning`) is used intentionally: Python silently filters `ImportWarning` by default in many contexts, making it invisible to operators who would benefit from knowing observability is disabled. `UserWarning` is visible by default. The downside is that library users who intentionally omit these extras get warning noise they can suppress with `warnings.filterwarnings("ignore", category=UserWarning, module="pramanix")`.
 
 ---
 
@@ -2578,8 +2584,8 @@ Source: [tests/](tests/)
 ### Statistics
 
 ```
-Total test files:   205
-Total test cases:   5,109 (collected; pytest --collect-only -q 2026-05-29)
+Total test files:   211 (204 non-init; 7 __init__.py / conftest.py)
+Total test cases:   5,230 (collected; pytest --collect-only -q 2026-05-31)
 Coverage target:    ≥ 98% branch coverage (fail_under = 98)
 Test runner:        pytest 8.4, pytest-asyncio 0.23 (asyncio_mode = "auto")
 Property tests:     hypothesis 6.100+
@@ -2902,17 +2908,13 @@ This section catalogs every known gap, flaw, and deliberate limitation found in 
 
 **Impact:** AGPL-3.0 is incompatible with private SaaS deployments that cannot or do not publish their source modifications. This is a GA blocker for any enterprise customer.
 
-**CRITICAL-2: `InMemoryExecutionTokenVerifier` is per-process, in-memory only.**
+**CRITICAL-2: `InMemoryApprovalWorkflow` is the only oversight backend — approvals are lost on restart.**
 
-`execution_token.py` contains `InMemoryExecutionTokenVerifier` which stores issued tokens in a Python `dict`. There is no `RedisExecutionTokenVerifier`, `PostgresExecutionTokenVerifier`, or any durable token store in the codebase. In a multi-process or multi-container deployment (Kubernetes with 3+ replicas), tokens issued by one process cannot be verified by another. An attacker who obtains a token issued in one pod can replay it successfully in a second pod where the token was never recorded.
+`execution_token.py` provides four `ExecutionTokenVerifier` implementations: `InMemoryExecutionTokenVerifier` (single-process, re-exported from `testing.py`), `SQLiteExecutionTokenVerifier` (single-host, SQLite UNIQUE constraint), `RedisExecutionTokenVerifier` (SETNX with TTL, multi-replica-safe), and `PostgresExecutionTokenVerifier` (`asyncpg` + UNIQUE constraint, multi-replica-safe). The token layer is fully implemented for distributed deployments — callers must choose and configure the appropriate backend.
 
-**Impact:** The human oversight token model is TOCTOU-broken in any horizontally scaled deployment. This affects `OversightRequiredError` and the approval workflow end-to-end.
+However, `oversight/workflow.py` contains only `InMemoryApprovalWorkflow` as a concrete `ApprovalWorkflow` implementation. Pending human approvals are stored in an in-memory dict. On process restart, all pending approvals are lost — an agent awaiting human approval loses that record if the process crashes or restarts. In a multi-replica deployment, approval submitted on replica A cannot be queried on replica B.
 
-**CRITICAL-3: `InMemoryApprovalWorkflow` is the only oversight backend.**
-
-`oversight/workflow.py` contains one concrete `ApprovalWorkflow` implementation. No database-backed, Redis-backed, or durable approval workflow exists. Pending approvals are lost on process restart. An agent awaiting approval in production will lose that approval record if the process crashes.
-
-**Impact:** Human-in-the-loop oversight is a process-local fiction in production deployments. This is a GA blocker for any safety-critical use case.
+**Impact:** Human-in-the-loop oversight is process-local and non-durable in the default configuration. The `ApprovalWorkflow` is a Protocol — operators can implement their own Redis/database-backed backend — but no built-in durable implementation is provided. This is a GA blocker for safety-critical use cases requiring oversight durability.
 
 ---
 
@@ -3297,33 +3299,40 @@ async def execute_transfer(intent: dict, state: dict) -> str:
 
 ### 20.7 YAML policy (subset of Python DSL)
 
+The top-level key is `meta:` (not `policy:`). Invariant identifiers use `name:` (not `label:`). Field type is declared under `z3_type:`.
+
 ```yaml
 # transfer_policy.yaml
-policy:
+meta:
   name: TransferPolicy
   version: "1.0.0"
-  fields:
-    amount:     { type: Real }
-    balance:    { type: Real }
-    daily_limit: { type: Real }
-    is_frozen:  { type: Bool }
-    status:     { type: String }
-  invariants:
-    - expr: "amount > 0"
-      label: positive_amount
-    - expr: "amount <= balance"
-      label: sufficient_balance
-    - expr: "amount <= daily_limit"
-      label: within_daily_limit
-    - expr: "not is_frozen"
-      label: account_not_frozen
+fields:
+  amount:
+    z3_type: Real
+  balance:
+    z3_type: Real
+  daily_limit:
+    z3_type: Real
+  is_frozen:
+    z3_type: Bool
+  status:
+    z3_type: String
+invariants:
+  - name: positive_amount
+    expr: "amount > 0"
+  - name: sufficient_balance
+    expr: "amount <= balance"
+  - name: within_daily_limit
+    expr: "amount <= daily_limit"
+  - name: account_not_frozen
+    expr: "not is_frozen"
 ```
 
 ```python
-from pramanix.natural_policy import load_policy_from_yaml
+from pramanix.natural_policy.yaml_loader import load_policy_file
 from pathlib import Path
 
-PolicyClass = load_policy_from_yaml(Path("transfer_policy.yaml"))
+PolicyClass = load_policy_file(Path("transfer_policy.yaml"))
 guard = Guard(policy=PolicyClass, config=GuardConfig())
 ```
 
@@ -3500,7 +3509,7 @@ Status labels used:
 | GCP Secret Manager provider | IMPLEMENTED | `key_provider.py` | Requires `google-cloud-secret-manager` |
 | HashiCorp Vault provider | IMPLEMENTED | `key_provider.py` | Requires `hvac` |
 | `InMemoryApprovalWorkflow` | PARTIAL | `oversight/workflow.py` | Only implementation; no persistence |
-| `ExecutionTokenVerifier` | PARTIAL | `execution_token.py` | Per-process only; TOCTOU in multi-container |
+| `ExecutionTokenVerifier` | IMPLEMENTED | `execution_token.py` | 4 backends: InMemory, SQLite, Redis (SETNX), Postgres (asyncpg). Default config uses no verifier — opt-in required. |
 | `ScopedMemoryPartition` | IMPLEMENTED | `memory/store.py` | Write-up prevention; cross-tenant isolation |
 | IFC `FlowEnforcer` | IMPLEMENTED | `ifc/enforcer.py` | Lattice-based; `FlowViolationError` |
 | `MeshAuthenticator` JWT-SVID | IMPLEMENTED | `mesh/authenticator.py` | SPIFFE URI validation; all failure modes |
@@ -3526,7 +3535,7 @@ Status labels used:
 | Nightly benchmark CI enforcement | MISSING | — | Targets exist in code; CI never fails on regression |
 | Python 3.11/3.12 CI matrix | MISSING | — | Only 3.13 tested despite version range claims |
 | Durable Merkle persistence | MISSING | — | No database-backed audit log |
-| Database-backed token verifier | MISSING | — | Redis/Postgres `ExecutionTokenVerifier` not implemented |
+| Database-backed `ApprovalWorkflow` | MISSING | — | `InMemoryApprovalWorkflow` only; no Redis/Postgres-backed oversight workflow |
 | Commercial license file | MISSING | — | Referenced in `pyproject.toml`; file absent |
 
 ---
@@ -3540,16 +3549,16 @@ These items block the GA release. They are not optional.
 | # | Item | Blocker reason | Source evidence |
 |---|---|---|---|
 | GA-1 | Add `LICENSE-COMMERCIAL` file | AGPL + proprietary classifier without commercial license is legally inconsistent | `pyproject.toml` line 11 |
-| GA-2 | `RedisExecutionTokenVerifier` | Current per-process token verifier breaks multi-container oversight | `execution_token.py` |
-| GA-3 | Database-backed `ApprovalWorkflow` | Pending approvals lost on restart | `oversight/workflow.py` |
-| GA-4 | CI matrix for Python 3.11 + 3.12 | Version range claim `>=3.11` is untested | `pyproject.toml`, CI config |
-| GA-5 | Benchmark threshold enforcement | Performance targets are not enforced; silent regressions possible | `benchmarks/bench_guard.py` |
-| GA-6 | W3C trace correlation for LLM calls | `decision_id` not propagated as trace parent to outbound HTTP | `translator/anthropic.py` |
+| GA-2 | Database-backed `ApprovalWorkflow` | `InMemoryApprovalWorkflow` is the only backend; approvals lost on restart | `oversight/workflow.py` |
+| GA-3 | CI matrix for Python 3.11 + 3.12 | Version range claim `>=3.11` is untested | `pyproject.toml`, CI config |
+| GA-4 | Benchmark threshold enforcement | Performance targets are not enforced; silent regressions possible | `benchmarks/bench_guard.py` |
+| GA-5 | W3C trace correlation for LLM calls | `decision_id` not propagated as trace parent to outbound HTTP | `translator/anthropic.py` |
 
 ### 23.2 v1.1.0 targets (post-GA hardening)
 
 | Feature | Description |
 |---|---|
+| Database-backed `ApprovalWorkflow` | Redis- or Postgres-backed implementation for durable oversight in multi-replica deployments |
 | Persistent Merkle log | PostgreSQL or append-only file backend for `AuditSink` |
 | gRPC / Kafka TLS docs | Document mTLS configuration for both interceptors; add integration tests with real broker |
 | `ToxicityScorer` replacement | Replace keyword list with a calibrated `CalibratedScorer` variant or delegate to an ML-backed API |
@@ -3693,4 +3702,4 @@ Key fields from `src/pramanix/guard_config.py`:
 
 *— End of README —*
 
-*Source-verified against commit `ec788c5` (2026-05-27). All claims traceable to file paths, class names, function names, or test files listed in this document.*
+*Source-verified against commit `c7e5854` (2026-05-31). All claims traceable to file paths, class names, function names, or test files listed in this document.*
