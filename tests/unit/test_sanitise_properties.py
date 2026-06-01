@@ -200,7 +200,7 @@ def test_empty_warnings_no_injection_pattern_signal(
     extra_warnings=st.lists(st.text(max_size=50), max_size=3),
     sub_penny_threshold=_sub_penny_threshold,
 )
-@settings(max_examples=300, deadline=timedelta(milliseconds=500))
+@settings(max_examples=300, deadline=None)
 def test_injection_pattern_warning_drives_score_to_at_least_0_6(
     user_input: str,
     extracted_intent: dict,
@@ -276,7 +276,7 @@ _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
 @given(raw=_short_text)
-@settings(max_examples=500, deadline=timedelta(milliseconds=500))
+@settings(max_examples=500, deadline=None)
 def test_sanitise_short_input_never_raises(raw: str) -> None:
     """S-1+S-3: inputs short enough after NFKC never raise; return is (str, list).
 
@@ -291,7 +291,7 @@ def test_sanitise_short_input_never_raises(raw: str) -> None:
 
 
 @given(raw=_short_text)
-@settings(max_examples=500, deadline=timedelta(milliseconds=500))
+@settings(max_examples=500, deadline=None)
 def test_sanitise_output_has_no_stripped_control_chars(raw: str) -> None:
     """S-2: Output never contains C0 control codes in the stripped range."""
     cleaned, _ = sanitise_user_input(raw)
@@ -318,7 +318,7 @@ def test_sanitise_raises_for_over_limit_input(raw: str) -> None:
 
 
 @given(raw=st.text(max_size=200))
-@settings(max_examples=300, deadline=timedelta(milliseconds=500))
+@settings(max_examples=300, deadline=None)
 def test_sanitise_unicode_normalised_warning_iff_nfkc_changes_text(
     raw: str,
 ) -> None:

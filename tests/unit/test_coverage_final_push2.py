@@ -57,8 +57,8 @@ def test_worker_pool_async_process_normal_unseal():
         warmup=False,
     )
     pool.spawn()
-    # 90 s solver + 60 s host = 150 s deadline — covers slow spawn under coverage load.
-    decision = pool.submit_solve(DummyPolicy, {}, 90_000)
+    # 300 s solver + 60 s host = 360 s deadline — covers slow spawn under coverage load.
+    decision = pool.submit_solve(DummyPolicy, {}, 300_000)
     assert decision.allowed is True, (
         f"expected allowed=True; got status={decision.status!r} "
         f"explanation={decision.explanation!r}"

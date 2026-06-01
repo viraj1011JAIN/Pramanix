@@ -375,6 +375,34 @@ def main() -> int:
         help="Exit 1 on warnings as well as errors.",
     )
 
+    # report subcommand — render a ComplianceReport JSON to text / JSON / PDF
+    rep_cmd = sub.add_parser(
+        "report",
+        help=(
+            "Render a ComplianceReport JSON file (from ComplianceReport.to_json()) "
+            "as text, JSON, or PDF."
+        ),
+    )
+    rep_cmd.add_argument(
+        "input",
+        nargs="?",
+        default="-",
+        help="Path to a ComplianceReport JSON file, or '-' to read from stdin (default: -).",
+    )
+    rep_cmd.add_argument(
+        "--format",
+        dest="output_format",
+        choices=["text", "json", "pdf"],
+        default="text",
+        help="Output format: text (default), json, or pdf (requires fpdf2).",
+    )
+    rep_cmd.add_argument(
+        "--out",
+        dest="output_file",
+        default=None,
+        help="Write output to FILE instead of stdout (required for --format pdf).",
+    )
+
     # coverage subcommand — run test cases through a policy and report coverage
     cov_cmd = sub.add_parser(
         "coverage",
@@ -455,6 +483,9 @@ def main() -> int:
 
     if args.command == "coverage":
         return _cmd_coverage(args)
+
+    if args.command == "report":
+        return _cmd_report(args)
 
     parser.print_help()
     return 2
@@ -2759,6 +2790,146 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         return 1
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    """Render a ComplianceReport JSON file as text, JSON, or PDF.
+
+    Reads a JSON document produced by ``ComplianceReport.to_json()`` and
+    writes the report in the requested format.
+
+    Exit codes:
+        0 — success
+        1 — render error (e.g. missing fpdf2 for PDF output)
+        2 — usage / parse error (bad input, bad format)
+    """
+    import json as _json_mod
+    import pathlib
+    import sys as _sys
+
+    input_path = getattr(args, "input", "-")
+    output_format = getattr(args, "output_format", "text")
+    output_file = getattr(args, "output_file", None)
+
+    # ── Read input ────────────────────────────────────────────────────────────
+    try:
+        if input_path == "-":
+            raw = _sys.stdin.read()
+        else:
+            raw = pathlib.Path(input_path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(f"ERROR: File not found: {input_path}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"ERROR: Cannot read {input_path}: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        data = _json_mod.loads(raw)
+    except _json_mod.JSONDecodeError as exc:
+        print(f"ERROR: Invalid JSON in {input_path}: {exc}", file=sys.stderr)
+        return 2
+
+    if not isinstance(data, dict):
+        print("ERROR: ComplianceReport JSON must be a JSON object (dict).", file=sys.stderr)
+        return 2
+
+    # ── Reconstruct ComplianceReport ─────────────────────────────────────────
+    try:
+        from pramanix.helpers.compliance import ComplianceReport as _CR
+
+        report = _CR(
+            decision_id=str(data.get("decision_id", "")),
+            decision_hash=str(data.get("decision_hash", "")),
+            timestamp=str(data.get("timestamp", "")),
+            verdict=str(data.get("verdict", "")),
+            severity=str(data.get("severity", "")),
+            policy_name=str(data.get("policy_name", "")),
+            policy_version=str(data.get("policy_version", "")),
+            violated_rules=tuple(data.get("violated_rules") or []),
+            compliance_rationale=tuple(data.get("compliance_rationale") or []),
+            regulatory_refs=tuple(data.get("regulatory_refs") or []),
+            explanation=str(data.get("explanation", "")),
+        )
+    except Exception as exc:
+        print(f"ERROR: Cannot deserialize ComplianceReport: {exc}", file=sys.stderr)
+        return 2
+
+    # ── Render ────────────────────────────────────────────────────────────────
+    if output_format == "json":
+        rendered_text = report.to_json()
+        if output_file:
+            try:
+                pathlib.Path(output_file).write_text(rendered_text, encoding="utf-8")
+            except OSError as exc:
+                print(f"ERROR: Cannot write {output_file}: {exc}", file=sys.stderr)
+                return 1
+        else:
+            print(rendered_text)
+        return 0
+
+    if output_format == "pdf":
+        if not output_file:
+            print(
+                "ERROR: --out <FILE> is required for --format pdf "
+                "(PDF is binary and cannot be written to stdout).",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            pdf_bytes = report.to_pdf()
+        except ImportError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"ERROR: PDF generation failed: {exc}", file=sys.stderr)
+            return 1
+        try:
+            pathlib.Path(output_file).write_bytes(pdf_bytes)
+            print(f"PDF written to {output_file}")
+        except OSError as exc:
+            print(f"ERROR: Cannot write {output_file}: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    # ── Text format (default) ─────────────────────────────────────────────────
+    lines = [
+        "=" * 60,
+        "PRAMANIX COMPLIANCE REPORT",
+        "=" * 60,
+        f"Decision ID:     {report.decision_id}",
+        f"Decision Hash:   {report.decision_hash}",
+        f"Timestamp:       {report.timestamp}",
+        f"Verdict:         {report.verdict}",
+        f"Severity:        {report.severity}",
+        f"Policy:          {report.policy_name} v{report.policy_version}",
+    ]
+    if report.violated_rules:
+        lines.append(f"Violated Rules:  {', '.join(report.violated_rules)}")
+    if report.explanation:
+        lines.append(f"Explanation:     {report.explanation}")
+    if report.compliance_rationale:
+        lines.append("")
+        lines.append("Compliance Rationale:")
+        for item in report.compliance_rationale:
+            lines.append(f"  - {item}")
+    if report.regulatory_refs:
+        lines.append("")
+        lines.append("Regulatory References:")
+        for ref in report.regulatory_refs:
+            lines.append(f"  - {ref}")
+    lines.append("=" * 60)
+    rendered_text = "\n".join(lines)
+
+    if output_file:
+        try:
+            pathlib.Path(output_file).write_text(rendered_text, encoding="utf-8")
+        except OSError as exc:
+            print(f"ERROR: Cannot write {output_file}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        print(rendered_text)
     return 0
 
 

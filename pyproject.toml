@@ -371,6 +371,7 @@ testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "perf: performance benchmarks",
+    "benchmark: timing-sensitive solver latency and throughput benchmarks",
     "adversarial: adversarial security tests",
 ]
 filterwarnings = [

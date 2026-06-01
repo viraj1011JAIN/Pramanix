@@ -3441,7 +3441,7 @@ The path to implementation: `gramine-sgx` wraps standard Linux binaries to run i
 
 ## 47. The Final Word — Why This System Matters
 
-Every tool in this blueprint is in service of one answer. Not "maybe safe." Not "probably safe." Not "safe according to our heuristics." 
+Every tool in this blueprint is in service of one answer. Not "maybe safe." Not "probably safe." Not "safe according to our heuristics."
 
 **Provably safe.**
 

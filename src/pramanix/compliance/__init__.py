@@ -35,6 +35,7 @@ from pramanix.compliance.oracle import (
     FrameworkAttestation,
     MappingMatchKind,
     RegulatoryFramework,
+    default_oracle,
 )
 
 __all__ = [
@@ -46,4 +47,5 @@ __all__ = [
     "FrameworkAttestation",
     "MappingMatchKind",
     "RegulatoryFramework",
+    "default_oracle",
 ]

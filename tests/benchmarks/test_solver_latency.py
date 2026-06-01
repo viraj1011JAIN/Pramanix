@@ -77,6 +77,8 @@ _BLOCK_STATE = {
 }
 
 
+pytestmark = pytest.mark.benchmark
+
 # ── First-call latency (cold Z3) ──────────────────────────────────────────────
 
 

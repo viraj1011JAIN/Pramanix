@@ -180,6 +180,7 @@ __all__ = [
     "FrameworkAttestation",
     "MappingMatchKind",
     "RegulatoryFramework",
+    "default_oracle",
 ]
 
 _log = logging.getLogger(__name__)
@@ -1083,6 +1084,25 @@ class ComplianceOracle:
                 key=lambda f: f.value,
             )
 
+    def get_mappings(self, framework: RegulatoryFramework) -> list[ControlMapping]:
+        """Return a snapshot of all registered mappings for a framework.
+
+        Returns a copy — mutating the returned list does not affect the oracle.
+
+        Args
+        ----
+        framework : RegulatoryFramework
+            The framework whose mappings to retrieve.
+
+        Returns
+        -------
+        list[ControlMapping]
+            All :class:`ControlMapping` objects registered under ``framework``,
+            in registration order.  Empty list if none registered.
+        """
+        with self._lock:
+            return list(self._registry.get(framework, []))
+
     # ── Internal implementation ────────────────────────────────────────────────
 
     def _evaluate_impl(
@@ -1550,3 +1570,346 @@ def _format_violation_prevented(
         f"Blocked: {mapping.framework.value} {mapping.control_id} "
         f"({mapping.control_title}) enforced via {evidence}."
     )
+
+
+# ── Built-in compliance mapping library ───────────────────────────────────────
+
+
+def _cm(
+    framework: RegulatoryFramework,
+    control_id: str,
+    control_title: str,
+    invariant_label: str,
+    description: str,
+) -> ControlMapping:
+    return ControlMapping(
+        framework=framework,
+        control_id=control_id,
+        control_title=control_title,
+        invariant_label=invariant_label,
+        description=description,
+    )
+
+
+# Pre-built mappings from conventional Pramanix invariant labels to regulatory
+# controls.  Policies that follow Pramanix naming conventions get compliance
+# attestations with no manual oracle configuration.
+_BUILT_IN_MAPPINGS: list[ControlMapping] = [
+    # ── SOC 2 TSC ─────────────────────────────────────────────────────────────
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.1",
+        "Logical and Physical Access Controls",
+        "authorized_role",
+        "CC6.1 requires restricting access to systems. "
+        "The authorized_role invariant provides formal Z3 proof that "
+        "only credentialled principals may invoke guarded actions.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.1",
+        "Logical and Physical Access Controls",
+        "trusted_mesh_caller",
+        "CC6.1 requires logical access restrictions. "
+        "The trusted_mesh_caller invariant provides Z3-verified proof "
+        "that only SPIFFE-authenticated service mesh principals may invoke this action.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.1",
+        "Logical and Physical Access Controls",
+        "amount_limit",
+        "CC6.1 requires transaction authorisation controls. "
+        "The amount_limit invariant enforces a Z3-verified upper bound on "
+        "each transaction, preventing unauthorised high-value transfers.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.1",
+        "Logical and Physical Access Controls",
+        "within_limit",
+        "CC6.1 requires authorisation controls. "
+        "The within_limit invariant enforces a Z3-verified per-request ceiling.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.7",
+        "Logical Access Controls — Transaction Monitoring",
+        "velocity_check",
+        "CC6.7 requires detection of unusual access patterns. "
+        "The velocity_check invariant provides Z3-verified enforcement of "
+        "per-period transaction velocity limits (BSA/AML requirement).",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.8",
+        "Logical Access Controls — Fraud Prevention",
+        "anti_structuring",
+        "CC6.8 requires controls to prevent fraud. "
+        "The anti_structuring invariant formally proves that individual "
+        "transactions do not fall into BSA structuring patterns.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC6.6",
+        "Logical Access Controls — Identity Verification",
+        "kyc_status",
+        "CC6.6 requires identity verification before access. "
+        "The kyc_status invariant provides Z3 proof that KYC is complete "
+        "before any account action is permitted.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC9.1",
+        "Risk Assessment and Mitigation",
+        "sufficient_balance",
+        "CC9.1 requires risk mitigation controls. "
+        "The sufficient_balance invariant provides Z3-verified proof that "
+        "a transfer cannot overdraw the account, mitigating liquidity risk.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC8.1",
+        "Change Management Authorisation",
+        "prod_gate_approval",
+        "CC8.1 requires change management approval. "
+        "The prod_gate_approval invariant proves that a human approval token "
+        "was presented before any production system change was allowed.",
+    ),
+    _cm(
+        RegulatoryFramework.SOC2,
+        "CC7.2",
+        "System Operations — Monitoring and Alerting",
+        "blast_radius_check",
+        "CC7.2 requires detection of and response to security events. "
+        "The blast_radius_check invariant enforces a Z3-verified ceiling on "
+        "the impact radius of any automated infrastructure change.",
+    ),
+    # ── EU AI Act ─────────────────────────────────────────────────────────────
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.14",
+        "Human Oversight",
+        "amount_limit",
+        "Art. 14 requires that high-risk AI systems be designed so that "
+        "natural persons can oversee and intervene. "
+        "The amount_limit invariant provides formal Z3 proof that the AI "
+        "cannot autonomously authorise transactions above the defined ceiling.",
+    ),
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.14",
+        "Human Oversight",
+        "within_limit",
+        "Art. 14 requires that AI systems permit human oversight. "
+        "The within_limit invariant provides Z3-verified enforcement that "
+        "the AI cannot exceed the per-request limit without human approval.",
+    ),
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.14",
+        "Human Oversight",
+        "sufficient_balance",
+        "Art. 14 requires that high-risk AI systems be accurate and controllable. "
+        "The sufficient_balance invariant formally proves that the AI will not "
+        "authorise financially unsafe operations.",
+    ),
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.9",
+        "Risk Management System",
+        "authorized_role",
+        "Art. 9 requires a continuous risk management system. "
+        "The authorized_role invariant provides Z3-verified access control, "
+        "forming part of the risk management lifecycle.",
+    ),
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.9",
+        "Risk Management System",
+        "blast_radius_check",
+        "Art. 9 requires risk identification and mitigation. "
+        "The blast_radius_check invariant provides formal proof that "
+        "the impact radius of any AI-triggered change is bounded.",
+    ),
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.13",
+        "Transparency",
+        "kyc_status",
+        "Art. 13 requires that high-risk AI systems be transparent. "
+        "The kyc_status invariant provides Z3-verified proof that "
+        "identity verification was completed — an auditable transparency claim.",
+    ),
+    _cm(
+        RegulatoryFramework.EU_AI_ACT,
+        "Art.15",
+        "Accuracy, Robustness and Cybersecurity",
+        "phi_least_privilege",
+        "Art. 15 requires accuracy and robustness against risks. "
+        "The phi_least_privilege invariant provides formal Z3 proof that "
+        "data access is bounded to the minimum necessary.",
+    ),
+    # ── HIPAA ─────────────────────────────────────────────────────────────────
+    _cm(
+        RegulatoryFramework.HIPAA,
+        "§164.312",
+        "Technical Safeguards — Access Control",
+        "authorized_role",
+        "§164.312(a)(1) requires unique user identification and access control. "
+        "The authorized_role invariant provides Z3-verified proof that role "
+        "checks gate all PHI access operations.",
+    ),
+    _cm(
+        RegulatoryFramework.HIPAA,
+        "§164.514",
+        "De-Identification — Minimum Necessary",
+        "phi_least_privilege",
+        "§164.514(d) requires that disclosure be limited to the minimum necessary. "
+        "The phi_least_privilege invariant provides Z3 proof that each request "
+        "does not exceed the minimum necessary data scope.",
+    ),
+    _cm(
+        RegulatoryFramework.HIPAA,
+        "§164.508",
+        "Authorization Requirements",
+        "patient_consent_required",
+        "§164.508 requires patient authorisation before disclosure. "
+        "The patient_consent_required invariant provides Z3-verified proof that "
+        "a valid consent record is present before any disclosure action.",
+    ),
+    _cm(
+        RegulatoryFramework.HIPAA,
+        "§164.508",
+        "Authorization Requirements",
+        "consent_active",
+        "§164.508(c) requires that the authorisation be currently valid. "
+        "The consent_active invariant proves that the consent has not expired.",
+    ),
+    _cm(
+        RegulatoryFramework.HIPAA,
+        "§164.502",
+        "Uses and Disclosures — Minimum Necessary",
+        "must_be_clinician",
+        "§164.502(b) requires disclosure limited to the minimum necessary. "
+        "The must_be_clinician invariant provides Z3 proof that PHI access "
+        "is restricted to licensed clinical staff.",
+    ),
+    _cm(
+        RegulatoryFramework.HIPAA,
+        "§164.312",
+        "Emergency Access Procedure",
+        "break_glass_auth",
+        "§164.312(a)(2)(ii) requires procedures for emergency PHI access. "
+        "The break_glass_auth invariant formally verifies that an emergency "
+        "access token was presented and is valid before override access is granted.",
+    ),
+    # ── NIST AI RMF ───────────────────────────────────────────────────────────
+    _cm(
+        RegulatoryFramework.NIST_AI_RMF,
+        "GOVERN-1.1",
+        "Policies, Processes, Procedures and Practices",
+        "authorized_role",
+        "GOVERN-1.1 requires that policies for AI risk management are documented. "
+        "The authorized_role invariant demonstrates machine-verifiable enforcement "
+        "of access control policy.",
+    ),
+    _cm(
+        RegulatoryFramework.NIST_AI_RMF,
+        "MANAGE-3.1",
+        "Risk Treatment — Response",
+        "amount_limit",
+        "MANAGE-3.1 requires that identified risks are responded to. "
+        "The amount_limit invariant provides Z3-verified evidence that "
+        "the AI system responds to financial risk by enforcing per-request limits.",
+    ),
+    _cm(
+        RegulatoryFramework.NIST_AI_RMF,
+        "MEASURE-2.5",
+        "AI Risk Measurement — System Performance",
+        "sufficient_balance",
+        "MEASURE-2.5 requires that AI system performance is measured. "
+        "The sufficient_balance invariant provides formal evidence that "
+        "the AI system accurately enforces financial safety constraints.",
+    ),
+    _cm(
+        RegulatoryFramework.NIST_AI_RMF,
+        "MAP-2.1",
+        "AI Risk Characterisation",
+        "blast_radius_check",
+        "MAP-2.1 requires characterisation of AI system risks and impacts. "
+        "The blast_radius_check invariant provides Z3-verified bounds on "
+        "the potential impact radius of each AI-driven change.",
+    ),
+    _cm(
+        RegulatoryFramework.NIST_AI_RMF,
+        "GOVERN-3.1",
+        "Organizational Accountability",
+        "kyc_status",
+        "GOVERN-3.1 requires that accountability for AI risks is established. "
+        "The kyc_status invariant provides verifiable identity accountability "
+        "by formally proving KYC completion before action.",
+    ),
+    # ── GDPR ──────────────────────────────────────────────────────────────────
+    _cm(
+        RegulatoryFramework.GDPR,
+        "Art.25",
+        "Data Protection by Design and by Default",
+        "phi_least_privilege",
+        "Art. 25 requires data minimisation by design. "
+        "The phi_least_privilege invariant provides Z3-verified proof that "
+        "data access is bounded to the minimum necessary for each operation.",
+    ),
+    _cm(
+        RegulatoryFramework.GDPR,
+        "Art.5",
+        "Principles Relating to Processing of Personal Data",
+        "authorized_role",
+        "Art. 5(1)(f) requires appropriate security of personal data. "
+        "The authorized_role invariant provides Z3-verified access control "
+        "as a technical safeguard for personal data processing.",
+    ),
+    _cm(
+        RegulatoryFramework.GDPR,
+        "Art.25",
+        "Data Protection by Design and by Default",
+        "kyc_status",
+        "Art. 25 requires that data protection principles are implemented by design. "
+        "The kyc_status invariant ensures identity is formally verified "
+        "before any personal data processing action is permitted.",
+    ),
+]
+
+
+def default_oracle() -> ComplianceOracle:
+    """Create a :class:`ComplianceOracle` pre-loaded with built-in control mappings.
+
+    The built-in library maps conventional Pramanix invariant label names to
+    controls across six frameworks: SOC 2, EU AI Act, HIPAA, NIST AI RMF,
+    ISO/IEC 42001, and GDPR.
+
+    Policies that follow Pramanix naming conventions (``amount_limit``,
+    ``authorized_role``, ``sufficient_balance``, etc.) receive compliance
+    attestations with no manual oracle configuration.
+
+    Returns
+    -------
+    ComplianceOracle
+        A freshly constructed oracle with all built-in mappings registered.
+        Call :meth:`ComplianceOracle.register_mapping` on the returned oracle
+        to add project-specific mappings on top of the built-in library.
+
+    Example
+    -------
+    ::
+
+        from pramanix.compliance.oracle import default_oracle, RegulatoryFramework
+
+        oracle = default_oracle()
+        attestation = oracle.evaluate_record(record, frameworks=[RegulatoryFramework.SOC2])
+        print(attestation.summary)
+    """
+    oracle = ComplianceOracle()
+    for mapping in _BUILT_IN_MAPPINGS:
+        oracle.register_mapping(mapping.framework, mapping)
+    return oracle

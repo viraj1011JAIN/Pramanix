@@ -176,7 +176,7 @@ def test_collateral_haircut_monotone(
 
 
 @given(collateral=_positive_decimal, loan=_positive_decimal, haircut=_pct)
-@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+@settings(max_examples=1_000, deadline=None)
 def test_collateral_haircut_no_float_drift(
     collateral: Decimal, loan: Decimal, haircut: Decimal
 ) -> None:

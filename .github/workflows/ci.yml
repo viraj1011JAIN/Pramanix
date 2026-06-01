@@ -321,13 +321,13 @@ jobs:
       - name: "Step 4/5 — Adversarial security tests (always run)"
         run: pytest tests/adversarial/ -v --tb=short
 
-      - name: "Step 5/5 — Perf benchmarks (main branch only)"
+      - name: "Step 5/5 — Perf + latency benchmarks (main branch only)"
         if: github.ref == 'refs/heads/main'
-        run: pytest tests/perf/ -m "not slow" --tb=short
+        run: pytest tests/perf/ tests/benchmarks/ -m "not slow" --tb=short
 
-      - name: "Step 5/5 — Perf benchmarks (PR: non-slow only)"
+      - name: "Step 5/5 — Perf + latency benchmarks (PR: non-slow only)"
         if: github.ref != 'refs/heads/main' && github.event_name == 'pull_request'
-        run: pytest tests/perf/ -m "not slow" --tb=short
+        run: pytest tests/perf/ tests/benchmarks/ -m "not slow" --tb=short
 
       - name: Generate coverage report (Python 3.13 only)
         if: matrix.python-version == '3.13'
