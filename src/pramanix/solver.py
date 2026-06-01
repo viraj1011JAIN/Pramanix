@@ -229,7 +229,11 @@ def _realize_node(node: Any, values: dict[str, Any]) -> Any:
         actual: list[Any] = values.get(af.name) or []
         n = len(actual)
         if n == 0:
-            return _Literal(True)  # vacuously true
+            # Fail-closed by default (STOP 4): an empty array BLOCKS unless the
+            # policy author explicitly opts in with allow_empty=True.  Vacuous
+            # truth (ForAll over ∅ → True) lets an attacker submit an empty
+            # array and receive ALLOW for every ForAll constraint.
+            return _Literal(True) if node.allow_empty else _Literal(False)
         constraints = tuple(node.predicate(af.element_field(i)).node for i in range(n))
         return constraints[0] if n == 1 else _BoolOp("and", constraints)
 

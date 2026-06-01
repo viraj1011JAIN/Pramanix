@@ -79,7 +79,9 @@ class _SyncFailureMetric:
                         if _prom_factory is not None:
                             _Counter = _prom_factory()
                         else:
-                            from prometheus_client import Counter as _Counter  # type: ignore[assignment]
+                            from prometheus_client import (
+                                Counter as _Counter,  # type: ignore[assignment]
+                            )
 
                         self._counter = _prom_register(
                             _Counter,
@@ -238,6 +240,7 @@ class AdaptiveCircuitBreaker:
         self._metrics_available = False
         self._state_gauge: Any = None
         self._pressure_counter: Any = None
+        self._rejected_counter: Any = None
         self._register_metrics(_prom_factory=_prom_factory)
 
     @functools.cached_property
@@ -429,23 +432,33 @@ class AdaptiveCircuitBreaker:
     def _make_open_decision(self) -> Decision:
         from pramanix.decision import Decision
 
+        if self._rejected_counter is not None:
+            with contextlib.suppress(AttributeError, ValueError):
+                self._rejected_counter.labels(namespace=self._config.namespace, reason="open").inc()
         return Decision.error(
             reason=(
                 f"Circuit breaker OPEN (namespace={self._config.namespace}). "
                 f"Z3 solver under pressure. "
                 f"Failsafe: {self._config.failsafe_mode.value}. "
                 "Auto-recovery in progress. Request blocked."
-            )
+            ),
+            error_domain="resource_exhaustion",
         )
 
     def _make_isolated_decision(self) -> Decision:
         from pramanix.decision import Decision
 
+        if self._rejected_counter is not None:
+            with contextlib.suppress(AttributeError, ValueError):
+                self._rejected_counter.labels(
+                    namespace=self._config.namespace, reason="isolated"
+                ).inc()
         return Decision.error(
             reason=(
                 f"Circuit breaker ISOLATED (namespace={self._config.namespace}). "
                 "All requests blocked. Operator must call reset() to resume."
-            )
+            ),
+            error_domain="resource_exhaustion",
         )
 
     def _register_metrics(self, _prom_factory: Any = None) -> None:
@@ -466,6 +479,12 @@ class AdaptiveCircuitBreaker:
                 "pramanix_circuit_pressure_events_total",
                 "Z3 pressure events (solve_ms > threshold)",
                 ["namespace"],
+            )
+            self._rejected_counter = _prom_register(
+                Counter,
+                "pramanix_circuit_rejected_total",
+                "Requests rejected while circuit is OPEN or ISOLATED",
+                ["namespace", "reason"],
             )
             self._metrics_available = (
                 self._state_gauge is not None and self._pressure_counter is not None
@@ -641,6 +660,7 @@ class DistributedCircuitBreaker:
         self._metrics_available = False
         self._state_gauge: Any = None
         self._pressure_counter: Any = None
+        self._rejected_counter: Any = None
         self._register_metrics(_prom_factory=_prom_factory)
 
     @functools.cached_property
@@ -791,11 +811,18 @@ class DistributedCircuitBreaker:
         from pramanix.decision import Decision
 
         label = "OPEN" if current == CircuitState.OPEN else "ISOLATED"
+        reason_label = "open" if current == CircuitState.OPEN else "isolated"
+        if self._rejected_counter is not None:
+            with contextlib.suppress(AttributeError, ValueError):
+                self._rejected_counter.labels(
+                    namespace=self._config.namespace, reason=reason_label
+                ).inc()
         return Decision.error(
             reason=(
                 f"DistributedCircuitBreaker {label} (namespace={self._config.namespace}). "
                 "Aggregate replica state indicates Z3 solver pressure. Request blocked."
-            )
+            ),
+            error_domain="resource_exhaustion",
         )
 
     def _register_metrics(self, _prom_factory: Any = None) -> None:
@@ -817,6 +844,12 @@ class DistributedCircuitBreaker:
                 "pramanix_distributed_circuit_pressure_events_total",
                 "Distributed Z3 pressure events (solve_ms > threshold)",
                 ["namespace"],
+            )
+            self._rejected_counter = _prom_register(
+                Counter,
+                "pramanix_distributed_circuit_rejected_total",
+                "Requests rejected while distributed circuit is OPEN or ISOLATED",
+                ["namespace", "reason"],
             )
             self._metrics_available = (
                 self._state_gauge is not None and self._pressure_counter is not None
@@ -1278,7 +1311,7 @@ class TranslatorCircuitBreaker:
                 elapsed = time.monotonic() - (self._opened_at or 0.0)
                 if elapsed < self._recovery_seconds:
                     if self._metrics_available:
-                        with contextlib.suppress(Exception):
+                        with contextlib.suppress(AttributeError, ValueError):
                             self._calls_counter.labels(
                                 model=self.model, outcome="rejected_open"
                             ).inc()
@@ -1304,7 +1337,7 @@ class TranslatorCircuitBreaker:
                     elapsed,
                 )
                 if self._metrics_available:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(AttributeError, ValueError):
                         self._probes_counter.labels(model=self.model, outcome="started").inc()
 
         try:
@@ -1339,7 +1372,7 @@ class TranslatorCircuitBreaker:
             async with self._lock:
                 self._probing = False
             if self._metrics_available:
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(AttributeError, ValueError):
                     self._calls_counter.labels(model=self.model, outcome="error").inc()
             raise
         else:

@@ -151,13 +151,17 @@ class TestComplianceOracleRegisterMapping:
     def test_register_multiple_frameworks(self) -> None:
         oracle = ComplianceOracle()
         oracle.register_mapping(_FW, _mapping(framework=_FW))
-        oracle.register_mapping(_EU, _mapping(framework=_EU))
+        oracle.register_mapping(
+            _EU, _mapping(framework=_EU, control_id="Art.14", description="EU AI Act Art.14.")
+        )
         assert oracle.mapping_count() == 2
         assert set(oracle.registered_frameworks()) == {_FW, _EU}
 
     def test_registered_frameworks_sorted(self) -> None:
         oracle = ComplianceOracle()
-        oracle.register_mapping(_EU, _mapping(framework=_EU))
+        oracle.register_mapping(
+            _EU, _mapping(framework=_EU, control_id="Art.14", description="EU AI Act Art.14.")
+        )
         oracle.register_mapping(_FW, _mapping(framework=_FW))
         fws = oracle.registered_frameworks()
         assert fws == sorted(fws, key=lambda f: f.value)

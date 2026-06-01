@@ -87,7 +87,9 @@ unique before verification begins.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable
+from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.exceptions import (
@@ -151,7 +153,11 @@ def invariant_mixin(fn: _MixinFn) -> _MixinFn:
 
 
 # ── B-2: Dynamic policy cache — keyed by (fields_schema, invariant_ids) ──────
-_DYNAMIC_POLICY_CACHE: dict[tuple[Any, ...], type[Policy]] = {}
+# Capped at 256 entries (LRU eviction) to prevent unbounded memory growth in
+# multi-tenant deployments where each tenant may have a distinct schema.
+_DYNAMIC_POLICY_CACHE_MAX = 256
+_DYNAMIC_POLICY_CACHE: OrderedDict[tuple[Any, ...], type[Any]] = OrderedDict()
+_DYNAMIC_POLICY_CACHE_LOCK: Lock = Lock()
 
 
 class Policy:
@@ -525,8 +531,10 @@ class Policy:
         # cache entry exists — prevents id reuse after GC causing stale cache hits.
         inv_key = tuple(invariants)
         cache_key = (fields_key, inv_key)
-        if cache_key in _DYNAMIC_POLICY_CACHE:
-            return _DYNAMIC_POLICY_CACHE[cache_key]
+        with _DYNAMIC_POLICY_CACHE_LOCK:
+            if cache_key in _DYNAMIC_POLICY_CACHE:
+                _DYNAMIC_POLICY_CACHE.move_to_end(cache_key)
+                return _DYNAMIC_POLICY_CACHE[cache_key]
 
         # ── Evaluate invariant lambdas once (compile-time, not per-request) ──
         realized: list[ConstraintExpr] = []
@@ -554,7 +562,11 @@ class Policy:
         namespace["invariants"] = classmethod(_inv_method)
 
         dynamic_cls: type[Policy] = type(class_name, (cls,), namespace)
-        _DYNAMIC_POLICY_CACHE[cache_key] = dynamic_cls
+        with _DYNAMIC_POLICY_CACHE_LOCK:
+            _DYNAMIC_POLICY_CACHE[cache_key] = dynamic_cls
+            _DYNAMIC_POLICY_CACHE.move_to_end(cache_key)
+            if len(_DYNAMIC_POLICY_CACHE) > _DYNAMIC_POLICY_CACHE_MAX:
+                _DYNAMIC_POLICY_CACHE.popitem(last=False)
         return dynamic_cls
 
     # ── Meta accessors ────────────────────────────────────────────────────────

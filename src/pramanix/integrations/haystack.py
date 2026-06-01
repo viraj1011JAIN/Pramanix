@@ -83,6 +83,13 @@ class HaystackGuardedComponent:
         self._state_provider = state_provider
         self._block_on_error = block_on_error
         self._haystack_available = _HAYSTACK_AVAILABLE
+        if not _HAYSTACK_AVAILABLE:
+            _log.warning(
+                "HaystackGuardedComponent: haystack-ai is not installed — "
+                "this component will not register as a Haystack pipeline component. "
+                "The guard logic is still available via .run() as a plain callable. "
+                "Install with: pip install 'pramanix[haystack]'"
+            )
 
     def run(
         self,

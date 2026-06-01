@@ -36,6 +36,7 @@ import base64
 import hashlib
 import logging
 import os
+import threading
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ _ENV_KEY_PEM = "PRAMANIX_SIGNING_KEY_PEM"
 # Module-level cache avoids re-registration ValueError on repeated imports and
 # removes the need to reach into prometheus_client's private _names_to_collectors.
 _signing_failure_counter: Any = None
-_signing_failure_counter_lock = __import__("threading").Lock()
+_signing_failure_counter_lock = threading.Lock()
 
 
 _COUNTER_DISABLED = object()  # sentinel: collision detected, counter permanently disabled

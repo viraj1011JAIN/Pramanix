@@ -465,6 +465,9 @@ _EXPECTED_KEYS = frozenset(
         "policy_hash",
         "hash_alg",
         "policy_name",
+        # STOP 2: error taxonomy (v1.0.0+)
+        "error_domain",
+        "stack_trace_hash",
     }
 )
 

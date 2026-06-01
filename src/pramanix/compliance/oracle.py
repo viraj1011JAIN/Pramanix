@@ -156,9 +156,11 @@ from __future__ import annotations
 import enum
 import fnmatch
 import logging
+import re
 import secrets
 import threading
 import uuid
+import warnings
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -262,6 +264,40 @@ class MappingMatchKind(str, enum.Enum):
     INVARIANT_LABEL = "invariant_label"
     PRINCIPAL_IDENTITY = "principal_identity"
     BOTH = "both"
+
+
+# ── Control-ID format validation ──────────────────────────────────────────────
+
+_CONTROL_ID_PATTERNS: dict[str, re.Pattern[str]] = {
+    # SOC 2 TSC: CC1.1 … CC9.9, A1.1 … A1.3, PI1.1 … PI1.5, P1.0, C1.1, CA1.1
+    "SOC2": re.compile(r"^(CC|A|PI|P|C|CA)\d+\.\d+$"),
+    # EU AI Act: Art.9, Art.13a, Recital 12, Annex I
+    "EU_AI_ACT": re.compile(r"^(Art|Recital|Annex)[\s.]*\d+[a-zA-Z]?"),
+    # HIPAA CFR: §164.312(a)(1), §164.308(a)(1)(ii)(A)
+    "HIPAA": re.compile(r"^§\d+\.\d+"),
+    # NIST AI RMF: GOVERN-1.1, MAP-2.1, MEASURE-2.5, MANAGE-3.2
+    "NIST_AI_RMF": re.compile(r"^(GOVERN|MAP|MEASURE|MANAGE)-\d+\.\d+$"),
+    # ISO/IEC 42001: Clause 6.1, Annex A.6.2.1, Annex B.1
+    "ISO_42001": re.compile(r"^(Clause|Annex)\s+[A-Za-z0-9]+"),
+    # GDPR: Art.5, Art.25, Art.35, Recital 4
+    "GDPR": re.compile(r"^(Art|Recital)[\s.]*\d+[a-zA-Z]?"),
+}
+"""Per-framework canonical control-ID format patterns.
+
+These patterns encode the *minimum* syntactic requirements for a control ID
+to be considered a genuine reference to the named standard.  They do NOT
+guarantee the control exists in the published standard — that requires a
+live schema lookup beyond the scope of this module.
+
+The intent is to prevent accidental (or deliberate) use of arbitrary strings
+as control IDs, which would produce attestations that look authoritative but
+reference non-existent controls.
+
+If you need to reference a proprietary or supplemental control that does not
+follow the standard format, set ``ControlMapping.custom_control=True``.  A
+``UserWarning`` will be emitted at construction time to make the deviation
+visible in CI logs and security reviews.
+"""
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
@@ -407,14 +443,28 @@ class ControlMapping(BaseModel):
             "False = either match independently triggers the control."
         ),
     )
+    custom_control: bool = _PF(
+        default=False,
+        description=(
+            "Set True for proprietary or supplemental controls that do not "
+            "follow the canonical format for the named framework.  A "
+            "UserWarning is emitted at construction time so the deviation is "
+            "visible in CI logs and security reviews.  When False (default), "
+            "control_id must match the framework's canonical pattern from "
+            "_CONTROL_ID_PATTERNS — fabricated IDs are rejected at construction."
+        ),
+    )
 
     def model_post_init(self, __context: Any) -> None:
-        """Validate that at least one matching criterion is provided.
+        """Validate matching criteria and control-ID format.
 
         Raises
         ------
         ValueError
             If both ``invariant_label`` and ``principal_pattern`` are ``None``.
+        ValueError
+            If ``control_id`` does not match the canonical format for
+            ``framework`` and ``custom_control=False``.
         """
         if self.invariant_label is None and self.principal_pattern is None:
             raise ValueError(
@@ -422,6 +472,27 @@ class ControlMapping(BaseModel):
                 "at least one of 'invariant_label' or 'principal_pattern' must be "
                 "set — a mapping with no matching criterion can never fire."
             )
+
+        pattern = _CONTROL_ID_PATTERNS.get(self.framework.value)
+        if pattern is not None and not pattern.search(self.control_id):
+            if self.custom_control:
+                warnings.warn(
+                    f"ControlMapping({self.framework.value!r}, {self.control_id!r}): "
+                    f"control_id does not match the canonical {self.framework.value} "
+                    f"format (pattern: {pattern.pattern!r}).  Auditors may question "
+                    "non-standard control IDs in compliance reports.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                raise ValueError(
+                    f"ControlMapping({self.framework.value!r}): "
+                    f"control_id {self.control_id!r} does not match the canonical "
+                    f"{self.framework.value} format (expected pattern: "
+                    f"{pattern.pattern!r}).  Use a valid control identifier from "
+                    "the published standard, or set custom_control=True for "
+                    "proprietary/supplemental controls."
+                )
 
 
 class ControlSatisfactionResult(BaseModel):

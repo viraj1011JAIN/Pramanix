@@ -27,7 +27,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     ),
     (r"ignore\s+all", "instruction_override"),
     (
-        r"disregard\s+(?:all\s+)?(?:previous|above|any|all)\s+"
+        r"disregard\s+(?:(?:the|all)\s+)?(?:previous|above|any|all)\s+"
         r"(instructions?|rules?|guidelines?)",
         "instruction_override",
     ),
@@ -59,6 +59,10 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     (r"pretend\s+you\s+are", "persona_override"),
     (r"you\s+are\s+now\s+\w", "persona_override"),
     (
+        r"you\s+are\s+(?:an?\s+)?(admin|root|superuser|god|oracle)\b",
+        "role_escalation",
+    ),
+    (
         r"act\s+as\s+(an?\s+)?"
         r"(admin|root|superuser|god|oracle|unrestricted"
         r"|assistant\s+without\s+(restrictions?|limits?|guidelines?))",
@@ -74,7 +78,7 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
         "markdown_injection",
     ),
     # ── Refusal bypass ──────────────────────────────────────────────────
-    (r"(do\s+not|don'?t)\s+refuse", "refusal_bypass"),
+    (r"(?:do\s+not|don'?t|must\s+not|shall\s+not|will\s+not|cannot)\s+refuse", "refusal_bypass"),
     (
         r"you\s+(must|will|should|shall)\s+" r"(comply|obey|follow|execute)\s+",
         "compliance_coercion",
@@ -82,8 +86,8 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     # ── Prompt / system-prompt extraction ──────────────────────────────
     (
         r"(print|reveal|show|output|display|repeat)\s+"
-        r"(your\s+)?(system\s+)?"
-        r"(prompt|instructions?|rules?|configuration)",
+        r"(?:(?:me|us|the\s+user)\s+)?(your\s+)?(system\s+)?"
+        r"(prompt|instructions?|rules?|configuration|message)",
         "prompt_extraction",
     ),
     (
@@ -105,11 +109,11 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
         "constraint_override",
     ),
     (
-        r"override\s+(?:all\s+)?(?:constraints?|policies|rules?|limits?)",
+        r"override\s+(?:(?:all|the)\s+)?(?:constraints?|policies|rules?|limits?)",
         "constraint_override",
     ),
     (
-        r"bypass\s+(?:the\s+)?(?:policy|policies|filter|filters|constraints?|rules?|safety)",
+        r"bypass\s+(?:(?:the|all)\s+)?(?:\w+\s+)?(?:policy|policies|filter|filters|constraints?|rules?|safety)",
         "policy_bypass",
     ),
     (
@@ -119,5 +123,79 @@ INJECTION_PATTERNS: Final[list[tuple[str, str]]] = [
     (
         r"no\s+(?:more\s+)?(?:restrictions?|constraints?|limits?|rules?|policies)",
         "constraint_override",
+    ),
+    # ── Context delimiter injection ─────────────────────────────────────
+    (
+        r"<<\s*(?:new\s+)?(?:system|instructions?|prompt)\s*>>",
+        "context_delimiter",
+    ),
+    (
+        r"(?:---|\*{3}|={3})\s*(?:end\s+(?:of\s+)?(?:user\s+)?input|system|instructions?)\s*(?:---|\*{3}|={3})?",
+        "context_delimiter",
+    ),
+    (
+        r"#\s*(?:system|instructions?|prompt)\s*:",
+        "context_delimiter",
+    ),
+    (
+        r"\[\s*system\s*message\s*\]|\[\s*admin\s*\]",
+        "context_delimiter",
+    ),
+    # ── Context poisoning / indirect compliance coercion ─────────────────
+    (
+        r"there\s+(?:are|is)\s+no\s+(?:restrictions?|policies|limits?|rules?|constraints?)\s+(?:here|in\s+this|for\s+this)",
+        "context_poisoning",
+    ),
+    (
+        r"(?:new|updated|latest)\s+(?:system\s+)?(?:system|configuration|settings?)\s+(?:says?|states?|allows?)\s*:",
+        "context_poisoning",
+    ),
+    (
+        r"admin\s*(?:message|alert|notice|override|command)\s*:",
+        "context_poisoning",
+    ),
+    # ── Future-instruction injection ──────────────────────────────────
+    (
+        r"from\s+(?:now\s+on|this\s+(?:point|moment)|here(?:\s+forward)?)\s*,?\s+(?:you|ignore|treat|act|follow)",
+        "future_instruction",
+    ),
+    (
+        r"(?:going|moving)\s+forward\s*,?\s*(?:always\s+)?(?:ignore|bypass|skip|treat\s+every)",
+        "future_instruction",
+    ),
+    # ── Paraphrase variants of instruction overrides ─────────────────────
+    (
+        r"(?:set|put|push|leave)\s+aside\s+(?:(?:all|the)\s+)?(?:(?:previous|above|prior|your|all)\s+)?"
+        r"(?:instructions?|rules?|context|constraints?|guidelines?|policies)",
+        "instruction_override",
+    ),
+    (
+        r"(?:starting|beginning)\s+(?:fresh|over|again|anew)\s*[:,.]?\s*(?:ignore|forget|disregard)",
+        "instruction_override",
+    ),
+    (
+        r"new\s+(?:task|objective|goal|mission)\s*:\s*(?:ignore|forget|bypass|override|disregard)",
+        "instruction_override",
+    ),
+    # ── Tool / function spec injection signals ───────────────────────────
+    (
+        r'"(?:tool|function_?name|name)"\s*:\s*"(?:exec(?:ute)?|shell|system|cmd|run|eval|os\.)"|'
+        r"'(?:tool|function_?name|name)'\s*:\s*'(?:exec(?:ute)?|shell|system|cmd|run|eval|os\.)'",
+        "tool_spec_injection",
+    ),
+    (
+        r"<\s*tool_?(?:call|use|invoke)\b|<\s*function_?call\b",
+        "tool_spec_injection",
+    ),
+    # ── Indirect prompt extraction ────────────────────────────────────────
+    (
+        r"(?:summarize|echo|repeat|recite|write\s+out)\s+your\s+(?:\w+\s+)?"
+        r"(?:system\s+)?(?:message|prompt|initialization|context|training)",
+        "prompt_extraction",
+    ),
+    (
+        r"what\s+(?:does?\s+your|were\s+you|were\s+your)\s+"
+        r"(?:initial|original|first|base)\s+(?:instructions?|prompt|rules?|message)",
+        "prompt_extraction",
     ),
 ]

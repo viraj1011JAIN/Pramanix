@@ -400,10 +400,15 @@ class _ForAllOp(NamedTuple):
 
     Transpiled to ``z3.And(predicate(elem_0), …, predicate(elem_{n-1}))`` at
     solve time, where *n* is the actual array length (≤ max_length).
+
+    When *array_field* is empty at solve time the result is ``False`` by
+    default (fail-closed).  Pass ``allow_empty=True`` only when an empty
+    array is a legitimate business state that must pass the invariant.
     """
 
     array_field: ArrayField
     predicate: Any  # Callable[[Field], ConstraintExpr]
+    allow_empty: bool = False
 
 
 class _ExistsOp(NamedTuple):
@@ -998,6 +1003,8 @@ def E(field: Field) -> ExpressionNode:
 def ForAll(
     array_field: ArrayField,
     predicate: Callable[[Field], ConstraintExpr],
+    *,
+    allow_empty: bool = False,
 ) -> ConstraintExpr:
     """Universal quantifier: every element of *array_field* must satisfy *predicate*.
 
@@ -1005,12 +1012,26 @@ def ForAll(
     ``AND(predicate(elem_0), …, predicate(elem_{n-1}))`` where *n* is the
     actual array length passed in the values dict.
 
-    An empty array satisfies ``ForAll`` vacuously (returns ALLOW for that invariant).
+    **Fail-closed empty-array semantics (STOP 4)**
+
+    When the array is empty at solve time the result is ``False`` by default
+    — the invariant **blocks** the intent.  This is the safe default: an
+    attacker who submits an empty array cannot vacuously satisfy every
+    ``ForAll`` constraint and receive an ALLOW decision for a malformed payload.
+
+    If an empty array is a legitimate business state that must pass the
+    invariant (e.g. "zero payments are trivially valid"), declare the intent
+    explicitly::
+
+        ForAll(payments, lambda p: E(p) >= 0, allow_empty=True)
 
     Args:
-        array_field: An :class:`ArrayField` descriptor declared on the policy.
-        predicate:   A callable that takes a :class:`Field` and returns a
-                     :class:`ConstraintExpr`.  It is called once per element.
+        array_field:  An :class:`ArrayField` descriptor declared on the policy.
+        predicate:    A callable that takes a :class:`Field` and returns a
+                      :class:`ConstraintExpr`.  Called once per element.
+        allow_empty:  When ``True``, an empty array causes this invariant to
+                      return ``True`` (vacuously satisfied).  Default ``False``
+                      (fail-closed: empty array → BLOCK).
 
     Raises:
         PolicyCompilationError: If *array_field* is not an :class:`ArrayField`
@@ -1021,14 +1042,18 @@ def ForAll(
         amounts = ArrayField('amounts', Decimal, z3_sort='Real', max_length=50)
 
         ForAll(amounts, lambda amt: E(amt) >= Decimal('0')).named('all_non_negative')
+        ForAll(amounts, lambda amt: E(amt) >= Decimal('0'), allow_empty=True).named(
+            'all_non_negative_or_empty'
+        )
     """
     if not isinstance(array_field, ArrayField):
         raise PolicyCompilationError(
-            f"ForAll first argument must be an ArrayField; got {type(array_field).__name__!r}."
+            f"ForAll first argument must be an ArrayField; "
+            f"got {type(array_field).__name__!r}."
         )
     if not callable(predicate):
         raise PolicyCompilationError("ForAll predicate must be callable.")
-    return ConstraintExpr(_ForAllOp(array_field, predicate))
+    return ConstraintExpr(_ForAllOp(array_field, predicate, allow_empty))
 
 
 def Exists(

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+import warnings
 from decimal import Decimal
 from typing import Any
 
@@ -47,12 +48,38 @@ __all__ = [
 ]
 
 # ── Injection pattern registry ────────────────────────────────────────────────
-# Built from the canonical INJECTION_PATTERNS list (L-11) so _sanitise.py and
+# Built from the canonical INJECTION_PATTERNS list so _sanitise.py and
 # injection_filter.py share exactly the same pattern definitions without drift.
-_INJECTION_RE = re.compile(
-    "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS),
-    re.IGNORECASE,
-)
+#
+# Engine selection: RE2 (O(n) linear-time, ReDoS-immune) is preferred.
+# If google-re2 is not installed we fall back to stdlib re with a SecurityWarning.
+# The warning is emitted once at module import time so operators see it on startup.
+_re_engine: Any = None
+try:
+    import re2 as _re2_mod
+
+    _re_engine = _re2_mod
+except ImportError:
+    warnings.warn(
+        "pramanix._sanitise: google-re2 is not installed — injection pattern "
+        "matching uses stdlib re which may be vulnerable to ReDoS on adversarial "
+        "inputs.  Install with: pip install 'pramanix[security]'",
+        stacklevel=1,
+        category=UserWarning,
+    )
+    _re_engine = re
+
+
+def _compile_injection_re() -> Any:
+    combined = "|".join(f"(?:{pat})" for pat, _ in INJECTION_PATTERNS)
+    if _re_engine is re:
+        return re.compile(combined, re.IGNORECASE)
+    opts = _re_engine.Options()
+    opts.case_sensitive = False
+    return _re_engine.compile(combined, opts)
+
+
+_INJECTION_RE = _compile_injection_re()
 
 # Allow: HT (\x09), LF (\x0a), CR (\x0d) — normal whitespace
 # Strip:  NUL (\x00) and other C0 control codes that serve no legitimate purpose

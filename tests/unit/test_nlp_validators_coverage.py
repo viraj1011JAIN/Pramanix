@@ -215,6 +215,22 @@ def test_injection_filter_re2_is_enforced() -> None:
     ), "injection_filter._re_engine must be the re2 module, not stdlib re"
 
 
+def test_sanitise_re2_is_enforced() -> None:
+    """_sanitise.py must use google-re2, not stdlib re, when RE2 is installed.
+
+    Falling back to stdlib re for injection detection leaves _sanitise.py
+    vulnerable to ReDoS on adversarial inputs.
+    """
+    import pramanix.translator._sanitise as _s
+
+    import re2 as _re2
+
+    assert _s._re_engine is _re2, (
+        "_sanitise._re_engine must be the re2 module, not stdlib re. "
+        "Run: pip install 'pramanix[security]'"
+    )
+
+
 # ── _get_nlp_gauge: resilience when prometheus_client absent ───────────────────
 
 

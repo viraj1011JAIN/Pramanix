@@ -218,13 +218,13 @@ class MistralTranslator:
         http_client = getattr(client, "http_client", None)
         transport = getattr(http_client, "_transport", None)
         if transport is not None and hasattr(transport, "close"):
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(OSError, RuntimeError):
                 transport.close()
             return
         with contextlib.suppress(RuntimeError):
             asyncio.get_running_loop()
             return
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(RuntimeError, OSError):
             asyncio.run(self.aclose())
 
     async def __aenter__(self) -> MistralTranslator:

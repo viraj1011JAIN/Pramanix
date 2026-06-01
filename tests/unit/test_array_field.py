@@ -164,10 +164,12 @@ class TestForAllGuardIntegration:
         )
         assert d.allowed is False
 
-    def test_empty_array_vacuously_allowed(self) -> None:
+    def test_empty_array_blocked_by_default(self) -> None:
+        # STOP 4 fix: ForAll over empty array is fail-closed (BLOCK) by default.
+        # Use ForAll(..., allow_empty=True) to explicitly permit empty arrays.
         guard = _make_basket_guard()
         d = guard.verify(intent={"amounts": []}, state={})
-        assert d.allowed is True
+        assert d.allowed is False
 
     def test_full_array_at_max_length(self) -> None:
         guard = _make_basket_guard(max_length=5)

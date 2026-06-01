@@ -22,8 +22,8 @@ Contracts locked at v0.9.0:
 
   1. pramanix.__all__            — exact set of 150 exported names.
   2. SolverStatus                — exact 9 members, wire values, iteration order.
-  3. Decision.to_dict()          — exact 13-key schema + per-field type semantics.
-  4. GuardConfig field names     — exact 29 fields, all-defaults constructor, frozen.
+  3. Decision.to_dict()          — exact 17-key schema + per-field type semantics.
+  4. GuardConfig field names     — exact 32 fields, all-defaults constructor, frozen.
   5. GuardConfig default values  — operational defaults that callers depend on.
   6. Direct import surface       — high-visibility names importable from `pramanix`.
   7. Decision factory methods    — all factory class-methods exist, correct status.
@@ -549,6 +549,9 @@ _EXPECTED_DECISION_KEYS: frozenset[str] = frozenset(
         "hash_alg",
         # Policy name for audit correlation (v1.0.0+)
         "policy_name",
+        # STOP 2: error taxonomy fields (v1.0.0+)
+        "error_domain",
+        "stack_trace_hash",
     }
 )
 
@@ -846,6 +849,9 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         # P0.2: solver + clock injection for tests (v1.0.0+)
         "solver_factory",
         "clock",
+        # Phase 1 STOP 1+3: IPC seal key injection + timing protection (v1.0.0+)
+        "result_seal_key",
+        "allow_insecure_timing_leaks",
     }
 )
 
@@ -882,6 +888,9 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     # P0.2: solver + clock injection for tests (v1.0.0+)
     "solver_factory": None,
     "clock": None,
+    # Phase 1 STOP 1+3: IPC seal key injection + timing protection (v1.0.0+)
+    "result_seal_key": None,
+    "allow_insecure_timing_leaks": False,
 }
 
 

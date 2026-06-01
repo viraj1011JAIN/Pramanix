@@ -154,7 +154,7 @@ def _try_detoxify_scorer() -> Any:
 
         g = _get_nlp_gauge()
         if g is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError, ValueError):
                 g.labels(model="detoxify").set(1)
         return _score
     except Exception as _exc:
@@ -168,7 +168,7 @@ def _try_detoxify_scorer() -> Any:
         )
         g = _get_nlp_gauge()
         if g is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError, ValueError):
                 g.labels(model="detoxify").set(0)
         return None
 
@@ -185,7 +185,7 @@ def _try_sentence_transformer() -> Any:
         model = SentenceTransformer("all-MiniLM-L6-v2")
         g = _get_nlp_gauge()
         if g is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError, ValueError):
                 g.labels(model="sentence_transformer").set(1)
         return model
     except Exception as _exc:
@@ -199,7 +199,7 @@ def _try_sentence_transformer() -> Any:
         )
         g = _get_nlp_gauge()
         if g is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(AttributeError, ValueError):
                 g.labels(model="sentence_transformer").set(0)
         return None
 
@@ -514,7 +514,7 @@ class ToxicityScorer:
                 )
                 _c = _get_nlp_degradation_counter()
                 if _c is not None:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(AttributeError, ValueError):
                         _c.labels(scorer="ToxicityScorer", fallback="keyword").inc()
 
     def score(self, text: str) -> float:
@@ -681,7 +681,7 @@ class SemanticSimilarityGuard:
                 )
                 _c = _get_nlp_degradation_counter()
                 if _c is not None:
-                    with contextlib.suppress(Exception):
+                    with contextlib.suppress(AttributeError, ValueError):
                         _c.labels(scorer="SemanticSimilarityGuard", fallback="jaccard").inc()
 
         # Pre-tokenise anchors for the Jaccard fallback path.

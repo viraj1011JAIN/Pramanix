@@ -309,7 +309,16 @@ class TestProductionModeWarning:
         from pramanix import GuardConfig
         from pramanix.audit_sink import StdoutAuditSink
 
-        GuardConfig(execution_mode=mode, audit_sinks=(StdoutAuditSink(),))
+        _seal_key = None
+        if mode == "async-process":
+            import secrets as _s
+            _seal_key = _s.token_bytes(32)
+        GuardConfig(
+            execution_mode=mode,
+            audit_sinks=(StdoutAuditSink(),),
+            min_response_ms=5.0,
+            result_seal_key=_seal_key,
+        )
 
     def test_sync_in_production_emits_warning(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PRAMANIX_ENV", "production")

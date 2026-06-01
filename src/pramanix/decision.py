@@ -49,13 +49,6 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-import json as _json_stdlib
-
-
-def _stdlib_canonical_bytes(payload: dict[str, Any]) -> bytes:
-    """Canonical bytes via stdlib json — always available, used as orjson fallback."""
-    return _json_stdlib.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-
 
 try:
     import orjson as _orjson
@@ -75,7 +68,13 @@ except ImportError:
         return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
-__all__ = ["Decision", "SolverStatus", "_build_decision_canonical", "_make_json_safe"]
+__all__ = [
+    "Decision",
+    "SolverStatus",
+    "_build_decision_canonical",
+    "_make_json_safe",
+    "_ERROR_DOMAIN_MAP",
+]
 
 
 def _make_json_safe(d: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +155,38 @@ def _build_decision_canonical(
         "status": str(status or ""),
         "violated_invariants": sorted(str(v) for v in (violated_invariants or ())),
     }
+
+
+# ── Error domain taxonomy ─────────────────────────────────────────────────────
+
+_ERROR_DOMAIN_MAP: dict[str, str | None] = {
+    "safe": None,
+    "unsafe": "policy_violation",
+    "timeout": "resource_exhaustion",
+    "error": "system_fault",
+    "stale_state": "state_integrity",
+    "validation_failure": "state_integrity",
+    "rate_limited": "resource_exhaustion",
+    "consensus_failure": "consensus",
+    "governance_blocked": "governance",
+    "cache_hit": None,
+}
+"""Maps each SolverStatus wire value to its operational error domain.
+
+Domains:
+  ``None``                  — SAFE / CACHE_HIT (no error; action permitted)
+  ``"policy_violation"``    — UNSAFE: Z3 found a counterexample
+  ``"resource_exhaustion"`` — TIMEOUT / RATE_LIMITED: system under load
+  ``"system_fault"``        — ERROR: unexpected internal exception (page on-call)
+  ``"state_integrity"``     — STALE_STATE / VALIDATION_FAILURE: bad input data
+  ``"consensus"``           — CONSENSUS_FAILURE: dual-LLM disagreement
+  ``"governance"``          — GOVERNANCE_BLOCKED: privilege/oversight/IFC gate
+
+For ERROR-status decisions, callers may override with a more specific domain
+via ``Decision.error(error_domain=...)``.  Never conflate ``"system_fault"``
+with ``"policy_violation"`` in dashboards — the former pages on-call; the
+latter is expected policy behaviour.
+"""
 
 
 # ── SolverStatus ──────────────────────────────────────────────────────────────
@@ -290,6 +321,23 @@ class Decision:
     Stored alongside policy_hash so offline audit tools can identify the
     policy by name without decoding the hash.
     """
+    error_domain: str | None = field(default=None)
+    """Operational error domain — distinguishes fault categories for ops dashboards.
+
+    Auto-populated from :data:`_ERROR_DOMAIN_MAP` in ``__post_init__``.
+    For ``ERROR``-status decisions the default is ``"system_fault"``; callers
+    may pass a more specific domain via ``Decision.error(error_domain=...)``.
+
+    Values: ``None`` | ``"policy_violation"`` | ``"resource_exhaustion"`` |
+    ``"system_fault"`` | ``"state_integrity"`` | ``"consensus"`` | ``"governance"``
+    """
+    stack_trace_hash: str | None = field(default=None)
+    """SHA-256 hex digest of the exception traceback for ``ERROR`` decisions.
+
+    Allows correlating system faults across pods without leaking stack frames
+    to the caller.  Populated by :meth:`error` when ``traceback_str`` is
+    supplied.  ``None`` for all non-``ERROR`` or exception-free decisions.
+    """
 
     # ── Cross-invariant validation ────────────────────────────────────────────
 
@@ -305,6 +353,14 @@ class Decision:
                 "Decision(allowed=False, status=SAFE) is inconsistent. "
                 "SAFE status implies the action is permitted."
             )
+        # Auto-populate error_domain if not explicitly set by the factory.
+        # The domain is derived from status; ERROR callers may override it.
+        if self.error_domain is None:
+            _auto = _ERROR_DOMAIN_MAP.get(
+                self.status.value if hasattr(self.status, "value") else str(self.status)
+            )
+            if _auto is not None:
+                object.__setattr__(self, "error_domain", _auto)
         # Compute decision_hash if not already set
         if not self.decision_hash:
             object.__setattr__(self, "decision_hash", self._compute_hash())
@@ -374,6 +430,8 @@ class Decision:
             "public_key_id": self.public_key_id,
             "policy_hash": self.policy_hash,
             "policy_name": self.policy_name,
+            "error_domain": self.error_domain,
+            "stack_trace_hash": self.stack_trace_hash,
         }
 
     # ── Factory: SAFE ─────────────────────────────────────────────────────────
@@ -476,6 +534,8 @@ class Decision:
         *,
         reason: str = "Internal verification error — action blocked (fail-safe).",
         metadata: dict[str, Any] | None = None,
+        traceback_str: str | None = None,
+        error_domain: str | None = None,
     ) -> Decision:
         """Construct a *blocked* decision for an unexpected internal error.
 
@@ -483,14 +543,26 @@ class Decision:
         ``Guard.verify()`` produces this decision rather than propagating.
 
         Args:
-            reason:   Human-readable error summary (safe to log).
-            metadata: Optional caller-supplied tracing data.
+            reason:        Human-readable error summary (safe to log).
+            metadata:      Optional caller-supplied tracing data.
+            traceback_str: ``traceback.format_exc()`` from the caught exception.
+                           Hashed to :attr:`stack_trace_hash` so faults can be
+                           correlated across pods without leaking stack frames.
+            error_domain:  Override the auto-populated domain (default:
+                           ``"system_fault"``).  Use ``"resource_exhaustion"``
+                           for circuit-breaker / capacity blocks, or
+                           ``"state_integrity"`` for input-validation failures.
         """
+        _sth: str | None = None
+        if traceback_str:
+            _sth = hashlib.sha256(traceback_str.encode()).hexdigest()
         return cls(
             allowed=False,
             status=SolverStatus.ERROR,
             explanation=reason,
             metadata=dict(metadata) if metadata is not None else {},
+            stack_trace_hash=_sth,
+            error_domain=error_domain,
         )
 
     # ── Factory: STALE_STATE ──────────────────────────────────────────────────
@@ -681,6 +753,7 @@ class Decision:
             public_key_id=base.public_key_id,
             policy_hash=base.policy_hash,
             policy_name=base.policy_name,
+            stack_trace_hash=base.stack_trace_hash,
         )
 
     # ── Cache-hit query ───────────────────────────────────────────────────────
@@ -746,6 +819,13 @@ class Decision:
             public_key_id=d.get("public_key_id"),
             policy_hash=d.get("policy_hash"),
             policy_name=d.get("policy_name"),
+            # For non-ERROR statuses error_domain is always re-derived from
+            # status in __post_init__ (prevents forgery in the wire).  For
+            # ERROR status the explicit override (e.g. "resource_exhaustion"
+            # from a circuit-breaker) is meaningful and must be preserved.
+            error_domain=(d.get("error_domain") if d.get("status") == "error" else None),
+            # stack_trace_hash is opaque — must be restored from wire
+            stack_trace_hash=d.get("stack_trace_hash"),
         )
 
     # ── Human-readable representation ────────────────────────────────────────

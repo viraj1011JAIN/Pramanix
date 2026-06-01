@@ -158,7 +158,7 @@ class PramanixGuardedTool(BaseTool):
 
     @staticmethod
     def _shutdown_executor(executor: concurrent.futures.ThreadPoolExecutor) -> None:
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(RuntimeError, OSError):
             executor.shutdown(wait=False)
 
     def close(self) -> None:

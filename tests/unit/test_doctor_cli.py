@@ -749,3 +749,59 @@ class TestDoctorTranslatorEnabledCheck:
         checks = {c["name"]: c for c in data["checks"]}
         assert checks["translator-enabled"]["level"] == "WARN"
         assert "parse_and_verify" in checks["translator-enabled"]["detail"]
+
+
+class TestDoctorTranslatorApiKeys:
+    """translator-api-keys check — Phase 4 Item 12 DX."""
+
+    def test_check_present_in_output(self, capsys: pytest.CaptureFixture) -> None:
+        """translator-api-keys check must appear in doctor output."""
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        check_names = {c["name"] for c in data["checks"]}
+        assert "translator-api-keys" in check_names
+
+    def test_ok_or_warn_when_at_least_one_key_set(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With at least one API key set, check must be OK or WARN (never ERROR/SKIP)."""
+        import importlib.util
+
+        if importlib.util.find_spec("httpx") is None:
+            pytest.skip("httpx not installed — translator package absent")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-1234")
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-api-keys"]["level"] in ("OK", "WARN"), (
+            "With at least one API key configured, level must be OK or WARN, "
+            f"not {checks['translator-api-keys']['level']!r}"
+        )
+
+    def test_error_when_packages_installed_but_no_keys(
+        self, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With translator packages installed but zero API keys set, must ERROR."""
+        import importlib.util
+
+        if importlib.util.find_spec("httpx") is None:
+            pytest.skip("httpx not installed — translator package absent")
+        for key in (
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "MISTRAL_API_KEY",
+            "COHERE_API_KEY",
+            "OLLAMA_BASE_URL",
+            "PRAMANIX_OLLAMA_BASE_URL",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        _, stdout, _ = _run_cli(["doctor", "--json"], capsys)
+        data = json.loads(stdout)
+        checks = {c["name"]: c for c in data["checks"]}
+        assert checks["translator-api-keys"]["level"] in ("ERROR", "WARN"), (
+            "With zero API keys, level must be ERROR or WARN, "
+            f"not {checks['translator-api-keys']['level']!r}"
+        )
+        assert checks["translator-api-keys"].get("hint")

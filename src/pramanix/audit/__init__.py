@@ -6,19 +6,27 @@
 """Cryptographic audit trail for Pramanix decisions.
 
 Exports: DecisionSigner, DecisionVerifier, MerkleAnchor, PersistentMerkleAnchor,
-         MerkleArchiver (E-2: pruning/archival), EncryptedArchiveWriter (AES-256-GCM)
+         MerkleArchiver (E-2: pruning/archival), EncryptedArchiveWriter (AES-256-GCM),
+         ArchiveKeySet, RotatingKeyArchiveWriter (key-rotation support)
 """
 
-from pramanix.audit.archiver import EncryptedArchiveWriter, MerkleArchiver
+from pramanix.audit.archiver import (
+    ArchiveKeySet,
+    EncryptedArchiveWriter,
+    MerkleArchiver,
+    RotatingKeyArchiveWriter,
+)
 from pramanix.audit.merkle import MerkleAnchor, PersistentMerkleAnchor
 from pramanix.audit.signer import DecisionSigner
 from pramanix.audit.verifier import DecisionVerifier
 
 __all__ = [
+    "ArchiveKeySet",
     "DecisionSigner",
     "DecisionVerifier",
     "EncryptedArchiveWriter",
     "MerkleAnchor",
     "MerkleArchiver",
     "PersistentMerkleAnchor",
+    "RotatingKeyArchiveWriter",
 ]

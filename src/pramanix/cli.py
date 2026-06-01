@@ -2020,7 +2020,9 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # ── 19. Prometheus metrics availability ───────────────────────────────────
     if _has("prometheus_client"):
-        _check("metrics-prometheus", "OK", "prometheus_client installed — /metrics endpoint supported")
+        _check(
+            "metrics-prometheus", "OK", "prometheus_client installed — /metrics endpoint supported"
+        )
     elif is_production_profile:
         _check(
             "metrics-prometheus",
@@ -2330,6 +2332,8 @@ def _cmd_lint_policy(args: argparse.Namespace) -> int:
     * **W003** — No ``state_model`` on ``Meta`` (state validation disabled)
     * **W004** — Fields declared but not referenced by any invariant
     * **W005** — ``Policy.validate()`` raises (policy is syntactically ill-formed)
+    * **W006** — Invariant missing ``.explain()`` call (violation messages will
+      be generic; operators won't be able to surface useful context to callers)
 
     Exit codes:
         0 — No errors (warnings only if ``--strict`` is not set)
@@ -2538,6 +2542,20 @@ def _lint_policy_class(policy_cls: Any, report: Any) -> None:
             "WARN",
             f"Field {field_name!r} is declared but not referenced by any invariant",
         )
+
+    # ── W006: invariants without .explain() — operators cannot surface
+    #    human-readable violation messages to callers ────────────────────────
+    for inv in invariants:
+        label = getattr(inv, "label", None) or ""
+        explanation = getattr(inv, "explanation", None)
+        if label and not explanation:
+            report(
+                "W006",
+                "WARN",
+                f"Invariant {label!r} has no .explain() message — "
+                "callers will receive a generic violation string instead of a "
+                "human-readable explanation. Add .explain('<message>') for better DX.",
+            )
 
 
 def _collect_field_refs(node: Any, out: set[str]) -> None:

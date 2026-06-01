@@ -79,6 +79,7 @@ import json as _json_stdlib
 import secrets
 import threading
 import time
+import traceback as _traceback
 import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
@@ -171,10 +172,9 @@ class PolicyCoverageReport:
                 for label in self.declared_invariants
                 if self.invariant_violations.get(label, 0) == 0
             ],
-            "unseen_fields": [
-                f for f in self.fields_declared if f not in self.fields_seen
-            ],
+            "unseen_fields": [f for f in self.fields_declared if f not in self.fields_seen],
         }
+
 
 # C-1: Fail fast on musl libc (Alpine). Runs once at module import time.
 check_platform()
@@ -213,12 +213,11 @@ def _is_picklable(obj: Any) -> bool:
     """Return True if *obj* can be round-tripped through pickle."""
     import logging as _log_pickle
     import pickle as _p
-    import pickle as _pickle_mod
 
     try:
         _p.dumps(obj)
         return True
-    except _pickle_mod.PicklingError as e:
+    except _p.PicklingError as e:
         _log_pickle.getLogger(__name__).warning("Not picklable: %s", e)
         return False
     except Exception as _exc:
@@ -289,6 +288,71 @@ def _emit_translator_metric(failure_type: str, models: tuple[str, str] | list[st
             type(_metric_exc).__name__,
             _metric_exc,
         )
+
+
+# ── Decision + invariant-violation Prometheus counters ────────────────────────
+
+_GUARD_METRICS_LOCK = threading.Lock()
+_GUARD_DECISION_COUNTER: Any = None  # pramanix_guard_decisions_total{policy, outcome}
+_GUARD_VIOLATION_COUNTER: Any = None  # pramanix_invariant_violations_total{policy, invariant}
+
+
+def _ensure_guard_metrics() -> None:
+    global _GUARD_DECISION_COUNTER, _GUARD_VIOLATION_COUNTER
+    if _GUARD_DECISION_COUNTER is not None:
+        return
+    with _GUARD_METRICS_LOCK:
+        if _GUARD_DECISION_COUNTER is not None:
+            return
+        try:
+            from prometheus_client import Counter as _Counter
+
+            _GUARD_DECISION_COUNTER = _Counter(
+                "pramanix_guard_decisions_total",
+                "Guard verification outcomes by policy and result (allow/block/error)",
+                ["policy", "outcome"],
+            )
+            _GUARD_VIOLATION_COUNTER = _Counter(
+                "pramanix_invariant_violations_total",
+                "Invariant violation counts by policy and invariant label",
+                ["policy", "invariant"],
+            )
+        except Exception as _reg_exc:
+            _GUARD_DECISION_COUNTER = False
+            _GUARD_VIOLATION_COUNTER = False
+            log.warning(
+                "pramanix.guard: failed to register decision/violation counters "
+                "— policy observability metrics unavailable (%s: %s)",
+                type(_reg_exc).__name__,
+                _reg_exc,
+            )
+
+
+def _emit_decision_metrics(
+    policy_name: str,
+    decision: Any,
+) -> None:
+    """Emit pramanix_guard_decisions_total and pramanix_invariant_violations_total."""
+    _ensure_guard_metrics()
+    try:
+        if _GUARD_DECISION_COUNTER:
+            if decision.allowed:
+                outcome = "allow"
+            elif getattr(decision, "status", None) and decision.status.name == "ERROR":
+                outcome = "error"
+            else:
+                outcome = "block"
+            _GUARD_DECISION_COUNTER.labels(policy=policy_name, outcome=outcome).inc()
+        if _GUARD_VIOLATION_COUNTER and decision.violated_invariants:
+            for label in decision.violated_invariants:
+                _GUARD_VIOLATION_COUNTER.labels(policy=policy_name, invariant=label).inc()
+    except Exception as _e:
+        with contextlib.suppress(Exception):
+            log.debug(
+                "pramanix.guard: decision/violation metric increment failed (%s: %s)",
+                type(_e).__name__,
+                _e,
+            )
 
 
 # ── Field coverage metric helper ──────────────────────────────────────────────
@@ -429,6 +493,8 @@ class Guard:
         # Spawn WorkerPool for async modes.
         mode = self._config.execution_mode
         if mode in ("async-thread", "async-process"):
+            from pramanix.worker import _RESULT_SEAL_KEY as _default_seal_key
+
             self._pool: WorkerPool | None = WorkerPool(
                 mode=mode,
                 max_workers=self._config.max_workers,
@@ -436,6 +502,11 @@ class Guard:
                 warmup=self._config.worker_warmup,
                 latency_threshold_ms=self._config.shed_latency_threshold_ms,
                 worker_pct=self._config.shed_worker_pct,
+                seal_key=(
+                    self._config.result_seal_key
+                    if self._config.result_seal_key is not None
+                    else _default_seal_key.bytes
+                ),
             )
             self._pool.spawn()
         else:
@@ -1188,6 +1259,7 @@ class Guard:
             _public_reason = (
                 "verification_error" if self._config.redact_violations else _verbose_reason
             )
+            _tb = _traceback.format_exc()
             if self._config.redact_violations:
                 # §27.21: use structlog (_log) consistently — raw logging bypasses
                 # the structured pipeline and loses trace-id / policy context.
@@ -1197,7 +1269,7 @@ class Guard:
                     policy=self._policy.__name__,
                     exc_type=type(exc).__name__,
                 )
-            decision = Decision.error(reason=_public_reason)
+            decision = Decision.error(reason=_public_reason, traceback_str=_tb)
             _metric_status = decision.status.value
             _log.error(
                 "pramanix.guard.decision",
@@ -1448,7 +1520,8 @@ class Guard:
             return await _timed(
                 self._sign_decision(
                     Decision.error(
-                        reason=f"Unexpected error during validation ({type(exc).__name__}): {exc}"
+                        reason=f"Unexpected error during validation ({type(exc).__name__}): {exc}",
+                        traceback_str=_traceback.format_exc(),
                     )
                 )
             )
@@ -1519,7 +1592,6 @@ class Guard:
             import pickle as _pickle
 
             from pramanix.worker import (
-                _RESULT_SEAL_KEY,
                 _unseal_decision,
                 _worker_solve_sealed,
             )
@@ -1551,22 +1623,35 @@ class Guard:
                 # Process pool workers run in a separate OS process — context vars
                 # do NOT cross process boundaries, so no copy_context() wrapper is
                 # needed or useful here.  _ctx.run would fail to pickle regardless.
+                import functools as _functools
+
+                _async_nonce = secrets.token_hex(16)
                 sealed = await loop.run_in_executor(
                     pool.executor,
-                    _worker_solve_sealed,
-                    self._policy,
-                    values,
-                    self._config.solver_timeout_ms,
-                    _RESULT_SEAL_KEY.bytes,
-                    self._config.solver_rlimit,
+                    _functools.partial(
+                        _worker_solve_sealed,
+                        self._policy,
+                        values,
+                        self._config.solver_timeout_ms,
+                        pool.seal_key,
+                        self._config.solver_rlimit,
+                        _async_nonce,
+                    ),
                 )
-                result_dict_p: dict[str, Any] = _unseal_decision(sealed)
+                result_dict_p: dict[str, Any] = _unseal_decision(
+                    sealed,
+                    expected_nonce=_async_nonce,
+                    seal_key=pool.seal_key,
+                )
                 decision = pool._dict_to_decision(result_dict_p)
             except (ValueError, KeyError):
                 return await _timed(
                     self._sign_decision(
                         Decision.error(
-                            reason="Worker result integrity check failed — HMAC mismatch."
+                            reason=(
+                                "Worker result integrity check failed"
+                                " — HMAC mismatch or replay detected."
+                            )
                         )
                     )
                 )
@@ -1799,6 +1884,7 @@ class Guard:
                 if label in self._coverage_violations:
                     self._coverage_violations[label] += 1
             self._coverage_fields_seen.update(intent_values.keys())
+        _emit_decision_metrics(self._policy.__name__, decision)
 
     def coverage_report(self) -> PolicyCoverageReport:
         """Return a snapshot of per-invariant coverage statistics.
@@ -1832,9 +1918,7 @@ class Guard:
 
         declared_fields = list(self._policy.fields().keys())
         violated_at_least_once = sum(1 for v in violations.values() if v > 0)
-        coverage_pct = (
-            100.0 * violated_at_least_once / len(labels) if labels else 0.0
-        )
+        coverage_pct = 100.0 * violated_at_least_once / len(labels) if labels else 0.0
 
         return PolicyCoverageReport(
             policy_name=self._policy.__name__,

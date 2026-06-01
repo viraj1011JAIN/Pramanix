@@ -225,7 +225,7 @@ class PersistentMerkleAnchor(MerkleAnchor):
             if anchor is not None:
                 import contextlib
 
-                with contextlib.suppress(Exception):
+                with contextlib.suppress(OSError, RuntimeError):
                     anchor.flush()
 
         atexit.register(_atexit_flush)

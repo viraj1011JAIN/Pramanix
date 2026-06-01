@@ -94,6 +94,7 @@ class StdoutAuditSink:
             line = json.dumps(decision.to_dict(), default=str)
             print(line, file=self._stream, flush=True)
         except Exception as exc:
+            _increment_send_error_metric("stdout")
             log.error("StdoutAuditSink: failed to emit decision: %s", exc, exc_info=True)
 
 
@@ -169,19 +170,20 @@ class InMemoryAuditSink:
 # silently swallows legitimate programming errors (metric name collision with
 # different labelset), which is a real bug that must surface immediately.
 _OVERFLOW_COUNTER: Any = None
+_SEND_ERROR_COUNTER: Any = None
 _AUDIT_METRICS_LOCK = threading.Lock()
 _AUDIT_REGISTERED_METRICS: dict[str, Any] = globals().get("_AUDIT_REGISTERED_METRICS", {})
 
 
 def _init_audit_overflow_counter(_prom_factory: Any = None) -> Any:
-    """Register the overflow Prometheus counter and return it (or None on failure).
+    """Register the overflow and send-error Prometheus counters.
 
     Accepts an optional ``_prom_factory`` callable for dependency injection in
     tests — when provided, the callable is invoked instead of importing
     ``prometheus_client`` so that the ImportError branch can be exercised without
     touching ``sys.modules``.
     """
-    global _OVERFLOW_COUNTER
+    global _OVERFLOW_COUNTER, _SEND_ERROR_COUNTER
     try:
         if _prom_factory is not None:
             _prom_init = _prom_factory()
@@ -189,15 +191,27 @@ def _init_audit_overflow_counter(_prom_factory: Any = None) -> Any:
             import prometheus_client as _prom_init  # type: ignore[assignment]
 
         with _AUDIT_METRICS_LOCK:
-            _name = "pramanix_audit_sink_overflow_total"
-            if _name not in _AUDIT_REGISTERED_METRICS:
+            _ov_name = "pramanix_audit_sink_overflow_total"
+            if _ov_name not in _AUDIT_REGISTERED_METRICS:
                 _OVERFLOW_COUNTER = _prom_init.Counter(
-                    _name,
+                    _ov_name,
                     "Number of audit decisions dropped due to sink queue overflow",
                 )
-                _AUDIT_REGISTERED_METRICS[_name] = _OVERFLOW_COUNTER
+                _AUDIT_REGISTERED_METRICS[_ov_name] = _OVERFLOW_COUNTER
             else:
-                _OVERFLOW_COUNTER = _AUDIT_REGISTERED_METRICS[_name]
+                _OVERFLOW_COUNTER = _AUDIT_REGISTERED_METRICS[_ov_name]
+
+            _err_name = "pramanix_audit_sink_emit_errors_total"
+            if _err_name not in _AUDIT_REGISTERED_METRICS:
+                _SEND_ERROR_COUNTER = _prom_init.Counter(
+                    _err_name,
+                    "Number of audit sink send/emit errors by sink type",
+                    ["sink"],
+                )
+                _AUDIT_REGISTERED_METRICS[_err_name] = _SEND_ERROR_COUNTER
+            else:
+                _SEND_ERROR_COUNTER = _AUDIT_REGISTERED_METRICS[_err_name]
+
         return _OVERFLOW_COUNTER
     except ImportError:
         return None  # prometheus_client not installed — metrics silently disabled
@@ -222,6 +236,15 @@ def _increment_overflow_metric() -> None:
         log.warning(
             "pramanix.audit_sink: failed to increment overflow metric: %s", exc, exc_info=True
         )
+
+
+def _increment_send_error_metric(sink: str) -> None:
+    """Increment pramanix_audit_sink_emit_errors_total{sink=...} counter."""
+    try:
+        if _SEND_ERROR_COUNTER is not None:
+            _SEND_ERROR_COUNTER.labels(sink=sink).inc()
+    except Exception as exc:
+        log.debug("pramanix.audit_sink: failed to increment send_error metric (%s): %s", sink, exc)
 
 
 class KafkaAuditSink:
@@ -322,6 +345,7 @@ class KafkaAuditSink:
         except Exception as exc:
             with self._queue_lock:
                 self._queue_depth = max(0, self._queue_depth - 1)
+            _increment_send_error_metric("kafka")
             log.error("KafkaAuditSink: failed to produce decision: %s", exc, exc_info=True)
 
     def flush(self, timeout: float = 10.0) -> None:
@@ -383,8 +407,7 @@ class S3AuditSink:
             from pramanix.exceptions import ConfigurationError
 
             raise ConfigurationError(
-                "boto3 is required for S3AuditSink. "
-                "Install it with: pip install 'pramanix[s3]'"
+                "boto3 is required for S3AuditSink. " "Install it with: pip install 'pramanix[s3]'"
             ) from exc
 
         self._bucket = bucket
@@ -443,6 +466,7 @@ class S3AuditSink:
                     decision_id,
                 )
         except Exception as exc:
+            _increment_send_error_metric("s3")
             log.error("S3AuditSink: failed to enqueue upload: %s", exc, exc_info=True)
 
     def _upload(self, key: str, body: bytes) -> None:
@@ -454,6 +478,7 @@ class S3AuditSink:
                 ContentType="application/json",
             )
         except Exception as exc:
+            _increment_send_error_metric("s3")
             log.error("S3AuditSink: failed to upload decision: %s", exc, exc_info=True)
 
     @property
@@ -560,6 +585,7 @@ class SplunkHecAuditSink:
                     },
                 )
             except Exception as exc:
+                _increment_send_error_metric("splunk")
                 log.error("SplunkHecAuditSink: send error: %s", exc, exc_info=True)
 
     def emit(self, decision: Decision) -> None:
@@ -696,6 +722,7 @@ class DatadogAuditSink:
                 )
                 self._logs_api.submit_log(HTTPLog([log_item]))
             except Exception as exc:
+                _increment_send_error_metric("datadog")
                 log.error(
                     "DatadogAuditSink: send error: %s (%.120s)",
                     type(exc).__name__,

@@ -148,6 +148,7 @@ from pramanix.expressions import (
 from pramanix.fast_path import FastPathRule, SemanticFastPath
 from pramanix.governance_config import GovernanceConfig
 from pramanix.guard import Guard, GuardConfig
+from pramanix.guard_config import ClockProtocol
 from pramanix.helpers.compliance import ComplianceReport, ComplianceReporter
 from pramanix.helpers.policy_auditor import PolicyAuditor
 from pramanix.helpers.string_enum import StringEnumField
@@ -309,6 +310,7 @@ __all__ = [
     # Guard
     "Guard",
     "GuardConfig",
+    "ClockProtocol",
     "GovernanceConfig",
     "GuardError",
     "GuardViolationError",

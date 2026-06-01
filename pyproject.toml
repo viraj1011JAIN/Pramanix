@@ -8,14 +8,16 @@ version = "1.0.0"
 description = "Deterministic neuro-symbolic guardrails for autonomous AI agents"
 authors = ["Viraj Jain <viraj@pramanix.dev>"]
 license = "AGPL-3.0-only"
-# Commercial license available — see LICENSE-COMMERCIAL and https://pramanix.dev/enterprise
+# Dual-license model: AGPL-3.0-only (community/open-source) + proprietary commercial
+# (enterprise/SaaS — closes AGPL copyleft obligation).
+# Commercial license text: LICENSE-COMMERCIAL | Inquiries: viraj@pramanix.dev
 readme = "README.md"
 homepage = "https://github.com/viraj1011JAIN/Pramanix"
 repository = "https://github.com/viraj1011JAIN/Pramanix"
 documentation = "https://github.com/viraj1011JAIN/Pramanix#readme"
 keywords = ["ai-safety", "guardrails", "smt", "z3", "formal-verification", "neuro-symbolic"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Security",
@@ -119,7 +121,7 @@ pydantic-ai = ["pydantic-ai"]
 semantic-kernel = ["semantic-kernel"]
 haystack = ["haystack-ai"]
 sklearn = ["scikit-learn"]
-security = []
+security = ["google-re2"]
 bedrock = ["boto3"]
 vertexai = ["google-cloud-aiplatform"]
 all = ["prometheus-client", "orjson", "httpx", "openai", "anthropic", "tenacity", "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc", "fastapi", "starlette", "langchain-core", "llama-index-core", "pyautogen", "redis", "cryptography", "boto3", "azure-keyvault-secrets", "azure-identity", "google-cloud-secret-manager", "hvac", "confluent-kafka", "datadog-api-client", "fpdf2", "cohere", "mistralai", "google-generativeai", "llama-cpp-python", "asyncpg", "dspy-ai", "crewai", "pydantic-ai", "semantic-kernel", "haystack-ai", "scikit-learn", "google-cloud-aiplatform"]

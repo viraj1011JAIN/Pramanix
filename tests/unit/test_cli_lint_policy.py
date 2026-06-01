@@ -54,8 +54,8 @@ class AmountPolicy(Policy):
     @classmethod
     def invariants(cls):
         return [
-            (E(cls.amount) <= E(cls.limit)).named("within_limit"),
-            (E(cls.amount) >= 0).named("non_negative"),
+            (E(cls.amount) <= E(cls.limit)).named("within_limit").explain("Amount must not exceed limit"),
+            (E(cls.amount) >= 0).named("non_negative").explain("Amount must be non-negative"),
         ]
 
     class Meta:
@@ -193,7 +193,7 @@ class FullMetaPolicy(Policy):
 
     @classmethod
     def invariants(cls):
-        return [(E(cls.amount) <= E(cls.limit)).named("within_limit")]
+        return [(E(cls.amount) <= E(cls.limit)).named("within_limit").explain("Amount must not exceed limit")]
 
     class Meta:
         version = "1.0"

@@ -13,8 +13,11 @@ If the package is not installed, instantiation raises
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import TYPE_CHECKING, Any
+
+_log = logging.getLogger(__name__)
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
@@ -204,8 +207,11 @@ class CohereTranslator:
         if transport is not None and hasattr(transport, "close"):
             try:
                 transport.close()
-            except Exception:
-                pass
+            except Exception as _close_exc:
+                _log.warning(
+                    "CohereTranslator.__del__: error closing httpx transport (resource may leak): %s",
+                    _close_exc,
+                )
             return
         # Fallback: if no running loop, run aclose() in a fresh loop.
         try:
@@ -217,8 +223,11 @@ class CohereTranslator:
             return  # asyncio module may be None during interpreter shutdown
         try:
             asyncio.run(self.aclose())
-        except Exception:
-            pass
+        except Exception as _close_exc:
+            _log.warning(
+                "CohereTranslator.__del__: error during async cleanup (resource may leak): %s",
+                _close_exc,
+            )
 
     async def __aenter__(self) -> CohereTranslator:
         return self

@@ -99,7 +99,8 @@ class TestAuditSinksProductionError:
         monkeypatch.setenv("PRAMANIX_ENV", "production")
         monkeypatch.delenv("PRAMANIX_ALLOW_NO_AUDIT_SINKS", raising=False)
         # A real production sink satisfies the requirement — no error.
-        cfg = GuardConfig(audit_sinks=(StdoutAuditSink(),))
+        # min_response_ms=5.0 satisfies the timing side-channel protection check.
+        cfg = GuardConfig(audit_sinks=(StdoutAuditSink(),), min_response_ms=5.0)
         assert len(cfg.audit_sinks) == 1
 
     def test_error_type_is_configuration_error_not_warning(

@@ -27,7 +27,7 @@ import re
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import structlog
 
@@ -40,7 +40,22 @@ if TYPE_CHECKING:
     from pramanix.crypto import PramanixSigner
     from pramanix.solver import SolverProtocol
 
-__all__ = ["GovernanceConfig", "GuardConfig", "Path"]
+__all__ = ["ClockProtocol", "GovernanceConfig", "GuardConfig", "Path"]
+
+
+@runtime_checkable
+class ClockProtocol(Protocol):
+    """Structural type for clock callables accepted by :class:`GuardConfig`.
+
+    Any callable returning a ``float`` Unix timestamp (same contract as
+    ``time.time()``) satisfies this protocol.  Use it for type annotations
+    and ``isinstance`` checks in tests::
+
+        from pramanix.guard_config import ClockProtocol
+        assert isinstance(time.time, ClockProtocol)
+    """
+
+    def __call__(self) -> float: ...
 
 from pramanix.governance_config import GovernanceConfig
 
@@ -551,13 +566,14 @@ class GuardConfig:
     ``solver_factory`` is supplied.
     """
 
-    clock: Callable[[], float] | None = field(default=None)
+    clock: ClockProtocol | None = field(default=None)
     """Optional clock injection for ``E.now()`` time-policy expressions.
 
-    The callable must return the current Unix timestamp as a float (same
-    contract as ``time.time()``).  Injecting a deterministic clock makes
-    time-window, TTL, and scheduled-access invariants fully testable without
-    ``time.sleep()`` or ``monkeypatch.setattr``.
+    Must satisfy :class:`ClockProtocol` — any callable returning a ``float``
+    Unix timestamp (same contract as ``time.time()``).  Injecting a
+    deterministic clock makes time-window, TTL, and scheduled-access
+    invariants fully testable without ``time.sleep()`` or
+    ``monkeypatch.setattr``.
 
     When ``None`` (default), the transpiler uses ``time.time()`` directly.
 
@@ -566,6 +582,53 @@ class GuardConfig:
         import time
         _frozen = time.time()
         config = GuardConfig(clock=lambda: _frozen)
+    """
+
+    result_seal_key: bytes | None = field(default=None)
+    """HMAC-SHA256 key (≥ 32 bytes) for IPC result-integrity sealing in
+    ``async-process`` execution mode.
+
+    In ``async-process`` mode the coordinator serialises work to OS worker
+    processes via :mod:`multiprocessing`.  Each worker signs its result with
+    this key; the coordinator verifies the tag before trusting the decision.
+    Without injection every coordinator pod generates an independent ephemeral
+    key at import time — a result signed by pod-A's worker is rejected by
+    pod-B's coordinator, making multi-replica K8s deployments impossible.
+
+    **Required in** ``PRAMANIX_ENV=production`` **when**
+    ``execution_mode='async-process'``.  Inject from a shared secrets manager
+    (AWS KMS, HashiCorp Vault, Kubernetes Secrets) at startup so that all
+    coordinator replicas share the same key.
+
+    In non-production and ``async-thread``/``sync`` modes the module-level
+    ephemeral key is used as a process-local fallback.
+
+    Minimum length: 32 bytes.  Use ``secrets.token_bytes(32)`` or derive from
+    a KMS-managed secret.
+
+    Example::
+
+        import secrets
+        key = secrets.token_bytes(32)   # or load from vault
+        config = GuardConfig(
+            execution_mode="async-process",
+            result_seal_key=key,
+        )
+    """
+
+    allow_insecure_timing_leaks: bool = field(default=False)
+    """Opt-in to disable timing-side-channel protection in production.
+
+    When ``PRAMANIX_ENV=production`` Pramanix requires ``min_response_ms > 0.0``
+    to prevent attackers from distinguishing an injection block (μs) from a Z3
+    evaluation (ms) through the response time alone.  Setting this flag to
+    ``True`` disables that requirement.
+
+    **This flag is a security downgrade.** Use only when:
+    * You have a network-level timing normaliser in front of Pramanix, OR
+    * Your threat model explicitly excludes timing oracles.
+
+    The flag name is intentionally verbose so that a security review catches it.
     """
 
     def __post_init__(self) -> None:
@@ -748,4 +811,47 @@ class GuardConfig:
                 "PRAMANIX_ENV=production. A custom solver factory replaces "
                 "formal Z3 verification entirely — this is only safe in tests. "
                 "Remove solver_factory from your production GuardConfig."
+            )
+        # ── STOP 1: IPC seal-key must be injected in production ───────────────
+        if self.result_seal_key is not None and len(self.result_seal_key) < 32:
+            raise ConfigurationError(
+                f"GuardConfig.result_seal_key must be at least 32 bytes "
+                f"(got {len(self.result_seal_key)} bytes). "
+                "Use secrets.token_bytes(32) or derive from a KMS-managed key."
+            )
+        if (
+            _is_prod
+            and self.execution_mode == "async-process"
+            and self.result_seal_key is None
+        ):
+            raise ConfigurationError(
+                "GuardConfig(result_seal_key=None) is not permitted in "
+                "production (PRAMANIX_ENV=production) with "
+                "execution_mode='async-process'. "
+                "Each coordinator pod generates an independent ephemeral HMAC "
+                "key at import time — worker results signed by pod-A are "
+                "rejected by pod-B's coordinator, making multi-replica "
+                "deployments impossible. "
+                "Inject the key from a shared secrets manager (AWS KMS, "
+                "HashiCorp Vault, Kubernetes Secrets) at startup: "
+                "GuardConfig(result_seal_key=vault.get_secret('pramanix-seal'))"
+            )
+        # ── STOP 3: timing side-channel — require non-zero floor in prod ──────
+        if (
+            _is_prod
+            and self.min_response_ms == 0.0
+            and not self.allow_insecure_timing_leaks
+        ):
+            raise ConfigurationError(
+                "GuardConfig(min_response_ms=0.0) is not permitted in "
+                "production (PRAMANIX_ENV=production). "
+                "A zero response-time floor leaks the classification path via "
+                "timing: injection blocks return in microseconds, Z3 "
+                "evaluations in milliseconds — an attacker with network access "
+                "can distinguish them. "
+                "Set min_response_ms to a non-zero value (e.g. 5.0 ms) to pad "
+                "short decisions to a constant floor. "
+                "If you have a network-level timing normaliser and explicitly "
+                "accept this risk, set "
+                "GuardConfig(allow_insecure_timing_leaks=True)."
             )

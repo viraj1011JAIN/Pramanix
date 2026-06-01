@@ -245,6 +245,240 @@ class EncryptedArchiveWriter:
         return secrets.token_bytes(32)
 
 
+class ArchiveKeySet:
+    """Manages multiple AES-256 keys for Merkle archive key rotation.
+
+    Usage::
+
+        key_set = ArchiveKeySet()
+        key_set.add("key-2026-01", secrets.token_bytes(32))
+        key_set.set_active("key-2026-01")
+
+        # Six months later — rotate without losing decryptability of old archives:
+        old_id = key_set.rotate("key-2026-07", secrets.token_bytes(32))
+        # key-2026-01 is still in the set for decrypting old .enc files.
+        # Remove it only once all archives encrypted with it have been re-encrypted:
+        # key_set.remove(old_id)   # optional cleanup
+
+    Thread-safety: all mutations are protected by an internal ``threading.Lock``.
+    """
+
+    def __init__(self) -> None:
+        self._keys: dict[str, bytes] = {}
+        self._active_key_id: str | None = None
+        self._lock: threading.Lock = threading.Lock()
+
+    def add(self, key_id: str, key: bytes) -> None:
+        """Add *key* under *key_id*.  Overwrites silently if the ID already exists."""
+        if len(key) != 32:
+            raise ValueError(
+                f"ArchiveKeySet.add({key_id!r}): key must be exactly 32 bytes "
+                f"(got {len(key)}).  Generate one with secrets.token_bytes(32)."
+            )
+        with self._lock:
+            self._keys[key_id] = key
+
+    def remove(self, key_id: str) -> None:
+        """Remove *key_id* from the set.  Raises ``KeyError`` if not found.
+
+        Do not remove a key while archives encrypted with it still exist and
+        have not been re-encrypted — decryption will fail.
+        """
+        with self._lock:
+            if key_id not in self._keys:
+                raise KeyError(key_id)
+            if key_id == self._active_key_id:
+                raise ValueError(
+                    f"Cannot remove active key {key_id!r}. " "Call rotate() or set_active() first."
+                )
+            del self._keys[key_id]
+
+    def set_active(self, key_id: str) -> None:
+        """Set *key_id* as the key used for new encryption operations."""
+        with self._lock:
+            if key_id not in self._keys:
+                raise KeyError(
+                    f"Key {key_id!r} not in ArchiveKeySet. " "Call add(key_id, key) first."
+                )
+            self._active_key_id = key_id
+
+    def rotate(self, new_key_id: str, new_key: bytes) -> str:
+        """Add *new_key* as *new_key_id* and promote it to active.
+
+        The old active key remains in the set for decrypting historical
+        archives.  Returns the previously active key_id so the caller
+        can schedule its eventual removal.
+
+        Raises:
+            RuntimeError: If no active key has been set yet.
+        """
+        self.add(new_key_id, new_key)
+        with self._lock:
+            old_id = self._active_key_id
+            if old_id is None:
+                raise RuntimeError(
+                    "ArchiveKeySet.rotate() called before any active key was set. "
+                    "Call set_active() at least once first."
+                )
+            self._active_key_id = new_key_id
+        return old_id  # type: ignore[return-value]
+
+    @property
+    def active_key_id(self) -> str:
+        """The key_id currently used for encryption.  Raises ``RuntimeError`` if unset."""
+        with self._lock:
+            if self._active_key_id is None:
+                raise RuntimeError(
+                    "ArchiveKeySet has no active key. "
+                    "Call add(key_id, key) then set_active(key_id)."
+                )
+            return self._active_key_id
+
+    @property
+    def active_key(self) -> bytes:
+        """The 32-byte key currently used for encryption."""
+        with self._lock:
+            if self._active_key_id is None:
+                raise RuntimeError("ArchiveKeySet has no active key.")
+            return self._keys[self._active_key_id]
+
+    def get(self, key_id: str) -> bytes:
+        """Return the key for *key_id*.  Raises ``KeyError`` if not found."""
+        with self._lock:
+            try:
+                return self._keys[key_id]
+            except KeyError:
+                raise KeyError(
+                    f"Key {key_id!r} not found in ArchiveKeySet. "
+                    "This key may have been removed or was never added."
+                ) from None
+
+    def key_ids(self) -> list[str]:
+        """Return all key IDs currently in the set (unordered)."""
+        with self._lock:
+            return list(self._keys)
+
+
+class RotatingKeyArchiveWriter:
+    """AES-256-GCM writer with key rotation support.
+
+    Embeds a *key_id* in the wire format so that historical archives can
+    be decrypted with the correct key from an :class:`ArchiveKeySet` even
+    after the active key has been rotated.
+
+    Wire format (written to ``path.with_suffix(".enc")``)::
+
+        [4-byte magic: b'RPMK']
+        [2-byte key_id length, big-endian]
+        [key_id bytes, UTF-8]
+        [12-byte nonce (random per-write)]
+        [AES-256-GCM ciphertext with appended 16-byte auth tag]
+
+    The 4-byte magic ``b'RPMK'`` disambiguates this format from archives
+    written by the single-key :class:`EncryptedArchiveWriter` (which starts
+    with a raw nonce).
+
+    Requires: ``cryptography >= 41.0``
+
+    Args:
+        key_set: An :class:`ArchiveKeySet` with at least one key and an active
+                 key set.
+
+    Raises:
+        ConfigurationError: If the ``cryptography`` package is not installed.
+    """
+
+    _MAGIC: bytes = b"RPMK"
+    _NONCE_BYTES: int = 12
+    _MAX_KEY_ID_BYTES: int = 65_535
+
+    def __init__(self, key_set: ArchiveKeySet) -> None:
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM  # noqa: F401
+        except ImportError as exc:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                "The 'cryptography' package is required for RotatingKeyArchiveWriter. "
+                "Install it with: pip install pramanix  (it is a core dependency)"
+            ) from exc
+        self._key_set = key_set
+
+    def __call__(self, path: Path, content: bytes) -> None:
+        """Encrypt *content* and write to ``path.with_suffix('.enc')``."""
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        key_id = self._key_set.active_key_id
+        key_id_bytes = key_id.encode("utf-8")
+        if len(key_id_bytes) > self._MAX_KEY_ID_BYTES:
+            raise ValueError(
+                f"key_id {key_id!r} is too long "
+                f"({len(key_id_bytes)} bytes > {self._MAX_KEY_ID_BYTES})."
+            )
+
+        nonce = secrets.token_bytes(self._NONCE_BYTES)
+        ciphertext = AESGCM(self._key_set.active_key).encrypt(nonce, content, None)
+
+        payload = (
+            self._MAGIC + len(key_id_bytes).to_bytes(2, "big") + key_id_bytes + nonce + ciphertext
+        )
+
+        enc_path = path.with_suffix(".enc")
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=enc_path.parent, prefix=".merkle.rot.tmp.", suffix=".partial"
+        )
+        try:
+            with os.fdopen(tmp_fd, "wb") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+            raise
+        os.replace(tmp_path, enc_path)
+
+    @classmethod
+    def decrypt(cls, key_set: ArchiveKeySet, enc_path: Path) -> bytes:
+        """Decrypt an archive written by :class:`RotatingKeyArchiveWriter`.
+
+        Reads the embedded *key_id*, retrieves the key from *key_set*, and
+        decrypts.  Authentication tag mismatch raises
+        :class:`cryptography.exceptions.InvalidTag`.
+
+        Args:
+            key_set:  Must contain the key that was active when the archive
+                      was written (identified by the embedded key_id).
+            enc_path: Path to the ``.enc`` file.
+
+        Raises:
+            ValueError:                         File is not in RPMK format.
+            KeyError:                           key_id embedded in file is not
+                                                in *key_set*.
+            cryptography.exceptions.InvalidTag: Ciphertext has been tampered.
+        """
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        raw = Path(enc_path).read_bytes()
+        if not raw.startswith(cls._MAGIC):
+            raise ValueError(
+                f"File {enc_path} is not in RPMK rotating-key format "
+                f"(expected magic {cls._MAGIC!r}, got {raw[:4]!r}). "
+                "Use EncryptedArchiveWriter.decrypt() for single-key archives."
+            )
+
+        offset = len(cls._MAGIC)
+        key_id_len = int.from_bytes(raw[offset : offset + 2], "big")
+        offset += 2
+        key_id = raw[offset : offset + key_id_len].decode("utf-8")
+        offset += key_id_len
+        nonce = raw[offset : offset + cls._NONCE_BYTES]
+        offset += cls._NONCE_BYTES
+        ciphertext = raw[offset:]
+
+        return AESGCM(key_set.get(key_id)).decrypt(nonce, ciphertext, None)
+
+
 class MerkleArchiver:
     """Merkle accumulator with automatic segment-based archival.
 
@@ -415,6 +649,59 @@ class MerkleArchiver:
         """Return a copy of the active leaf list (for testing/inspection)."""
         with self._lock:
             return list(self._active)
+
+    @classmethod
+    def verify_encrypted_archive(
+        cls,
+        archive_path: str | Path,
+        *,
+        key: bytes | None = None,
+        key_set: ArchiveKeySet | None = None,
+    ) -> bool:
+        """Decrypt and verify an encrypted archive segment.
+
+        Supply exactly one of *key* (for :class:`EncryptedArchiveWriter`
+        archives) or *key_set* (for :class:`RotatingKeyArchiveWriter`
+        archives).
+
+        Args:
+            archive_path: Path to the ``.enc`` file.
+            key:          32-byte AES-256 key used at encryption time
+                          (single-key :class:`EncryptedArchiveWriter` mode).
+            key_set:      :class:`ArchiveKeySet` containing the key identified
+                          by the embedded ``key_id``
+                          (:class:`RotatingKeyArchiveWriter` mode).
+
+        Returns:
+            ``True`` if the decrypted archive passes :meth:`verify_archive`,
+            ``False`` if the Merkle root mismatches.
+
+        Raises:
+            ValueError:                         Neither or both of *key* /
+                                                *key_set* were supplied.
+            cryptography.exceptions.InvalidTag: Ciphertext has been tampered.
+            KeyError:                           Embedded key_id not in *key_set*.
+        """
+        if (key is None) == (key_set is None):
+            raise ValueError(
+                "verify_encrypted_archive() requires exactly one of key= or key_set=, not both or neither."
+            )
+
+        enc_path = Path(archive_path)
+        if key is not None:
+            plaintext = EncryptedArchiveWriter.decrypt(key, enc_path)
+        else:
+            plaintext = RotatingKeyArchiveWriter.decrypt(key_set, enc_path)  # type: ignore[arg-type]
+
+        tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".merkle.verify", prefix=".pramanix.verify.")
+        tmp_path = Path(tmp_path_str)
+        try:
+            with os.fdopen(tmp_fd, "wb") as fh:
+                fh.write(plaintext)
+            return cls.verify_archive(tmp_path)
+        finally:
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
 
     @classmethod
     def verify_archive(cls, archive_path: str | Path) -> bool:
