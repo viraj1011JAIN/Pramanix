@@ -43,11 +43,17 @@ from __future__ import annotations
 
 import enum
 import hashlib
+import json as _json_stdlib
 import secrets
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
+
+
+def _stdlib_canonical_bytes(payload: dict[str, Any]) -> bytes:
+    """Canonical bytes via stdlib json — always available, used as orjson fallback."""
+    return _json_stdlib.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
 try:
@@ -61,11 +67,10 @@ try:
         )
 
 except ImportError:
-    import json as _json
 
     def _canonical_bytes(payload: dict[str, Any]) -> bytes:
         """Deterministic canonical bytes via stdlib json (sorted keys)."""
-        return _json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return _stdlib_canonical_bytes(payload)
 
 
 __all__ = [
