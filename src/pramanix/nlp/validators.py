@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import threading
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -86,12 +87,12 @@ def _re_ci_ml(pattern: str) -> Any:
 # Prometheus gauges for NLP model availability (set at module load time).
 # Operators can alert on pramanix_nlp_model_available{model="..."} == 0.
 _NLP_GAUGE: Any = None  # set below after load attempts
-_NLP_GAUGE_LOCK = __import__("threading").Lock()
+_NLP_GAUGE_LOCK = threading.Lock()
 
 # Counter for NLP scorer degradation events (fallback to keyword/Jaccard).
 # Operators can alert on pramanix_nlp_degradation_total{scorer=...,fallback=...}.
 _NLP_DEGRADATION_COUNTER: Any = None
-_NLP_DEGRADATION_COUNTER_LOCK = __import__("threading").Lock()
+_NLP_DEGRADATION_COUNTER_LOCK = threading.Lock()
 
 
 def _get_nlp_degradation_counter() -> Any:

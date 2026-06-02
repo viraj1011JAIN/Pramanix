@@ -82,6 +82,8 @@ from __future__ import annotations
 import ast as _ast
 import pathlib
 import re
+from datetime import datetime as _datetime
+from decimal import Decimal as _Decimal
 from typing import TYPE_CHECKING, Any
 
 from pramanix.exceptions import PolicySyntaxError
@@ -89,8 +91,6 @@ from pramanix.expressions import (
     ConstraintExpr,
     ExpressionNode,
     Field,
-    _BoolOp,
-    _CmpOp,
     _FieldRef,
     _Literal,
 )
@@ -108,13 +108,13 @@ __all__ = [
 # ── Type-name → Python type mapping ──────────────────────────────────────────
 
 _PYTHON_TYPES: dict[str, type] = {
-    "Decimal": __import__("decimal").Decimal,
+    "Decimal": _Decimal,
     "float": float,
     "int": int,
     "bool": bool,
     "str": str,
     "string": str,
-    "datetime": __import__("datetime").datetime,
+    "datetime": _datetime,
 }
 
 # ── Safe expression parser ────────────────────────────────────────────────────
@@ -202,8 +202,7 @@ def _parse_expr(
         tree = _ast.parse(source.strip(), mode="eval")
     except SyntaxError as exc:
         raise PolicySyntaxError(
-            f"Invariant {invariant_name!r}: syntax error in expression "
-            f"{source!r}: {exc}"
+            f"Invariant {invariant_name!r}: syntax error in expression " f"{source!r}: {exc}"
         ) from exc
 
     result = _visit(tree.body, fields, source, invariant_name)
@@ -344,8 +343,7 @@ def _visit(
         if isinstance(op, _ast.NotEq):
             return left != right
         raise PolicySyntaxError(
-            f"Invariant {invariant_name!r}: unsupported comparison op "
-            f"{type(op).__name__!r}"
+            f"Invariant {invariant_name!r}: unsupported comparison op " f"{type(op).__name__!r}"
         )
 
     # ── Boolean operators ─────────────────────────────────────────────────────
@@ -399,9 +397,7 @@ def _build_policy_class(spec: dict[str, Any]) -> type[Policy]:
 
     # Validate the class name (must be a valid Python identifier)
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", policy_name):
-        raise PolicySyntaxError(
-            f"meta.name {policy_name!r} is not a valid Python identifier."
-        )
+        raise PolicySyntaxError(f"meta.name {policy_name!r} is not a valid Python identifier.")
 
     # ── Build Field objects ───────────────────────────────────────────────────
     raw_fields: dict[str, Any] = spec.get("fields") or {}
@@ -434,7 +430,7 @@ def _build_policy_class(spec: dict[str, Any]) -> type[Policy]:
         # Fall back to sensible defaults when python_type is not declared
         if python_type is object:
             python_type = {
-                "Real": __import__("decimal").Decimal,
+                "Real": _Decimal,
                 "Int": int,
                 "Bool": bool,
                 "String": str,
@@ -461,9 +457,7 @@ def _build_policy_class(spec: dict[str, Any]) -> type[Policy]:
             )
         inv_name = str(inv_spec.get("name") or f"invariant_{idx + 1}").strip()
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", inv_name):
-            raise PolicySyntaxError(
-                f"Invariant name {inv_name!r} is not a valid identifier."
-            )
+            raise PolicySyntaxError(f"Invariant name {inv_name!r} is not a valid identifier.")
         if inv_name in seen_names:
             raise PolicySyntaxError(
                 f"Duplicate invariant name {inv_name!r} — all names must be unique."
@@ -525,8 +519,7 @@ def load_policy_yaml(content: str) -> type[Policy]:
         import yaml  # type: ignore[import]
     except ImportError as exc:
         raise ImportError(
-            "pyyaml is required for YAML policy loading. "
-            "Install it with: pip install pyyaml"
+            "pyyaml is required for YAML policy loading. " "Install it with: pip install pyyaml"
         ) from exc
 
     try:
@@ -536,8 +529,7 @@ def load_policy_yaml(content: str) -> type[Policy]:
 
     if not isinstance(spec, dict):
         raise PolicySyntaxError(
-            "YAML policy must be a top-level mapping (dict); "
-            f"got {type(spec).__name__!r}"
+            "YAML policy must be a top-level mapping (dict); " f"got {type(spec).__name__!r}"
         )
     return _build_policy_class(spec)
 
@@ -596,9 +588,7 @@ def load_policy_string(content: str, *, fmt: str = "yaml") -> type[Policy]:
         return load_policy_yaml(content)
     if fmt == "toml":
         return load_policy_toml(content)
-    raise ValueError(
-        f"Unknown format {fmt!r}.  Supported values: 'yaml', 'toml'."
-    )
+    raise ValueError(f"Unknown format {fmt!r}.  Supported values: 'yaml', 'toml'.")
 
 
 def load_policy_file(path: str | pathlib.Path) -> type[Policy]:

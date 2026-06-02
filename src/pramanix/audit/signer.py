@@ -22,6 +22,7 @@ import hmac
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-_signing_failure_counter_lock = __import__("threading").Lock()
+_signing_failure_counter_lock = threading.Lock()
 _signing_failure_counter: Any = None
 
 
