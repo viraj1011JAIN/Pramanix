@@ -20,7 +20,7 @@ Do NOT update the snapshots without completing all three steps.
 
 Contracts locked at v0.9.0:
 
-  1. pramanix.__all__            — exact set of 150 exported names.
+  1. pramanix.__all__            — exact set of 157 exported names.
   2. SolverStatus                — exact 9 members, wire values, iteration order.
   3. Decision.to_dict()          — exact 17-key schema + per-field type semantics.
   4. GuardConfig field names     — exact 32 fields, all-defaults constructor, frozen.
@@ -119,6 +119,7 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         # Guard
         "Guard",
         "GuardConfig",
+        "ClockProtocol",
         # Identity (Phase 9)
         "JWTIdentityLinker",
         # Limitations overrides (v0.9.0)
