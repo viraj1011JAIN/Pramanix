@@ -51,10 +51,10 @@
 
 | # | Item | Status | Evidence / Notes |
 |---|------|--------|------------------|
-| S1 | Trivy container scan: 0 critical/high CVEs | ⚠️ Check | CI job: `trivy` |
-| S2 | pip-audit: 0 known vulnerabilities | ⚠️ Check | CI job: `license-scan` |
-| S3 | SAST (bandit/semgrep): 0 high severity | ⚠️ Check | CI job: `sast` |
-| S4 | No secrets in repository history | ⚠️ Check | `git log --all -S 'sk-'` etc. |
+| S1 | Trivy container scan: 0 critical/high CVEs | ⚠️ Check | CI job: `trivy` (tool not installed on dev) |
+| S2 | pip-audit: 0 known vulnerabilities in core | ⚠️ Check | 2026-06-02: 0 in core (z3-solver/pydantic/structlog). Optional extras have CVEs; `cryptography` bumped to ≥46.0.7 in pyproject.toml |
+| S3 | SAST (bandit/semgrep): 0 high severity | ⚠️ Check | CI job: `sast` (`bandit` not installed in venv; CI-only) |
+| S4 | No secrets in repository history | ✅ | 2026-06-02: `git log -S 'sk-ant-\|AKIA\|AWS_SECRET'` — no real keys; `.env.example` uses `YOUR_KEY_HERE` placeholders |
 | S5 | `PRAMANIX_ENV=production` blocks InMemory* | ✅ | All 4 guards verified |
 | S6 | `result_seal_key` injectable | ✅ | `guard_config.py:528` Phase 1 fix |
 | S7 | Nonce replay prevention | ✅ | `verify_async` Phase 1 fix |
@@ -131,10 +131,11 @@
 | License | 3 | 0 | 1 |
 | Code Quality | 5 | 4 | 0 |
 | Packaging | 4 | 5 | 0 |
-| Security | 10 | 4 | 0 |
+| Security | 11 | 3 | 0 |
 | API Surface | 5 | 1 | 0 |
 | Documentation | 3 | 4 | 0 |
-| **Total** | **30** | **18** | **1** |
+| **Total** | **31** | **17** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: 18 items require verification runs (code quality, packaging smoke test, CI check).
+**Soft blockers**: 17 items require verification runs (code quality, packaging smoke test, CI check).
+**Last updated**: 2026-06-02 — S4 resolved (no real secrets in git history).

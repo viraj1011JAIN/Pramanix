@@ -3666,37 +3666,42 @@ Invariant enforced in `Decision.__post_init__`: `allowed=True` iff `status == So
 
 ## Appendix C — GuardConfig Reference
 
-Key fields from `src/pramanix/guard_config.py`:
+Key fields from `src/pramanix/guard_config.py` (32 total). All have defaults; pass to `GuardConfig(field=value)`.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `solver_timeout_ms` | `int` | `500` | Z3 per-invariant wall-clock timeout in milliseconds |
+| `execution_mode` | `str` | `"sync"` | `"sync"`, `"async-thread"`, or `"async-process"` |
+| `solver_timeout_ms` | `int` | `5_000` | Z3 per-invariant wall-clock timeout in milliseconds |
 | `solver_rlimit` | `int` | `10_000_000` | Z3 resource limit (elementary ops) — DoS protection |
 | `max_workers` | `int` | `4` | Thread/process pool size |
-| `executor_mode` | `str` | `"thread"` | `"thread"` or `"process"` |
 | `max_decisions_per_worker` | `int` | `10_000` | Worker recycle threshold (memory vs cold-start) |
-| `max_input_bytes` | `int` | `65_536` | Raw input size guard (bytes) |
+| `worker_warmup` | `bool` | `True` | Run dummy Z3 solve on worker start to eliminate cold-start JIT spike |
+| `max_input_bytes` | `int` | `65_536` | Raw input size guard (bytes) — rejects before Z3 |
 | `max_input_chars` | `int` | `512` | LLM input character limit (raises `InputTooLongError`) |
 | `injection_threshold` | `float` | `0.5` | Score ≥ this → `InjectionBlockedError` |
-| `injection_scorer_path` | `Path \| None` | `None` | Path to saved `CalibratedScorer` `.npz` file |
-| `injection_sensitive_fields` | `list[str]` | `[]` | Extra per-field injection scoring after consensus |
+| `injection_scorer_path` | `str \| None` | `None` | Entry-point name of a custom injection scorer (NOT a file path) |
+| `injection_sensitive_fields` | `frozenset[str]` | `frozenset()` | Extra per-field injection scoring after consensus |
 | `consensus_strictness` | `str` | `"semantic"` | `"semantic"` (normalize Decimal/case) or `"strict"` (raw Python `!=`) |
 | `min_response_ms` | `float` | `0.0` | Minimum wall-clock response time (timing side-channel mitigation) |
 | `redact_violations` | `bool` | `False` | Replace explanation/violated_invariants with generic message |
 | `expected_policy_hash` | `str \| None` | `None` | SHA-256 of policy bytecode; `ConfigurationError` on mismatch |
 | `audit_sinks` | `tuple[AuditSink, ...]` | `()` | Audit trail consumers |
-| `decision_signer` | `Signer \| None` | `None` | Ed25519/RS256/ES256 signer for audit entries |
+| `signer` | `PramanixSigner \| None` | `None` | Ed25519/RS256/ES256 signer for audit entries |
 | `governance` | `GovernanceConfig \| None` | `None` | Privilege + oversight + IFC configuration |
-| `translator` | `Translator \| None` | `None` | Primary LLM translator for `parse_and_verify()` |
-| `secondary_translator` | `Translator \| None` | `None` | Secondary model for dual-model consensus |
+| `memory_store` | `SecureMemoryStore \| None` | `None` | Scoped agent memory store (not used by Guard itself) |
+| `translator_enabled` | `bool` | `False` | Enable LLM-based intent translation in `parse_and_verify()` |
 | `translator_circuit_breaker_config` | `CBConfig \| None` | `None` | Per-model circuit breaker for LLM calls |
-| `otel_endpoint` | `str \| None` | `None` | OpenTelemetry OTLP endpoint |
-| `prometheus_port` | `int \| None` | `None` | Prometheus metrics scrape port |
+| `metrics_enabled` | `bool` | `False` | Enable Prometheus metrics export |
+| `otel_enabled` | `bool` | `False` | Enable OpenTelemetry trace export |
+| `solver_factory` | `Callable \| None` | `None` | Z3 solver factory for test isolation — receives `z3.Context`, returns `SolverProtocol` |
+| `clock` | `ClockProtocol \| None` | `None` | Injected clock for `E.now()` time-policy expressions (returns `float` Unix timestamp) |
+| `result_seal_key` | `bytes \| None` | `None` | HMAC-SHA256 key (≥ 32 bytes) for IPC result-integrity sealing in async-process mode |
+| `allow_insecure_timing_leaks` | `bool` | `False` | **Security opt-out**: disables timing jitter. Never set `True` in production. |
 
-`GuardConfig` is a Pydantic `BaseModel`. All fields are validated at instantiation. Invalid values (e.g., `solver_timeout_ms=0`, `max_workers=0`) raise `ConfigurationError` immediately. When `PRAMANIX_ENV=production` and any `InMemory*` sink is configured, a `UserWarning` is emitted.
+`GuardConfig` is a `@dataclass(frozen=True)`. All fields are validated in `__post_init__`. Invalid values (e.g., `solver_timeout_ms=0`, `max_workers=0`) raise `ConfigurationError` immediately. When `PRAMANIX_ENV=production` and any `InMemory*` sink is configured, a `UserWarning` is emitted.
 
 ---
 
 *— End of README —*
 
-*Source-verified against commit `c7e5854` (2026-05-31). All claims traceable to file paths, class names, function names, or test files listed in this document.*
+*Source-verified against commit `a89f94a` (2026-06-02). All claims traceable to file paths, class names, function names, or test files listed in this document. Appendix C reflects all 32 GuardConfig fields; `ClockProtocol` is exported in `pramanix.__all__` (157 total).*

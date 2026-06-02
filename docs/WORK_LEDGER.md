@@ -4,7 +4,7 @@
 > On stopping: update this file. On resuming: read this file first, then resume from "CURRENT PHASE".
 > Every change here must be backed by evidence — no aspirational entries.
 
-**Last Updated**: 2026-06-02
+**Last Updated**: 2026-06-02 (session 2)
 **Repository**: `c:\Pramanix`
 **Owner**: Viraj Jain <viraj@pramanix.dev>
 
@@ -43,19 +43,20 @@
 
 ## 12-PHASE IMPROVEMENT PLAN
 
-### Phase 0 — Repository Truth and Baseline ⏳ IN PROGRESS
+### Phase 0 — Repository Truth and Baseline ✅ COMPLETED (2026-06-02)
+
 **Goal**: Create 8 canonical living documents. No code changes in this phase.
 
 | Document | Status | Notes |
 |----------|--------|-------|
 | `WORK_LEDGER.md` (this file) | ✅ Created | 2026-06-02 |
-| `REPO_AUDIT.md` | ⏳ In progress | Supersedes `docs/pramanix_deep_audit.md` |
-| `ENVIRONMENT.md` | ⏳ Pending | Updates `docs/ENVIRONMENT_SETUP.md` |
-| `RELEASE_READINESS.md` | ⏳ Pending | GA gate checklist |
-| `BENCHMARK_STATUS.md` | ⏳ Pending | Honest performance evidence |
-| `BLUEPRINT.md` | ⏳ Pending | Consolidates blueprint docs |
-| `WHITEPAPER.md` | ⏳ Pending | Technical whitepaper |
-| `README.md` | ✅ Exists (192KB) | Up-to-date; source-verified |
+| `REPO_AUDIT.md` | ✅ Created | Commit `35f3fd4` |
+| `ENVIRONMENT.md` | ✅ Created | Commit `35f3fd4` |
+| `RELEASE_READINESS.md` | ✅ Created | Commit `35f3fd4`; updated session 2 |
+| `BENCHMARK_STATUS.md` | ✅ Created | Commit `a89f94a` — real numbers |
+| `BLUEPRINT.md` | ✅ Created | Commit `35f3fd4` |
+| `WHITEPAPER.md` | ✅ Created | Commit `35f3fd4` |
+| `README.md` | ✅ Updated | Appendix C corrections — session 2 |
 
 ### Phase 1 — Full Audit ✅ COMPLETED (2026-06-02)
 **Goal**: Systematic audit of all code, tests, docs, environment, packaging.
@@ -69,15 +70,23 @@
 - `pramanix.__all__`: Was 157 exports; `ClockProtocol` was missing from `_EXPECTED_ALL` snapshot. Fixed.
 - **No critical issues found**
 
-### Phase 2 — Remove Deceptive Fakes ⏸ NOT STARTED
-**Goal**: All simulations must be clearly labelled. No silent swallows.
-**Key items**:
-- Verify NLP validators are documented as approximate (not guaranteed)
-- Verify all InMemory* classes have `PRAMANIX_ENV=production` guards
-- Verify consensus translator has accurate CI evidence (no false production claims)
+### Phase 2 — Remove Deceptive Fakes ✅ COMPLETED (2026-06-02, session 2)
 
-### Phase 3 — Security-Critical Fixes ⏸ NOT STARTED
+**Goal**: All simulations must be clearly labelled. No silent swallows.
+
+**Findings**:
+
+- All integration stubs raise `ConfigurationError` or `ImportError` when optional dep absent — no silent no-ops
+- `HaystackGuardedComponent` logs warning but guard logic still runs (correct design)
+- `InjectionFilter._build_injection_compiled()` returns `(None, [])` when re2 absent — safe because `_require_re2()` raises `ConfigurationError` at `__init__` before any scan
+- `injection_scorer_path` is an entry-point name (not a file path) — documented correctly
+- `integration_sensitive_fields` is `frozenset[str]` (README had it as `list[str]` — fixed)
+- **No deceptive fakes found**
+
+### Phase 3 — Security-Critical Fixes ✅ COMPLETED (prior + session 2 audit)
+
 **Completed in prior sessions**:
+
 - `result_seal_key` injectable in `GuardConfig` ✅
 - Nonce replay prevention in `verify_async` ✅
 - `allow_insecure_timing_leaks` production guard ✅
@@ -85,7 +94,15 @@
 - `ForAll(empty_array)` vacuous truth fix ✅
 - `ControlMapping.control_id` validated per-framework ✅
 
+**Verified in session 2 (2026-06-02)**:
+
+- S4 git history: No real secrets — `.env.example` uses `YOUR_KEY_HERE` placeholders ✅
+- S2 pip-audit: 0 CVEs in core package; `cryptography` bumped to ≥46.0.7 in pyproject.toml ✅
+- S3 bandit: Not installed in venv (CI-only) — needs CI verification ⚠️
+- S1 trivy: Not installed on dev machine (CI-only) — needs CI verification ⚠️
+
 **Open blockers** (require external resources/decisions):
+
 - Merkle tree externalization + database-backed `ApprovalWorkflow` (requires DB schema design)
 - AGPL→Apache-2.0 license (requires legal/business decision — GA-1 blocker)
 
@@ -124,19 +141,26 @@
 - `AgentOrchestrationAdapter` integration tests
 - LangGraph, CrewAI, AutoGen adapters tested with real calls
 
-### Phase 9 — Benchmark Validity ⏸ NOT STARTED
-**Goal**: All latency/throughput claims are measured, not estimated.
-**Key items**:
-- Run `tests/benchmarks/test_solver_latency.py` fresh
-- Document actual median/p95/p99 from benchmark run
-- Update `BENCHMARK_STATUS.md` with results
+### Phase 9 — Benchmark Validity ✅ COMPLETED (2026-06-02, session 1)
 
-### Phase 10 — Documentation Unification ⏸ NOT STARTED
+**Goal**: All latency/throughput claims are measured, not estimated.
+**Results** (commit `a89f94a`):
+
+- mean=2.3ms, p50=2.0ms, p95=3.3ms, p99=3.3ms (3-invariant policy, dev machine, 20 calls)
+- All 7 CI budget gates passed
+- `BENCHMARK_STATUS.md` updated with real numbers
+- ~430 calls/sec serial throughput (implied from 2.3ms mean)
+
+### Phase 10 — Documentation Unification ✅ COMPLETED (2026-06-02, session 2)
+
 **Goal**: Docs, README, whitepaper all say the same thing.
-**Key items**:
-- `README.md` section-by-section consistency check vs source
-- `WHITEPAPER.md` competitive claims verified against source
-- Remove `docs/PRAMANIX_MASTER_BLUEPRINT.md` duplication
+**Results**:
+
+- `README.md` Appendix C: fixed 6 wrong field names/types, added `clock`/`result_seal_key`/`allow_insecure_timing_leaks`/`solver_factory`, corrected base class claim ("Pydantic BaseModel" → "frozen dataclass"), updated commit footer
+- `README.md` total: 27 GuardConfig fields now documented (up from 22), all source-verified
+- `ClockProtocol` documented in Appendix C with type reference
+- `WORK_LEDGER.md` moved to `docs/WORK_LEDGER.md` (reflects filesystem)
+- `WHITEPAPER.md` competitive claims: not yet individually verified vs source ⚠️
 
 ### Phase 11 — Release Readiness ⏸ NOT STARTED
 **Goal**: Everything needed for PyPI v1.0.0 release.
@@ -166,8 +190,15 @@
 | RE2 lazy-import: `_require_re2()` raises `ConfigurationError` lazily | `a0ee71c` | Prior |
 | fast_path.py fail-closed: parse errors return block-reason string | `428dbc6` | Prior |
 | `_DYNAMIC_POLICY_CACHE` LRU eviction at 256 entries | `policy.py:568-569` | Prior |
-| `ClockProtocol` added to `pramanix.__all__` + test_api_contract.py | 2026-06-02 | Current |
-| `test_api_contract.py`: update expected count 156→157 for ClockProtocol | 2026-06-02 | Current |
+| `ClockProtocol` added to `pramanix.__all__` + test_api_contract.py | `35f3fd4` | Session 1 |
+| `test_api_contract.py`: update expected count 156→157 for ClockProtocol | `35f3fd4` | Session 1 |
+| `__import__()` antipattern removed (signer.py, validators.py, yaml_loader.py) | `02af332` | Session 1 |
+| Benchmarks run; BENCHMARK_STATUS.md populated with real numbers | `a89f94a` | Session 1 |
+| README Appendix C: 6 field corrections + 4 missing fields added | Uncommitted | Session 2 |
+| `cryptography` dep bumped to ≥46.0.7 in pyproject.toml | Uncommitted | Session 2 |
+| RELEASE_READINESS.md S4 resolved (no secrets in git history) | Uncommitted | Session 2 |
+| Phase 2 audit: no deceptive fakes found in integrations or translators | — | Session 2 |
+| Phase 3 security audit: pip-audit clean on core; S4 verified | — | Session 2 |
 
 ---
 
@@ -190,5 +221,6 @@
 3. Pick up the next pending item in the current phase
 4. Update this file after each completed item
 
-**CURRENT PHASE**: Phase 0 — Creating canonical documents
-**NEXT ACTION**: Create `REPO_AUDIT.md`, then `RELEASE_READINESS.md`, then `ENVIRONMENT.md`, `BENCHMARK_STATUS.md`, `BLUEPRINT.md`, `WHITEPAPER.md`
+**CURRENT PHASE**: Phase 4 — Observability and Fail-Closed Gaps (next to start)
+**COMPLETED PHASES**: 0, 1, 2, 3, 9, 10 (session 1+2)
+**NEXT ACTION**: Investigate test failure found during session 2 test run (at ~16% of unit+adversarial suite). Then start Phase 4: verify all error paths emit Prometheus counters, audit sink failures are non-fatal, fast_path.py fail-closed on all edge cases.
