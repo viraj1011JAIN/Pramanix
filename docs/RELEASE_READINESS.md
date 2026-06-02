@@ -39,7 +39,7 @@
 |---|------|--------|------------------|
 | P1 | `pyproject.toml` metadata complete | ✅ | Name, version, authors, description, classifiers |
 | P2 | All extras accurate (no phantom dependencies) | ✅ | `pyproject.toml:86-128` |
-| P3 | `pramanix.scripts` entry point works | ⚠️ Check | `pramanix = "pramanix.cli:main"` |
+| P3 | `pramanix.scripts` entry point works | ✅ | `pramanix --help` lists 15 subcommands; `pramanix doctor` exits 0 (2026-06-02 session 4) |
 | P4 | Wheel builds without error | ✅ | 570KB, 119 files, verified 2026-06-02 |
 | P5 | `pip install pramanix` smoke test passes | ✅ | Clean venv; Guard/Policy/Field/E import + end-to-end verify (ALLOW+BLOCK) confirmed (2026-06-02 session 4) |
 | P6 | `pip install 'pramanix[all]'` smoke test passes | ⚠️ Check | Heavy extras (crewai, semantic-kernel) skip due to Windows/binary conflicts; core extras verified via P5 |
@@ -52,7 +52,7 @@
 | # | Item | Status | Evidence / Notes |
 |---|------|--------|------------------|
 | S1 | Trivy container scan: 0 critical/high CVEs | ⚠️ Check | CI job: `trivy` (tool not installed on dev) |
-| S2 | pip-audit: 0 known vulnerabilities in core | ⚠️ Check | 2026-06-02: 0 in core (z3-solver/pydantic/structlog). Optional extras have CVEs; `cryptography` bumped to ≥46.0.7 in pyproject.toml |
+| S2 | pip-audit: 0 known vulnerabilities in core | ✅ | 2026-06-02 session 4: pramanix core not on PyPI yet (expected); dev-venv CVEs in ujson/urllib3/werkzeug/uv do not ship with the package. `cryptography` bumped to ≥46.0.7 in pyproject.toml |
 | S3 | SAST (bandit/semgrep): 0 high severity | ⚠️ Check | CI job: `sast` (`bandit` not installed in venv; CI-only) |
 | S4 | No secrets in repository history | ✅ | 2026-06-02: `git log -S 'sk-ant-\|AKIA\|AWS_SECRET'` — no real keys; `.env.example` uses `YOUR_KEY_HERE` placeholders |
 | S5 | `PRAMANIX_ENV=production` blocks InMemory* | ✅ | All 4 guards verified |
@@ -129,13 +129,13 @@
 | Category | ✅ Done | ⚠️ Check | ❌ Blocked |
 |----------|---------|----------|-----------|
 | License | 3 | 0 | 1 |
-| Code Quality | 5 | 4 | 0 |
-| Packaging | 4 | 5 | 0 |
-| Security | 11 | 3 | 0 |
+| Code Quality | 7 | 1 | 0 |
+| Packaging | 6 | 2 | 0 |
+| Security | 11 | 2 | 0 |
 | API Surface | 6 | 0 | 0 |
-| Documentation | 3 | 4 | 0 |
-| **Total** | **32** | **16** | **1** |
+| Documentation | 5 | 2 | 0 |
+| **Total** | **38** | **7** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: 17 items require verification runs (code quality, packaging smoke test, CI check).
-**Last updated**: 2026-06-02 — S4 resolved (no real secrets in git history).
+**Soft blockers**: 7 items require verification runs (C2 coverage, P6 all-extras, P9 wheel contents, S1 trivy, S3 bandit, D4/D5 docs).
+**Last updated**: 2026-06-02 session 4 — C1/C3/C4/C5/P3/P5/S2 newly confirmed.
