@@ -4,7 +4,7 @@
 > On stopping: update this file. On resuming: read this file first, then resume from "CURRENT PHASE".
 > Every change here must be backed by evidence — no aspirational entries.
 
-**Last Updated**: 2026-06-02 (session 3)
+**Last Updated**: 2026-06-02 (session 4)
 **Repository**: `c:\Pramanix`
 **Owner**: Viraj Jain <viraj@pramanix.dev>
 
@@ -179,12 +179,20 @@
   - Fixes: N814/RUF100 × 4 (auto-fix) — stale noqa directives
   - Fixes: I001 (transpiler.py auto-fix) — import sort
   - Global ignores added: N806, N814, TCH001, TCH002, TCH003
+- C1: Unit test suite — 4701 passed, 0 failed (commit `a6cc05b`, session 4) ✅
+- C3: mypy strict 0 errors — "Success: no issues found in 112 source files" (commit `a6cc05b`) ✅
+  - Structural fixes: importlib.import_module() for factory DI branches (no-redef)
+  - Added _DoctorCheck TypedDict in cli.py (NotRequired hint field)
+  - Replaced `__hash__ = None` with explicit `def __hash__` in expressions.py
+  - Annotated private key fields as Any in crypto.py (factory-injected types)
+  - Added NoReturn return types to helper raise-only functions in yaml_loader.py
+  - Added mypy overrides for re2, detoxify, sentence_transformers, jsonschema
+- C5: 0 `# type: ignore` in production source — all removed via proper code fixes ✅
 
 **Remaining** (soft blockers — ⚠️ in RELEASE_READINESS.md):
-- C1: Full test suite pass (unit tests running — session 4)
-- C2: Coverage ≥98% (needs measurement)
-- C3: mypy strict 0 errors (running — session 4)
-- P5/P6: `pip install pramanix` smoke test in clean venv
+
+- C2: Coverage ≥98% (measurement in progress — session 4, slow suite)
+- P5/P6: `pip install pramanix` smoke test in clean venv (not yet done)
 - L1: License decision (hard blocker — business/legal)
 
 ---
