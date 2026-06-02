@@ -13,7 +13,7 @@
 ## REPOSITORY BASELINE (as of 2026-06-02)
 
 | Metric | Value | Source |
-|--------|-------|--------|
+| -------- | ------- | -------- |
 | Production source files | 112 | `Get-ChildItem src/pramanix -Recurse -Filter *.py` |
 | Test files (total) | 224 | `Get-ChildItem tests -Recurse -Filter *.py` |
 | Tests collected | 5,687 | `pytest --collect-only -q` |
@@ -30,7 +30,7 @@
 ### Test Directory Breakdown
 
 | Directory | Files | Purpose |
-|-----------|-------|---------|
+| ----------- | ------- | --------- |
 | `tests/unit/` | 162 | Unit and functional tests (real deps, no mocks) |
 | `tests/integration/` | 34 | Integration tests (real containers, real APIs) |
 | `tests/adversarial/` | 14 | Adversarial/security boundary tests |
@@ -48,7 +48,7 @@
 **Goal**: Create 8 canonical living documents. No code changes in this phase.
 
 | Document | Status | Notes |
-|----------|--------|-------|
+| ---------- | -------- | ------- |
 | `WORK_LEDGER.md` (this file) | ✅ Created | 2026-06-02 |
 | `REPO_AUDIT.md` | ✅ Created | Commit `35f3fd4` |
 | `ENVIRONMENT.md` | ✅ Created | Commit `35f3fd4` |
@@ -189,18 +189,17 @@
   - Added mypy overrides for re2, detoxify, sentence_transformers, jsonschema
 - C5: 0 `# type: ignore` in production source — all removed via proper code fixes ✅
 
-**Remaining** (soft blockers — ⚠️ in RELEASE_READINESS.md):
+**Remaining** (soft/hard blockers):
 
-- C2: Coverage ≥98% (measurement in progress — session 4, slow suite)
-- P5/P6: `pip install pramanix` smoke test in clean venv (not yet done)
-- L1: License decision (hard blocker — business/legal)
+- C2: Coverage ≥98% (suite running in background — 7+ hour run; previous April measurement 95.09% before new tests added)
+- L1: License decision (hard blocker — business/legal — cannot be resolved without business input)
 
 ---
 
 ## COMPLETED ITEMS (cross-session history)
 
 | Item | Commit | Session |
-|------|--------|---------|
+| ------ | -------- | --------- |
 | P3.1: `default_oracle()` factory with 31 built-in mappings | `143189b` | 2026-05-31 |
 | P3.6: `pramanix report` CLI subcommand | `143189b` | 2026-05-31 |
 | P3.11: Benchmark CI gate in `ci.yml` | `143189b` | 2026-05-31 |
@@ -222,7 +221,7 @@
 ## ACTIVE BLOCKERS (GA blockers — require business/external decision)
 
 | ID | Blocker | Severity | Owner |
-|----|---------|----------|-------|
+| ---- | --------- | ---------- | ------- |
 | GA-1 | AGPL-3.0 prevents enterprise adoption (copyleft obligation) | Critical | Business decision |
 | GA-2 | LLM consensus: no real-CI evidence for `RedundantTranslator` | High | LLM key availability |
 | GA-3 | Merkle archive encryption: archives are plaintext (compression only) | Medium | Arch decision |
