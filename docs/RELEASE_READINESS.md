@@ -74,7 +74,7 @@
 | A3 | `GuardConfig` has 32 fields | ✅ | `test_api_contract.py` |
 | A4 | `SolverStatus` has 9 members | ✅ | `test_api_contract.py` |
 | A5 | All `__all__` exports importable | ✅ | `test_api_contract.py` |
-| A6 | CHANGELOG.md up-to-date | ⚠️ Check | Verify all commits since last entry |
+| A6 | CHANGELOG.md up-to-date | ✅ | Created 2026-06-02; covers all 1.0.0 features + known limitations |
 
 ### Documentation
 
@@ -132,9 +132,9 @@
 | Code Quality | 5 | 4 | 0 |
 | Packaging | 4 | 5 | 0 |
 | Security | 11 | 3 | 0 |
-| API Surface | 5 | 1 | 0 |
+| API Surface | 6 | 0 | 0 |
 | Documentation | 3 | 4 | 0 |
-| **Total** | **31** | **17** | **1** |
+| **Total** | **32** | **16** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
 **Soft blockers**: 17 items require verification runs (code quality, packaging smoke test, CI check).
