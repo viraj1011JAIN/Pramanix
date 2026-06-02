@@ -2,6 +2,11 @@
 # Pramanix .gitignore — Python 3.11+ / Z3 / Poetry
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Dev scratch files
+pytest_*.txt
+pytest_out.txt
+_smoke_*/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
