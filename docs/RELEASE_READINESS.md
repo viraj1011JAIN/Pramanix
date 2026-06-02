@@ -14,7 +14,7 @@
 ### License
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | L1 | License decision (AGPL-3.0 vs Apache-2.0) | ❌ BLOCKED | Business/legal decision required |
 | L2 | `LICENSE` file present and accurate | ✅ | `LICENSE` file exists, AGPL-3.0-only |
 | L3 | `LICENSE-COMMERCIAL` file present | ✅ | Dual-license model documented |
@@ -23,7 +23,7 @@
 ### Code Quality
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | C1 | All unit + adversarial + property tests pass | ✅ | 4701 passed, 0 failed (2026-06-02 session 4) |
 | C2 | Coverage ≥ 98% (`fail_under = 98`) | ⚠️ Check | `pyproject.toml:393` |
 | C3 | mypy strict — 0 errors | ✅ | "Success: no issues found in 112 source files" (2026-06-02 session 4, commit `a6cc05b`) |
@@ -36,7 +36,7 @@
 ### Packaging
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | P1 | `pyproject.toml` metadata complete | ✅ | Name, version, authors, description, classifiers |
 | P2 | All extras accurate (no phantom dependencies) | ✅ | `pyproject.toml:86-128` |
 | P3 | `pramanix.scripts` entry point works | ✅ | `pramanix --help` lists 15 subcommands; `pramanix doctor` exits 0 (2026-06-02 session 4) |
@@ -50,7 +50,7 @@
 ### Security
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | S1 | Trivy container scan: 0 critical/high CVEs | ⚠️ Check | CI job: `trivy` (tool not installed on dev) |
 | S2 | pip-audit: 0 known vulnerabilities in core | ✅ | 2026-06-02 session 4: pramanix core not on PyPI yet (expected); dev-venv CVEs in ujson/urllib3/werkzeug/uv do not ship with the package. `cryptography` bumped to ≥46.0.7 in pyproject.toml |
 | S3 | SAST (bandit/semgrep): 0 high severity | ⚠️ Check | CI job: `sast` (`bandit` not installed in venv; CI-only) |
@@ -68,7 +68,7 @@
 ### API Surface
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | A1 | `pramanix.__all__` count locked (157 exports) | ✅ | `test_api_contract.py` |
 | A2 | `Decision.to_dict()` has 17 keys | ✅ | `test_api_contract.py` |
 | A3 | `GuardConfig` has 32 fields | ✅ | `test_api_contract.py` |
@@ -79,12 +79,12 @@
 ### Documentation
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | D1 | `README.md` source-verified (no aspirational claims) | ✅ | Verified in deep audit Pass 4 |
 | D2 | `ENVIRONMENT.md` complete | ✅ | Created 2026-06-02 |
 | D3 | `REPO_AUDIT.md` complete | ✅ | Created 2026-06-02 |
-| D4 | `BLUEPRINT.md` complete | ⚠️ In progress | Phase 0 work |
-| D5 | `WHITEPAPER.md` complete | ⚠️ In progress | Phase 0 work |
+| D4 | `BLUEPRINT.md` complete | ✅ | 11KB, no TODOs/placeholders; architecture + roadmap + ADR log (2026-06-02 session 4) |
+| D5 | `WHITEPAPER.md` complete | ✅ | 16KB, no TODOs/placeholders; honesty notice + references to source (2026-06-02 session 4) |
 | D6 | CLI help text accurate for all subcommands | ✅ | 2026-06-02: 15 subcommands confirmed via `pramanix --help` |
 | D7 | Known gaps documented honestly | ✅ | `REPO_AUDIT.md` Part 3 |
 
@@ -95,7 +95,7 @@
 ### Performance
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | F1 | Benchmark baseline captured | ⚠️ Pending | `BENCHMARK_STATUS.md` |
 | F2 | Latency targets documented | ⚠️ Pending | targets not measured production values |
 | F3 | Memory stability tests pass | ⚠️ Check | `tests/perf/test_memory_stability.py` |
@@ -103,7 +103,7 @@
 ### Enterprise Features
 
 | # | Item | Status | Evidence / Notes |
-|---|------|--------|------------------|
+| --- | ------ | -------- | ------------------ |
 | E1 | `ApprovalWorkflow` durability (DB-backed) | ❌ Not done | Documented gap; in-memory only |
 | E2 | LLM consensus real-CI evidence | ❌ Not done | No API keys in standard CI |
 | E3 | Merkle archive encryption | ❌ Not done | Compression only; documented |
@@ -133,9 +133,9 @@
 | Packaging | 6 | 2 | 0 |
 | Security | 11 | 2 | 0 |
 | API Surface | 6 | 0 | 0 |
-| Documentation | 5 | 2 | 0 |
-| **Total** | **38** | **7** | **1** |
+| Documentation | 7 | 0 | 0 |
+| **Total** | **40** | **5** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: 7 items require verification runs (C2 coverage, P6 all-extras, P9 wheel contents, S1 trivy, S3 bandit, D4/D5 docs).
+**Soft blockers**: 5 items require verification runs (C2 coverage, P6 all-extras, P9 wheel contents, S1 trivy, S3 bandit).
 **Last updated**: 2026-06-02 session 4 — C1/C3/C4/C5/P3/P5/S2 newly confirmed.
