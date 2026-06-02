@@ -237,5 +237,6 @@
 3. Pick up the next pending item in the current phase
 4. Update this file after each completed item
 
-**CURRENT PHASE**: Phase 0 — Creating canonical documents
-**NEXT ACTION**: Create `REPO_AUDIT.md`, then `RELEASE_READINESS.md`, then `ENVIRONMENT.md`, `BENCHMARK_STATUS.md`, `BLUEPRINT.md`, `WHITEPAPER.md`
+**CURRENT PHASE**: Phase 11 — Release Readiness (nearly complete)
+**NEXT ACTION**: Wait for C2 coverage run to complete (~7h suite); update RELEASE_READINESS.md with result. If ≥98%, only L1 (license decision) remains as a hard GA blocker.
+**RESUME NOTE**: Coverage run was started in session 4 (2026-06-02). On resume, check if `.coverage` file exists. If tests completed, run `python -m coverage report` to get the percentage.
