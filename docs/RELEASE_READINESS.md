@@ -24,11 +24,11 @@
 
 | # | Item | Status | Evidence / Notes |
 |---|------|--------|------------------|
-| C1 | All unit + adversarial + property tests pass | ⚠️ Check | Run before release |
+| C1 | All unit + adversarial + property tests pass | ✅ | 4701 passed, 0 failed (2026-06-02 session 4) |
 | C2 | Coverage ≥ 98% (`fail_under = 98`) | ⚠️ Check | `pyproject.toml:393` |
-| C3 | mypy strict — 0 errors | ⚠️ Check | `pyproject.toml:154-155` |
+| C3 | mypy strict — 0 errors | ✅ | "Success: no issues found in 112 source files" (2026-06-02 session 4, commit `a6cc05b`) |
 | C4 | ruff lint — 0 violations | ✅ | `ruff check src/pramanix` → "All checks passed!" (2026-06-02 session 4) |
-| C5 | `# type: ignore` (16 in 9 files) | ⚠️ | All legitimate: lazy optional imports + mypy inference limits. Audit 2026-06-02. |
+| C5 | `# type: ignore` — 0 in production source | ✅ | All removed; replaced with proper structural fixes (session 4) |
 | C6 | 0 `# pragma: no cover` in production source | ✅ | Verified in deep audit |
 | C7 | 0 `unittest.mock.patch`/`MagicMock` in tests | ✅ | Zero-Mock Sprint `a0ee71c` |
 | C8 | `assert_and_track` used (not bare `add`) | ✅ | `solver.py:395` |
