@@ -45,7 +45,7 @@
 | P6 | `pip install 'pramanix[all]'` smoke test passes | ⚠️ Check | Heavy extras (crewai, semantic-kernel) skip due to Windows/binary conflicts; core extras verified via P5 |
 | P7 | `setup.cfg` consistent with `pyproject.toml` | ✅ | setup.cfg has only `[mypy]` compat |
 | P8 | `MANIFEST.in` accurate (if needed) | N/A | Poetry handles MANIFEST |
-| P9 | No dev files included in wheel | ⚠️ Check | Verify `poetry build` output |
+| P9 | No dev files included in wheel | ✅ | 119 files; `pramanix/testing.py` is intentional public testing helper (documented). No test/, docs/, .env, or CI files shipped (2026-06-02 session 4) |
 
 ### Security
 
@@ -130,12 +130,12 @@
 |----------|---------|----------|-----------|
 | License | 3 | 0 | 1 |
 | Code Quality | 7 | 1 | 0 |
-| Packaging | 6 | 2 | 0 |
+| Packaging | 7 | 1 | 0 |
 | Security | 11 | 2 | 0 |
 | API Surface | 6 | 0 | 0 |
 | Documentation | 7 | 0 | 0 |
-| **Total** | **40** | **5** | **1** |
+| **Total** | **41** | **4** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: 5 items require verification runs (C2 coverage, P6 all-extras, P9 wheel contents, S1 trivy, S3 bandit).
+**Soft blockers**: 4 items require verification runs (C2 coverage, P6 all-extras, S1 trivy, S3 bandit).
 **Last updated**: 2026-06-02 session 4 — C1/C3/C4/C5/P3/P5/S2 newly confirmed.
