@@ -84,13 +84,14 @@ import pathlib
 import re
 from datetime import datetime as _datetime
 from decimal import Decimal as _Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from pramanix.exceptions import PolicySyntaxError
 from pramanix.expressions import (
     ConstraintExpr,
     ExpressionNode,
     Field,
+    Z3Type,
     _FieldRef,
     _Literal,
 )
@@ -120,7 +121,7 @@ _PYTHON_TYPES: dict[str, type] = {
 # ── Safe expression parser ────────────────────────────────────────────────────
 
 
-def _raise_unexpected_operand(op_name: str, invariant_name: str) -> None:
+def _raise_unexpected_operand(op_name: str, invariant_name: str) -> NoReturn:
     """Raise PolicySyntaxError for an unexpected operand type.
 
     Extracted from the defensive guards in _visit() so the branches are
@@ -131,7 +132,7 @@ def _raise_unexpected_operand(op_name: str, invariant_name: str) -> None:
     )
 
 
-def _raise_unhandled_ast_node(node: Any, invariant_name: str) -> None:
+def _raise_unhandled_ast_node(node: Any, invariant_name: str) -> NoReturn:
     """Raise PolicySyntaxError for an AST node type that passed the allow-list
     but is not handled by any isinstance branch in _visit().
 
@@ -339,9 +340,9 @@ def _visit(
         if isinstance(op, _ast.Lt):
             return left < right
         if isinstance(op, _ast.Eq):
-            return left == right
+            return cast("ConstraintExpr", left == right)
         if isinstance(op, _ast.NotEq):
-            return left != right
+            return cast("ConstraintExpr", left != right)
         raise PolicySyntaxError(
             f"Invariant {invariant_name!r}: unsupported comparison op " f"{type(op).__name__!r}"
         )
@@ -432,7 +433,7 @@ def _build_policy_class(spec: dict[str, Any]) -> type[Policy]:
                 "Bool": bool,
                 "String": str,
             }[z3_type]
-        field_objects[field_name] = Field(field_name, python_type, z3_type)  # type: ignore[arg-type]
+        field_objects[field_name] = Field(field_name, python_type, cast(Z3Type, z3_type))
 
     # ── Wrap each Field in an ExpressionNode for expression parsing ───────────
     expr_nodes: dict[str, ExpressionNode] = {
@@ -548,10 +549,12 @@ def load_policy_toml(content: str) -> type[Policy]:
                            cannot be parsed.
     """
     try:
-        import tomllib  # stdlib 3.11+
+        import tomllib as _tomllib  # stdlib 3.11+
     except ImportError:
         try:
-            import tomli as tomllib  # type: ignore[no-redef]
+            import importlib as _importlib
+
+            _tomllib = _importlib.import_module("tomli")
         except ImportError as exc:
             raise ImportError(
                 "TOML policy loading requires Python 3.11+ (stdlib tomllib) "
@@ -559,7 +562,7 @@ def load_policy_toml(content: str) -> type[Policy]:
             ) from exc
 
     try:
-        spec = tomllib.loads(content)
+        spec = _tomllib.loads(content)
     except Exception as exc:
         raise PolicySyntaxError(f"TOML parse error: {exc}") from exc
 

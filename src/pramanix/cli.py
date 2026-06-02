@@ -36,7 +36,7 @@ import os
 import pathlib
 import sys
 from decimal import Decimal
-from typing import Any, get_args, get_origin
+from typing import Any, Literal, NotRequired, TypedDict, get_args, get_origin
 
 
 def main() -> int:
@@ -984,6 +984,7 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
     policy_var = getattr(args, "policy_var", "policy")
     _suffix = _pathlib.Path(policy_path).suffix.lower()
 
+    policy: Any = None
     if _suffix in (".yaml", ".yml", ".toml"):
         try:
             from pramanix.natural_policy.yaml_loader import load_policy_file
@@ -1010,7 +1011,7 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
             return 2
 
-        policy = getattr(module, policy_var, None)  # type: ignore[assignment]
+        policy = getattr(module, policy_var, None)
         if policy is None:
             print(
                 f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
@@ -1471,7 +1472,14 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _check_z3_solver(solver_factory: type | None = None) -> dict[str, object]:
+class _DoctorCheck(TypedDict):
+    name: str
+    level: Literal["OK", "WARN", "ERROR", "SKIP"]
+    detail: str
+    hint: NotRequired[str]
+
+
+def _check_z3_solver(solver_factory: type | None = None) -> _DoctorCheck:
     """Run the Z3 functional sanity check.
 
     Args:
@@ -1518,7 +1526,7 @@ def _check_z3_solver(solver_factory: type | None = None) -> dict[str, object]:
         }
 
 
-def _check_pointer_width(calcsize_fn: type | None = None) -> dict[str, object]:
+def _check_pointer_width(calcsize_fn: type | None = None) -> _DoctorCheck:
     """Return the pointer-width check result dict.
 
     Args:
@@ -1557,7 +1565,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     import pathlib
     import platform
     import sys as _sys
-    from typing import Literal
 
     checks: list[dict[str, object]] = []
     _pramanix_env = os.environ.get("PRAMANIX_ENV", "").lower()
@@ -1632,7 +1639,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
 
     # ── 3. Pointer width ──────────────────────────────────────────────────────
-    _check(**_check_pointer_width())  # type: ignore[arg-type]
+    _check(**_check_pointer_width())
 
     # ── 4. Core pramanix import ───────────────────────────────────────────────
     try:
@@ -1650,7 +1657,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # ── 5. Z3 solver ─────────────────────────────────────────────────────────
     z3_result = _check_z3_solver()
-    _check(**z3_result)  # type: ignore[arg-type]
+    _check(**z3_result)
 
     # ── 6. Pydantic ───────────────────────────────────────────────────────────
     try:
@@ -2647,6 +2654,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     suffix = policy_path.suffix.lower()
 
     # ── Load policy ───────────────────────────────────────────────────────────
+    policy: Any = None
     if suffix in (".yaml", ".yml", ".toml"):
         try:
             from pramanix.natural_policy.yaml_loader import load_policy_file
@@ -2673,7 +2681,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
             print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
             return 2
 
-        policy = getattr(module, policy_var, None)  # type: ignore[assignment]
+        policy = getattr(module, policy_var, None)
         if policy is None:
             print(
                 f"ERROR: Variable '{policy_var}' not found in {policy_path}. "

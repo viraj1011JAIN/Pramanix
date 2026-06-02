@@ -90,10 +90,11 @@ class BedrockTranslator:
     ) -> None:
         try:
             if _boto3_factory is not None:
-                boto3 = _boto3_factory()
+                _boto3 = _boto3_factory()
             else:
-                import boto3  # type: ignore[no-redef]
-                import botocore.config
+                import importlib as _importlib
+                _boto3 = _importlib.import_module("boto3")
+            import botocore.config
         except ImportError as exc:
             raise ImportError(
                 "boto3 is required for BedrockTranslator. "
@@ -115,7 +116,7 @@ class BedrockTranslator:
         if profile_name:
             session_kwargs["profile_name"] = profile_name
 
-        session = boto3.Session(
+        session = _boto3.Session(
             aws_access_key_id=aws_access_key_id or os.environ.get("AWS_ACCESS_KEY_ID") or None,
             aws_secret_access_key=(
                 aws_secret_access_key or os.environ.get("AWS_SECRET_ACCESS_KEY") or None

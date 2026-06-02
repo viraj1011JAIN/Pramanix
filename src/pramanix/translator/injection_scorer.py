@@ -151,13 +151,16 @@ class CalibratedScorer:
     def __init__(self, *, _sklearn_factory: Any = None) -> None:
         try:
             if _sklearn_factory is not None:
-                TfidfVectorizer, LogisticRegression, Pipeline = _sklearn_factory()
+                _TfidfVectorizer, _LogisticRegression, _Pipeline = _sklearn_factory()
             else:
-                from sklearn.feature_extraction.text import (
-                    TfidfVectorizer,  # type: ignore[no-redef]
-                )
-                from sklearn.linear_model import LogisticRegression  # type: ignore[no-redef]
-                from sklearn.pipeline import Pipeline  # type: ignore[no-redef]
+                import importlib as _importlib
+
+                _sklearn_text = _importlib.import_module("sklearn.feature_extraction.text")
+                _sklearn_linear = _importlib.import_module("sklearn.linear_model")
+                _sklearn_pipeline = _importlib.import_module("sklearn.pipeline")
+                _TfidfVectorizer = _sklearn_text.TfidfVectorizer
+                _LogisticRegression = _sklearn_linear.LogisticRegression
+                _Pipeline = _sklearn_pipeline.Pipeline
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -166,11 +169,11 @@ class CalibratedScorer:
                 "Install it with: pip install 'pramanix[sklearn]'"
             ) from exc
 
-        self._pipeline: Any = Pipeline(
+        self._pipeline: Any = _Pipeline(
             [
                 (
                     "tfidf",
-                    TfidfVectorizer(
+                    _TfidfVectorizer(
                         ngram_range=(1, 3),
                         analyzer="word",
                         max_features=50_000,
@@ -179,7 +182,7 @@ class CalibratedScorer:
                 ),
                 (
                     "lr",
-                    LogisticRegression(
+                    _LogisticRegression(
                         class_weight="balanced",
                         max_iter=1000,
                         solver="lbfgs",

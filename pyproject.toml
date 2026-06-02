@@ -258,6 +258,17 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = [
+    "re2",
+    "detoxify",
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "jsonschema",
+    "jsonschema.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 # audit_sink.py calls datadog_api_client functions that lack type stubs.
 # Suppressing untyped-call check only for this file rather than globally.
 module = ["pramanix.audit_sink"]

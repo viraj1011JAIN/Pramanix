@@ -192,9 +192,7 @@ class PramanixSigner:
 
         if private_key_pem is not None:
             raw = private_key_pem.encode() if isinstance(private_key_pem, str) else private_key_pem
-            self._private_key: Ed25519PrivateKey = cast(
-                "Ed25519PrivateKey", load_pem_private_key(raw, password=None)
-            )
+            self._private_key: Any = load_pem_private_key(raw, password=None)
             if not isinstance(self._private_key, Ed25519PrivateKey):
                 raise ValueError(
                     "PEM key is not an Ed25519 private key. "
@@ -203,9 +201,7 @@ class PramanixSigner:
         else:
             env_pem = os.environ.get(_ENV_KEY_PEM, "")
             if env_pem:
-                self._private_key = cast(
-                    "Ed25519PrivateKey", load_pem_private_key(env_pem.encode(), password=None)
-                )
+                self._private_key = load_pem_private_key(env_pem.encode(), password=None)
                 if not isinstance(self._private_key, Ed25519PrivateKey):
                     raise ValueError("PRAMANIX_SIGNING_KEY_PEM is not an Ed25519 private key.")
             elif force_ephemeral:
@@ -535,7 +531,7 @@ class RS256Signer:
             raise ValueError(
                 f"RSA key size {_loaded.key_size} bits is too small. " "Minimum 2048 bits required."
             )
-        self._private_key: RSAPrivateKey = _loaded
+        self._private_key: Any = _loaded
         self._public_key_obj = self._private_key.public_key()
         self._public_pem = self._public_key_obj.public_bytes(
             encoding=Encoding.PEM,
@@ -588,7 +584,7 @@ class RS256Signer:
 
     def public_key_pem(self) -> bytes:
         """Return RSA public key in PEM (SubjectPublicKeyInfo) format."""
-        return self._public_pem
+        return cast(bytes, self._public_pem)
 
     def key_id(self) -> str:
         """Return 16-char hex key ID derived from SHA-256 of public key PEM."""
@@ -624,7 +620,7 @@ class RS256Verifier:
         loaded = load_pem_public_key(raw)
         if not isinstance(loaded, RSAPublicKey):
             raise ValueError("PEM key is not an RSA public key.")
-        self._public_key: RSAPublicKey = loaded
+        self._public_key: Any = loaded
 
     def verify(self, decision_hash: str, signature: str) -> bool:
         """Return True if *signature* is a valid RS256 signature over *decision_hash*.
@@ -759,7 +755,7 @@ class ES256Signer:
             raise ValueError(
                 f"ES256Signer requires P-256 (secp256r1), got {type(_curve).__name__}."
             )
-        self._private_key: EllipticCurvePrivateKey = _loaded
+        self._private_key: Any = _loaded
         self._public_key_obj = self._private_key.public_key()
         self._public_pem = self._public_key_obj.public_bytes(
             encoding=Encoding.PEM,
@@ -812,7 +808,7 @@ class ES256Signer:
 
     def public_key_pem(self) -> bytes:
         """Return EC public key in PEM (SubjectPublicKeyInfo) format."""
-        return self._public_pem
+        return cast(bytes, self._public_pem)
 
     def key_id(self) -> str:
         """Return 16-char hex key ID derived from SHA-256 of public key PEM."""
@@ -853,7 +849,7 @@ class ES256Verifier:
             raise ValueError("PEM key is not an EC public key.")
         if not isinstance(loaded.curve, SECP256R1):
             raise ValueError(f"ES256Verifier requires P-256, got {type(loaded.curve).__name__}.")
-        self._public_key: EllipticCurvePublicKey = loaded
+        self._public_key: Any = loaded
 
     def verify(self, decision_hash: str, signature: str) -> bool:
         """Return True if *signature* is a valid ES256 signature over *decision_hash*.

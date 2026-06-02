@@ -321,7 +321,7 @@ class ArchiveKeySet:
                     "Call set_active() at least once first."
                 )
             self._active_key_id = new_key_id
-        return old_id  # type: ignore[return-value]
+        return old_id
 
     @property
     def active_key_id(self) -> str:
@@ -691,7 +691,8 @@ class MerkleArchiver:
         if key is not None:
             plaintext = EncryptedArchiveWriter.decrypt(key, enc_path)
         else:
-            plaintext = RotatingKeyArchiveWriter.decrypt(key_set, enc_path)  # type: ignore[arg-type]
+            assert key_set is not None
+            plaintext = RotatingKeyArchiveWriter.decrypt(key_set, enc_path)
 
         tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".merkle.verify", prefix=".pramanix.verify.")
         tmp_path = Path(tmp_path_str)

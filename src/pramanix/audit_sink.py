@@ -400,9 +400,11 @@ class S3AuditSink:
     ) -> None:
         try:
             if _boto3_factory is not None:
-                boto3 = _boto3_factory()
+                _boto3 = _boto3_factory()
             else:
-                import boto3  # type: ignore[no-redef]
+                import importlib as _importlib
+
+                _boto3 = _importlib.import_module("boto3")
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -414,7 +416,7 @@ class S3AuditSink:
         self._prefix = prefix
         self._timeout = timeout
         self._max_queue = max_queue_size
-        self._s3: Any = boto3.client("s3", **boto3_kwargs)
+        self._s3: Any = _boto3.client("s3", **boto3_kwargs)
         # Bounded queue provides backpressure; pool submits are non-blocking.
         self._queue: queue.Queue[tuple[str, bytes] | None] = queue.Queue(maxsize=max_queue_size)
         self._queue_lock = threading.Lock()

@@ -338,9 +338,11 @@ class AwsKmsKeyProvider:
     ) -> None:
         try:
             if _boto3_factory is not None:
-                boto3 = _boto3_factory()
+                _boto3 = _boto3_factory()
             else:
-                import boto3  # type: ignore[no-redef]
+                import importlib as _importlib
+
+                _boto3 = _importlib.import_module("boto3")
         except ImportError as exc:
             raise ImportError(
                 "AwsKmsKeyProvider requires 'boto3'. " "Install it: pip install 'pramanix[aws]'"
@@ -348,7 +350,7 @@ class AwsKmsKeyProvider:
         self._secret_arn = secret_arn
         self._version_stage = version_stage
         self._explicit_version = version
-        self._client = _client or boto3.client("secretsmanager", region_name=region_name)
+        self._client = _client or _boto3.client("secretsmanager", region_name=region_name)
         # H-12: cache fetched key PEM and version to avoid redundant API calls.
         self._cache_lock = threading.Lock()
         self._cached_pem: bytes | None = None
@@ -695,9 +697,11 @@ class HashiCorpVaultKeyProvider:
     ) -> None:
         try:
             if _hvac_factory is not None:
-                hvac = _hvac_factory()
+                _hvac = _hvac_factory()
             else:
-                import hvac  # type: ignore[no-redef]
+                import importlib as _importlib
+
+                _hvac = _importlib.import_module("hvac")
         except ImportError as exc:
             raise ImportError(
                 "HashiCorpVaultKeyProvider requires 'hvac'. "
@@ -706,7 +710,7 @@ class HashiCorpVaultKeyProvider:
         self._secret_path = secret_path
         self._field = field
         self._mount_point = mount_point
-        self._client = _client or hvac.Client(url=url, token=token)
+        self._client = _client or _hvac.Client(url=url, token=token)
         # H-12: cache fetched key PEM and version to avoid redundant API calls.
         self._cache_lock = threading.Lock()
         self._cached_pem: bytes | None = None

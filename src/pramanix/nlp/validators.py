@@ -1110,7 +1110,7 @@ class JSONSchemaValidator:
                 return False, f"invalid JSON string: {exc}"
 
         try:
-            import jsonschema  # type: ignore[import]
+            import jsonschema
 
             try:
                 jsonschema.validate(instance=data, schema=self.schema)
