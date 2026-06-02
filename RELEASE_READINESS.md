@@ -40,9 +40,9 @@
 | P1 | `pyproject.toml` metadata complete | ✅ | Name, version, authors, description, classifiers |
 | P2 | All extras accurate (no phantom dependencies) | ✅ | `pyproject.toml:86-128` |
 | P3 | `pramanix.scripts` entry point works | ⚠️ Check | `pramanix = "pramanix.cli:main"` |
-| P4 | Wheel builds without error | ⚠️ Check | `poetry build` |
-| P5 | `pip install pramanix` smoke test passes | ⚠️ Check | Run in clean venv |
-| P6 | `pip install 'pramanix[all]'` smoke test passes | ⚠️ Check | Run in clean venv |
+| P4 | Wheel builds without error | ✅ | 570KB, 119 files, verified 2026-06-02 |
+| P5 | `pip install pramanix` smoke test passes | ⚠️ Check | Run in clean venv (not yet done) |
+| P6 | `pip install 'pramanix[all]'` smoke test passes | ⚠️ Check | Run in clean venv (not yet done) |
 | P7 | `setup.cfg` consistent with `pyproject.toml` | ✅ | setup.cfg has only `[mypy]` compat |
 | P8 | `MANIFEST.in` accurate (if needed) | N/A | Poetry handles MANIFEST |
 | P9 | No dev files included in wheel | ⚠️ Check | Verify `poetry build` output |
