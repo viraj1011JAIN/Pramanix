@@ -166,7 +166,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
-from pydantic import Field as _PF  # noqa: N814
+from pydantic import Field as _PF
 
 if TYPE_CHECKING:
     from pramanix.provenance import ProvenanceRecord

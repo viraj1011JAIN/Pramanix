@@ -30,8 +30,10 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json as _json
 import os
+import pathlib
 import sys
 from decimal import Decimal
 from typing import Any, get_args, get_origin
@@ -1008,7 +1010,7 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
             print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
             return 2
 
-        policy = getattr(module, policy_var, None)
+        policy = getattr(module, policy_var, None)  # type: ignore[assignment]
         if policy is None:
             print(
                 f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
@@ -1630,7 +1632,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         )
 
     # ── 3. Pointer width ──────────────────────────────────────────────────────
-    _check(**_check_pointer_width())
+    _check(**_check_pointer_width())  # type: ignore[arg-type]
 
     # ── 4. Core pramanix import ───────────────────────────────────────────────
     try:
@@ -1648,7 +1650,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
     # ── 5. Z3 solver ─────────────────────────────────────────────────────────
     z3_result = _check_z3_solver()
-    _check(**z3_result)
+    _check(**z3_result)  # type: ignore[arg-type]
 
     # ── 6. Pydantic ───────────────────────────────────────────────────────────
     try:
@@ -2454,7 +2456,7 @@ def _lint_load_python_policy(
             report("E004", "ERROR", f"Cannot create module spec from {path}")
             return None
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        spec.loader.exec_module(module)
     except Exception as exc:
         report("E004", "ERROR", f"Failed to import {path}: {exc}")
         return None
@@ -2561,10 +2563,8 @@ def _lint_policy_class(policy_cls: Any, report: Any) -> None:
 
     # ── W004: declared-but-unused fields ────────────────────────────────────
     declared_fields: dict[str, Any] = {}
-    try:
+    with contextlib.suppress(AttributeError, TypeError):
         declared_fields = policy_cls.fields()
-    except (AttributeError, TypeError):
-        pass  # policy_cls doesn't expose .fields() — W004 check unavailable
 
     unused = sorted(set(declared_fields) - referenced_fields)
     for field_name in unused:
@@ -2673,7 +2673,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
             print(f"ERROR: Failed to import policy file: {exc}", file=sys.stderr)
             return 2
 
-        policy = getattr(module, policy_var, None)
+        policy = getattr(module, policy_var, None)  # type: ignore[assignment]
         if policy is None:
             print(
                 f"ERROR: Variable '{policy_var}' not found in {policy_path}. "
@@ -2690,7 +2690,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
         print(f"ERROR: Test cases file not found: {test_cases_path}", file=sys.stderr)
         return 2
 
-    test_cases: list[tuple[dict, dict]] = []
+    test_cases: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for line_no, line in enumerate(raw_lines, start=1):
         line = line.strip()
         if not line or line.startswith("#"):

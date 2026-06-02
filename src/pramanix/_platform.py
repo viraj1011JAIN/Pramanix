@@ -13,12 +13,14 @@ ConfigurationError before any solve attempt can be made.
 from __future__ import annotations
 
 import glob as _glob
+from collections.abc import Callable
+from typing import Any
 
 
 def is_musl(
-    _glob_fn=None,
+    _glob_fn: Callable[[str], list[Any]] | None = None,
     _platform_str: str | None = None,
-    _cdll_fn=None,
+    _cdll_fn: Callable[[str], Any] | None = None,
 ) -> bool:
     """Return ``True`` if the current process is running on musl libc.
 
@@ -58,7 +60,7 @@ def is_musl(
     return False
 
 
-def _check_musl(_glob_fn=None) -> None:
+def _check_musl(_glob_fn: Callable[[str], list[Any]] | None = None) -> None:
     """Raise ConfigurationError if running on musl libc (Alpine Linux).
 
     Args:
@@ -80,7 +82,7 @@ def _check_musl(_glob_fn=None) -> None:
         )
 
 
-def check_platform(_glob_fn=None) -> None:
+def check_platform(_glob_fn: Callable[[str], list[Any]] | None = None) -> None:
     """Run all platform compatibility checks.
 
     Called once at Guard import time. Individual checks are no-ops on

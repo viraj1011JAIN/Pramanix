@@ -583,10 +583,7 @@ class RegexClassifier:
     ) -> None:
         self._rules: list[tuple[str, re.Pattern[str]]] = []
         for label, pat in rules:
-            if isinstance(pat, str):
-                compiled = _re_ci_ml(pat)
-            else:
-                compiled = pat
+            compiled = _re_ci_ml(pat) if isinstance(pat, str) else pat
             self._rules.append((label, compiled))
 
     def classify(self, text: str) -> list[str]:
@@ -1008,11 +1005,10 @@ class URLValidator:
             if host == bd.lower() or host.endswith(f".{bd.lower()}"):
                 return False, f"domain {host!r} is in the blocklist"
 
-        if self.allowed_domains is not None:
-            if not any(
-                host == ad.lower() or host.endswith(f".{ad.lower()}") for ad in self.allowed_domains
-            ):
-                return False, f"domain {host!r} is not in the allowlist"
+        if self.allowed_domains is not None and not any(
+            host == ad.lower() or host.endswith(f".{ad.lower()}") for ad in self.allowed_domains
+        ):
+            return False, f"domain {host!r} is not in the allowlist"
 
         if self.require_path and not parsed.path.strip("/"):
             return False, "URL requires a non-empty path component"

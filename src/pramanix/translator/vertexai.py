@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
@@ -154,10 +154,13 @@ class VertexAITranslator:
         system_prompt = build_system_prompt(intent_schema)
         model_lower = self.model.lower()
 
-        if _is_palm(model_lower):
-            invoke_fn = lambda: self._invoke_palm(system_prompt, text)
-        else:
-            invoke_fn = lambda: self._invoke_gemini(system_prompt, text)
+        def _invoke_palm() -> str:
+            return self._invoke_palm(system_prompt, text)
+
+        def _invoke_gemini() -> str:
+            return self._invoke_gemini(system_prompt, text)
+
+        invoke_fn = _invoke_palm if _is_palm(model_lower) else _invoke_gemini
 
         loop = asyncio.get_event_loop()
         try:
@@ -202,7 +205,7 @@ class VertexAITranslator:
             raise ExtractionFailureError(
                 f"[{self.model}] Vertex AI Gemini returned an empty response."
             )
-        return raw
+        return cast(str, raw)
 
     def _invoke_palm(self, system_prompt: str, text: str) -> str:
         """Invoke a PaLM 2 text-generation model synchronously."""
@@ -220,7 +223,7 @@ class VertexAITranslator:
             raise ExtractionFailureError(
                 f"[{self.model}] Vertex AI PaLM returned an empty response."
             )
-        return raw
+        return cast(str, raw)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

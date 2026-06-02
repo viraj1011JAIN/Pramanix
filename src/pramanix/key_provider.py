@@ -38,11 +38,12 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 _DEFAULT_KEY_CACHE_TTL: float = 300.0
 
@@ -293,10 +294,8 @@ class FileKeyProvider:
             os.replace(tmp_path, self._path)
         except Exception:
             os.close(fd)
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
 
 
@@ -341,7 +340,7 @@ class AwsKmsKeyProvider:
             if _boto3_factory is not None:
                 boto3 = _boto3_factory()
             else:
-                import boto3
+                import boto3  # type: ignore[no-redef]
         except ImportError as exc:
             raise ImportError(
                 "AwsKmsKeyProvider requires 'boto3'. " "Install it: pip install 'pramanix[aws]'"
@@ -698,7 +697,7 @@ class HashiCorpVaultKeyProvider:
             if _hvac_factory is not None:
                 hvac = _hvac_factory()
             else:
-                import hvac
+                import hvac  # type: ignore[no-redef]
         except ImportError as exc:
             raise ImportError(
                 "HashiCorpVaultKeyProvider requires 'hvac'. "
@@ -812,4 +811,6 @@ def _derive_public_pem(private_pem: bytes, *, _crypto_factory: Any = None) -> by
         ) from exc
 
     key = load_pem_private_key(private_pem, password=None)
-    return key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    return cast(
+        bytes, key.public_key().public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+    )

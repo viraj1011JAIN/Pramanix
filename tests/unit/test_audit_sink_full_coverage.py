@@ -227,13 +227,17 @@ def test_splunk_sink_with_index_set() -> None:
     from pramanix.audit_sink import SplunkHecAuditSink
 
     sink = SplunkHecAuditSink(
-        hec_url="http://splunk.local:8088/services/collector",
+        hec_url="http://127.0.0.1:18088/services/collector",
         hec_token="test-token",
         index="pramanix_audit",
+        timeout=0.1,
     )
-    assert sink._index == "pramanix_audit"
-    # emit() will fail (no server) but the exception is swallowed internally
-    sink.emit(_safe_decision())
+    try:
+        assert sink._index == "pramanix_audit"
+        # emit() will fail (no server) but the exception is swallowed internally
+        sink.emit(_safe_decision())
+    finally:
+        sink.close()
 
 
 def test_splunk_sink_without_index() -> None:
@@ -241,21 +245,29 @@ def test_splunk_sink_without_index() -> None:
     from pramanix.audit_sink import SplunkHecAuditSink
 
     sink = SplunkHecAuditSink(
-        hec_url="http://splunk.local:8088/services/collector",
+        hec_url="http://127.0.0.1:18088/services/collector",
         hec_token="Splunk already-prefixed",
+        timeout=0.1,
     )
-    assert sink._index is None
-    sink.emit(_safe_decision())  # exception swallowed
+    try:
+        assert sink._index is None
+        sink.emit(_safe_decision())  # exception swallowed
+    finally:
+        sink.close()
 
 
 def test_splunk_sink_bare_token_gets_prefixed() -> None:
     from pramanix.audit_sink import SplunkHecAuditSink
 
     sink = SplunkHecAuditSink(
-        hec_url="http://x",
+        hec_url="http://127.0.0.1:18088/services/collector",
         hec_token="my-raw-token",
+        timeout=0.1,
     )
-    assert sink._auth.startswith("Splunk ")
+    try:
+        assert sink._auth.startswith("Splunk ")
+    finally:
+        sink.close()
 
 
 # ── DatadogAuditSink: ConfigurationError + emit does not raise ────────────────
@@ -284,7 +296,10 @@ def test_datadog_sink_emit_does_not_raise() -> None:
     from pramanix.audit_sink import DatadogAuditSink
 
     sink = DatadogAuditSink(api_key="unit-test-fake-key-xyzzy")
-    sink.emit(_safe_decision())  # API error is swallowed — must not raise
+    try:
+        sink.emit(_safe_decision())  # API error is swallowed — must not raise
+    finally:
+        sink.close()
 
 
 def test_datadog_sink_stores_tags_and_service() -> None:
@@ -298,5 +313,8 @@ def test_datadog_sink_stores_tags_and_service() -> None:
         service="my-service",
         source="my-source",
     )
-    assert sink._tags == "env:prod,version:1"
-    assert sink._service == "my-service"
+    try:
+        assert sink._tags == "env:prod,version:1"
+        assert sink._service == "my-service"
+    finally:
+        sink.close()

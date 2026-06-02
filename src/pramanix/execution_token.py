@@ -1086,6 +1086,7 @@ class PostgresExecutionTokenVerifier:
                 exc,
             )
         self._loop.call_soon_threadsafe(self._loop.stop)
+        assert self._loop_thread is not None
         self._loop_thread.join(timeout=10.0)
 
     async def _ensure_table(self, conn: Any) -> None:

@@ -105,7 +105,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-from pydantic import Field as _PF  # noqa: N814
+from pydantic import Field as _PF
 
 from pramanix.exceptions import FieldTypeError, PolicyCompilationError
 from pramanix.expressions import (

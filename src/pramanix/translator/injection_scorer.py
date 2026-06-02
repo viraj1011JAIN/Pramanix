@@ -154,10 +154,10 @@ class CalibratedScorer:
                 TfidfVectorizer, LogisticRegression, Pipeline = _sklearn_factory()
             else:
                 from sklearn.feature_extraction.text import (
-                    TfidfVectorizer,
+                    TfidfVectorizer,  # type: ignore[no-redef]
                 )
-                from sklearn.linear_model import LogisticRegression
-                from sklearn.pipeline import Pipeline
+                from sklearn.linear_model import LogisticRegression  # type: ignore[no-redef]
+                from sklearn.pipeline import Pipeline  # type: ignore[no-redef]
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 
@@ -366,7 +366,7 @@ class CalibratedScorer:
             else:
                 import sklearn  # noqa: F401 — availability probe only
         except ImportError:
-            from pramanix.exceptions import ConfigurationError as _CE  # noqa: N814
+            from pramanix.exceptions import ConfigurationError as _CE
 
             raise _CE(
                 "scikit-learn is required to load a CalibratedScorer. "

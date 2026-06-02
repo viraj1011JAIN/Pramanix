@@ -238,7 +238,7 @@ def _visit(
     # ── Literal constant ──────────────────────────────────────────────────────
     if isinstance(node, _ast.Constant):
         v = node.value
-        if not isinstance(v, (int, float, bool, str)):
+        if not isinstance(v, int | float | bool | str):
             raise PolicySyntaxError(
                 f"Invariant {invariant_name!r}: literal {v!r} has unsupported "
                 f"type {type(v).__name__!r}.  Supported: int, float, bool, str."
@@ -363,10 +363,7 @@ def _visit(
                 )
         result = promoted[0]
         for operand in promoted[1:]:
-            if isinstance(node.op, _ast.And):
-                result = result & operand
-            else:
-                result = result | operand
+            result = (result & operand) if isinstance(node.op, _ast.And) else (result | operand)
         return result
 
     _raise_unhandled_ast_node(node, invariant_name)
@@ -516,7 +513,7 @@ def load_policy_yaml(content: str) -> type[Policy]:
                            expression cannot be parsed.
     """
     try:
-        import yaml  # type: ignore[import]
+        import yaml
     except ImportError as exc:
         raise ImportError(
             "pyyaml is required for YAML policy loading. " "Install it with: pip install pyyaml"
@@ -554,7 +551,7 @@ def load_policy_toml(content: str) -> type[Policy]:
         import tomllib  # stdlib 3.11+
     except ImportError:
         try:
-            import tomli as tomllib  # type: ignore[no-redef,import]
+            import tomli as tomllib  # type: ignore[no-redef]
         except ImportError as exc:
             raise ImportError(
                 "TOML policy loading requires Python 3.11+ (stdlib tomllib) "

@@ -90,7 +90,7 @@ _DRY_RUN_CONFIG = GuardConfig(
     # Disable timing jitter so dry runs complete without artificial delay.
     min_response_ms=0.0,
     # Disable all audit sinks — dry runs must have zero side-effects.
-    audit_sinks=[],
+    audit_sinks=(),
 )
 
 

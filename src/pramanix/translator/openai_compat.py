@@ -57,7 +57,7 @@ class OpenAICompatTranslator:
             if _openai_factory is not None:
                 openai = _openai_factory()
             else:
-                import openai  # type: ignore[assignment]
+                import openai
         except ImportError as exc:
             raise ImportError(
                 "openai package is required for OpenAICompatTranslator. "

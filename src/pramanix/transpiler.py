@@ -35,9 +35,10 @@ import contextlib
 import enum
 import warnings
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass as _dataclass
 from decimal import Decimal
-from typing import Any, Callable, ClassVar, cast
+from typing import Any, ClassVar, cast
 
 import z3
 

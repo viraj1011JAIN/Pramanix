@@ -144,7 +144,7 @@ class PolicyCoverageReport:
         fields_declared:      All field names declared on the policy.
         fields_seen:          Field names that appeared in at least one intent dict.
         coverage_pct:         Percentage of invariants violated at least once
-                              (0–100).  Used to gauge test-suite completeness.
+                              (0-100).  Used to gauge test-suite completeness.
     """
 
     policy_name: str
@@ -320,7 +320,8 @@ def _ensure_guard_metrics() -> None:
         except Exception as _reg_exc:
             _GUARD_DECISION_COUNTER = False
             _GUARD_VIOLATION_COUNTER = False
-            log.warning(
+            import logging as _gm_log
+            _gm_log.getLogger(__name__).warning(
                 "pramanix.guard: failed to register decision/violation counters "
                 "— policy observability metrics unavailable (%s: %s)",
                 type(_reg_exc).__name__,
@@ -348,7 +349,8 @@ def _emit_decision_metrics(
                 _GUARD_VIOLATION_COUNTER.labels(policy=policy_name, invariant=label).inc()
     except Exception as _e:
         with contextlib.suppress(Exception):
-            log.debug(
+            import logging as _gm_log
+            _gm_log.getLogger(__name__).debug(
                 "pramanix.guard: decision/violation metric increment failed (%s: %s)",
                 type(_e).__name__,
                 _e,
@@ -387,7 +389,8 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
                     )
                 except Exception as _reg_exc:
                     _FIELD_SEEN_COUNTER = False
-                    log.warning(
+                    import logging as _gm_log
+                    _gm_log.getLogger(__name__).warning(
                         "pramanix.guard: failed to register pramanix_policy_field_seen_total "
                         "— field-coverage metrics will be unavailable (%s: %s). "
                         "Check prometheus_client registry health.",
@@ -399,7 +402,8 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
             for _f in field_names:
                 _FIELD_SEEN_COUNTER.labels(policy=policy_name, field=_f).inc()
     except Exception as _e:
-        log.warning(
+        import logging as _gm_log
+        _gm_log.getLogger(__name__).warning(
             "pramanix.guard: metrics increment failed — field-coverage counters may be "
             "inconsistent (%s: %s). Check prometheus_client and counter state.",
             type(_e).__name__,
@@ -493,7 +497,7 @@ class Guard:
         # Spawn WorkerPool for async modes.
         mode = self._config.execution_mode
         if mode in ("async-thread", "async-process"):
-            from pramanix.worker import _RESULT_SEAL_KEY as _default_seal_key
+            from pramanix.worker import _RESULT_SEAL_KEY as _default_seal_key  # noqa: N811
 
             self._pool: WorkerPool | None = WorkerPool(
                 mode=mode,

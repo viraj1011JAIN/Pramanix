@@ -188,7 +188,7 @@ def _init_audit_overflow_counter(_prom_factory: Any = None) -> Any:
         if _prom_factory is not None:
             _prom_init = _prom_factory()
         else:
-            import prometheus_client as _prom_init  # type: ignore[assignment]
+            import prometheus_client as _prom_init
 
         with _AUDIT_METRICS_LOCK:
             _ov_name = "pramanix_audit_sink_overflow_total"
@@ -282,7 +282,7 @@ class KafkaAuditSink:
                 if _kafka_factory is not None:
                     Producer = _kafka_factory()
                 else:
-                    from confluent_kafka import Producer  # type: ignore[assignment]
+                    from confluent_kafka import Producer
             except ImportError as exc:
                 from pramanix.exceptions import ConfigurationError
 
@@ -402,7 +402,7 @@ class S3AuditSink:
             if _boto3_factory is not None:
                 boto3 = _boto3_factory()
             else:
-                import boto3  # type: ignore[assignment]
+                import boto3  # type: ignore[no-redef]
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
 

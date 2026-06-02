@@ -11,7 +11,7 @@ Requires the ``pramanix[translator]`` extra (``anthropic``, ``tenacity``).
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
@@ -167,4 +167,4 @@ class AnthropicTranslator:
             system=system_prompt,
             messages=[{"role": "user", "content": text}],
         ) as stream:
-            return await stream.get_final_text()
+            return cast(str, await stream.get_final_text())

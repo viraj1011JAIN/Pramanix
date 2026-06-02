@@ -27,7 +27,7 @@
 | C1 | All unit + adversarial + property tests pass | ⚠️ Check | Run before release |
 | C2 | Coverage ≥ 98% (`fail_under = 98`) | ⚠️ Check | `pyproject.toml:393` |
 | C3 | mypy strict — 0 errors | ⚠️ Check | `pyproject.toml:154-155` |
-| C4 | ruff lint — 0 violations | ⚠️ Check | `pyproject.toml:266` |
+| C4 | ruff lint — 0 violations | ✅ | `ruff check src/pramanix` → "All checks passed!" (2026-06-02 session 4) |
 | C5 | `# type: ignore` (16 in 9 files) | ⚠️ | All legitimate: lazy optional imports + mypy inference limits. Audit 2026-06-02. |
 | C6 | 0 `# pragma: no cover` in production source | ✅ | Verified in deep audit |
 | C7 | 0 `unittest.mock.patch`/`MagicMock` in tests | ✅ | Zero-Mock Sprint `a0ee71c` |
@@ -85,7 +85,7 @@
 | D3 | `REPO_AUDIT.md` complete | ✅ | Created 2026-06-02 |
 | D4 | `BLUEPRINT.md` complete | ⚠️ In progress | Phase 0 work |
 | D5 | `WHITEPAPER.md` complete | ⚠️ In progress | Phase 0 work |
-| D6 | CLI help text accurate for all subcommands | ⚠️ Check | `pramanix --help` |
+| D6 | CLI help text accurate for all subcommands | ✅ | 2026-06-02: 15 subcommands confirmed via `pramanix --help` |
 | D7 | Known gaps documented honestly | ✅ | `REPO_AUDIT.md` Part 3 |
 
 ---

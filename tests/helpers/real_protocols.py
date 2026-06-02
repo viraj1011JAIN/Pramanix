@@ -2262,3 +2262,89 @@ class _FakeWorkerProcess:
     """
 
     name: str = "ForkPoolWorker-1"
+
+
+# ── AWS Bedrock duck-types ──────────────────────────────────────────────────
+
+
+class _BedrockResponseBody:
+    """AWS Bedrock response body duck-type.  Implements ``.read()`` → JSON bytes.
+
+    Replaces the StreamingBody object returned by boto3 bedrock-runtime's
+    ``invoke_model`` response dict under the ``"body"`` key.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+class _BedrockRuntimeClient:
+    """AWS bedrock-runtime client duck-type for BedrockTranslator tests.
+
+    Provides the same interface as boto3's bedrock-runtime client without
+    making real network calls.  Set ``raises`` to inject an exception on
+    any call.
+
+    Usage::
+
+        client = _BedrockRuntimeClient(
+            invoke_model_body=json.dumps({"content": [{"text": '{"amount": 5}'}]}).encode(),
+        )
+        translator._client = client
+        result = asyncio.run(translator.extract(text, schema))
+    """
+
+    def __init__(
+        self,
+        *,
+        invoke_model_body: bytes | None = None,
+        converse_response: dict | None = None,
+        raises: Exception | None = None,
+    ) -> None:
+        self._invoke_body = invoke_model_body if invoke_model_body is not None else b"{}"
+        self._converse_response = converse_response if converse_response is not None else {}
+        self._raises = raises
+        self.invoke_model_calls: list = []
+        self.converse_calls: list = []
+        self.close_called: bool = False
+
+    def invoke_model(self, **kwargs: Any) -> dict:
+        self.invoke_model_calls.append(kwargs)
+        if self._raises is not None:
+            raise self._raises
+        return {"body": _BedrockResponseBody(self._invoke_body)}
+
+    def converse(self, **kwargs: Any) -> dict:
+        self.converse_calls.append(kwargs)
+        if self._raises is not None:
+            raise self._raises
+        return self._converse_response
+
+    def close(self) -> None:
+        self.close_called = True
+
+
+class _FailingSyncRedisClient:
+    """Sync Redis client duck-type where ALL methods raise RuntimeError.
+
+    Used to exercise the error-handling / fallback paths in ``_RedisCache``
+    and ``IntentCache.from_env()`` without requiring a real Redis server.
+    """
+
+    def get(self, key: str) -> None:
+        raise RuntimeError("redis unavailable")
+
+    def setex(self, key: str, ttl: int, value: str) -> None:
+        raise RuntimeError("redis unavailable")
+
+    def delete(self, *keys: Any) -> None:
+        raise RuntimeError("redis unavailable")
+
+    def scan(self, cursor: int, match: str, count: int) -> None:
+        raise RuntimeError("redis unavailable")
+
+    def ping(self) -> None:
+        raise RuntimeError("redis unavailable")

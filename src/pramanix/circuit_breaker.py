@@ -80,7 +80,7 @@ class _SyncFailureMetric:
                             _Counter = _prom_factory()
                         else:
                             from prometheus_client import (
-                                Counter as _Counter,  # type: ignore[assignment]
+                                Counter as _Counter,
                             )
 
                         self._counter = _prom_register(

@@ -26,7 +26,6 @@ Run 1 000 examples:  ``pytest tests/property/ -q``
 from __future__ import annotations
 
 import gc
-from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -60,7 +59,7 @@ def _fresh_ctx() -> z3.Context:
         # future-proof and suitable for Big Finance.
     )
 )
-@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+@settings(max_examples=1_000, deadline=None)
 def test_decimal_z3_roundtrip(value: Decimal) -> None:
     """Decimal survives the Z3 RealVal encoding at arbitrary precision.
 

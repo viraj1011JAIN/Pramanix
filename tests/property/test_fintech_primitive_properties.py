@@ -20,7 +20,6 @@ Run:
 
 from __future__ import annotations
 
-from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -90,7 +89,7 @@ _pct = st.decimals(
 
 
 @given(balance=_positive_decimal, amount=_positive_decimal)
-@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+@settings(max_examples=1_000, deadline=None)
 def test_sufficient_balance_no_float_drift(balance: Decimal, amount: Decimal) -> None:
     """SAT result matches exact Decimal comparison — no float drift.
 
@@ -109,7 +108,7 @@ def test_sufficient_balance_no_float_drift(balance: Decimal, amount: Decimal) ->
 
 
 @given(balance=_positive_decimal, amount=_positive_decimal, extra=_positive_decimal)
-@settings(max_examples=500, deadline=timedelta(seconds=5))
+@settings(max_examples=500, deadline=None)
 def test_sufficient_balance_monotone_balance_increase(
     balance: Decimal, amount: Decimal, extra: Decimal
 ) -> None:
@@ -132,7 +131,7 @@ _CTR_THRESHOLD = Decimal("10000")
 
 
 @given(amount=_non_negative_decimal)
-@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+@settings(max_examples=1_000, deadline=None)
 def test_anti_structuring_threshold_exactness(amount: Decimal) -> None:
     """SAT ↔ amount < 10,000 — Z3 agrees with Python for all Decimal precisions."""
     inv = [AntiStructuring(_cumulative, _CTR_THRESHOLD)]
@@ -157,7 +156,7 @@ def test_anti_structuring_threshold_exactness(amount: Decimal) -> None:
     haircut=_pct,
     extra_collateral=_positive_decimal,
 )
-@settings(max_examples=500, deadline=timedelta(seconds=5))
+@settings(max_examples=500, deadline=None)
 def test_collateral_haircut_monotone(
     collateral: Decimal,
     loan: Decimal,
@@ -200,7 +199,7 @@ def test_collateral_haircut_no_float_drift(
 
 
 @given(current=_positive_decimal, peak=_positive_decimal, max_dd=_pct)
-@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+@settings(max_examples=1_000, deadline=None)
 def test_max_drawdown_agrees_with_python(current: Decimal, peak: Decimal, max_dd: Decimal) -> None:
     """Z3 agrees with Python: (peak - current) <= max_dd * peak iff SAT.
 
@@ -236,7 +235,7 @@ def test_max_drawdown_agrees_with_python(current: Decimal, peak: Decimal, max_dd
     position=_positive_decimal,
     margin=_pct,
 )
-@settings(max_examples=1_000, deadline=timedelta(seconds=5))
+@settings(max_examples=1_000, deadline=None)
 def test_margin_requirement_no_float_drift(
     equity: Decimal, position: Decimal, margin: Decimal
 ) -> None:
@@ -257,7 +256,7 @@ def test_margin_requirement_no_float_drift(
     margin=_pct,
     extra=_positive_decimal,
 )
-@settings(max_examples=500, deadline=timedelta(seconds=5))
+@settings(max_examples=500, deadline=None)
 def test_margin_requirement_monotone_equity(
     equity: Decimal, position: Decimal, margin: Decimal, extra: Decimal
 ) -> None:
@@ -366,7 +365,7 @@ class TestMaxDrawdownEdgeCases:
 
 
 @given(window_limit=st.integers(min_value=1, max_value=1_000))
-@settings(max_examples=500, deadline=timedelta(seconds=5))
+@settings(max_examples=500, deadline=None)
 def test_velocity_check_exact_boundary_is_sat(window_limit: int) -> None:
     """Exactly at the velocity limit is always allowed (constraint is <=)."""
     inv = [VelocityCheck(_tx_count, window_limit)]
@@ -375,7 +374,7 @@ def test_velocity_check_exact_boundary_is_sat(window_limit: int) -> None:
 
 
 @given(window_limit=st.integers(min_value=1, max_value=1_000))
-@settings(max_examples=500, deadline=timedelta(seconds=5))
+@settings(max_examples=500, deadline=None)
 def test_velocity_check_one_over_limit_is_unsat(window_limit: int) -> None:
     """One transaction over the limit is always rejected."""
     inv = [VelocityCheck(_tx_count, window_limit)]

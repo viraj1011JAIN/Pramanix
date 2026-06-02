@@ -263,12 +263,12 @@ class LangGraphGuardAdapter:
         """
         try:
             intent: dict[str, Any] = (
-                dict(state.get(self._intent_key, state))  # type: ignore[arg-type]
+                dict(state.get(self._intent_key, state))
                 if self._intent_key is not None
                 else dict(state)
             )
             payload: dict[str, Any] = (
-                dict(state.get(self._state_key, {}))  # type: ignore[arg-type]
+                dict(state.get(self._state_key, {}))
                 if self._state_key is not None
                 else {}
             )
@@ -350,7 +350,7 @@ class AutoGenGuardAdapter:
         """
         try:
             intent: dict[str, Any] = (
-                dict(state.get(self._intent_key, state))  # type: ignore[arg-type]
+                dict(state.get(self._intent_key, state))
                 if self._intent_key is not None
                 else dict(state)
             )

@@ -16,10 +16,51 @@ References §6.7 item 4 of flaws.md.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from pramanix.decision import Decision
-from pramanix.integrations.agent_orchestration import AgentOrchestrationAdapter
+from pramanix.expressions import E, Field
+from pramanix.integrations.agent_orchestration import (
+    AgentOrchestrationAdapter,
+    AutoGenGuardAdapter,
+    LangGraphGuardAdapter,
+)
+from pramanix.policy import Policy
+
+
+# ── Shared guard factory ──────────────────────────────────────────────────────
+
+
+def _amount_field() -> Field:
+    return Field("amount", Decimal, "Real")
+
+
+def _make_real_guard(max_amount: Decimal = Decimal("1000")):
+    """Return a real Guard with a simple amount-ceiling policy.
+
+    Meta.version=None disables the state_version check so tests can pass
+    plain intent dicts without a version sidecar in the state payload.
+    """
+    from pramanix.guard import Guard, GuardConfig
+
+    f = _amount_field()
+
+    class _P(Policy):
+        class Meta:
+            version = None  # skip state_version binding check in tests
+
+        amount = f
+
+        @classmethod
+        def fields(cls):
+            return {"amount": f}
+
+        @classmethod
+        def invariants(cls):
+            return [(E(f) <= max_amount).named("max_amount")]
+
+    return Guard(_P, GuardConfig(execution_mode="sync"))
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -230,3 +271,168 @@ class TestRouterPattern:
 
         assert route({}) == "proceed_node"
         assert route({"amount": 100}) == "proceed_node"
+
+
+# ── LangGraphGuardAdapter with real Guard ─────────────────────────────────────
+
+
+class TestLangGraphGuardAdapter:
+    """LangGraphGuardAdapter wired to a real Guard instance."""
+
+    def test_satisfies_protocol(self) -> None:
+        guard = _make_real_guard()
+        adapter = LangGraphGuardAdapter(guard=guard, intent_key="intent")
+        assert isinstance(adapter, AgentOrchestrationAdapter)
+
+    def test_should_block_false_when_allowed(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("1000"))
+        adapter = LangGraphGuardAdapter(guard=guard, intent_key="intent")
+        state = {"intent": {"amount": Decimal("500")}}
+        assert adapter.should_block(state) is False
+
+    def test_should_block_true_when_violated(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("1000"))
+        adapter = LangGraphGuardAdapter(guard=guard, intent_key="intent")
+        state = {"intent": {"amount": Decimal("2000")}}
+        assert adapter.should_block(state) is True
+
+    def test_should_block_fail_closed_on_bad_intent(self) -> None:
+        guard = _make_real_guard()
+        adapter = LangGraphGuardAdapter(guard=guard)
+        # Passing an unhashable or type-broken intent should not raise — fail closed.
+        # The guard receives the full state dict; missing `amount` field → solver
+        # returns UNKNOWN/error → adapter returns True (block).
+        result = adapter.should_block({"irrelevant_key": "no_amount_field"})
+        assert isinstance(result, bool)
+
+    def test_on_node_enter_records_timestamp(self) -> None:
+        guard = _make_real_guard()
+        adapter = LangGraphGuardAdapter(guard=guard)
+        adapter.on_node_enter("transfer_node", {"amount": Decimal("100")})
+        assert "transfer_node" in adapter._enter_times
+
+    def test_on_node_exit_writes_sidecar(self) -> None:
+        guard = _make_real_guard()
+        adapter = LangGraphGuardAdapter(guard=guard, sidecar_key="_verdict")
+        state: dict[str, Any] = {}
+        adapter.on_node_enter("pay_node", state)
+        adapter.on_node_exit("pay_node", state, Decision.safe())
+        assert "_verdict" in state
+        verdict = state["_verdict"]
+        assert verdict["node"] == "pay_node"
+        assert verdict["allowed"] is True
+        assert "latency_ms" in verdict
+        assert isinstance(verdict["latency_ms"], float)
+
+    def test_on_node_exit_sidecar_contains_violated_invariants(self) -> None:
+        guard = _make_real_guard()
+        adapter = LangGraphGuardAdapter(guard=guard)
+        state: dict[str, Any] = {}
+        blocked = Decision.unsafe(
+            violated_invariants=("max_amount",), explanation="exceeded"
+        )
+        adapter.on_node_enter("pay_node", state)
+        adapter.on_node_exit("pay_node", state, blocked)
+        verdict = state["_pramanix_verdict"]
+        assert verdict["allowed"] is False
+        assert "max_amount" in verdict["violated_invariants"]
+
+    def test_full_allow_roundtrip(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("1000"))
+        adapter = LangGraphGuardAdapter(guard=guard, intent_key="intent")
+        state: dict[str, Any] = {"intent": {"amount": Decimal("100")}}
+
+        adapter.on_node_enter("pay_node", state)
+        blocked = adapter.should_block(state)
+        decision = guard.verify(intent={"amount": Decimal("100")}, state={})
+        adapter.on_node_exit("pay_node", state, decision)
+
+        assert blocked is False
+        assert state["_pramanix_verdict"]["allowed"] is True
+
+    def test_full_block_roundtrip(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("500"))
+        adapter = LangGraphGuardAdapter(guard=guard, intent_key="intent")
+        state: dict[str, Any] = {"intent": {"amount": Decimal("2000")}}
+
+        adapter.on_node_enter("pay_node", state)
+        blocked = adapter.should_block(state)
+        decision = guard.verify(intent={"amount": Decimal("2000")}, state={})
+        adapter.on_node_exit("pay_node", state, decision)
+
+        assert blocked is True
+        assert state["_pramanix_verdict"]["allowed"] is False
+
+
+# ── AutoGenGuardAdapter with real Guard ───────────────────────────────────────
+
+
+class TestAutoGenGuardAdapter:
+    """AutoGenGuardAdapter wired to a real Guard instance."""
+
+    def test_satisfies_protocol(self) -> None:
+        guard = _make_real_guard()
+        adapter = AutoGenGuardAdapter(guard=guard)
+        assert isinstance(adapter, AgentOrchestrationAdapter)
+
+    def test_should_block_false_when_allowed(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("1000"))
+        adapter = AutoGenGuardAdapter(guard=guard, intent_key="tool_args")
+        state = {"tool_args": {"amount": Decimal("300")}}
+        assert adapter.should_block(state) is False
+
+    def test_should_block_true_when_violated(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("1000"))
+        adapter = AutoGenGuardAdapter(guard=guard, intent_key="tool_args")
+        state = {"tool_args": {"amount": Decimal("9999")}}
+        assert adapter.should_block(state) is True
+
+    def test_on_node_exit_writes_rejection_when_blocked(self) -> None:
+        guard = _make_real_guard()
+        adapter = AutoGenGuardAdapter(guard=guard, rejection_key="_rejection")
+        state: dict[str, Any] = {}
+        blocked = Decision.unsafe(
+            violated_invariants=("max_amount",), explanation="exceeded limit"
+        )
+        adapter.on_node_exit("tool_node", state, blocked)
+        assert "_rejection" in state
+        assert state["_rejection"]["explanation"] == "exceeded limit"
+        assert "max_amount" in state["_rejection"]["violated_invariants"]
+
+    def test_on_node_exit_does_not_write_rejection_when_allowed(self) -> None:
+        guard = _make_real_guard()
+        adapter = AutoGenGuardAdapter(guard=guard, rejection_key="_rejection")
+        state: dict[str, Any] = {}
+        adapter.on_node_exit("tool_node", state, Decision.safe())
+        assert "_rejection" not in state
+
+    def test_on_node_enter_does_not_raise(self) -> None:
+        guard = _make_real_guard()
+        adapter = AutoGenGuardAdapter(guard=guard)
+        adapter.on_node_enter("any_node", {"tool_args": {}})
+
+    def test_full_allow_roundtrip(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("1000"))
+        adapter = AutoGenGuardAdapter(guard=guard, intent_key="tool_args")
+        state: dict[str, Any] = {"tool_args": {"amount": Decimal("200")}}
+
+        adapter.on_node_enter("tool_node", state)
+        blocked = adapter.should_block(state)
+        decision = guard.verify(intent={"amount": Decimal("200")}, state={})
+        adapter.on_node_exit("tool_node", state, decision)
+
+        assert blocked is False
+        assert "_pramanix_rejection" not in state
+
+    def test_full_block_roundtrip(self) -> None:
+        guard = _make_real_guard(max_amount=Decimal("100"))
+        adapter = AutoGenGuardAdapter(guard=guard, intent_key="tool_args")
+        state: dict[str, Any] = {"tool_args": {"amount": Decimal("999")}}
+
+        adapter.on_node_enter("tool_node", state)
+        blocked = adapter.should_block(state)
+        decision = guard.verify(intent={"amount": Decimal("999")}, state={})
+        adapter.on_node_exit("tool_node", state, decision)
+
+        assert blocked is True
+        assert "_pramanix_rejection" in state

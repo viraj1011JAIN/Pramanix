@@ -10,8 +10,10 @@ from pramanix.oversight.workflow import (
     ApprovalRequest,
     ApprovalStatus,
     EscalationQueue,
-    InMemoryApprovalWorkflow,  # kept importable for tests; not in __all__
     OversightRecord,
+)
+from pramanix.oversight.workflow import (
+    InMemoryApprovalWorkflow as InMemoryApprovalWorkflow,  # intentionally not in __all__; importable for tests
 )
 
 __all__ = [

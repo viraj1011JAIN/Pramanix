@@ -594,10 +594,15 @@ class TestDatadogAuditSinkInit:
         pytest.importorskip("datadog_api_client")
         from pramanix.audit_sink import DatadogAuditSink
 
-        sink = DatadogAuditSink(api_key="dd-test-key", service="my-service", source="my-src")
-        assert sink._service == "my-service"
-        assert sink._source == "my-src"
-        assert sink._tags == ""
+        sink = DatadogAuditSink(
+            api_key="dd-test-key", service="my-service", source="my-src"
+        )
+        try:
+            assert sink._service == "my-service"
+            assert sink._source == "my-src"
+            assert sink._tags == ""
+        finally:
+            sink.close()
 
     def test_datadog_init_uses_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """DatadogAuditSink with api_key=None reads DD_API_KEY env var."""
@@ -605,9 +610,11 @@ class TestDatadogAuditSinkInit:
         monkeypatch.setenv("DD_API_KEY", "env-api-key")
         from pramanix.audit_sink import DatadogAuditSink
 
-        # Just verify the sink initialises without error.
         sink = DatadogAuditSink()
-        assert sink._service == "pramanix"  # default service name
+        try:
+            assert sink._service == "pramanix"  # default service name
+        finally:
+            sink.close()
 
     def test_datadog_emit_sends_log(self) -> None:
         """DatadogAuditSink.emit() calls submit_log on the logs API."""

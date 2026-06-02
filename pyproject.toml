@@ -291,6 +291,16 @@ ignore = [
     "S110",    # try-except-pass — used deliberately in fail-safe paths
     "S603",    # subprocess without shell — intentional in drain/kill paths
     "S607",    # partial path subprocess — intentional in drain/kill paths
+    # N806: lazy optional-dep imports assign SDK classes to PascalCase locals (e.g. ApiClient, Producer).
+    # This is the standard pattern for optional dependencies that may not be installed.
+    "N806",
+    # N814: short private aliases for exception types (e.g. ConfigurationError as _CE) are deliberate.
+    "N814",
+    # TCH001/2/3: moving imports to TYPE_CHECKING is an optimisation; skipping to keep the
+    # code readable and avoid accidental isinstance()-at-runtime breakage during refactors.
+    "TCH001",
+    "TCH002",
+    "TCH003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -338,6 +348,16 @@ ignore = [
 "src/pramanix/interceptors/kafka.py" = ["N818"]
 # CLI is a terminal entry point — print() is the intended output mechanism.
 "src/pramanix/cli.py" = ["T20"]
+# guard.py: `from decimal import Decimal as _Decimal` appears after the
+# check_platform() call which must run before the import to fail-fast on
+# unsupported platforms. E402 suppressed — reordering would break fail-fast.
+"src/pramanix/guard.py" = ["E402"]
+# guard_config.py: GovernanceConfig is imported after the Protocol definition
+# because it depends on types declared in the same file. E402 deliberate.
+"src/pramanix/guard_config.py" = ["E402"]
+# cohere.py: optional-dependency imports (cohere SDK) follow the module-level
+# _log assignment — standard translator pattern matching all other translators.
+"src/pramanix/translator/cohere.py" = ["E402"]
 "tests/integration/test_fastapi_middleware.py" = ["T20"]
 "tests/integration/test_langchain_tool.py" = ["T20"]
 "tests/integration/test_integration_matrix.py" = ["T20"]

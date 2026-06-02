@@ -220,7 +220,7 @@ _solver_timeouts_total: Any = None
 _validation_failures_total: Any = None
 _PROM_AVAILABLE = False
 
-import threading as _gc_threading  # noqa: E402
+import threading as _gc_threading
 
 _GC_PROM_LOCK = _gc_threading.Lock()
 _GC_PROM_METRICS: dict[str, Any] = {}

@@ -31,7 +31,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
@@ -92,7 +92,7 @@ class BedrockTranslator:
             if _boto3_factory is not None:
                 boto3 = _boto3_factory()
             else:
-                import boto3
+                import boto3  # type: ignore[no-redef]
                 import botocore.config
         except ImportError as exc:
             raise ImportError(
@@ -258,7 +258,7 @@ class BedrockTranslator:
             raise ExtractionFailureError(
                 f"[{self.model}] Bedrock returned an empty response body: {body}"
             )
-        return text
+        return cast(str, text)
 
     async def _converse(self, system_prompt: str, text: str) -> dict[str, Any]:
         """Use the Bedrock Converse API (model-agnostic) for unsupported models."""
