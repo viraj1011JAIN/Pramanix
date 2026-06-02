@@ -2024,7 +2024,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             if os.environ.get(_envvar, "").strip():
                 _present_keys.append(f"{_name} ({_envvar})")
             else:
-                _missing_keys.append(f"{_name} → set {_envvar}")
+                _missing_keys.append(f"{_name} -> set {_envvar}")
 
         if _missing_keys and not _present_keys:
             # All installed translators are missing their key.
@@ -2182,7 +2182,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             line = f"  [{icon}] {c['name']}: {c['detail']}"
             print(line)
             if c.get("hint") and c["level"] in ("WARN", "ERROR"):
-                print(f"         → {c['hint']}")
+                print(f"         -> {c['hint']}")
         print()
         ok_count = sum(1 for c in checks if c["level"] == "OK")
         skip_count = sum(1 for c in checks if c["level"] == "SKIP")
