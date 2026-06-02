@@ -19,7 +19,7 @@
 ### Test Location
 
 | File | Purpose | Mark |
-|------|---------|------|
+| ------ |---------| ------ |
 | `tests/benchmarks/test_solver_latency.py` | Z3 solve latency, throughput | `benchmark` |
 | `tests/perf/test_memory_stability.py` | Memory leak detection | `perf` |
 | `tests/perf/` (3 files total) | Performance regression | `perf` |
@@ -37,7 +37,7 @@ pytest tests/perf/ tests/benchmarks/ -m "not slow" --tb=short
 ### Hardware (Dev Machine — NOT Production)
 
 | Spec | Value |
-|------|-------|
+| ------ |-------|
 | OS | Windows 11 Home |
 | Python | 3.13.7 |
 | Z3 version | 4.16.0.0 |
@@ -56,7 +56,7 @@ Measured via `tests/benchmarks/test_solver_latency.py::TestLatencyReport`.
 20 calls, sync mode, warm Z3 (after 3 warmup calls).
 
 | Metric | Measured | CI Budget | Status |
-|--------|----------|-----------|--------|
+| -------- |----------| ----------- |--------|
 | Mean | **2.3 ms** | < 300 ms | ✅ |
 | p50 (median) | **2.0 ms** | < 500 ms | ✅ |
 | p95 | **3.3 ms** | < 500 ms | ✅ |
@@ -65,14 +65,14 @@ Measured via `tests/benchmarks/test_solver_latency.py::TestLatencyReport`.
 ### First Call Latency (Cold Z3)
 
 | Scenario | CI Budget | Status |
-|----------|-----------|--------|
+| ---------- |-----------| -------- |
 | First verify() (SAT) | ≤ 3,000 ms | ✅ Passed |
 | First verify() (UNSAT) | ≤ 3,000 ms | ✅ Passed |
 
 ### Throughput
 
 | Scenario | CI Budget | Implied Rate | Status |
-|----------|-----------|-------------|--------|
+| ---------- |-----------| ------------- |--------|
 | 100 sequential ALLOW calls (warm) | ≤ 30,000 ms total | ~430/s (at 2.3ms mean) | ✅ Passed |
 | 100 mixed ALLOW/BLOCK calls (warm) | ≤ 30,000 ms total | ~430/s (at 2.3ms mean) | ✅ Passed |
 
@@ -84,7 +84,7 @@ Measured via `tests/benchmarks/test_solver_latency.py::TestLatencyReport`.
 ## Memory Stability
 
 | Test | Status | Notes |
-|------|--------|-------|
+| ------ |--------| ------- |
 | `test_memory_stability.py` | ⚠️ Not run this session | Run: `pytest tests/perf/ -v` |
 | Memory leak check (1000 decisions) | Target: < 10 MB growth | Not measured |
 | Z3 context cleanup after decision | Expected: ~0 residual | `delete solver + vars` pattern in `solver.py` |
@@ -97,7 +97,7 @@ This table tracks every performance claim made in README, whitepaper, or marketi
 and whether it is backed by measurements.
 
 | Claim | Source | Evidence Level | Measurement (2026-06-02) |
-|-------|--------|---------------|--------------------------|
+| ------- |--------| --------------- |--------------------------|
 | "Sub-millisecond Z3 evaluation for simple invariants" | README/WHITEPAPER | ✅ Measured | p50=2.0ms (3-invariant policy, dev machine) |
 | "< 5ms median for 3-invariant SAT check" | WHITEPAPER target | ✅ Measured | mean=2.3ms, p50=2.0ms |
 | "< 500ms cold start" | Design intent | ✅ Measured | First call passed ≤3,000ms CI budget |
@@ -124,7 +124,7 @@ higher on production servers with warm JIT).
 ## Competitive Context (Honest)
 
 | SDK | Verification | Latency |
-|-----|-------------|---------|
+| ----- |-------------| --------- |
 | **Pramanix** | Z3 formal (deterministic) | Unknown — not measured |
 | NeMo Guardrails | LLM-based (probabilistic) | ~200-500ms (LLM round-trip) |
 | Guardrails AI | Regex + validators | < 1ms (keyword); ~200ms (LLM) |

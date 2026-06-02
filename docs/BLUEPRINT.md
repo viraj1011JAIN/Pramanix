@@ -67,7 +67,7 @@ These are CI-enforced invariants, not guidelines:
 8 phases in `Guard.verify(intent, state)`:
 
 | Phase | What Happens | Fail Mode |
-|-------|-------------|-----------|
+| ------- |-------------| ----------- |
 | 0 | Input size guard (`max_input_bytes`) | BLOCK if oversized |
 | 1 | Resolver cache population | BLOCK on resolver error |
 | 2 | Pydantic validation (if `intent_model`/`state_model` set) | BLOCK on schema violation |
@@ -107,7 +107,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### Subsystems and Source Files
 
 | Subsystem | Files | Lines | Status |
-|-----------|-------|-------|--------|
+| ----------- |-------| ------- |--------|
 | Guard pipeline | `guard.py`, `guard_config.py`, `guard_pipeline.py` | ~3,000 | Production |
 | Transpiler | `transpiler.py` | 970 | Production |
 | Solver | `solver.py` | 491 | Production |
@@ -133,7 +133,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### The Honest Differentiation Matrix
 
 | Capability | Pramanix | NeMo Guardrails | Guardrails AI | LangChain |
-|-----------|----------|----------------|---------------|-----------|
+| ----------- |----------| ---------------- |---------------| ----------- |
 | Formal verification | ✅ Z3 SMT | ❌ None | ❌ None | ❌ None |
 | Deterministic ALLOW | ✅ Mathematical proof | ❌ Probabilistic | ❌ None | ❌ None |
 | Counterexample on BLOCK | ✅ Z3 model | ❌ None | ❌ None | ❌ None |
@@ -164,7 +164,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### P1 — Critical (GA Blockers)
 
 | Gap | Description | Resolution Path |
-|----|-------------|----------------|
+| ---- |-------------| ---------------- |
 | P1-L | AGPL-3.0 license | Business decision: relicense or establish enterprise tier |
 | P1-CI | LLM consensus CI | Commit API keys to CI secrets + run nightly |
 | P1-DB | Persistent `ApprovalWorkflow` | DB schema design + asyncpg implementation |
@@ -172,7 +172,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### P2 — Important (Post-GA)
 
 | Gap | Description |
-|----|-------------|
+| ---- |-------------|
 | P2-ENC | Merkle archive encryption (plaintext today) |
 | P2-ML | Real ML for ToxicityScorer (sentence-transformers) |
 | P2-COMM | Community validator plugin ecosystem |
@@ -181,7 +181,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### P3 — Nice to Have
 
 | Gap | Description |
-|----|-------------|
+| ---- |-------------|
 | P3-BENCH | Publish verified benchmark results |
 | P3-DOCS | API reference generated from docstrings |
 | P3-CERT | Integration certification badges (LangChain, CrewAI, etc.) |
@@ -226,7 +226,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 Key architectural decisions made and why:
 
 | Decision | Rationale | Date |
-|----------|-----------|------|
+| ---------- |-----------| ------ |
 | Z3 over LLM-as-judge | Determinism: Z3 proves; LLM guesses | Founding |
 | AGPL-3.0 + commercial dual | Copyleft community + paid enterprise | Founding |
 | python:3.11-slim (not Alpine) | z3-solver doesn't compile with musl libc | Early |

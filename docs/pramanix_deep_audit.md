@@ -33,7 +33,7 @@ The formal verification core (Z3 SMT solver) is genuinely world-class — no com
 **Pass 3 corrections invalidate several Pass 2 findings:**
 
 | Pass 2 Claim | Actual State (Pass 3 verified) | Source |
-|---|---|---|
+| --- |---| --- |
 | `rotate_key()` raises `NotImplementedError` in all 3 providers | All three implemented: in-memory, atomic file, AWS Secrets Manager | `key_provider.py:145-164, 267-300, 407-415` |
 | `_DEFAULT_TOXIC_WORDS` contains zero stems | Contains 27 stems across 5 categories | `nlp/validators.py:328-364` |
 | InMemory* classes exported in `__all__` | Removed from `__all__` | `__init__.py:316-318` |
@@ -49,7 +49,7 @@ These corrections materially improve the production confidence score.
 **Pass 4 corrections invalidate several Pass 3 findings:**
 
 | Pass 3 Claim | Actual State (Pass 4 verified) | Source |
-|---|---|---|
+| --- |---| --- |
 | Both modules raise `RuntimeError` at import if google-re2 absent | `_RE2_AVAILABLE = False` at module level; `_require_re2()` raises `ConfigurationError` **lazily** when PII/regex features are first used — module imports cleanly without RE2 | `nlp/validators.py:52-62`; `injection_filter.py:55-65` |
 | `_DEFAULT_TOXIC_WORDS` has 27 stems across 5 categories, zero slurs | **58 stems across 8 categories** including comprehensive slur coverage | `nlp/validators.py:373-430` |
 | `ClockProtocol` injection seam absent from `transpiler._NowOp()` | `GuardConfig.clock: Callable[[], float] \| None` wired end-to-end; `transpiler.py:645` uses `clock() if clock is not None else _time.time()` | `guard_config.py:551`; `transpiler.py:645` |
@@ -60,7 +60,7 @@ These corrections materially improve the production confidence score.
 | 4,494 passing tests | **5,023 collected** | `pytest --co -q` (2026-05-27) |
 
 | Dimension | Pass 3 | Pass 4 | Reality |
-|-----------|--------|--------|---------|
+| ----------- |--------| -------- |---------|
 | Core Formal Engine | 98 | **98** | World-class, unmatched |
 | Cryptographic Audit Trail | 95 | **95** | Excellent |
 | Compliance/Regulatory Mapping | 90 | **90** | Unique advantage |
@@ -433,7 +433,7 @@ Both handlers: log at ERROR with `exc_info=True` (full traceback captured) + inc
 `ci.yml` (845 lines) is among the most thorough CI pipelines for a Python SDK:
 
 | Stage | Details |
-|-------|---------|
+| ------- |---------|
 | SAST | `pip-audit` + `bandit` + `semgrep` — runs before tests |
 | Alpine/musl ban gate | Rejects Z3 glibc-incompatible builds |
 | Lint + mypy strict | Enforced before test matrix |
@@ -516,7 +516,7 @@ Both `nlp/validators.py` and `injection_filter.py` now use a **lazy** RE2 import
 #### ML Model Fallback Degradation (Still Open)
 
 | Model | Absent Behavior | Detection Evasion |
-|-------|----------------|-------------------|
+| ------- |----------------| ------------------- |
 | `detoxify` | WARNING log + `pramanix_nlp_degradation_total` counter + keyword-density fallback | Synonyms, obfuscation, foreign language |
 | `sentence-transformers` | WARNING log + `pramanix_nlp_degradation_total` counter + Jaccard overlap fallback | Any paraphrasing |
 
@@ -554,7 +554,7 @@ NeMo Guardrails ships production-tested LLM rails for toxicity, jailbreak, topic
 **Verified inventory of silent swallows in `src/pramanix/`:**
 
 | File | Line(s) | Handler | Impact |
-|------|---------|---------|--------|
+| ------ |---------| --------- |--------|
 | `circuit_breaker.py` | 79 | `except Exception: return` | Prometheus increment failure — silent return |
 | `circuit_breaker.py` | 1276-1278 | `except Exception: async with self._lock: self._probing = False` | Resets probe flag but swallows exception detail |
 | `crypto.py` | 98 | `except Exception: pass` | Crypto cleanup error silently swallowed |
@@ -635,7 +635,7 @@ They remain directly importable: `from pramanix.audit_sink import InMemoryAuditS
 **5,023 collected tests** (up from 4,494 at Pass 3). The Zero-Mock Sprint (commit `a0ee71c`, `cad42a0`) eliminated every `unittest.mock.patch` / `MagicMock` / `AsyncMock` site from the test suite. `tests/helpers/real_protocols.py` (1,948 lines) centralises duck-typed protocol implementations. Pass 3's structural mock problem is materially resolved.
 
 | Mock Pattern | Pass 3 Count | Pass 4 Count | What Is Never Exercised |
-|-------------|------|------|------------------------|
+| ------------- |------| ------ |------------------------|
 | `patch()` / `patch.object()` replacing real callables | 50+ sites (15+ files) | **0** (Zero-Mock Sprint) | — |
 | `patch.dict(sys.modules)` hiding real packages | ~21 sites (9 files) | ~21 sites (9 files) | Real import failures |
 | `monkeypatch.setattr` replacing real functions | 80+ sites (46 files) | Reduced (scope not re-counted) | Real function logic |
@@ -708,7 +708,7 @@ The most security-relevant inputs (empty, single-char, injection-prefix, overlon
 Tests directly mutate private attributes to reach states that the real system would reach only through internal transitions:
 
 | File | Line | Mutation |
-|------|------|----------|
+| ------ |------| ---------- |
 | `test_audit_sink_full_coverage.py` | 121 | `_sink_mod._OVERFLOW_COUNTER = None` |
 | `test_audit_sink_full_coverage.py` | 184 | `sink._queue_depth = 1` |
 | `test_circuit_breaker_and_guard_paths.py` | 551 | `sink._queue_depth = 0` |
@@ -732,7 +732,7 @@ The most severe case: `tests/integration/test_gemini_translator.py:41-50` constr
 `docs/Ideal_Architecture.md` (4,271 lines, 180 KB) describes the complete ideal Pramanix. Current implementation status:
 
 | Blueprint Item | Status | Detail |
-|---------------|--------|--------|
+| --------------- |--------| -------- |
 | `SolverProtocol` injectable via `GuardConfig(solver=...)` | ✅ FIXED (Pass 4) | `solver_factory: Callable[[Any], SolverProtocol] \| None` at `guard_config.py:528`; production guard at line 726 |
 | `ClockProtocol` injectable in transpiler | 🟡 PARTIAL (Pass 4) | `GuardConfig.clock: Callable[[], float] \| None` at line 551; wired into `transpile(..., clock)` at `transpiler.py:645`; no formal `ClockProtocol` Protocol type |
 | `tests/helpers/solver_stubs.py` | ✅ FIXED (Pass 4) | 6 real `SolverProtocol` stubs: Raising, Timeout, Failing, Slow, Unsat, Sat |
@@ -786,7 +786,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### 5.1 vs. NeMo Guardrails
 
 | Capability | Pramanix | NeMo Guardrails | Winner |
-|-----------|----------|-----------------|--------|
+| ----------- |----------| ----------------- |--------|
 | Formal verification (SMT) | ✅ Z3, complete for numerics | ❌ Not present | **Pramanix** |
 | Regulatory compliance oracle | ✅ SOC2, HIPAA, EU AI Act, GDPR | ❌ Not present | **Pramanix** |
 | Cryptographic audit trail | ✅ Ed25519, Merkle, HMAC | 🟡 Basic logging | **Pramanix** |
@@ -805,7 +805,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### 5.2 vs. Guardrails AI
 
 | Capability | Pramanix | Guardrails AI | Winner |
-|-----------|----------|---------------|--------|
+| ----------- |----------| --------------- |--------|
 | Formal verification (SMT) | ✅ Z3, unmatched | ❌ Heuristic only | **Pramanix** |
 | Regulatory compliance mapping | ✅ SOC2, HIPAA, EU AI Act | ❌ Not present | **Pramanix** |
 | Key rotation | ✅ Atomic in all 3 providers | 🟡 Not primary focus | **Pramanix** |
@@ -826,7 +826,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### 🔴 P0 — Existential (Do These First)
 
 | # | Gap | Current State | Effort | Impact |
-|---|-----|--------------|--------|--------|
+| --- |-----| -------------- |--------| -------- |
 | P0.1 | **Re-license to Apache-2.0** (or dual commercial) | AGPL-3.0 | Medium | Removes #1 adoption blocker |
 | ~~P0.2~~ | ~~**Make `SolverProtocol` injectable via `GuardConfig(solver=...)`**~~ | ✅ **FIXED** (Pass 4) — `solver_factory` at `guard_config.py:528`; production guard at line 726 | — | — |
 | ~~P0.3~~ | ~~`DistributedCircuitBreaker` silent default~~ | ✅ **FIXED** — raises `ConfigurationError` | — | — |
@@ -836,7 +836,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### 🟠 P1 — Enterprise Blockers
 
 | # | Gap | Effort | Impact |
-|---|-----|--------|--------|
+| --- |-----| -------- |--------|
 | ~~P1.1~~ | ~~**Formalize `ClockProtocol`**~~ | 🟡 **PARTIAL** (Pass 4) — `Callable[[], float] \| None` injection exists (`guard_config.py:551`, `transpiler.py:645`); formal `Protocol` type still absent | Low | Deterministic time-policy testing |
 | P1.2 | **Real NLP validators** — production toxicity model with slur coverage | High | Guardrails AI parity on content safety |
 | P1.3 | **Live LLM CI job** — `ollama`-based containerised model in ci.yml | High | Validates Layer 4 consensus in CI |
@@ -850,7 +850,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### 🟡 P2 — Quality & Completeness
 
 | # | Gap | Effort | Impact |
-|---|-----|--------|--------|
+| --- |-----| -------- |--------|
 | ~~P2.1~~ | ~~**Concurrent-mutation test for CB `_lock`**~~ | ✅ **FIXED** — `TestCircuitBreakerLockLinearizability` (200 coroutines) passes; `@functools.cached_property` fix verified. | — |
 | ~~P2.2~~ | ~~**Add `tests/helpers/solver_stubs.py`**~~ | ✅ **FIXED** (Pass 4) — 6 real `SolverProtocol` stubs shipped | — | — |
 | ~~P2.3~~ | ~~**Non-numeric state injection integration tests**~~ | ✅ **FIXED** — `tests/integration/test_corrupted_state_injection.py` — 19 tests: string/None/list/dict/inf/nan/bool for state fields, and string/None/inf for intent fields; all BLOCK. | — |
@@ -867,7 +867,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### 🟢 P3 — Excellence (Giant-Tier Polish)
 
 | # | Gap | Effort |
-|---|-----|--------|
+| --- |-----| -------- |
 | P3.1 | Replace 5 stub integrations (CrewAI, DSPy, Haystack, SemanticKernel, PydanticAI) with real end-to-end tests | High |
 | ~~P3.2~~ | ~~Populate `_DEFAULT_TOXIC_WORDS` with curated slur stems~~ | ✅ **FIXED** (Pass 4) — 58 stems / 8 categories including slurs at `nlp/validators.py:373-430` |
 | P3.3 | Establish commercial support tier / enterprise SLA | High |
@@ -884,7 +884,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 ### What the Benchmarks Cover
 
 | Script | Measures |
-|--------|---------|
+| -------- |---------|
 | `100m_audit_merge.py` | 100M decision Merkle merge throughput |
 | `100m_orchestrator_fast.py` | Orchestrator latency at scale |
 | `100m_worker_fast.py` | Async-process worker throughput |
@@ -895,7 +895,7 @@ Blueprint specified `__hash__ = None` (unhashable, strict). Current implementati
 All benchmark results are from **v0.8.0 on consumer laptop hardware.** Since then, these changes affect latency:
 
 | Change | Latency Effect |
-|--------|--------------|
+| -------- |--------------|
 | `@functools.cached_property` circuit-breaker fix | Changed concurrency behavior |
 | 8× guard_pipeline exception re-raise | Changed BLOCK path |
 | `_emit_field_seen()` added to every `verify()` | Added overhead to ALLOW path |
@@ -919,7 +919,7 @@ None of these are reflected in published numbers. **To claim Giant-tier:** Run a
 Full inventory of confirmed-fixed items, with exact source citations:
 
 | Item | How Fixed | Source |
-|------|-----------|--------|
+| ------ |-----------| -------- |
 | `DistributedCircuitBreaker` silent `InMemoryDistributedBackend` default | Raises `ConfigurationError` if `backend=None` | `circuit_breaker.py:573-579` |
 | RE2 fallback to stdlib `re` (ReDoS risk) — nlp/validators.py | **(Pass 3)** Raised `RuntimeError` at import; **(Pass 4)** lazy `_require_re2()` → `ConfigurationError` on use | `nlp/validators.py:52-62` |
 | RE2 fallback to stdlib `re` (ReDoS risk) — injection_filter.py | **(Pass 3)** Raised `RuntimeError` at import; **(Pass 4)** lazy `_require_re2()` → `ConfigurationError` on use | `translator/injection_filter.py:55-65` |
@@ -974,7 +974,7 @@ But:
 ### What It Takes to Be Giant-Tier
 
 | Dimension | Current State | Required State |
-|-----------|--------------|----------------|
+| ----------- |--------------| ---------------- |
 | License | AGPL-3.0 | Apache-2.0 or commercial dual |
 | NLP Safety | Beta (58 stems / 8 categories; detoxify + sentence-transformers integration; Prometheus-observable degradation) | Production model, slur coverage, 50+ validators |
 | Real LLM CI | Zero | At least 1 containerized model |
@@ -1022,7 +1022,7 @@ Everything else is optimization.
 **Security Guarantees (documented in module header, verified in source):**
 
 | # | Guarantee | Implementation |
-|---|-----------|---------------|
+| --- |-----------| --------------- |
 | 1 | Algorithm whitelist — only RS256 and ES256 | `_ALLOWED_ALGORITHMS: Final[frozenset] = frozenset({"RS256", "ES256"})` (line 96) |
 | 2 | Signature verified BEFORE exp/nbf/aud | Prevents timing oracle on claim validation |
 | 3 | `exp` required — missing `exp` rejected | JWT-SVIDs without expiry are not accepted |
@@ -1089,7 +1089,7 @@ class AgentPolicy(Policy):
 `cli.py` provides the `pramanix` command-line interface. Available subcommands (verified from source):
 
 | Command | Purpose | Gap |
-|---------|---------|-----|
+| --------- |---------| ----- |
 | `pramanix check` / `lint` | Readiness check: Python version, Z3, Redis, extras, signing key | Correct alias; good first-run UX |
 | `pramanix verify-proof <token>` | Verify a JWS decision proof; reads `PRAMANIX_SIGNING_KEY` | Tested via `test_verify_proof_cli.py` |
 | `pramanix simulate --policy FILE --intent JSON` | **Runs `Guard.verify()` without LLM or side-effects** | Exists but `--suggest-fix` flag is untested |
@@ -1115,7 +1115,7 @@ class AgentPolicy(Policy):
 Beyond the three core key providers, the SDK ships cloud key store providers. Each requires an explicit extra:
 
 | Provider | Extra | Storage | `rotate_key()` |
-|----------|-------|---------|----------------|
+| ---------- |-------| --------- |----------------|
 | `PemKeyProvider` | none | In-memory PEM | ✅ New Ed25519 in-memory |
 | `EnvKeyProvider` | none | Environment variable | ❌ `NotImplementedError` (by design, `supports_rotation=False`) |
 | `FileKeyProvider` | none | Filesystem PEM | ✅ Atomic `mkstemp` + `os.replace()` |
@@ -1180,7 +1180,7 @@ policy = await compiler.compile(
 **Core mandatory dependencies (always installed):**
 
 | Package | Minimum | Purpose | Risk |
-|---------|---------|---------|------|
+| --------- |---------| --------- |------|
 | `pydantic` | 2.5+ | Schema validation, model serialization | Supply chain: widely used |
 | `z3-solver` | 4.12+ | SMT formal verification kernel | C extension; Alpine/musl incompatible |
 | `structlog` | 23.2+ | Structured JSON logging | Low risk |
@@ -1189,13 +1189,13 @@ policy = await compiler.compile(
 **Security-mandatory extras (enforce via `pramanix[security]`):**
 
 | Package | Purpose | If Absent |
-|---------|---------|-----------|
+| --------- |---------| ----------- |
 | `google-re2` | Linear-time regex for PII/injection | Lazy `ConfigurationError` when RE2 features used — module imports cleanly without RE2 |
 
 **Optional but significant extras:**
 
 | Extra | Key Packages | If Absent |
-|-------|-------------|-----------|
+| ------- |-------------| ----------- |
 | `[metrics]` | `prometheus-client` | All metrics silently no-op (None guards) |
 | `[tracing]` | `opentelemetry-sdk` | All spans no-op (`nullcontext`) |
 | `[redis]` | `redis[hiredis]` | RedisExecutionTokenVerifier, RedisDistributedBackend unavailable |
@@ -1237,7 +1237,7 @@ Both Dockerfiles bake in `PRAMANIX_TRANSLATOR_ENABLED="false"` — the LLM pathw
 **Measured (v0.8.0, consumer laptop — see §7 for caveat):**
 
 | Mode | P50 | P95 | P99 |
-|------|-----|-----|-----|
+| ------ |-----| ----- |-----|
 | `sync` (in-process Z3) | ~2ms | ~6ms | ~14ms |
 | `async-thread` (ThreadPoolExecutor) | ~3ms | ~8ms | ~18ms |
 | `async-process` (ProcessPoolExecutor) | ~8ms | ~15ms | ~28ms |
@@ -1265,7 +1265,7 @@ Pramanix ships a comprehensive observability layer that is rarely discussed but 
 **Prometheus Metrics (when `pramanix[metrics]` installed):**
 
 | Metric | Type | Labels | Purpose |
-|--------|------|--------|---------|
+| -------- |------| -------- |---------|
 | `pramanix_decisions_total` | Counter | `policy`, `outcome` | Decision rate and block ratio |
 | `pramanix_decision_latency_seconds` | Histogram | `policy`, `mode` | P50/P95/P99 per policy per mode |
 | `pramanix_solver_timeouts_total` | Counter | `policy` | Z3 timeout rate (DoS signal) |
@@ -1293,7 +1293,7 @@ All metrics use `None` guards — if `prometheus-client` is absent, every `.labe
 All open items from `flaws.md`, `gaps.md`, and this audit, ranked by production impact:
 
 | Priority | Item | File/Location | Severity |
-|---------|------|--------------|---------|
+| --------- |------| -------------- |---------|
 | P0.1 | Re-license to Apache-2.0 or dual commercial | `pyproject.toml`, `LICENCE` | 🔴 Critical |
 | ~~P0.2~~ | ~~`SolverProtocol` injectable via `GuardConfig(solver=...)`~~ | `guard_config.py:528,726-733` | ✅ **FIXED (Pass 4)** |
 | P0.5 | Remove `--fail-under=95` CI override; enforce 98% | `ci.yml:376` | 🟠 High |

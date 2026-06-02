@@ -26,7 +26,7 @@ with enterprise SaaS deployment. All other blockers are technical and have clear
 ## Component Maturity Matrix
 
 | Component | Score | Reality |
-|-----------|-------|---------|
+| ----------- |-------| --------- |
 | Z3 Formal Verification Core | 98 | World-class; no competitor has this |
 | Cryptographic Audit Trail | 95 | Ed25519/RS256/ES256 + Merkle |
 | Compliance Oracle | 92 | 31 built-in mappings, 5 frameworks |
@@ -248,7 +248,7 @@ Real alternatives used:
 ### 5.1 Verified Gates
 
 | Gate | Status |
-|------|--------|
+| ------ |--------|
 | SAST (bandit/semgrep) | ✅ Job: `sast` |
 | Alpine ban (Docker) | ✅ Checked in CI |
 | ruff lint | ✅ Job: `lint` |
@@ -275,7 +275,7 @@ Real alternatives used:
 ### Required (always installed)
 
 | Package | Version | Purpose |
-|---------|---------|---------|
+| --------- |---------| --------- |
 | `pydantic` | ^2.5 | Policy and config validation |
 | `z3-solver` | ^4.12 | SMT solving |
 | `structlog` | ^23.2 | Structured logging |
@@ -284,7 +284,7 @@ Real alternatives used:
 ### Extras (opt-in)
 
 | Extra | Key Packages | Purpose |
-|-------|-------------|---------|
+| ------- |-------------| --------- |
 | `translator` | httpx, openai, anthropic, tenacity | LLM translators |
 | `otel` | opentelemetry-sdk | OpenTelemetry tracing |
 | `fastapi` | fastapi, starlette | FastAPI middleware |
@@ -306,5 +306,5 @@ Real alternatives used:
 ## CHANGE LOG
 
 | Date | Change | Author |
-|------|--------|--------|
+| ------ |--------| -------- |
 | 2026-06-02 | Initial creation, supersedes `docs/pramanix_deep_audit.md` | Viraj Jain |

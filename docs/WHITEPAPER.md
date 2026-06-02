@@ -218,7 +218,7 @@ soc2_mappings = oracle.get_mappings(RegulatoryFramework.SOC2)
 `default_oracle()` ships with 31 pre-built `ControlMapping` instances:
 
 | Framework | Mappings | Example Control |
-|-----------|---------|----------------|
+| ----------- |---------| ---------------- |
 | SOC2 | 7 | CC6.1: Logical access controls → `authorized_role` |
 | EU AI Act | 8 | Art.14: Human oversight → `human_oversight_required` |
 | HIPAA | 6 | §164.312(a)(1): Access control → `phi_least_privilege` |
@@ -243,7 +243,7 @@ report = reporter.generate()
 ### 5.1 Architecture Comparison
 
 | Dimension | Pramanix | NeMo Guardrails | Guardrails AI |
-|-----------|----------|----------------|---------------|
+| ----------- |----------| ---------------- |---------------|
 | Safety model | Formal (Z3 SMT) | Probabilistic (Colang) | Schema validation |
 | ALLOW guarantee | Mathematical proof | "probably compliant" | Structurally conformant |
 | BLOCK evidence | Counterexample + attribution | Log message | Validation error |
@@ -327,7 +327,7 @@ characteristics on simple formulas. They are not measured production numbers.
 See `BENCHMARK_STATUS.md` for honest status of performance evidence.
 
 | Scenario | Target |
-|----------|--------|
+| ---------- |--------|
 | Single invariant, SAT | < 1 ms |
 | 10 invariants, SAT | < 5 ms |
 | 10 invariants, UNSAT + attribution | < 20 ms |

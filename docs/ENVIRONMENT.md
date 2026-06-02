@@ -44,7 +44,7 @@ The formal verification core is fully functional with no external services.
 ## Python Version
 
 | Version | Status |
-|---------|--------|
+| --------- |--------|
 | 3.11 | ✅ Supported (declared minimum) |
 | 3.12 | ✅ Supported |
 | 3.13 | ✅ CI-tested (primary) |
@@ -304,7 +304,7 @@ Install: `pip install 'pramanix[otel]'`
 ## Guard Tuning Variables
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- |---------| ------------- |
 | `PRAMANIX_ENV` | `development` | Set to `production` to block InMemory* sinks |
 | `PRAMANIX_LOG_LEVEL` | `INFO` | structlog level |
 | `PRAMANIX_SOLVER_TIMEOUT_MS` | `5000` | Z3 solver timeout per call (ms) |
