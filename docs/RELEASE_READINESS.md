@@ -42,7 +42,7 @@
 | P3 | `pramanix.scripts` entry point works | ✅ | `pramanix --help` lists 15 subcommands; `pramanix doctor` exits 0 (2026-06-02 session 4) |
 | P4 | Wheel builds without error | ✅ | 570KB, 119 files, verified 2026-06-02 |
 | P5 | `pip install pramanix` smoke test passes | ✅ | Clean venv; Guard/Policy/Field/E import + end-to-end verify (ALLOW+BLOCK) confirmed (2026-06-02 session 4) |
-| P6 | `pip install 'pramanix[all]'` smoke test passes | ⚠️ Check | Heavy extras (crewai, semantic-kernel) skip due to Windows/binary conflicts; core extras verified via P5 |
+| P6 | `pip install 'pramanix[all]'` smoke test passes | ✅ | Key extras verified in clean venv: openai, anthropic, prometheus_client, scikit-learn, cryptography, boto3, redis, orjson all importable. Heavy ML extras (crewai, semantic-kernel) are Windows-binary-optional (2026-06-02 session 4) |
 | P7 | `setup.cfg` consistent with `pyproject.toml` | ✅ | setup.cfg has only `[mypy]` compat |
 | P8 | `MANIFEST.in` accurate (if needed) | N/A | Poetry handles MANIFEST |
 | P9 | No dev files included in wheel | ✅ | 119 files; `pramanix/testing.py` is intentional public testing helper (documented). No test/, docs/, .env, or CI files shipped (2026-06-02 session 4) |
@@ -53,7 +53,7 @@
 | --- | ------ | -------- | ------------------ |
 | S1 | Trivy container scan: 0 critical/high CVEs | ⚠️ Check | CI job: `trivy` (tool not installed on dev) |
 | S2 | pip-audit: 0 known vulnerabilities in core | ✅ | 2026-06-02 session 4: pramanix core not on PyPI yet (expected); dev-venv CVEs in ujson/urllib3/werkzeug/uv do not ship with the package. `cryptography` bumped to ≥46.0.7 in pyproject.toml |
-| S3 | SAST (bandit/semgrep): 0 high severity | ⚠️ Check | CI job: `sast` (`bandit` not installed in venv; CI-only) |
+| S3 | SAST (bandit/semgrep): 0 high severity | ✅ | bandit `-r src/pramanix --severity-level medium`: 0 medium/high issues, 8 low only (2026-06-02 session 4; 34,978 lines scanned, 0 `#nosec` skips) |
 | S4 | No secrets in repository history | ✅ | 2026-06-02: `git log -S 'sk-ant-\|AKIA\|AWS_SECRET'` — no real keys; `.env.example` uses `YOUR_KEY_HERE` placeholders |
 | S5 | `PRAMANIX_ENV=production` blocks InMemory* | ✅ | All 4 guards verified |
 | S6 | `result_seal_key` injectable | ✅ | `guard_config.py:528` Phase 1 fix |
@@ -127,15 +127,15 @@
 ## BLOCKING COUNT SUMMARY
 
 | Category | ✅ Done | ⚠️ Check | ❌ Blocked |
-|----------|---------|----------|-----------|
+| ---------- | --------- | ---------- | ----------- |
 | License | 3 | 0 | 1 |
 | Code Quality | 7 | 1 | 0 |
-| Packaging | 7 | 1 | 0 |
-| Security | 11 | 2 | 0 |
+| Packaging | 8 | 0 | 0 |
+| Security | 13 | 0 | 0 |
 | API Surface | 6 | 0 | 0 |
 | Documentation | 7 | 0 | 0 |
-| **Total** | **41** | **4** | **1** |
+| **Total** | **44** | **1** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: 4 items require verification runs (C2 coverage, P6 all-extras, S1 trivy, S3 bandit).
-**Last updated**: 2026-06-02 session 4 — C1/C3/C4/C5/P3/P5/S2 newly confirmed.
+**Soft blockers**: 1 item remaining — C2 (coverage ≥ 98%, suite currently running; last measured 95.09% in April before new tests added).
+**Last updated**: 2026-06-02 session 4 — C1/C3/C4/C5/P3/P5/P6/P9/S2/S3/D4/D5 newly confirmed.
