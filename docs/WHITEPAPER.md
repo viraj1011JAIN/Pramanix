@@ -5,7 +5,7 @@
 > in development, it is explicitly labelled. No marketing language without evidence.
 >
 > **Version**: 1.0.0-dev
-> **Date**: 2026-06-02
+> **Date**: 2026-06-03
 > **Author**: Viraj Jain, Pramanix
 
 ---
@@ -29,6 +29,7 @@ verification as its primary enforcement mechanism.
 ### 1.1 Why Probabilistic Filters Are Insufficient
 
 Contemporary AI agent safety relies on:
+
 1. **Heuristic classifiers** (e.g., keyword/regex matching)
 2. **LLM-as-judge** (e.g., a second LLM evaluates the first LLM's output)
 3. **Schema validators** (e.g., Pydantic models ensuring output structure)
@@ -48,6 +49,7 @@ input values (intent + state), is there an assignment of values that satisfies a
 constraints simultaneously?*
 
 The Z3 SMT solver answers this question with mathematical proof:
+
 - **SAT** (satisfiable): there exists an assignment where all constraints hold → `allowed=True`, with a satisfying model as proof
 - **UNSAT** (unsatisfiable): no such assignment exists → `allowed=False`, with a minimal counterexample
 
@@ -63,7 +65,7 @@ injection that tells Z3 to return SAT will not change what Z3 returns.
 
 Pramanix implements a strict two-phase pipeline:
 
-```
+```text
 Phase 1 — Intent Extraction (OPTIONAL)
   Input: Raw text (untrusted)
   Process: LLM translation → structured {intent: dict, state: dict}
@@ -126,6 +128,7 @@ tree. The transpiler lowers that tree to Z3 AST. The solver checks the Z3 AST.
 
 The transpiler converts `ConstraintExpr` trees to Z3 AST via a single recursive
 `_realize_node()` dispatch. It handles:
+
 - Comparison operators: `==`, `!=`, `<`, `<=`, `>`, `>=`
 - Boolean operators: `and`, `or`, `not`
 - Arithmetic: `+`, `-`, `*`, `/`, `%`, `**`
@@ -140,15 +143,17 @@ bypass where an empty set satisfies all universally quantified constraints.
 ### 2.5 The Solver (`solver.py`, 491 lines)
 
 **Phase A — Shared Solver (SAT/UNSAT determination):**
+
 - Single `z3.Solver` with all invariants via `s.add()` (not `assert_and_track`)
 - Timeout: `s.set("timeout", timeout_ms)` (default: 5,000ms)
 - Resource limit: `s.set("rlimit", 10_000_000)` — caps elementary operations regardless of wall time
 - `z3.unknown` → `SolverTimeoutError` → Decision.error() → BLOCK
 
 **Phase B — Per-Invariant Attribution (UNSAT only):**
+
 - Each invariant gets its own solver instance
 - `assert_and_track(formula, z3.Bool(label, ctx))` per invariant
-- `unsat_core()` returns minimal set of violated invariants
+- `unsat_core()` always returns `{label}` exactly — no minimal-subset ambiguity (one tracked formula per solver)
 - Reports exactly which policy constraints were violated, with which values
 
 **Thread safety**: `threading.local()` (`_tl_ctx`) — per-thread Z3 contexts. Z3's C library
@@ -176,6 +181,7 @@ Signatures are independent of Pramanix. A verifier can check the signature using
 the public key and the decision dict — no Pramanix installation required.
 
 Supported signature schemes:
+
 - `PramanixSigner` / `PramanixVerifier`: Ed25519 (FIPS 186-5 compliant)
 - `RS256Signer` / `RS256Verifier`: RSA-2048+ (JWT RS256 compatible)
 - `ES256Signer` / `ES256Verifier`: ECDSA P-256 (JWT ES256 compatible)
@@ -184,7 +190,7 @@ Supported signature schemes:
 
 `MerkleArchiver` maintains a tamper-evident append-only log:
 
-```
+```text
 Decision 1 ──hash──► Node 1 ──┐
 Decision 2 ──hash──► Node 2 ──┼──► Merkle Root
 Decision 3 ──hash──► Node 3 ──┘
@@ -215,15 +221,16 @@ soc2_mappings = oracle.get_mappings(RegulatoryFramework.SOC2)
 
 ### 4.2 Built-in Mapping Library
 
-`default_oracle()` ships with 31 pre-built `ControlMapping` instances:
+`default_oracle()` ships with built-in `ControlMapping` instances across **6 regulatory frameworks**:
 
-| Framework | Mappings | Example Control |
-| ----------- |---------| ---------------- |
-| SOC2 | 7 | CC6.1: Logical access controls → `authorized_role` |
-| EU AI Act | 8 | Art.14: Human oversight → `human_oversight_required` |
-| HIPAA | 6 | §164.312(a)(1): Access control → `phi_least_privilege` |
-| NIST AI RMF | 6 | GOVERN-1.1: Risk governance → `risk_appetite_limit` |
-| GDPR | 4 | Art.25: Data minimisation → `data_minimization` |
+| Framework | Enum Member | Example Control |
+| --------- | ----------- | --------------- |
+| SOC2 | `RegulatoryFramework.SOC2` | CC6.1: Logical access controls |
+| EU AI Act | `RegulatoryFramework.EU_AI_ACT` | Art.14: Human oversight |
+| HIPAA | `RegulatoryFramework.HIPAA` | §164.312(a)(1): Access control |
+| NIST AI RMF | `RegulatoryFramework.NIST_AI_RMF` | GOVERN-1.1: Risk governance |
+| ISO/IEC 42001 | `RegulatoryFramework.ISO_42001` | Clause 6.1: AI risk assessment |
+| GDPR | `RegulatoryFramework.GDPR` | Art.25: Data minimisation |
 
 ### 4.3 Automated Compliance Attestation
 
@@ -243,24 +250,25 @@ report = reporter.generate()
 ### 5.1 Architecture Comparison
 
 | Dimension | Pramanix | NeMo Guardrails | Guardrails AI |
-| ----------- |----------| ---------------- |---------------|
+| --------- | -------- | --------------- | ------------- |
 | Safety model | Formal (Z3 SMT) | Probabilistic (Colang) | Schema validation |
 | ALLOW guarantee | Mathematical proof | "probably compliant" | Structurally conformant |
 | BLOCK evidence | Counterexample + attribution | Log message | Validation error |
 | Prompt injection protection | Mathematical (Z3 ignores language) | Heuristic | Heuristic |
-| Regulatory mapping | Built-in (5 frameworks) | None | None |
-| Audit trail | Ed25519 + Merkle | Limited | None |
+| Regulatory mapping | Built-in (6 frameworks) | None | None |
+| Audit trail | Ed25519 + Merkle + AES-256-GCM | Limited | None |
 | fail-closed guarantee | All paths | Partial | Partial |
 | License | AGPL-3.0 | Apache-2.0 | Apache-2.0 |
-| Validator library | Primitives (FinTech/Health/RBAC) | Many Colang | 50+ validators |
+| Privilege/IFC separation | ExecutionScope + TrustLabel lattice | None | None |
+| Validator library | Primitives (FinTech/Health/RBAC/Infra) | Many Colang | 50+ validators |
 
 ### 5.2 The Irreversible Moat
 
 NeMo and Guardrails AI are probabilistic systems. They can add features. They cannot
 add formal proof without rebuilding their architecture from scratch. The moat is structural:
 
-- NeMo can add more Colang rules → still probabilistic
-- Guardrails AI can add more validators → still schema-based
+- NeMo can add more Colang rules — still probabilistic
+- Guardrails AI can add more validators — still schema-based
 - Neither can ship: "here is a mathematical proof that this action satisfies these invariants"
 
 This is the wedge. Every gap closed in Pramanix widens it.
@@ -268,6 +276,7 @@ This is the wedge. Every gap closed in Pramanix widens it.
 ### 5.3 Honest Limitations
 
 Pramanix does not compete on:
+
 - **Community validator count**: NeMo and Guardrails AI have extensive community libraries
 - **LLM output parsing**: Guardrails AI has mature output parsing and retry logic
 - **Enterprise licensing**: AGPL-3.0 is a current blocker for enterprise SaaS adoption
@@ -279,6 +288,7 @@ Pramanix does not compete on:
 ### 6.1 Threat Model
 
 Pramanix defends against:
+
 1. **Prompt injection**: Adversarial instructions that attempt to override policy
 2. **Parameter tampering**: Malicious intent values designed to bypass invariants
 3. **Logic bombs**: Pathological inputs designed to crash the solver
@@ -286,6 +296,7 @@ Pramanix defends against:
 5. **Replay attacks**: Reuse of previously valid execution tokens
 
 Pramanix does **not** defend against:
+
 1. **Policy authoring mistakes**: An incorrectly written invariant will be enforced correctly but provide no protection against its own logical gap
 2. **Compromised hosting environment**: If the Python process is compromised, decisions cannot be trusted
 3. **State manipulation**: If the state dict is manipulated before being passed to `verify()`, Pramanix reasons over the manipulated state
@@ -326,13 +337,12 @@ Pramanix's `_ForAllOp(allow_empty=False)` prevents this: empty arrays fail close
 characteristics on simple formulas. They are not measured production numbers.
 See `BENCHMARK_STATUS.md` for honest status of performance evidence.
 
-| Scenario | Target |
-| ---------- |--------|
-| Single invariant, SAT | < 1 ms |
-| 10 invariants, SAT | < 5 ms |
-| 10 invariants, UNSAT + attribution | < 20 ms |
-| Cold start (first call) | < 500 ms |
-| With JVM warmup amortized | < 1 ms per call |
+| Scenario | Measured (dev laptop) | CI Nightly Target |
+| -------- | --------------------- | ----------------- |
+| 3-invariant policy, SAT, warm (20 calls) | P50=2.0ms, P99=3.3ms | P99 < 15ms |
+| Sustained 1M decisions (~81 RPS) | P50=11.3ms, P99=30.5ms | — |
+| Cold start (first call) | < 3,000ms | < 3,000ms |
+| P99.99 (GC spike, 1M run) | ~270ms | — |
 
 **Z3 resource limit** (`rlimit = 10_000_000`): Caps elementary operations regardless of
 wall-clock time. This prevents logic bomb DoS where specially crafted formulas consume
@@ -344,27 +354,31 @@ unbounded CPU time.
 
 ### 8.1 Production Requirements
 
-- Python 3.11+ (3.13 tested in CI)
-- `python:3.11-slim` Docker base (Alpine banned — z3-solver musl incompatibility)
-- Non-root user (`Dockerfile.production`)
+- Python 3.11+ (3.13 tested in CI only; 3.11/3.12 declared but not CI-tested)
+- `python:3.13-slim-bookworm` Docker base with SHA256 digest pinning (Alpine banned — z3-solver musl incompatibility)
+- Non-root user UID 10001 (`Dockerfile.production`)
 - HEALTHCHECK configured (`Dockerfile.production`)
 - `PRAMANIX_ENV=production` to block InMemory* sinks
+- `PRAMANIX_MERKLE_ARCHIVE_KEY` (64-char hex) for AES-256-GCM audit archive encryption in HIPAA/PCI deployments
 
 ### 8.2 Integration Patterns
 
 **Pattern 1 — Direct SDK (no LLM)**:
+
 ```python
 # Callers provide pre-structured intent+state dicts
 decision = guard.verify({"amount": 500, "recipient": "alice"}, state)
 ```
 
 **Pattern 2 — NLP Bridge (LLM + formal verification)**:
+
 ```python
 # LLM extracts structured intent from raw text
 decision = await guard.parse_and_verify("Pay Alice $500", translator)
 ```
 
 **Pattern 3 — Framework Adapter**:
+
 ```python
 # LangChain
 from pramanix.integrations import PramanixToolCallback
@@ -372,6 +386,7 @@ chain = my_chain | PramanixToolCallback(guard=guard)
 ```
 
 **Pattern 4 — FastAPI Middleware**:
+
 ```python
 from pramanix.integrations import PramanixMiddleware
 app.add_middleware(PramanixMiddleware, guard=guard)
@@ -384,7 +399,7 @@ app.add_middleware(PramanixMiddleware, guard=guard)
 Pramanix is dual-licensed:
 
 - **Community**: AGPL-3.0-only. Free for open-source use. Copyleft obligation applies: SaaS operators must publish application source.
-- **Commercial**: Proprietary commercial license removes the copyleft obligation. For enterprise SaaS deployment. Contact: viraj@pramanix.dev
+- **Commercial**: Proprietary commercial license removes the copyleft obligation. For enterprise SaaS deployment. Contact: `viraj@pramanix.dev`
 
 **Current status**: AGPL-3.0 is a GA blocker for enterprise adoption. A license decision
 is required before v1.0.0 GA. See `RELEASE_READINESS.md` item L1.
@@ -399,7 +414,7 @@ for regulatory audit.
 
 The formal verification core (Z3 SMT) is structurally unreplicable by probabilistic competitors.
 The cryptographic audit trail (Ed25519/Merkle) satisfies enterprise audit requirements.
-The compliance oracle (31 mappings, 5 frameworks) enables automatic regulatory attestation.
+The compliance oracle (6 frameworks: SOC2/EU AI Act/HIPAA/NIST AI RMF/ISO 42001/GDPR) enables automatic regulatory attestation.
 
 The path to v1.0.0 GA requires one business decision (license) and two technical completions
 (persistent ApprovalWorkflow, LLM consensus CI evidence). The architecture is otherwise
@@ -410,8 +425,8 @@ production-ready.
 ## References
 
 1. de Moura, L., & Bjørner, N. (2008). Z3: An Efficient SMT Solver. TACAS 2008.
-2. Pramanix source code: `src/pramanix/` (112 production files, 224 test files)
-3. Compliance mappings: `src/pramanix/compliance/oracle.py`
-4. Test suite: `tests/` (5,687 collected tests, ≥98% coverage)
-5. Architecture: `BLUEPRINT.md`
-6. Audit: `REPO_AUDIT.md`
+2. Pramanix source code: `src/pramanix/` (112 production files, 227 test files, ~29,000 LOC)
+3. Compliance mappings: `src/pramanix/compliance/oracle.py` (6 frameworks)
+4. Test suite: `tests/` (5,687 collected tests, ≥98% coverage enforced in CI)
+5. Architecture: `docs/BLUEPRINT.md`
+6. Audit: `docs/PRAMANIX_MASTER_AUDIT.md`

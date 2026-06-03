@@ -4,28 +4,33 @@
 > On stopping: update this file. On resuming: read this file first, then resume from "CURRENT PHASE".
 > Every change here must be backed by evidence — no aspirational entries.
 
-**Last Updated**: 2026-06-02 (session 4)
+**Last Updated**: 2026-06-03 (session 5 — full doc verification pass)
 **Repository**: `c:\Pramanix`
 **Owner**: Viraj Jain <viraj@pramanix.dev>
 
 ---
 
-## REPOSITORY BASELINE (as of 2026-06-02)
+## REPOSITORY BASELINE (as of 2026-06-03)
 
 | Metric | Value | Source |
 | -------- | ------- | -------- |
 | Production source files | 112 | `Get-ChildItem src/pramanix -Recurse -Filter *.py` |
-| Test files (total) | 224 | `Get-ChildItem tests -Recurse -Filter *.py` |
-| Tests collected | 5,687 | `pytest --collect-only -q` |
-| Coverage gate | ≥ 98% | `pyproject.toml [tool.coverage.report]` |
+| Test files (total) | 227 | `Get-ChildItem tests -Recurse -Filter *.py` (2026-06-03 verified) |
+| Tests collected | 5,687 | `pytest --collect-only -q` (all suites) |
+| Tests collected (unit+adversarial) | 5,301 | `pytest --collect-only -q` (2026-06-03) |
+| Estimated production LOC | ~29,000 | File-by-file measurement |
+| Coverage gate | ≥ 98% | `pyproject.toml`; CI enforces `--fail-under=98` at `ci.yml:375` |
 | Version | 1.0.0 | `pyproject.toml [tool.poetry] version` |
 | License | AGPL-3.0-only / Commercial dual | `pyproject.toml` |
 | Python range | ≥3.11,<4.0 | `pyproject.toml` |
-| CI-tested Python | 3.13 only | `README.md` |
+| CI-tested Python | 3.13 only | `ci.yml` header |
 | Z3 solver version | ^4.12 (installed: 4.16.0.0) | `pyproject.toml` |
 | Public API exports | 157 | `test_api_contract.py` |
-| GuardConfig fields | 32 | `test_api_contract.py` |
-| Decision wire format | 17 keys | `test_api_contract.py` |
+| GuardConfig fields | 32 | `test_api_contract.py`; verified by reading `guard_config.py` |
+| Decision wire format | 17 keys | `decision.py:422-440` verified |
+| SolverStatus members | 10 | `decision.py` + `_EXPECTED_SOLVER_STATUS_ORDERED` in test |
+| Compliance oracle frameworks | 6 | SOC2, EU AI Act, HIPAA, NIST AI RMF, ISO 42001, GDPR |
+| Docker base image | python:3.13-slim-bookworm | Both Dockerfiles (SHA256 digest-pinned) |
 
 ### Test Directory Breakdown
 
@@ -224,7 +229,7 @@
 | ---- | --------- | ---------- | ------- |
 | GA-1 | AGPL-3.0 prevents enterprise adoption (copyleft obligation) | Critical | Business decision |
 | GA-2 | LLM consensus: no real-CI evidence for `RedundantTranslator` | High | LLM key availability |
-| GA-3 | Merkle archive encryption: archives are plaintext (compression only) | Medium | Arch decision |
+| GA-3 | Merkle archive encryption default-on: `EncryptedArchiveWriter` (AES-256-GCM) exists in `audit/archiver.py` but is opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var; plaintext is default | Medium | Operator configuration |
 | GA-4 | Persistent `ApprovalWorkflow`: in-memory only (no DB durability) | Medium | DB schema design |
 | GA-5 | `sklearn`/`sentence-transformers` NLP: no real ML in CI | Low | ML infra |
 
@@ -237,6 +242,16 @@
 3. Pick up the next pending item in the current phase
 4. Update this file after each completed item
 
-**CURRENT PHASE**: Phase 11 — Release Readiness (nearly complete)
-**NEXT ACTION**: Wait for C2 coverage run to complete (~7h suite); update RELEASE_READINESS.md with result. If ≥98%, only L1 (license decision) remains as a hard GA blocker.
-**RESUME NOTE**: Coverage run was started in session 4 (2026-06-02). On resume, check if `.coverage` file exists. If tests completed, run `python -m coverage report` to get the percentage.
+**CURRENT PHASE**: Phase 11 — Release Readiness + Session 5 doc verification pass
+**NEXT ACTION**: Run full coverage suite (`pytest tests/ --cov=src/pramanix --cov-report=term-missing`); check result vs 98% gate. If ≥98%, C2 is done and only L1 (license decision) remains as a hard GA blocker.
+**SESSION 5 COMPLETED** (2026-06-03):
+
+- Full end-to-end source verification pass of all documents
+- `PRAMANIX_MASTER_AUDIT.md` created (supersedes REPO_AUDIT.md + pramanix_deep_audit.md, both deleted)
+- README.md: 15 factual corrections (IFC labels, test counts, Docker base, Merkle encryption, SolverStatus)
+- RELEASE_READINESS.md: A4 corrected (9→10 members), E3 corrected (AES-256-GCM exists), D3 updated
+- BENCHMARK_STATUS.md: 1M audit benchmark data added (p50=11.3ms, p99=30.5ms, ~81 RPS)
+- ENVIRONMENT.md: Docker base corrected, Merkle env vars added
+- BLUEPRINT.md: 5→6 frameworks, file counts corrected, translator count corrected, docker base corrected
+- WHITEPAPER.md: 5→6 frameworks, docker base corrected, test file count, performance table measured values, bare URL fixed, all MD lint warnings resolved
+- WORK_LEDGER.md: baseline updated with 2026-06-03 verified values

@@ -4,7 +4,7 @@
 > Every item must be ✅ before tagging `v1.0.0` on PyPI.
 > No item may be marked ✅ without evidence. "Aspirational" = NOT ✅.
 >
-> **Last Updated**: 2026-06-02
+> **Last Updated**: 2026-06-03
 > **Target**: PyPI v1.0.0 release
 
 ---
@@ -56,7 +56,7 @@
 | S3 | SAST (bandit/semgrep): 0 high severity | ✅ | bandit `-r src/pramanix --severity-level medium`: 0 medium/high issues, 8 low only (2026-06-02 session 4; 34,978 lines scanned, 0 `#nosec` skips) |
 | S4 | No secrets in repository history | ✅ | 2026-06-02: `git log -S 'sk-ant-\|AKIA\|AWS_SECRET'` — no real keys; `.env.example` uses `YOUR_KEY_HERE` placeholders |
 | S5 | `PRAMANIX_ENV=production` blocks InMemory* | ✅ | All 4 guards verified |
-| S6 | `result_seal_key` injectable | ✅ | `guard_config.py:528` Phase 1 fix |
+| S6 | `result_seal_key` injectable | ✅ | `guard_config.py:587` (verified 2026-06-03) |
 | S7 | Nonce replay prevention | ✅ | `verify_async` Phase 1 fix |
 | S8 | fail-closed on all error paths | ✅ | `_verify_core()` blanket catch |
 | S9 | `ForAll(empty_array)` not vacuously true | ✅ | Phase 3 STOP 4 fix |
@@ -72,7 +72,7 @@
 | A1 | `pramanix.__all__` count locked (157 exports) | ✅ | `test_api_contract.py` |
 | A2 | `Decision.to_dict()` has 17 keys | ✅ | `test_api_contract.py` |
 | A3 | `GuardConfig` has 32 fields | ✅ | `test_api_contract.py` |
-| A4 | `SolverStatus` has 9 members | ✅ | `test_api_contract.py` |
+| A4 | `SolverStatus` has 10 members | ✅ | `decision.py` enum + `_EXPECTED_SOLVER_STATUS_ORDERED` (10 entries incl. `GOVERNANCE_BLOCKED`). `test_api_contract.py` comment says "9" — stale human note, snapshot has 10. |
 | A5 | All `__all__` exports importable | ✅ | `test_api_contract.py` |
 | A6 | CHANGELOG.md up-to-date | ✅ | Created 2026-06-02; covers all 1.0.0 features + known limitations |
 
@@ -82,7 +82,7 @@
 | --- | ------ | -------- | ------------------ |
 | D1 | `README.md` source-verified (no aspirational claims) | ✅ | Verified in deep audit Pass 4 |
 | D2 | `ENVIRONMENT.md` complete | ✅ | Created 2026-06-02 |
-| D3 | `REPO_AUDIT.md` complete | ✅ | Created 2026-06-02 |
+| D3 | `PRAMANIX_MASTER_AUDIT.md` complete | ✅ | Created 2026-06-03; supersedes `REPO_AUDIT.md` (deleted) and `pramanix_deep_audit.md` (deleted); end-to-end source-verified |
 | D4 | `BLUEPRINT.md` complete | ✅ | 11KB, no TODOs/placeholders; architecture + roadmap + ADR log (2026-06-02 session 4) |
 | D5 | `WHITEPAPER.md` complete | ✅ | 16KB, no TODOs/placeholders; honesty notice + references to source (2026-06-02 session 4) |
 | D6 | CLI help text accurate for all subcommands | ✅ | 2026-06-02: 15 subcommands confirmed via `pramanix --help` |
@@ -106,7 +106,7 @@
 | --- | ------ | -------- | ------------------ |
 | E1 | `ApprovalWorkflow` durability (DB-backed) | ❌ Not done | Documented gap; in-memory only |
 | E2 | LLM consensus real-CI evidence | ❌ Not done | No API keys in standard CI |
-| E3 | Merkle archive encryption | ❌ Not done | Compression only; documented |
+| E3 | Merkle archive encryption (default-on in production) | ⚠️ Partial | `audit/archiver.py` ships `EncryptedArchiveWriter` + `RotatingKeyArchiveWriter` (AES-256-GCM). Encryption is opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var — plaintext is default. For HIPAA/PCI compliance, production deployments must set this variable. |
 | E4 | Commercial support tier defined | ❌ Not done | Business decision |
 
 ---
@@ -137,5 +137,5 @@
 | **Total** | **44** | **1** | **1** |
 
 **Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: 1 item remaining — C2 (coverage ≥ 98%, suite currently running; last measured 95.09% in April before new tests added).
-**Last updated**: 2026-06-02 session 4 — C1/C3/C4/C5/P3/P5/P6/P9/S2/S3/D4/D5 newly confirmed.
+**Soft blockers**: C2 (coverage ≥ 98%; CI now enforces `--fail-under=98` at `ci.yml:375`; last full suite run in progress).
+**Last updated**: 2026-06-03 — full source cross-verification pass; A4 corrected to 10 members; E3 corrected (AES-256-GCM exists, opt-in); D3 updated to PRAMANIX_MASTER_AUDIT.md.

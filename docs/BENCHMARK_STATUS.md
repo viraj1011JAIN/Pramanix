@@ -8,9 +8,10 @@
 > development hardware. No production deployment metrics exist. These numbers indicate
 > what the system can achieve in isolation, not under real production load.
 >
-> **Last Updated**: 2026-06-02
+> **Last Updated**: 2026-06-03
 > **Benchmark File**: `tests/benchmarks/test_solver_latency.py`
 > **Perf Tests**: `tests/perf/test_memory_stability.py`
+> **1M Benchmark**: `benchmarks/results/1m_audit_summary.json`
 
 ---
 
@@ -81,6 +82,34 @@ Measured via `tests/benchmarks/test_solver_latency.py::TestLatencyReport`.
 
 ---
 
+## 1M Decision Sustained-Load Benchmark (`benchmarks/results/1m_audit_summary.json`)
+
+> Source: `benchmarks/results/1m_audit_summary.json` (committed result from benchmark run)
+> Hardware: Development machine (Windows 11, Python 3.13, Z3 4.16.0.0)
+
+| Metric | Value |
+| ------ | ----- |
+| Total decisions | 1,000,000 |
+| Duration | 12,298.5 sec |
+| Throughput | ~81.3 RPS |
+| P50 latency | 11.3 ms |
+| P95 latency | 20.1 ms |
+| P99 latency | 30.5 ms |
+| P99.99 (est.) | ~270.5 ms (GC pause spike) |
+| Memory baseline | 57.6 MiB |
+| Memory peak | 80.4 MiB |
+| Memory growth | 2.8 MiB (stable — no leak) |
+| Verdict | **PASS** |
+
+**Important distinctions:**
+
+- The CI nightly microbenchmark (`tests/benchmarks/test_solver_latency.py`) measures 20 sequential warm calls at P99=3.3ms — a single-worker cold test.
+- The 1M benchmark above is **sustained load at ~81 RPS** across a long run — a materially different (and more realistic) measurement.
+- P99.99 spike of ~270ms (9× P99) indicates GC pause or Z3 internal timeout under sustained load. This may cause tail-latency SLA breaches at high volume.
+- No server-class hardware benchmark exists yet. These numbers are from a development laptop.
+
+---
+
 ## Memory Stability
 
 | Test | Status | Notes |
@@ -125,7 +154,7 @@ higher on production servers with warm JIT).
 
 | SDK | Verification | Latency |
 | ----- |-------------| --------- |
-| **Pramanix** | Z3 formal (deterministic) | Unknown — not measured |
+| **Pramanix** | Z3 formal (deterministic) | P50=2.0ms (microbench, 3-inv); P50=11.3ms (1M sustained, ~81 RPS) |
 | NeMo Guardrails | LLM-based (probabilistic) | ~200-500ms (LLM round-trip) |
 | Guardrails AI | Regex + validators | < 1ms (keyword); ~200ms (LLM) |
 | LangChain callbacks | None (hooks only) | < 1ms |

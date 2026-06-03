@@ -6,7 +6,7 @@
 > - `docs/PRAMANIX_BLUEPRINT_PART2.md`
 > - `docs/Ideal_Architecture.md` (competitive gap analysis)
 >
-> **Last Updated**: 2026-06-02
+> **Last Updated**: 2026-06-03
 > **Owner**: Viraj Jain
 
 ---
@@ -113,18 +113,19 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 | Solver | `solver.py` | 491 | Production |
 | Policy DSL | `policy.py`, `expressions.py`, `compiler.py` | ~1,900 | Production |
 | Cryptographic audit | `audit/`, `crypto.py` | ~1,500 | Production |
-| Compliance oracle | `compliance/oracle.py` | 1,482 | Production |
-| Circuit breaker | `circuit_breaker.py` | 1,340 | Production |
+| Compliance oracle | `compliance/oracle.py` | 1,482 | Production (6 frameworks: SOC2/EU AI Act/HIPAA/NIST AI RMF/ISO 42001/GDPR) |
+| Circuit breaker | `circuit_breaker.py` | 1,340 | Production (4-state: CLOSED/OPEN/HALF_OPEN/ISOLATED) |
 | Worker pool | `worker.py` | 1,018 | Production |
-| NLP validators | `nlp/validators.py` | 775 | Beta (keyword/regex) |
-| Translators | `translator/` (10 files) | ~3,500 | Production (where API available) |
-| Integrations | `integrations/` (12 files) | ~4,000 | Beta |
-| Primitives | `primitives/` (8 files) | ~2,000 | Production |
-| Execution tokens | `execution_token.py` | ~1,200 | Production |
-| IFC | `ifc/` | ~600 | Production |
-| Oversight | `oversight/workflow.py` | ~800 | Beta (in-memory only) |
-| Key providers | `key_provider.py` | ~800 | Production (3 cloud providers) |
-| Fast path | `fast_path.py` | 297 | Production |
+| NLP validators | `nlp/validators.py` | 775 | Beta (keyword/regex; 58 stems; optional ML) |
+| Translators | `translator/` (14 files) | ~4,613 | Production (where API available) |
+| Integrations | `integrations/` (12 files) | ~3,267 | Production (all real, no stubs) |
+| Primitives | `primitives/` (7 files) | ~1,228 | Production |
+| Execution tokens | `execution_token.py` | ~1,200 | Production (4 backends) |
+| IFC | `ifc/` (labels.py 215L + flow_policy.py 295L) | 510 | Production |
+| Oversight | `oversight/workflow.py` | ~600 | Beta (in-memory only; production guard) |
+| Key providers | `key_provider.py` | ~800 | Production (PEM/File/AWS atomic; Azure/GCP/Vault stub-tested) |
+| Fast path | `fast_path.py` | 309 | Production (5 rule factories; fail-closed) |
+| Merkle archiver | `audit/archiver.py` | 839 | Production (AES-256-GCM opt-in via env var) |
 
 ---
 
@@ -138,7 +139,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 | Deterministic ALLOW | ✅ Mathematical proof | ❌ Probabilistic | ❌ None | ❌ None |
 | Counterexample on BLOCK | ✅ Z3 model | ❌ None | ❌ None | ❌ None |
 | Audit trail with signatures | ✅ Ed25519/Merkle | ⚠️ Limited | ❌ None | ❌ None |
-| Regulatory mapping (SOC2/HIPAA) | ✅ 31 built-in | ❌ None | ❌ None | ❌ None |
+| Regulatory mapping (6 frameworks) | ✅ 6 frameworks, built-in mappings | ❌ None | ❌ None | ❌ None |
 | fail-closed on error | ✅ All paths | ⚠️ Some | ❌ None | ❌ None |
 | AGPL-compatible | ❌ Blocker | ✅ Apache-2.0 | ✅ Apache-2.0 | ✅ MIT |
 | Community validator library | ❌ Limited | ✅ Many Colang | ✅ 50+ validators | ✅ Callbacks |
@@ -173,7 +174,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 
 | Gap | Description |
 | ---- |-------------|
-| P2-ENC | Merkle archive encryption (plaintext today) |
+| P2-ENC | Merkle archive encryption **default-on** in production (AES-256-GCM exists in `audit/archiver.py` as `EncryptedArchiveWriter`; currently opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var) |
 | P2-ML | Real ML for ToxicityScorer (sentence-transformers) |
 | P2-COMM | Community validator plugin ecosystem |
 | P2-PPL | Pramanix Policy Language (YAML → DSL) improvements |
@@ -195,7 +196,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 - [x] Z3 formal verification core
 - [x] 8-phase guard pipeline
 - [x] Cryptographic audit trail (Ed25519/RS256/ES256)
-- [x] Compliance oracle (31 mappings, 5 frameworks)
+- [x] Compliance oracle (6 frameworks: SOC2/EU AI Act/HIPAA/NIST AI RMF/ISO 42001/GDPR)
 - [x] Circuit breaker (distributed)
 - [x] 10 LLM translators
 - [x] 12 framework integrations
@@ -229,7 +230,7 @@ Key architectural decisions made and why:
 | ---------- |-----------| ------ |
 | Z3 over LLM-as-judge | Determinism: Z3 proves; LLM guesses | Founding |
 | AGPL-3.0 + commercial dual | Copyleft community + paid enterprise | Founding |
-| python:3.11-slim (not Alpine) | z3-solver doesn't compile with musl libc | Early |
+| python:3.13-slim-bookworm (not Alpine) | z3-solver doesn't compile with musl libc; production Dockerfiles use digest-pinned 3.13-slim-bookworm | Early |
 | `assert_and_track` over bare `add` | Unsat core needs tracking per-invariant | v0.5 |
 | `threading.local` for Z3 context | Per-thread isolation; Z3 C lib is not thread-safe | v0.5 |
 | `fakeredis` over `unittest.mock` | Real behavior (TTL, SETNX) tested | v0.8 |

@@ -3,7 +3,7 @@
 > **Purpose**: Single reference for every environment variable, service dependency, and API key
 > needed to run Pramanix in production, development, or CI. Supersedes `docs/ENVIRONMENT_SETUP.md`.
 >
-> **Last Updated**: 2026-06-02
+> **Last Updated**: 2026-06-03
 
 ---
 
@@ -314,6 +314,9 @@ Install: `pip install 'pramanix[otel]'`
 | `PRAMANIX_MAX_INPUT_CHARS` | `512` | Max raw NL input (chars) |
 | `PRAMANIX_INJECTION_THRESHOLD` | `0.5` | Injection detection threshold [0.0, 1.0] |
 | `PRAMANIX_FAST_PATH_ENABLED` | `false` | Enable numeric fast-path pre-check |
+| `PRAMANIX_MERKLE_ARCHIVE_KEY` | (unset) | 64-char hex key for AES-256-GCM Merkle archive encryption. **Required for HIPAA/PCI compliance** — plaintext archives are written when this variable is absent. |
+| `PRAMANIX_MERKLE_SEGMENT_DAYS` | `30` | Days per Merkle archive segment |
+| `PRAMANIX_MERKLE_MAX_ACTIVE_ENTRIES` | `100000` | Max in-memory Merkle entries before auto-archival |
 
 ---
 
@@ -351,7 +354,7 @@ DATABASE_URL=postgresql://test:test@localhost:5432/pramanix_test
 See `deploy/k8s/` for Kubernetes manifests:
 - `namespace.yaml`, `configmap.yaml`, `service.yaml`, `hpa.yaml`, `networkpolicy.yaml`
 
-Production Docker image: `python:3.11-slim` base. Alpine banned (z3-solver musl incompatibility).
+Production Docker image: `python:3.13-slim-bookworm` base (with SHA256 digest pinning). Alpine banned (z3-solver musl incompatibility). Both `Dockerfile.production` and `Dockerfile.dev` use Python 3.13 Debian Bookworm slim.
 
 ---
 
