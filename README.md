@@ -8,7 +8,7 @@
 
 Version: `1.0.0` | License: `AGPL-3.0-only` (Community) / Commercial (Enterprise)
 Language: Python ≥ 3.11,<4.0 | CI-tested: Python 3.13 only
-Status: Beta → GA-in-progress | Source files: 112 production + 211 test files (204 non-init)
+Status: GA-in-progress | Source files: 112 production + 227 test files | ~29,000 LOC
 
 ---
 
@@ -176,7 +176,7 @@ Guard.verify(extracted_intent, state)  ←── main pipeline above
 src/pramanix/
 │
 ├── ── CORE VERIFICATION ─────────────────────────────────────────────────────
-│   ├── guard.py              # Guard class (~1947 lines) — SDK entry point
+│   ├── guard.py              # Guard class (1,674 lines) — SDK entry point
 │   ├── policy.py             # Policy base class, Meta, fields(), invariants()
 │   ├── expressions.py        # Field, E(), all AST node types
 │   ├── transpiler.py         # DSL AST → Z3 AST (no eval/exec)
@@ -218,7 +218,7 @@ src/pramanix/
 │   │   ├── signer.py         # DecisionSigner (HMAC-SHA256 JWS)
 │   │   ├── verifier.py       # DecisionVerifier (stdlib-only)
 │   │   ├── merkle.py         # MerkleAnchor, PersistentMerkleAnchor
-│   │   └── archiver.py       # MerkleArchiver (pruning + S3)
+│   │   └── archiver.py       # MerkleArchiver + EncryptedArchiveWriter (AES-256-GCM)
 │   ├── crypto.py             # Ed25519, RS256, ES256 sign/verify
 │   ├── audit_sink.py         # AuditSink Protocol + all implementations
 │   ├── execution_token.py    # HMAC single-use tokens, TOCTOU gap
@@ -241,7 +241,7 @@ src/pramanix/
 │
 ├── ── NLP LAYER ─────────────────────────────────────────────────────────────
 │   └── nlp/
-│       └── validators.py     # 11 validators (PIIDetector, ToxicityScorer, etc.)
+│       └── validators.py     # PIIDetector, ToxicityScorer, SemanticSimilarityGuard, RegexClassifier
 │
 ├── ── INTEGRATIONS ──────────────────────────────────────────────────────────
 │   └── integrations/
@@ -1385,13 +1385,14 @@ Source: [src/pramanix/ifc/](src/pramanix/ifc/)
 TrustLabel (IntEnum):
     PUBLIC      = 0   # No confidentiality requirement
     INTERNAL    = 1   # Internal use only
-    CONFIDENTIAL = 2  # Business sensitive
-    SECRET      = 3   # Regulatory restricted (PII, PHI)
-    TOP_SECRET  = 4   # Highest classification
+    CUSTOMER    = 2   # Customer-visible data
+    CONFIDENTIAL = 3  # Business sensitive / restricted
+    REGULATED   = 4   # HIPAA / PCI / GDPR regulated data
+    UNTRUSTED   = 5   # Agent-generated; treat as suspect
 
 Lattice rule: data flows DOWN the lattice only
-    TOP_SECRET → SECRET → CONFIDENTIAL → INTERNAL → PUBLIC ✓
-    PUBLIC → CONFIDENTIAL                                   ✗
+    REGULATED → CONFIDENTIAL → CUSTOMER → INTERNAL → PUBLIC ✓
+    PUBLIC → REGULATED                                       ✗
 ```
 
 ```python
@@ -2583,9 +2584,10 @@ Source: [tests/](tests/)
 ### Statistics
 
 ```
-Total test files:   211 (204 non-init; 7 __init__.py / conftest.py)
-Total test cases:   5,230 (collected; pytest --collect-only -q 2026-05-31)
-Coverage target:    ≥ 98% branch coverage (fail_under = 98)
+Total test files:   227
+Total test cases:   5,687 (collected; pytest --collect-only -q 2026-06-02)
+                    5,301 (unit + adversarial only; 2026-06-03)
+Coverage target:    ≥ 98% branch coverage (fail_under = 98; enforced in CI at --fail-under=98)
 Test runner:        pytest 8.4, pytest-asyncio 0.23 (asyncio_mode = "auto")
 Property tests:     hypothesis 6.100+
 Performance tests:  excluded from default run (addopts = "--ignore=tests/perf")
@@ -2595,11 +2597,11 @@ Performance tests:  excluded from default run (addopts = "--ignore=tests/perf")
 
 ```
 tests/
-├── unit/         # 151 files — no external services, fast
-├── integration/  # 32 files — testcontainers: Redis, Kafka, Postgres, Vault
-├── adversarial/  # 10 files — security-focused attack vectors
+├── unit/         # 162 files — no external services, fast
+├── integration/  # 34 files — testcontainers: Redis, Kafka, Postgres, Vault
+├── adversarial/  # 14 files — security-focused attack vectors
 ├── property/     # 4 files — Hypothesis property-based tests
-├── helpers/      # 3 files — shared test utilities (RaisingSolverStub, etc.)
+├── helpers/      # 3 files — real test doubles (RaisingSolverStub, real_protocols.py 2,350 lines)
 └── perf/         # 3 files — memory stability, latency (excluded from default)
 ```
 
@@ -2925,6 +2927,8 @@ However, `oversight/workflow.py` contains only `InMemoryApprovalWorkflow` as a c
 
 `audit/merkle.py` implements a Merkle tree for tamper-evident audit logging. The in-memory `InMemoryAuditSink` appends to this tree in the current process. There is no persistent Merkle log: no database write, no append-only log file, no distributed ledger. If the process exits normally or crashes, the entire audit history is lost. The tree cannot span process restarts.
 
+`audit/archiver.py` (839 lines) provides segment-based archival with optional AES-256-GCM encryption (`EncryptedArchiveWriter`, `RotatingKeyArchiveWriter`, `ArchiveKeySet`) but **encryption is opt-in** via the `PRAMANIX_MERKLE_ARCHIVE_KEY` environment variable. Plaintext (zstd-compressed) archives are the default. For HIPAA/PCI environments, encrypted archives should be explicitly configured.
+
 **HIGH-3: Benchmark performance targets are not enforced by CI.**
 
 `benchmarks/bench_guard.py` contains P50 < 5ms, P95 < 10ms, P99 < 15ms targets as comments. The CI benchmark job (if run) does not `sys.exit(1)` when targets are exceeded. There is no historical baseline stored in the repository. Performance regressions are silent.
@@ -2973,9 +2977,9 @@ The string promotion optimization in `transpiler.py` (`analyze_string_promotions
 
 In `guard.py` `_apply_governance_gates()`, the privilege check block reads the `"tool"` field from the intent dict. If the intent dict does not contain a `"tool"` key, the privilege check is skipped entirely. An agent that uses a different key name (e.g., `"action"`, `"function"`, `"command"`) bypasses privilege gating. This is a known gap in the `_apply_governance_gates` implementation.
 
-**MEDIUM-6: `InMemoryDistributedBackend` for circuit breaker emits `UserWarning` in production but does not block.**
+**MEDIUM-6: `InMemoryDistributedBackend` raises `ConfigurationError` in production; `DistributedCircuitBreaker` requires explicit backend.**
 
-`circuit_breaker.py` contains `InMemoryDistributedBackend`. When `PRAMANIX_ENV=production`, a `UserWarning` is emitted. The code continues and uses the in-memory backend. In a multi-process deployment, each process has its own circuit-breaker state: one process can be OPEN while another is CLOSED, causing split-brain. The warning is advisory only.
+`circuit_breaker.py` `InMemoryDistributedBackend` raises `ConfigurationError` (not just a warning) when `PRAMANIX_ENV=production`. Additionally, `DistributedCircuitBreaker` raises `ConfigurationError` if `backend=None` — no silent in-memory fallback. Note: the class docstring says "defaults to InMemoryDistributedBackend" — that is stale and incorrect. The code behavior is fail-safe by default. In a multi-process deployment without a Redis backend, each process has its own isolated circuit-breaker state, causing split-brain risk.
 
 **MEDIUM-7: `K8sWebhookServer` has no mTLS client certificate validation.**
 
@@ -3124,7 +3128,7 @@ pip install 'pramanix[fastapi]'
 pip install 'pramanix[all]'
 ```
 
-**Platform constraint**: Alpine Linux is banned (`_platform.py` `check_platform()` called at import time). Use `python:3.11-slim` (Debian) or `ubuntu:22.04` base images. Python ≥3.11, <4.0 required. Tested in CI against Python 3.13 only despite broader version claims.
+**Platform constraint**: Alpine Linux is banned (`_platform.py` `check_platform()` called at import time). Use `python:3.13-slim-bookworm` (Debian — both production Dockerfiles use this with SHA256 digest pinning) or `ubuntu:22.04` base images. Python ≥3.11, <4.0 required. Tested in CI against Python 3.13 only despite broader version claims.
 
 ---
 
@@ -3462,7 +3466,7 @@ Status labels used:
 | Z3 solver | IMPLEMENTED | `solver.py` | Thread-local ctx; `rlimit`; per-invariant violation |
 | Z3 string optimization | IMPLEMENTED | `transpiler.py` | Enum-style String → Int promotion |
 | `Decision` | IMPLEMENTED | `decision.py` | Immutable; `allowed ↔ SAFE` enforced |
-| `SolverStatus` | IMPLEMENTED | `decision.py` | 10 values: SAFE, UNSAFE, TIMEOUT, ERROR, STALE_STATE, VALIDATION_FAILURE, RATE_LIMITED, CONSENSUS_FAILURE, CACHE_HIT, GOVERNANCE_BLOCKED |
+| `SolverStatus` | IMPLEMENTED | `decision.py` | 10 values: SAFE, UNSAFE, TIMEOUT, ERROR, STALE_STATE, VALIDATION_FAILURE, RATE_LIMITED, CONSENSUS_FAILURE, CACHE_HIT, GOVERNANCE_BLOCKED. Note: `test_api_contract.py` comment says "9" — stale, snapshot has 10. |
 | Worker pool (thread) | IMPLEMENTED | `worker.py` | `ThreadPoolExecutor`; warmup; HMAC-sealed IPC |
 | Worker pool (process) | IMPLEMENTED | `worker.py` | `ProcessPoolExecutor` with `spawn`; `model_dump()` before submit |
 | `fast_path.py` | IMPLEMENTED | `fast_path.py` | Fail-closed numeric fast path; rule exceptions block immediately (fail-closed), not continue-to-Z3 |
@@ -3496,6 +3500,7 @@ Status labels used:
 | Kafka interceptor | PARTIAL | `interceptors/kafka.py` | No TLS docs; no integration test vs real broker |
 | K8s admission webhook | PARTIAL | `k8s/webhook.py` | No mTLS client validation documented |
 | Merkle audit log | PARTIAL | `audit/merkle.py` | In-memory; no persistence across restarts |
+| Audit archiver (AES-256-GCM) | IMPLEMENTED | `audit/archiver.py` | `EncryptedArchiveWriter`, `RotatingKeyArchiveWriter`, `ArchiveKeySet`; opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var; plaintext is default |
 | Audit PDF export | IMPLEMENTED | `audit/archiver.py` | Requires `fpdf2` |
 | Audit Datadog sink | IMPLEMENTED | `audit_sink.py` | `DatadogAuditSink` |
 | Audit Splunk sink | PARTIAL | `audit_sink.py` | Raw HTTP; no integration test |
@@ -3529,7 +3534,7 @@ Status labels used:
 | RBAC primitives | IMPLEMENTED | `primitives/rbac.py` | Role/scope/permission constraints |
 | Infrastructure primitives | IMPLEMENTED | `primitives/infra.py` | IP, port, resource limit constraints |
 | Time primitives | IMPLEMENTED | `primitives/time.py` | Business hours, date range, epoch constraints |
-| Nightly benchmark CI enforcement | MISSING | — | Targets exist in code; CI never fails on regression |
+| Nightly benchmark CI enforcement | IMPLEMENTED | `ci.yml` | `continue-on-error: false` enforced on nightly P99 < 15ms gate (microbenchmark, single-worker); sustained 1M-decision benchmark shows P99=30.5ms at ~81 RPS |
 | Python 3.11/3.12 CI matrix | MISSING | — | Only 3.13 tested despite version range claims |
 | Durable Merkle persistence | MISSING | — | No database-backed audit log |
 | Database-backed `ApprovalWorkflow` | MISSING | — | `InMemoryApprovalWorkflow` only; no Redis/Postgres-backed oversight workflow |
@@ -3704,4 +3709,4 @@ Key fields from `src/pramanix/guard_config.py` (32 total). All have defaults; pa
 
 *— End of README —*
 
-*Source-verified against commit `a89f94a` (2026-06-02). All claims traceable to file paths, class names, function names, or test files listed in this document. Appendix C reflects all 32 GuardConfig fields; `ClockProtocol` is exported in `pramanix.__all__` (157 total).*
+*Source-verified against commit `74f1574` (2026-06-03). All claims traceable to file paths, class names, function names, or test files listed in this document. Appendix C reflects all 32 GuardConfig fields; `ClockProtocol` is a formally defined `@runtime_checkable Protocol` type exported in `pramanix.__all__` (157 total). `TrustLabel` has 6 levels: PUBLIC, INTERNAL, CUSTOMER, CONFIDENTIAL, REGULATED, UNTRUSTED. `SolverStatus` has 10 members. `audit/archiver.py` ships AES-256-GCM archive encryption opt-in. All 11 AI framework adapters are real implementations. ~29,000 LOC across 112 production source files.*
