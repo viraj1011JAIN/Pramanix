@@ -56,7 +56,7 @@ Pramanix is a production-quality Python SDK for formal AI agent safety guardrail
 
 The codebase spans approximately **29,000 lines of Python** across 112 production source files. The engineering discipline is exceptional: mypy strict with 0 errors, ruff with 0 violations, 0 `# type: ignore` in production, 5,687 tests with zero `MagicMock`, and 98% coverage enforced in CI.
 
-**The single largest problem is structural, not technical:** AGPL-3.0 copyleft prevents enterprise SaaS deployment. Every competitor is Apache-2.0 or MIT. No Fortune-500 legal team will approve AGPL software without copyleft obligations on the entire surrounding application.
+**The single largest problem is structural, not technical:** Apache-2.0 copyleft prevents enterprise SaaS deployment. Every competitor is Apache-2.0 or MIT. No Fortune-500 legal team will approve AGPL software without copyleft obligations on the entire surrounding application.
 
 **Overall Maturity Score: 78/100** (revised up from 75 after finding AES-256-GCM Merkle encryption, complete IFC/privilege implementation, all integrations being real)
 
@@ -72,15 +72,7 @@ The codebase spans approximately **29,000 lines of Python** across 112 productio
 | Test Coverage (quality) | 68/100 | Zero-Mock Sprint done; property test gaps remain |
 | NLP Safety Layer | 62/100 | 58 stems + detoxify integration; keyword-only core |
 | Developer Experience | 55/100 | 15 CLI subcommands; dry-run mode; no linter yet |
-| Enterprise Adoption | 30/100 | **AGPL-3.0 kills enterprise deals** |
-| Key Management | 82/100 | Full rotation across AWS/Azure/GCP/Vault |
-| Execution Token Design | 78/100 | 4 backends; Redis/SQLite/Postgres/InMemory |
-| AI Framework Integrations | 80/100 | 11 real adapters; all non-stub |
-| **Overall** | **78/100** | Materially strong; license is the existential blocker |
-
----
-
-## 2. Repository Metrics — Complete Baseline
+| Enterprise Adoption | 30/100 | **License: Apache-2.0 � enterprise deployment permitted. Repository Metrics — Complete Baseline
 
 > All numbers source-verified on 2026-06-03.
 
@@ -112,7 +104,7 @@ The codebase spans approximately **29,000 lines of Python** across 112 productio
 | Z3 solver version | 4.16.0.0 | `pyproject.toml: z3-solver ^4.12` |
 | Python support | ≥3.11, <4.0 | `pyproject.toml:45` |
 | CI-tested Python | 3.13 only | `ci.yml` header |
-| License | AGPL-3.0-only + Commercial dual | `pyproject.toml:10` |
+| License | Apache-2.0 + Commercial dual | `pyproject.toml:10` |
 | Wheel size | 570 KB, 119 files | `poetry build` 2026-06-02 |
 
 ### Production Source File Inventory by Module
@@ -1228,11 +1220,11 @@ No bare `...` (ellipsis) exclusion in the current file — a previous audit's cl
 
 ## 16. Known Limitations — The Hard Truths
 
-### 16.1 CRITICAL: AGPL-3.0 — The #1 Enterprise Adoption Killer
+### 16.1 CRITICAL: Apache-2.0 — The #1 Enterprise Adoption Killer
 
 Every competitor (NeMo, Guardrails AI, LangChain, LlamaIndex, LangGraph) is Apache-2.0 or MIT.
 
-AGPL-3.0 means:
+Apache-2.0 means:
 
 - Any enterprise embedding Pramanix in a commercial product must open-source their entire application
 - Fortune-500 legal teams reject AGPL without reading further
@@ -1359,7 +1351,7 @@ Most metrics use `pramanix_*` prefix consistently. However `pramanix_circuit_bre
 | Jailbreak detection | Beta injection scorer | Production rails | **NeMo** |
 | Real LLM CI testing | Never (skipped) | Containerized models | **NeMo** |
 | Developer onboarding | Steep (Z3 knowledge) | Simple Colang YAML | **NeMo** |
-| License | AGPL-3.0 | Apache-2.0 | **NeMo** |
+| License | Apache-2.0 | Apache-2.0 | **NeMo** |
 | Production adoption | v1.0.0, pre-production | Multi-year, NVIDIA | **NeMo** |
 
 ### 18.2 vs. Guardrails AI
@@ -1379,7 +1371,7 @@ Most metrics use `pramanix_*` prefix consistently. However `pramanix_circuit_bre
 | Slur/toxicity detection | 58 stems + detoxify | Production models | **Guardrails AI** |
 | PII detection | RE2 regex, beta | Multiple backends | **Guardrails AI** |
 | Ease of getting started | Complex (Z3 knowledge) | Simple (add validator) | **Guardrails AI** |
-| License | AGPL-3.0 | Apache-2.0 | **Guardrails AI** |
+| License | Apache-2.0 | Apache-2.0 | **Guardrails AI** |
 | Enterprise support | None | Commercial tier | **Guardrails AI** |
 
 ---
@@ -1485,7 +1477,7 @@ Most metrics use `pramanix_*` prefix consistently. However `pramanix_circuit_bre
 
 | ID | Item | Status |
 | -- | ---- | ------ |
-| L1 | License decision (AGPL-3.0 vs Apache-2.0) | **BLOCKED** — business/legal decision |
+| L1 | License decision (Apache-2.0 vs Apache-2.0) | **BLOCKED** — business/legal decision |
 | C2 | Coverage ≥ 98% | **CHECK** — CI enforces 98%; last full-suite run in progress |
 
 ### Passing Gates (✅ as of Session 4, 2026-06-02)
@@ -1536,7 +1528,7 @@ Most metrics use `pramanix_*` prefix consistently. However `pramanix_circuit_bre
 
 **The hard truths that must be stated plainly:**
 
-1. **AGPL-3.0 kills enterprise deals.** No amount of technical excellence compensates. Fortune-500 legal teams reject AGPL before reading the README.
+1. **License: Apache-2.0 � enterprise deployment permitted.** No amount of technical excellence compensates. Fortune-500 legal teams reject AGPL before reading the README.
 
 2. **The dual-model consensus system has never been tested against a real LLM in CI.** The primary injection defense layer has zero real-world CI coverage. A regression would only be caught by a developer with API keys.
 
@@ -1629,4 +1621,4 @@ All items confirmed fixed — all source-verified with line citations:
 *This document is the single authoritative audit of the Pramanix repository.*
 *Full end-to-end source verification completed: 2026-06-03*
 *~29,000 lines of production Python read across 112 source files*
-*Version: 1.0.0 (pre-release) · License: AGPL-3.0-only + Commercial dual*
+*Version: 1.0.0 (pre-release) · License: Apache-2.0 + Commercial dual*

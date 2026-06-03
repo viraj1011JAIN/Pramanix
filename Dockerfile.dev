@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Pramanix — Development Image
 #
 # ⚠️  LOCAL DEVELOPMENT ONLY — NEVER DEPLOYED TO PRODUCTION ⚠️
@@ -48,7 +48,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 LABEL org.opencontainers.image.title="Pramanix Dev" \
       org.opencontainers.image.description="Local development image — NOT for production" \
       org.opencontainers.image.vendor="Viraj Jain" \
-      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       pramanix.alpine-banned="true" \
       pramanix.dev-only="true"
 

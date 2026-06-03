@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026 Viraj Jain
 """Phase 1 transpiler spike -- proves DSL -> Z3 and exact violation attribution.
 

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026 Viraj Jain
 """Unit tests for EncryptedArchiveWriter, ArchiveKeySet,
 RotatingKeyArchiveWriter, and MerkleArchiver.verify_encrypted_archive.

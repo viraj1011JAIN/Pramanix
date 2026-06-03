@@ -2933,7 +2933,7 @@ This is the complete list of things that must be true before any production depl
 [ ] THESIS.md explains why Pramanix exists (the academic argument)
 [ ] PROOF_DOSSIER.md has current benchmark results with hardware specs
 [ ] KNOWN_GAPS.md lists every open item from flaws.md
-[ ] LICENSING.md explains dual-licence terms (AGPL-3.0 + Commercial)
+[ ] LICENSING.md explains dual-licence terms (Apache-2.0 + Commercial)
 [ ] All 4 beta integrations labelled beta in PUBLIC_API.md
 [ ] INTEGRATION_STATUS dict queryable at runtime from health check
 ```
@@ -2999,12 +2999,12 @@ This is the single most commercially important decision in the project.
 
 ### 42.1 The Problem
 
-AGPL-3.0 requires that any software that uses Pramanix in a commercial product and exposes it over a network must open-source that entire product. Fortune-500 legal teams flag AGPL-3.0 and reject it without reading the technical documentation. This is not negotiable for them.
+Apache-2.0 requires that any software that uses Pramanix in a commercial product and exposes it over a network must open-source that entire product. Fortune-500 legal teams flag Apache-2.0 and reject it without reading the technical documentation. This is not negotiable for them.
 
 ### 42.2 The Recommended Path: Dual Licence
 
 ```
-Open Source Users:  AGPL-3.0
+Open Source Users:  Apache-2.0
   Academic research, non-commercial projects, AGPL-compatible products.
   Free. Full source. No commercial support.
 
@@ -3017,18 +3017,18 @@ Enterprise Users:  Commercial Licence (per-deployment or per-seat pricing)
 ### 42.3 Files to Update
 
 ```
-1. LICENCE             → dual licence text (AGPL-3.0 + commercial option)
+1. LICENCE             → dual licence text (Apache-2.0 + commercial option)
 2. pyproject.toml      → license = "LicenseRef-PramanixDual"
 3. README.md           → licensing section with dual-licence explanation
 4. CONTRIBUTING.md     → CLA requirement (contributors grant commercial licence rights)
 5. docs/LICENSING.md   → full dual-licence terms
 6. PROOF_DOSSIER.md    → commercial licence section
-7. src/pramanix/__init__.py → __license__ = "AGPL-3.0 OR Commercial"
+7. src/pramanix/__init__.py → __license__ = "Apache-2.0 OR Commercial"
 ```
 
 ### 42.4 The CLA (Contributor License Agreement)
 
-Without a CLA, you cannot grant commercial licences because you don't own all the code. Every contributor must sign a CLA that grants you the right to licence their contribution under both AGPL-3.0 and the commercial licence.
+Without a CLA, you cannot grant commercial licences because you don't own all the code. Every contributor must sign a CLA that grants you the right to licence their contribution under both Apache-2.0 and the commercial licence.
 
 Use [CLA Assistant](https://cla-assistant.io) — it auto-enforces CLA signing in PRs.
 

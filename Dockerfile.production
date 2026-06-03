@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Pramanix — Production Docker Image
 #
 # Multi-stage build: builder → runner
@@ -89,7 +89,7 @@ LABEL org.opencontainers.image.title="Pramanix" \
       org.opencontainers.image.description="Deterministic neuro-symbolic guardrails for autonomous AI agents" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.vendor="Viraj Jain" \
-      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.source="https://github.com/viraj1011JAIN/Pramanix" \
       pramanix.alpine-banned="true"
 

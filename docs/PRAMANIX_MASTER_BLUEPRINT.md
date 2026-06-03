@@ -180,7 +180,7 @@ name = "pramanix"
 version = "0.1.0"
 description = "Formal AI governance — Z3-proven decisions, cryptographically signed audit trail"
 authors = ["Your Name <you@example.com>"]
-license = "AGPL-3.0-or-later"
+license = "Apache-2.0-or-later"
 readme = "README.md"
 packages = [{ include = "pramanix", from = "src" }]
 

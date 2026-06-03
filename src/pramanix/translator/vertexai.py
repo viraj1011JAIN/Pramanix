@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2026 Viraj Jain
 """Google Vertex AI translator — Gemini and PaLM 2 models via google-cloud-aiplatform.
 

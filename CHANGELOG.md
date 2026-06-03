@@ -104,9 +104,9 @@ autonomous AI agents using Z3 SMT formal verification.
 
 | ID | Limitation | Severity |
 |----|------------|----------|
-| GA-1 | AGPL-3.0 copyleft obligation for SaaS deployment | Critical (business decision) |
+| GA-1 | ~~Apache-2.0 copyleft~~ — **RESOLVED: re-licensed to Apache-2.0** | ✅ Resolved |
 | GA-2 | LLM consensus (`RedundantTranslator`) not tested in standard CI (no API keys) | High |
-| GA-3 | Merkle archive: compression only, no encryption | Medium |
+| GA-3 | Merkle archive encryption opt-in (AES-256-GCM exists via `PRAMANIX_MERKLE_ARCHIVE_KEY`) | Medium |
 | GA-4 | `ApprovalWorkflow`: in-memory only, no DB durability | Medium |
 | GA-5 | NLP ML models (`sklearn`/`sentence-transformers`): no real ML in standard CI | Low |
 

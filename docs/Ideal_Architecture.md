@@ -1188,9 +1188,9 @@ DAY 1, HOUR 1:
 DAY 1, HOUR 2:
   Create LICENSE-COMMERCIAL (template below)
   Update pyproject.toml:
-    license = "AGPL-3.0-or-later OR Commercial"
+    license = "Apache-2.0-or-later OR Commercial"
   Add SPDX header to all source files:
-    # SPDX-License-Identifier: AGPL-3.0-or-later OR Commercial
+    # SPDX-License-Identifier: Apache-2.0-or-later OR Commercial
 
 DAY 1, HOUR 3:
   Update README.md with dual-license section
@@ -1198,7 +1198,7 @@ DAY 1, HOUR 3:
   Create docs/LICENSING.md with full explanation
 
 DAY 1, HOUR 4:
-  git commit -m "feat: dual AGPL-3.0/Commercial licensing"
+  git commit -m "feat: dual Apache-2.0/Commercial licensing"
   git push → PR → merge
 
 COMMERCIAL LICENSE TEMPLATE:

@@ -258,7 +258,7 @@ report = reporter.generate()
 | Regulatory mapping | Built-in (6 frameworks) | None | None |
 | Audit trail | Ed25519 + Merkle + AES-256-GCM | Limited | None |
 | fail-closed guarantee | All paths | Partial | Partial |
-| License | AGPL-3.0 | Apache-2.0 | Apache-2.0 |
+| License | Apache-2.0 | Apache-2.0 | Apache-2.0 |
 | Privilege/IFC separation | ExecutionScope + TrustLabel lattice | None | None |
 | Validator library | Primitives (FinTech/Health/RBAC/Infra) | Many Colang | 50+ validators |
 
@@ -279,7 +279,7 @@ Pramanix does not compete on:
 
 - **Community validator count**: NeMo and Guardrails AI have extensive community libraries
 - **LLM output parsing**: Guardrails AI has mature output parsing and retry logic
-- **Enterprise licensing**: AGPL-3.0 is a current blocker for enterprise SaaS adoption
+- **Enterprise licensing**: Apache-2.0 is a current blocker for enterprise SaaS adoption
 
 ---
 
@@ -394,15 +394,15 @@ app.add_middleware(PramanixMiddleware, guard=guard)
 
 ---
 
-## 9. License and Commercial Use
+## 9. License
 
-Pramanix is dual-licensed:
+Pramanix is licensed under **Apache-2.0** (re-licensed from AGPL-3.0-only on 2026-06-03).
 
-- **Community**: AGPL-3.0-only. Free for open-source use. Copyleft obligation applies: SaaS operators must publish application source.
-- **Commercial**: Proprietary commercial license removes the copyleft obligation. For enterprise SaaS deployment. Contact: `viraj@pramanix.dev`
+- **Commercial use**: Permitted. SaaS operators, enterprises, and cloud providers may embed Pramanix without any copyleft obligations.
+- **Modification and distribution**: Permitted under Apache-2.0 terms.
+- **Patent protection**: Apache-2.0 includes an express patent grant.
 
-**Current status**: AGPL-3.0 is a GA blocker for enterprise adoption. A license decision
-is required before v1.0.0 GA. See `RELEASE_READINESS.md` item L1.
+The `LICENSE-COMMERCIAL` file has been removed — Apache-2.0 already grants all commercial rights. The `LICENSE` file contains the full Apache-2.0 text. All 112 source files carry `# SPDX-License-Identifier: Apache-2.0`.
 
 ---
 

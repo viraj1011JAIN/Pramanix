@@ -6,7 +6,7 @@
 > class, function, or CI rule in this repository. Where functionality is documented but absent
 > from source, this is stated explicitly. Nothing here is aspirational.
 
-Version: `1.0.0` | License: `AGPL-3.0-only` (Community) / Commercial (Enterprise)
+Version: `1.0.0` | License: `Apache-2.0`
 Language: Python ≥ 3.11,<4.0 | CI-tested: Python 3.13 only
 Status: GA-in-progress | Source files: 112 production + 227 test files | ~29,000 LOC
 
@@ -2855,9 +2855,9 @@ Z3 is compiled against glibc. Alpine Linux uses musl libc. The Z3 binary in `z3-
 
 ### License Scan
 
-The `license-scan` job enforces an allowlist of SPDX license identifiers. Any dependency with a license not in the allowlist fails CI. AGPL-3.0 dependencies in non-core extras would force users who install those extras into AGPL compatibility — the allowlist prevents this from happening silently.
+The `license-scan` job enforces an allowlist of SPDX license identifiers. Any dependency with a license not in the allowlist fails CI. This prevents transitive AGPL/GPL dependencies from inadvertently infecting the permissive Apache-2.0 distribution.
 
-**Irony**: Pramanix itself is AGPL-3.0. Any service that uses Pramanix over a network (HTTP API call to a Pramanix-protected endpoint) must either release their source code or obtain a commercial license. This is intentional for the community edition. The commercial license terms are in `LICENSE-COMMERCIAL` in this repository — contact `viraj@pramanix.dev` for pricing and order forms.
+Pramanix itself is **Apache-2.0** (re-licensed from AGPL-3.0-only on 2026-06-03). Commercial and SaaS use is freely permitted.
 
 ### Nightly Benchmark
 
@@ -2903,9 +2903,9 @@ This section catalogs every known gap, flaw, and deliberate limitation found in 
 
 ### CRITICAL — Production blockers
 
-**RESOLVED (was CRITICAL-1): `LICENSE-COMMERCIAL` is now present in the repository.**
+**RESOLVED: Pramanix is now Apache-2.0 (re-licensed 2026-06-03).**
 
-The dual-license model is established: `LICENSE` (AGPL-3.0-only) governs community/open-source use; `LICENSE-COMMERCIAL` governs proprietary and SaaS deployments, releasing the operator from the AGPL source-publication obligation. The `pyproject.toml` `"License :: Other/Proprietary License"` PyPI classifier correctly signals this. Contact `viraj@pramanix.dev` for commercial pricing and order forms.
+`LICENSE` contains the full Apache-2.0 text. All 112 source files carry `# SPDX-License-Identifier: Apache-2.0`. `LICENSE-COMMERCIAL` has been removed — Apache-2.0 already permits all commercial and SaaS use without copyleft obligations.
 
 **CRITICAL-2: `InMemoryApprovalWorkflow` is the only oversight backend — approvals are lost on restart.**
 
@@ -3432,7 +3432,7 @@ Pramanix's genuine weaknesses vs. alternatives:
 2. **Smaller community** — new project, no production case studies published.
 3. **Z3 string theory performance** — free-text policies with string constraints are significantly slower than numeric policies.
 4. **No LLM output correction** — Pramanix blocks or allows; it does not re-ask the LLM to fix its output (unlike Guardrails AI's `reask` loop).
-5. **AGPL-3.0 license** — incompatible with proprietary SaaS under the community edition. A commercial license (`LICENSE-COMMERCIAL`) is available to close the copyleft obligation — contact `viraj@pramanix.dev` for terms.
+5. ~~**AGPL-3.0 license**~~ — **RESOLVED**: re-licensed to Apache-2.0 (2026-06-03). Commercial and SaaS use now freely permitted.
 
 ---
 
@@ -3526,8 +3526,8 @@ Status labels used:
 | `SemanticSimilarityGuard` | EXPERIMENTAL | `nlp/validators.py` | Embedding-based; marked experimental |
 | `ResolverRegistry` | PARTIAL | `resolvers.py` | Not thread-safe under free-threaded Python 3.13 |
 | `@invariant_mixin` | PARTIAL | `policy.py` | No mixin attribution in violation messages |
-| AGPL-3.0 license | IMPLEMENTED | `LICENSE` | Present |
-| Commercial license | IMPLEMENTED | `LICENSE-COMMERCIAL` | Dual-license model active; contact `viraj@pramanix.dev` for terms |
+| Apache-2.0 license | IMPLEMENTED | `LICENSE` | Full Apache-2.0 text; re-licensed from AGPL-3.0-only on 2026-06-03 |
+| Commercial license | N/A | — | Not needed — Apache-2.0 already permits commercial/SaaS use; `LICENSE-COMMERCIAL` removed |
 | Finance primitives | IMPLEMENTED | `primitives/finance.py` | Amount, balance, limit, currency constraints |
 | Fintech primitives | IMPLEMENTED | `primitives/fintech.py` | AML, KYC, transaction pattern constraints |
 | Healthcare primitives | IMPLEMENTED | `primitives/healthcare.py` | HIPAA-aligned field constraints |
@@ -3538,7 +3538,7 @@ Status labels used:
 | Python 3.11/3.12 CI matrix | MISSING | — | Only 3.13 tested despite version range claims |
 | Durable Merkle persistence | MISSING | — | No database-backed audit log |
 | Database-backed `ApprovalWorkflow` | MISSING | — | `InMemoryApprovalWorkflow` only; no Redis/Postgres-backed oversight workflow |
-| Commercial license file | IMPLEMENTED | `LICENSE-COMMERCIAL` | Dual-license model active — AGPL-3.0 (community) + commercial (enterprise/SaaS) |
+| Apache-2.0 re-license | IMPLEMENTED | `LICENSE` | AGPL-3.0-only → Apache-2.0 (2026-06-03); `LICENSE-COMMERCIAL` removed |
 
 ---
 
@@ -3550,7 +3550,7 @@ These items block the GA release. They are not optional.
 
 | # | Item | Blocker reason | Source evidence |
 |---|---|---|---|
-| ~~GA-1~~ | ~~Add `LICENSE-COMMERCIAL` file~~ | **RESOLVED** — `LICENSE-COMMERCIAL` now present; dual-license model active | `LICENSE-COMMERCIAL` |
+| ~~GA-1~~ | ~~AGPL-3.0 license blocker~~ | **RESOLVED** — re-licensed to Apache-2.0 (2026-06-03); `LICENSE-COMMERCIAL` removed | `LICENSE` |
 | GA-2 | Database-backed `ApprovalWorkflow` | `InMemoryApprovalWorkflow` is the only backend; approvals lost on restart | `oversight/workflow.py` |
 | GA-3 | CI matrix for Python 3.11 + 3.12 | Version range claim `>=3.11` is untested | `pyproject.toml`, CI config |
 | GA-4 | Benchmark threshold enforcement | Performance targets are not enforced; silent regressions possible | `benchmarks/bench_guard.py` |

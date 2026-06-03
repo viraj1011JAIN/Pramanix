@@ -21,7 +21,7 @@
 | Estimated production LOC | ~29,000 | File-by-file measurement |
 | Coverage gate | ≥ 98% | `pyproject.toml`; CI enforces `--fail-under=98` at `ci.yml:375` |
 | Version | 1.0.0 | `pyproject.toml [tool.poetry] version` |
-| License | AGPL-3.0-only / Commercial dual | `pyproject.toml` |
+| License | Apache-2.0 / Commercial dual | `pyproject.toml` |
 | Python range | ≥3.11,<4.0 | `pyproject.toml` |
 | CI-tested Python | 3.13 only | `ci.yml` header |
 | Z3 solver version | ^4.12 (installed: 4.16.0.0) | `pyproject.toml` |
@@ -64,8 +64,11 @@
 | `README.md` | ✅ Updated | Appendix C corrections — session 2 |
 
 ### Phase 1 — Full Audit ✅ COMPLETED (2026-06-02)
+
 **Goal**: Systematic audit of all code, tests, docs, environment, packaging.
+
 **Findings (2026-06-02)**:
+
 - `# type: ignore`: 16 occurrences in 9 files — all legitimate (lazy optional imports + mypy inference limits)
 - `# pragma: no cover`: 0 occurrences in production source
 - Silent swallows: 0 bare `except: pass`. All `except Exception` blocks are logged or fail-closed
@@ -109,11 +112,12 @@
 **Open blockers** (require external resources/decisions):
 
 - Merkle tree externalization + database-backed `ApprovalWorkflow` (requires DB schema design)
-- AGPL→Apache-2.0 license (requires legal/business decision — GA-1 blocker)
+- ~~AGPL→Apache-2.0 license~~ — **RESOLVED 2026-06-03: re-licensed to Apache-2.0**
 
 ### Phase 4 — Observability and Fail-Closed Gaps ✅ COMPLETED (2026-06-02, session 2)
 
 **Findings**:
+
 - `pramanix_audit_sink_emit_errors_total{sink=...}` incremented per-sink-type ✅
 - Guard outer catch is safety net; individual sinks own their metric increments ✅
 - `fast_path.py` fail-closed: parse errors return block-reason string, only `pass_through()` when no rule fires ✅
@@ -122,6 +126,7 @@
 ### Phase 5 — Test Realism ✅ COMPLETED (2026-06-02, session 2)
 
 **Findings**:
+
 - All Hypothesis `assume()` calls removed in prior Zero-Mock Sprint; strategies pre-constrained ✅
 - One legitimate `deadline=None` test (`test_collateral_haircut_no_float_drift`) — uses `solve()` with `timeout_ms=5_000` ✅
 - Integration test teardown: all async fixtures use `yield`+cleanup, containers stopped via `docker stop` ✅
@@ -129,6 +134,7 @@
 ### Phase 6 — Public API and Packaging ✅ COMPLETED (2026-06-02, session 2)
 
 **Findings**:
+
 - `pramanix.__all__`: 157 exports, `ClockProtocol` added to snapshot ✅
 - All extras in `pyproject.toml` accurate — no phantom dependencies ✅
 - `setup.cfg` has only `[mypy]` compat section (consistent with pyproject.toml) ✅
@@ -139,6 +145,7 @@
 ### Phase 7 — Developer Experience ✅ COMPLETED (2026-06-02, session 2)
 
 **Findings**:
+
 - `pramanix doctor` UnicodeEncodeError on Windows fixed: `→` → `->` in `cli.py` (commit `5fde07f`) ✅
 - 15 CLI subcommands confirmed via `pramanix --help` ✅
 - `pramanix doctor` exits 0, 23 checks pass, [WARN] only for unsigned decisions ✅
@@ -146,6 +153,7 @@
 ### Phase 8 — Architecture and Orchestration ✅ COMPLETED (2026-06-02, session 3)
 
 **Work done**:
+
 - Added `TestLangGraphGuardAdapter` (8 tests): Protocol satisfaction, allow/block/fail-closed, sidecar dict, latency_ms, full roundtrip ✅
 - Added `TestAutoGenGuardAdapter` (8 tests): Protocol satisfaction, allow/block/fail-closed, rejection dict, no-write-when-allowed, full roundtrip ✅
 - `_make_real_guard()` helper: real `Guard` + real `Policy` + real Z3 solve, no mocks ✅
@@ -154,12 +162,14 @@
 ### Phase 9 — Benchmark Validity ✅ COMPLETED (2026-06-02, session 1)
 
 **Results**:
+
 - Mean: 2.3ms, P50: 2.0ms, P95: 3.3ms, P99: 3.3ms (clean venv, z3-warmup=1)
 - See `docs/BENCHMARK_STATUS.md` for full details
 
 ### Phase 10 — Documentation Unification ✅ COMPLETED (2026-06-02, session 2)
 
 **Work done**:
+
 - `README.md` Appendix C corrected: 32 `GuardConfig` fields documented ✅
 - Removed 6 wrong field names/types, added 8 missing fields ✅
 - Fixed base class claim: "Pydantic BaseModel" → "@dataclass(frozen=True)" ✅
@@ -168,6 +178,7 @@
 ### Phase 11 — Release Readiness ⏸ IN PROGRESS (2026-06-02, session 4)
 
 **Completed**:
+
 - `CHANGELOG.md` created ✅
 - S4 git history: no real secrets ✅
 - S5–S13 security items: all ✅
@@ -227,7 +238,7 @@
 
 | ID | Blocker | Severity | Owner |
 | ---- | --------- | ---------- | ------- |
-| GA-1 | AGPL-3.0 prevents enterprise adoption (copyleft obligation) | Critical | Business decision |
+| GA-1 | Apache-2.0 � RESOLVED: enterprise adoption now permitted | Critical | Business decision |
 | GA-2 | LLM consensus: no real-CI evidence for `RedundantTranslator` | High | LLM key availability |
 | GA-3 | Merkle archive encryption default-on: `EncryptedArchiveWriter` (AES-256-GCM) exists in `audit/archiver.py` but is opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var; plaintext is default | Medium | Operator configuration |
 | GA-4 | Persistent `ApprovalWorkflow`: in-memory only (no DB durability) | Medium | DB schema design |

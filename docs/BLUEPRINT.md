@@ -1,10 +1,8 @@
 # BLUEPRINT.md — Pramanix Architecture and Roadmap
 
 > **Purpose**: Single canonical source for architectural decisions, implementation roadmap,
-> and competitive positioning. Consolidates:
-> - `docs/PRAMANIX_MASTER_BLUEPRINT.md` (construction manual)
-> - `docs/PRAMANIX_BLUEPRINT_PART2.md`
-> - `docs/Ideal_Architecture.md` (competitive gap analysis)
+> and competitive positioning. Consolidates `docs/PRAMANIX_MASTER_BLUEPRINT.md`,
+> `docs/PRAMANIX_BLUEPRINT_PART2.md`, and `docs/Ideal_Architecture.md`.
 >
 > **Last Updated**: 2026-06-03
 > **Owner**: Viraj Jain
@@ -24,7 +22,7 @@ No competitor in 2026 answers this. Pramanix is built to answer it.
 
 ### The Boundary Pramanix Governs
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────┐
 │  THE REAL WORLD                                                   │
 │  (bank accounts, patient records, infrastructure, trades)        │
@@ -67,7 +65,7 @@ These are CI-enforced invariants, not guidelines:
 8 phases in `Guard.verify(intent, state)`:
 
 | Phase | What Happens | Fail Mode |
-| ------- |-------------| ----------- |
+| ----- | ------------ | --------- |
 | 0 | Input size guard (`max_input_bytes`) | BLOCK if oversized |
 | 1 | Resolver cache population | BLOCK on resolver error |
 | 2 | Pydantic validation (if `intent_model`/`state_model` set) | BLOCK on schema violation |
@@ -107,7 +105,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### Subsystems and Source Files
 
 | Subsystem | Files | Lines | Status |
-| ----------- |-------| ------- |--------|
+| --------- | ----- | ----- | ------ |
 | Guard pipeline | `guard.py`, `guard_config.py`, `guard_pipeline.py` | ~3,000 | Production |
 | Transpiler | `transpiler.py` | 970 | Production |
 | Solver | `solver.py` | 491 | Production |
@@ -134,14 +132,14 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### The Honest Differentiation Matrix
 
 | Capability | Pramanix | NeMo Guardrails | Guardrails AI | LangChain |
-| ----------- |----------| ---------------- |---------------| ----------- |
+| ---------- | -------- | --------------- | ------------- | --------- |
 | Formal verification | ✅ Z3 SMT | ❌ None | ❌ None | ❌ None |
 | Deterministic ALLOW | ✅ Mathematical proof | ❌ Probabilistic | ❌ None | ❌ None |
 | Counterexample on BLOCK | ✅ Z3 model | ❌ None | ❌ None | ❌ None |
 | Audit trail with signatures | ✅ Ed25519/Merkle | ⚠️ Limited | ❌ None | ❌ None |
 | Regulatory mapping (6 frameworks) | ✅ 6 frameworks, built-in mappings | ❌ None | ❌ None | ❌ None |
 | fail-closed on error | ✅ All paths | ⚠️ Some | ❌ None | ❌ None |
-| AGPL-compatible | ❌ Blocker | ✅ Apache-2.0 | ✅ Apache-2.0 | ✅ MIT |
+| License | ✅ Apache-2.0 | ✅ Apache-2.0 | ✅ Apache-2.0 | ✅ MIT |
 | Community validator library | ❌ Limited | ✅ Many Colang | ✅ 50+ validators | ✅ Callbacks |
 | LLM output validation | ⚠️ Basic NLP | ✅ Colang rules | ✅ Pydantic + validators | ✅ Output parsers |
 
@@ -156,7 +154,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 
 1. **Community validators**: NeMo has Colang. Guardrails AI has 50+ community validators. Pramanix has primitives (FinTech, Healthcare, RBAC) but no community plugin ecosystem.
 2. **LLM output validation**: Guardrails AI is stronger for validating LLM output schemas. Pramanix validates intent before action — a different (and stronger) guarantee for agent safety.
-3. **License**: AGPL-3.0 is a GA blocker for enterprise. NeMo (Apache-2.0) and Guardrails AI (Apache-2.0) have no such restriction.
+3. **License**: Re-licensed to Apache-2.0 (2026-06-03). Enterprise deployment now permitted without copyleft obligations. Pramanix, NeMo, and Guardrails AI are all Apache-2.0.
 
 ---
 
@@ -165,16 +163,16 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### P1 — Critical (GA Blockers)
 
 | Gap | Description | Resolution Path |
-| ---- |-------------| ---------------- |
-| P1-L | AGPL-3.0 license | Business decision: relicense or establish enterprise tier |
+| --- | ----------- | --------------- |
+| ~~P1-L~~ | ~~AGPL-3.0 license~~ | ✅ **RESOLVED** — re-licensed to Apache-2.0 (2026-06-03) |
 | P1-CI | LLM consensus CI | Commit API keys to CI secrets + run nightly |
 | P1-DB | Persistent `ApprovalWorkflow` | DB schema design + asyncpg implementation |
 
 ### P2 — Important (Post-GA)
 
 | Gap | Description |
-| ---- |-------------|
-| P2-ENC | Merkle archive encryption **default-on** in production (AES-256-GCM exists in `audit/archiver.py` as `EncryptedArchiveWriter`; currently opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var) |
+| --- | ----------- |
+| P2-ENC | Merkle archive encryption default-on in production (AES-256-GCM exists in `audit/archiver.py` as `EncryptedArchiveWriter`; currently opt-in via `PRAMANIX_MERKLE_ARCHIVE_KEY` env var) |
 | P2-ML | Real ML for ToxicityScorer (sentence-transformers) |
 | P2-COMM | Community validator plugin ecosystem |
 | P2-PPL | Pramanix Policy Language (YAML → DSL) improvements |
@@ -182,7 +180,7 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 ### P3 — Nice to Have
 
 | Gap | Description |
-| ---- |-------------|
+| --- | ----------- |
 | P3-BENCH | Publish verified benchmark results |
 | P3-DOCS | API reference generated from docstrings |
 | P3-CERT | Integration certification badges (LangChain, CrewAI, etc.) |
@@ -201,13 +199,13 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 - [x] 10 LLM translators
 - [x] 12 framework integrations
 - [x] 5,687 tests / ≥98% coverage
-- [ ] License decision
+- [x] Re-licensed to Apache-2.0 (2026-06-03)
 - [ ] Persistent ApprovalWorkflow
 - [ ] Real LLM consensus CI
 
 ### v1.1.0 (Post-GA)
 
-- [ ] Merkle archive encryption
+- [ ] Merkle archive encryption default-on in production (AES-256-GCM currently opt-in)
 - [ ] Real ML NLP (sentence-transformers)
 - [ ] Community validator framework
 - [ ] Published benchmark results
@@ -227,9 +225,9 @@ Immutable frozen dataclass. Wire format: **17 keys**.
 Key architectural decisions made and why:
 
 | Decision | Rationale | Date |
-| ---------- |-----------| ------ |
+| -------- | --------- | ---- |
 | Z3 over LLM-as-judge | Determinism: Z3 proves; LLM guesses | Founding |
-| AGPL-3.0 + commercial dual | Copyleft community + paid enterprise | Founding |
+| Re-license AGPL-3.0 → Apache-2.0 | Enterprise adoption blocked by AGPL copyleft; Apache-2.0 permits commercial SaaS deployment | 2026-06-03 |
 | python:3.13-slim-bookworm (not Alpine) | z3-solver doesn't compile with musl libc; production Dockerfiles use digest-pinned 3.13-slim-bookworm | Early |
 | `assert_and_track` over bare `add` | Unsat core needs tracking per-invariant | v0.5 |
 | `threading.local` for Z3 context | Per-thread isolation; Z3 C lib is not thread-safe | v0.5 |

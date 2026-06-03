@@ -15,10 +15,10 @@
 
 | # | Item | Status | Evidence / Notes |
 | --- | ------ | -------- | ------------------ |
-| L1 | License decision (AGPL-3.0 vs Apache-2.0) | ❌ BLOCKED | Business/legal decision required |
-| L2 | `LICENSE` file present and accurate | ✅ | `LICENSE` file exists, AGPL-3.0-only |
-| L3 | `LICENSE-COMMERCIAL` file present | ✅ | Dual-license model documented |
-| L4 | PyPI license classifier matches file | ✅ | `pyproject.toml:25-26` has both AGPL + proprietary classifiers |
+| L1 | License decision | ✅ **RESOLVED** | Re-licensed to Apache-2.0 (2026-06-03). `LICENSE` file replaced with Apache-2.0 full text. All 112 source files updated. `LICENSE-COMMERCIAL` removed (Apache-2.0 already permits commercial use). |
+| L2 | `LICENSE` file present and accurate | ✅ | Apache-2.0 full text present |
+| L3 | `LICENSE-COMMERCIAL` file | N/A | Removed — Apache-2.0 already permits commercial SaaS deployment without copyleft obligations |
+| L4 | PyPI license classifier matches file | ✅ | `pyproject.toml` has `"License :: OSI Approved :: Apache Software License"` |
 
 ### Code Quality
 
@@ -128,14 +128,14 @@
 
 | Category | ✅ Done | ⚠️ Check | ❌ Blocked |
 | ---------- | --------- | ---------- | ----------- |
-| License | 3 | 0 | 1 |
+| License | 4 | 0 | 0 |
 | Code Quality | 7 | 1 | 0 |
 | Packaging | 8 | 0 | 0 |
 | Security | 13 | 0 | 0 |
 | API Surface | 6 | 0 | 0 |
 | Documentation | 7 | 0 | 0 |
-| **Total** | **44** | **1** | **1** |
+| **Total** | **45** | **1** | **0** |
 
-**Hard blockers**: L1 (license) — requires business decision.
-**Soft blockers**: C2 (coverage ≥ 98%; CI now enforces `--fail-under=98` at `ci.yml:375`; last full suite run in progress).
-**Last updated**: 2026-06-03 — full source cross-verification pass; A4 corrected to 10 members; E3 corrected (AES-256-GCM exists, opt-in); D3 updated to PRAMANIX_MASTER_AUDIT.md.
+**Hard blockers**: None. L1 (license) resolved 2026-06-03 — re-licensed to Apache-2.0.
+**Soft blockers**: C2 (coverage ≥ 98%; CI enforces `--fail-under=98` at `ci.yml:375`; last full suite run in progress).
+**Last updated**: 2026-06-03 — re-licensed to Apache-2.0; L1 RESOLVED; all 112 source SPDX headers updated; LICENSE-COMMERCIAL removed.
