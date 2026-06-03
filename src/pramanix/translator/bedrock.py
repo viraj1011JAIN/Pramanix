@@ -88,13 +88,14 @@ class BedrockTranslator:
         max_tokens: int = 1024,
         _boto3_factory: Any = None,
     ) -> None:
+        # Import boto3 eagerly so a missing install surfaces at construction time.
         try:
             if _boto3_factory is not None:
-                _boto3 = _boto3_factory()
+                self._boto3 = _boto3_factory()
             else:
                 import importlib as _importlib
-                _boto3 = _importlib.import_module("boto3")
-            import botocore.config
+
+                self._boto3 = _importlib.import_module("boto3")
         except ImportError as exc:
             raise ImportError(
                 "boto3 is required for BedrockTranslator. "
@@ -104,31 +105,46 @@ class BedrockTranslator:
         self.model = model
         self._timeout = timeout
         self._max_tokens = max_tokens
-
-        _region = (
+        self._region = (
             region
             or os.environ.get("AWS_DEFAULT_REGION")
             or os.environ.get("AWS_REGION")
             or "us-east-1"
         )
+        self._aws_access_key_id = aws_access_key_id or os.environ.get("AWS_ACCESS_KEY_ID") or None
+        self._aws_secret_access_key = (
+            aws_secret_access_key or os.environ.get("AWS_SECRET_ACCESS_KEY") or None
+        )
+        self._aws_session_token = aws_session_token or os.environ.get("AWS_SESSION_TOKEN") or None
+        self._profile_name = profile_name
+        # Client is created lazily on first use so that:
+        # (a) profile resolution errors surface at call time, not at import/construction time,
+        # (b) tests can inject a duck-typed client after construction.
+        self._client: Any = None
+
+    def _ensure_client(self) -> None:
+        """Create the bedrock-runtime boto3 client if not already created."""
+        if self._client is not None:
+            return
+        import botocore.config
 
         session_kwargs: dict[str, Any] = {}
-        if profile_name:
-            session_kwargs["profile_name"] = profile_name
-
-        session = _boto3.Session(
-            aws_access_key_id=aws_access_key_id or os.environ.get("AWS_ACCESS_KEY_ID") or None,
-            aws_secret_access_key=(
-                aws_secret_access_key or os.environ.get("AWS_SECRET_ACCESS_KEY") or None
-            ),
-            aws_session_token=(aws_session_token or os.environ.get("AWS_SESSION_TOKEN") or None),
+        if self._profile_name:
+            session_kwargs["profile_name"] = self._profile_name
+        session = self._boto3.Session(
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+            aws_session_token=self._aws_session_token,
             **session_kwargs,
         )
+        # urllib3 rejects read_timeout <= 0; clamp to at least 1 second at the
+        # boto3 layer.  asyncio.wait_for enforces the real sub-second timeout.
+        read_timeout = max(1, int(self._timeout))
         self._client = session.client(
             "bedrock-runtime",
-            region_name=_region,
+            region_name=self._region,
             config=botocore.config.Config(
-                read_timeout=int(timeout),
+                read_timeout=read_timeout,
                 connect_timeout=10,
                 retries={"max_attempts": 0},
             ),
@@ -156,6 +172,7 @@ class BedrockTranslator:
         """
         system_prompt = build_system_prompt(intent_schema)
         model_lower = self.model.lower()
+        self._ensure_client()
 
         if "claude" in model_lower:
             payload = self._build_claude_payload(system_prompt, text)
@@ -263,6 +280,7 @@ class BedrockTranslator:
 
     async def _converse(self, system_prompt: str, text: str) -> dict[str, Any]:
         """Use the Bedrock Converse API (model-agnostic) for unsupported models."""
+        self._ensure_client()
         loop = asyncio.get_event_loop()
         try:
             response = await asyncio.wait_for(

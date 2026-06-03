@@ -47,6 +47,9 @@ class TestBedrockTranslatorInit:
     def test_init_creates_client(self) -> None:
         t = _make_translator()
         assert t.model == "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        # Client is lazy-initialized; None until first extract() / _ensure_client() call.
+        assert t._client is None
+        t._ensure_client()
         assert t._client is not None
 
     def test_init_uses_region_kwarg(self) -> None:
@@ -66,7 +69,7 @@ class TestBedrockTranslatorInit:
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         monkeypatch.delenv("AWS_REGION", raising=False)
         t = BedrockTranslator("amazon.titan-text-express-v1")
-        assert t._client is not None  # us-east-1 default used
+        assert t._region == "us-east-1"  # default applied; client is lazy
 
     def test_init_profile_name_kwarg(self) -> None:
         # profile_name is accepted even if the profile doesn't exist yet

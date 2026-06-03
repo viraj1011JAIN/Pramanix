@@ -41,6 +41,18 @@ class TestTranslatorLazyImports:
         cls = t_pkg.OllamaTranslator
         assert cls.__name__ == "OllamaTranslator"
 
+    def test_bedrock_translator_importable(self) -> None:
+        import pramanix.translator as t_pkg
+
+        cls = t_pkg.BedrockTranslator
+        assert cls.__name__ == "BedrockTranslator"
+
+    def test_vertexai_translator_importable_or_config_error(self) -> None:
+        import pramanix.translator as t_pkg
+
+        cls = t_pkg.VertexAITranslator
+        assert cls.__name__ == "VertexAITranslator"
+
     def test_unknown_attribute_raises_attribute_error(self) -> None:
         import pramanix.translator as t_pkg
 

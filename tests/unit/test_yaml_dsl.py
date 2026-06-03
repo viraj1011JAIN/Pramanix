@@ -408,3 +408,239 @@ class TestYamlLoaderDefensiveHelpers:
         node = _ast.Not()
         with pytest.raises(PolicySyntaxError, match="Not"):
             _visit(node, {}, "test expr", "test_inv")
+
+
+# ── Expression branch coverage ────────────────────────────────────────────────
+
+_SINGLE_REAL = "meta:\n  name: P\nfields:\n  a:\n    z3_type: Real\n"
+_TWO_REAL = "meta:\n  name: P\nfields:\n  a:\n    z3_type: Real\n  b:\n    z3_type: Real\n"
+_BOOL_REAL = "meta:\n  name: P\nfields:\n  flag:\n    z3_type: Bool\n  a:\n    z3_type: Real\n"
+
+
+def _inv(expr: str) -> str:
+    return f"invariants:\n  - name: inv\n    expr: '{expr}'\n"
+
+
+class TestYamlLoaderMissingBranches:
+    """Cover all uncovered _visit branches and loader error paths."""
+
+    # ── _parse_expr SyntaxError path (lines 204-205) ──────────────────────────
+    def test_syntax_error_in_expr_raises_policy_syntax_error(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("a >=")
+        with pytest.raises(PolicySyntaxError, match="syntax error"):
+            yaml_loader(bad)
+
+    # ── Constant: unsupported literal type (None) (line 243) ─────────────────
+    def test_none_literal_rejected(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("a == None")
+        with pytest.raises(PolicySyntaxError, match="unsupported"):
+            yaml_loader(bad)
+
+    # ── Name: lowercase 'true' → True literal (line 254) ─────────────────────
+    def test_lowercase_true_name_treated_as_literal(self, yaml_loader) -> None:
+        y = _BOOL_REAL + _inv("flag == true")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── Name: lowercase 'false' → False literal (line 256) ───────────────────
+    def test_lowercase_false_name_treated_as_literal(self, yaml_loader) -> None:
+        y = _BOOL_REAL + _inv("flag == false")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── UnaryOp Not on ConstraintExpr → ~constraint (line 271) ───────────────
+    def test_not_on_constraint_expr(self, yaml_loader) -> None:
+        y = _SINGLE_REAL + _inv("not (a >= 0)")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── UnaryOp USub on ExpressionNode → -operand (lines 276-278) ────────────
+    def test_unary_minus_on_field(self, yaml_loader) -> None:
+        y = _SINGLE_REAL + _inv("-a >= 0")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── UnaryOp USub on ConstraintExpr → error (lines 279-282) ──────────────
+    def test_unary_minus_on_constraint_raises(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("-(a >= 0)")
+        with pytest.raises(PolicySyntaxError, match="unary minus"):
+            yaml_loader(bad)
+
+    # ── UnaryOp UAdd → no-op (lines 283-284) ─────────────────────────────────
+    def test_unary_plus_is_noop(self, yaml_loader) -> None:
+        y = _SINGLE_REAL + _inv("+a >= 0")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── UnaryOp unsupported op (Invert ~) → error (line 285) ─────────────────
+    def test_unsupported_unary_op_raises(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("~a >= 0")
+        with pytest.raises(PolicySyntaxError, match="unsupported unary operator"):
+            yaml_loader(bad)
+
+    # ── BinOp with ConstraintExpr operand → error (line 295) ─────────────────
+    def test_binop_on_constraint_lhs_raises(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("(a >= 0) + a >= 1")
+        with pytest.raises(PolicySyntaxError, match="arithmetic operators"):
+            yaml_loader(bad)
+
+    # ── BinOp Mult (lines 304-305) ────────────────────────────────────────────
+    def test_multiplication_operator(self, yaml_loader) -> None:
+        y = _TWO_REAL + _inv("a * b >= 0")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── BinOp Div (lines 306-307) ─────────────────────────────────────────────
+    def test_division_operator(self, yaml_loader) -> None:
+        y = _TWO_REAL + _inv("a / b >= 1")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── BinOp unsupported op (%) → error (line 308) ──────────────────────────
+    def test_unsupported_binop_raises(self, yaml_loader) -> None:
+        bad = _TWO_REAL + _inv("a % b >= 0")
+        with pytest.raises(PolicySyntaxError, match="unsupported binary operator"):
+            yaml_loader(bad)
+
+    # ── Compare: chained comparison rejected (line 316) ──────────────────────
+    def test_chained_comparison_rejected_properly(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("0 < a < 100")
+        with pytest.raises(PolicySyntaxError, match="chained"):
+            yaml_loader(bad)
+
+    # ── Compare: ConstraintExpr on LHS → error (line 325) ────────────────────
+    def test_constraint_as_comparison_lhs_raises(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("(a >= 0) == 1")
+        with pytest.raises(PolicySyntaxError, match="left-hand side"):
+            yaml_loader(bad)
+
+    # ── Compare: ConstraintExpr on RHS → error (line 330) ────────────────────
+    def test_constraint_as_comparison_rhs_raises(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("1 == (a >= 0)")
+        with pytest.raises(PolicySyntaxError, match="right-hand side"):
+            yaml_loader(bad)
+
+    # ── Compare: Gt (lines 338-339) ───────────────────────────────────────────
+    def test_gt_operator(self, yaml_loader) -> None:
+        y = _SINGLE_REAL + _inv("a > 0")
+        assert yaml_loader(y) is not None
+
+    # ── Compare: Lt (lines 340-341) ───────────────────────────────────────────
+    def test_lt_operator(self, yaml_loader) -> None:
+        y = _SINGLE_REAL + _inv("a < 100")
+        assert yaml_loader(y) is not None
+
+    # ── Compare: Eq (lines 342-343) ───────────────────────────────────────────
+    def test_eq_operator(self, yaml_loader) -> None:
+        y = (
+            "meta:\n  name: P\nfields:\n  a:\n    z3_type: Int\n"
+            + _inv("a == 0")
+        )
+        assert yaml_loader(y) is not None
+
+    # ── Compare: NotEq (lines 344-345) ────────────────────────────────────────
+    def test_neq_operator(self, yaml_loader) -> None:
+        y = (
+            "meta:\n  name: P\nfields:\n  a:\n    z3_type: Int\n"
+            + _inv("a != 0")
+        )
+        assert yaml_loader(y) is not None
+
+    # ── Compare: unsupported op (is) → error (line 346) ─────────────────────
+    def test_unsupported_comparison_op_raises(self, yaml_loader) -> None:
+        bad = _SINGLE_REAL + _inv("a is a")
+        with pytest.raises(PolicySyntaxError, match="unsupported comparison op"):
+            yaml_loader(bad)
+
+    # ── BoolOp: ExpressionNode (Bool field) promoted via .is_true() (line 358-359) ─
+    def test_bool_field_in_and_expression(self, yaml_loader) -> None:
+        y = _BOOL_REAL + _inv("flag and a >= 0")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── BoolOp: Or path (line 367) ────────────────────────────────────────────
+    def test_or_expression(self, yaml_loader) -> None:
+        y = _TWO_REAL + _inv("a >= 0 or b >= 0")
+        cls = yaml_loader(y)
+        assert cls is not None
+
+    # ── field spec not a mapping (line 410) ──────────────────────────────────
+    def test_field_spec_not_dict_raises(self, yaml_loader) -> None:
+        bad = (
+            "meta:\n  name: X\n"
+            "fields:\n  a: Real\n"
+            + _inv("a >= 0")
+        )
+        with pytest.raises(PolicySyntaxError, match="mapping"):
+            yaml_loader(bad)
+
+    # ── missing z3_type key (line 416) ───────────────────────────────────────
+    def test_missing_z3_type_raises(self, yaml_loader) -> None:
+        bad = (
+            "meta:\n  name: X\n"
+            "fields:\n  a:\n    type: float\n"
+            + _inv("a >= 0")
+        )
+        with pytest.raises(PolicySyntaxError, match="z3_type"):
+            yaml_loader(bad)
+
+    # ── z3type alias (no underscore) → accepted (line 414) ───────────────────
+    def test_z3type_alias_accepted(self, yaml_loader) -> None:
+        y = (
+            "meta:\n  name: X\n"
+            "fields:\n  a:\n    z3type: Real\n"
+            + _inv("a >= 0")
+        )
+        assert yaml_loader(y) is not None
+
+    # ── invariant item not a dict (line 453) ──────────────────────────────────
+    def test_invariant_not_dict_raises(self, yaml_loader) -> None:
+        bad = (
+            "meta:\n  name: X\n"
+            "fields:\n  a:\n    z3_type: Real\n"
+            "invariants:\n  - just_a_string\n"
+        )
+        with pytest.raises(PolicySyntaxError, match="mapping"):
+            yaml_loader(bad)
+
+    # ── invariant name not a valid identifier (line 458) ─────────────────────
+    def test_invariant_invalid_name_raises(self, yaml_loader) -> None:
+        bad = (
+            "meta:\n  name: X\n"
+            "fields:\n  a:\n    z3_type: Real\n"
+            "invariants:\n  - name: '123-bad'\n    expr: 'a >= 0'\n"
+        )
+        with pytest.raises(PolicySyntaxError, match="identifier"):
+            yaml_loader(bad)
+
+    # ── invariant missing expr key (line 467) ────────────────────────────────
+    def test_invariant_missing_expr_raises(self, yaml_loader) -> None:
+        bad = (
+            "meta:\n  name: X\n"
+            "fields:\n  a:\n    z3_type: Real\n"
+            "invariants:\n  - name: inv\n"
+        )
+        with pytest.raises(PolicySyntaxError, match="'expr'"):
+            yaml_loader(bad)
+
+    # ── YAML parse error (lines 525-526) ─────────────────────────────────────
+    def test_yaml_parse_error_raises_policy_syntax_error(self, yaml_loader) -> None:
+        with pytest.raises(PolicySyntaxError, match="YAML parse error"):
+            yaml_loader(":\n  bad: [unclosed")
+
+    # ── non-dict YAML top-level (line 529) ───────────────────────────────────
+    def test_yaml_non_dict_raises_policy_syntax_error(self, yaml_loader) -> None:
+        with pytest.raises(PolicySyntaxError, match="top-level mapping"):
+            yaml_loader("- item1\n- item2\n")
+
+    # ── TOML parse error (lines 566-567) ─────────────────────────────────────
+    def test_toml_parse_error_raises_policy_syntax_error(self, toml_loader) -> None:
+        with pytest.raises(PolicySyntaxError, match="TOML parse error"):
+            toml_loader("name = BrokenPolicy\n[")
+
+    # ── load_policy_string with fmt="toml" (line 590) ────────────────────────
+    def test_load_policy_string_toml_fmt(self) -> None:
+        from pramanix.natural_policy.yaml_loader import load_policy_string
+
+        cls = load_policy_string(TOML_POLICY, fmt="toml")
+        assert cls.__name__ == "SimpleLimitPolicy"
