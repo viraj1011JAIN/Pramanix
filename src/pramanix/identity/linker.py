@@ -236,9 +236,14 @@ class JWTIdentityLinker:
         if nbf is not None and now < int(nbf) - self._skew:
             raise JWTVerificationError(f"JWT not yet valid (nbf={nbf}, now={now})")
 
-        exp = payload.get("exp", 0)
-        if exp and now > exp + self._skew:
-            raise JWTExpiredError(f"JWT expired at {exp}, current time {now}")
+        exp = payload.get("exp")
+        # exp=0 is falsy — a plain `if exp` check would let a token with
+        # exp=0 bypass expiry validation entirely (#280).  Use explicit None
+        # check so exp=0 is treated as an expired-at-epoch token.
+        if exp is not None:
+            exp_int = int(exp)
+            if now > exp_int + self._skew:
+                raise JWTExpiredError(f"JWT expired at {exp_int}, current time {now}")
 
         # BUG-12: reject missing or empty sub to prevent empty-identity spoofing.
         sub = payload.get("sub")

@@ -89,10 +89,20 @@ class DecisionVerifier:
             payload_bytes = self._b64url_decode(payload_b64)
             payload = json.loads(payload_bytes)
 
+            # Use strict identity check for `allowed` — `bool(truthy_non_bool)`
+            # such as bool([1]) or bool({"x": 1}) would return True, allowing a
+            # crafted token with a non-boolean `allowed` field to be accepted as
+            # ALLOW.  The signed payload must contain the Python literal True.
+            raw_allowed = payload.get("allowed")
+            if raw_allowed is not True and raw_allowed is not False:
+                return self._invalid(
+                    f"Token 'allowed' field must be boolean true or false, "
+                    f"got {type(raw_allowed).__name__!r}: {raw_allowed!r}"
+                )
             return VerificationResult(
                 valid=True,
                 decision_id=str(payload.get("decision_id", "")),
-                allowed=bool(payload.get("allowed", False)),
+                allowed=raw_allowed,
                 status=str(payload.get("status", "")),
                 violated_invariants=list(payload.get("violated_invariants", [])),
                 explanation=str(payload.get("explanation", "")),

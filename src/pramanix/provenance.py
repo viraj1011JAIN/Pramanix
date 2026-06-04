@@ -188,27 +188,46 @@ class ProvenanceRecord:
     def hmac_tag(self, signing_key: bytes | None = None) -> str:
         """Compute and return the HMAC-SHA256 tag for this record.
 
-        The tag is computed over a canonical byte string of all identifying
+        The tag is computed over a canonical JSON byte string of all identifying
         fields.  It is *not* stored in the frozen dataclass — callers compute
         it on demand to keep the dataclass value type pure.
 
         Args:
-            signing_key: HMAC key.  Defaults to the stable per-process key.
+            signing_key: HMAC key (32 bytes).  Pass ``None`` to use the stable
+                per-process key.  Passing ``b""`` is an error; it does not fall
+                through to the process key.
         """
-        key = signing_key or _provenance_key()
-        payload = (
-            f"{self.record_id}|"
-            f"{self.decision_id}|"
-            f"{self.policy_hash}|"
-            f"{self.model_version}|"
-            f"{sorted(self.input_labels.items())}|"
-            f"{sorted(self.tool_manifest)}|"
-            f"{self.principal_id}|"
-            f"{self.allowed}|"
-            f"{self.created_at}|"
-            f"{self.prev_hash}"
-        ).encode()
-        return hmac.new(key, payload, hashlib.sha256).hexdigest()
+        import json as _json
+
+        if signing_key is not None and len(signing_key) == 0:
+            raise ValueError(
+                "signing_key must be None (use process-default key) or a "
+                "non-empty bytes key.  An empty b'' key is rejected to prevent "
+                "silent HMAC key substitution."
+            )
+        key = signing_key if signing_key is not None else _provenance_key()
+        # Canonical JSON payload — no Python repr, no pipe delimiters, no
+        # float repr ambiguity.  Field ordering is fixed by sort_keys=True.
+        # created_at is serialised as a string to avoid float repr differences
+        # across Python versions and platforms.
+        canonical = _json.dumps(
+            {
+                "record_id": self.record_id,
+                "decision_id": self.decision_id,
+                "policy_hash": self.policy_hash,
+                "model_version": self.model_version,
+                "input_labels": sorted(self.input_labels.items()),
+                "tool_manifest": sorted(self.tool_manifest),
+                "principal_id": self.principal_id,
+                "allowed": self.allowed,
+                "created_at": repr(self.created_at),
+                "prev_hash": self.prev_hash,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+        return hmac.new(key, canonical, hashlib.sha256).hexdigest()
 
     def verify(self, stored_tag: str, signing_key: bytes | None = None) -> bool:
         """Return ``True`` when the record has not been tampered with.

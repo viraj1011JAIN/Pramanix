@@ -37,6 +37,8 @@ from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
+from pramanix.translator.base import RedactedSecretsMixin
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -47,7 +49,7 @@ _log = logging.getLogger(__name__)
 __all__ = ["BedrockTranslator"]
 
 
-class BedrockTranslator:
+class BedrockTranslator(RedactedSecretsMixin):
     """Translator that calls AWS Bedrock foundation models.
 
     Wraps boto3's synchronous ``bedrock-runtime`` client in an async executor
@@ -184,7 +186,7 @@ class BedrockTranslator:
             # Fallback: use Bedrock Converse API (works for all models)
             return await self._converse(system_prompt, text)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             raw = await asyncio.wait_for(
                 loop.run_in_executor(None, lambda: self._invoke_model(payload)),
@@ -214,9 +216,20 @@ class BedrockTranslator:
             "messages": [{"role": "user", "content": text}],
         }
 
+    @staticmethod
+    def _sanitize_for_titan(text: str) -> str:
+        """Strip Titan role-boundary tokens from user-supplied text.
+
+        The Titan format uses ``\\nAssistant:`` as a role boundary.  An attacker
+        who includes ``\\nAssistant:`` in their input can inject a fake assistant
+        turn and bias the model's extraction.
+        """
+        return text.replace("\nAssistant:", " ").replace("\r\nAssistant:", " ")
+
     def _build_titan_payload(self, system_prompt: str, text: str) -> dict[str, Any]:
         """Build an Amazon Titan text-generation payload."""
-        combined = f"{system_prompt}\n\nUser: {text}\nAssistant:"
+        safe_text = self._sanitize_for_titan(text)
+        combined = f"{system_prompt}\n\nUser: {safe_text}\nAssistant:"
         return {
             "inputText": combined,
             "textGenerationConfig": {
@@ -227,9 +240,22 @@ class BedrockTranslator:
             },
         }
 
+    @staticmethod
+    def _sanitize_for_llama2(text: str) -> str:
+        """Strip Llama 2 instruction-format tokens from user-supplied text.
+
+        An attacker who includes ``[/INST]`` in their input can close the
+        instruction block and inject a fabricated assistant response before the
+        model generates.  Remove all Llama 2 control tokens from user text.
+        """
+        for token in ("[/INST]", "[INST]", "<<SYS>>", "<</SYS>>", "<s>", "</s>"):
+            text = text.replace(token, " ")
+        return text
+
     def _build_llama_payload(self, system_prompt: str, text: str) -> dict[str, Any]:
         """Build a Meta Llama chat payload."""
-        prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{text} [/INST]"
+        safe_text = self._sanitize_for_llama2(text)
+        prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{safe_text} [/INST]"
         return {
             "prompt": prompt,
             "max_gen_len": self._max_tokens,
@@ -281,7 +307,7 @@ class BedrockTranslator:
     async def _converse(self, system_prompt: str, text: str) -> dict[str, Any]:
         """Use the Bedrock Converse API (model-agnostic) for unsupported models."""
         self._ensure_client()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             response = await asyncio.wait_for(
                 loop.run_in_executor(

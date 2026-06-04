@@ -20,6 +20,8 @@ from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMT
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
+from pramanix.translator.base import RedactedSecretsMixin
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -40,7 +42,7 @@ _GEMINI_CONFIGURE_LOCK = _thr.Lock()
 del _thr
 
 
-class GeminiTranslator:
+class GeminiTranslator(RedactedSecretsMixin):
     """Translator that calls the Google Gemini GenerateContent API.
 
     Uses ``google.generativeai`` (``google-generativeai`` PyPI package).
@@ -202,7 +204,14 @@ class GeminiTranslator:
             ) from exc
 
         system_prompt = build_system_prompt(intent_schema)
-        full_prompt = f"{system_prompt}\n\nUser input:\n{text}"
+        # Use structured contents with system_instruction when the new-client path
+        # is available.  For the legacy genai.configure() path the prompt is still
+        # assembled as a flat string, but system_instruction is passed separately
+        # via GenerativeModel(system_instruction=...) to preserve role separation.
+        full_prompt = f"User input:\n{text}"
+        # Keep a combined prompt for the legacy path where system_instruction is
+        # not supported by the installed SDK version.
+        full_prompt_legacy = f"{system_prompt}\n\nUser input:\n{text}"
 
         attempts = 0
         try:
@@ -214,7 +223,11 @@ class GeminiTranslator:
             ):
                 with attempt:
                     attempts += 1
-                    raw = await self._single_call(prompt=full_prompt)
+                    raw = await self._single_call(
+                        prompt=full_prompt,
+                        system_prompt=system_prompt,
+                        full_prompt_legacy=full_prompt_legacy,
+                    )
                     return parse_llm_response(raw, model_name=self.model)
 
         except self._retryable as exc:
@@ -240,7 +253,13 @@ class GeminiTranslator:
             raise
         raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
 
-    async def _single_call(self, *, prompt: str) -> str:
+    async def _single_call(
+        self,
+        *,
+        prompt: str,
+        system_prompt: str = "",
+        full_prompt_legacy: str = "",
+    ) -> str:
         """Make a single GenerateContent call and return the raw text."""
         genai = self._genai
 
@@ -248,36 +267,64 @@ class GeminiTranslator:
         # back to the global configure() path under a module-level lock so
         # concurrent Guard instances with different keys don't race.
         if self._client is not None and hasattr(self._client, "aio"):
+            # New-client path: pass system_instruction separately for role
+            # separation.  This prevents prompt injection via the user-input
+            # portion of the prompt overriding system instructions.
+            cfg: dict[str, Any] = {
+                "temperature": _TEMPERATURE,
+                "response_mime_type": "application/json",
+            }
+            if system_prompt:
+                cfg["system_instruction"] = system_prompt
             response = await self._client.aio.models.generate_content(
                 model=self.model,
-                contents=prompt,
-                config={"temperature": _TEMPERATURE, "response_mime_type": "application/json"},
+                contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                config=cfg,
             )
             raw_text: str = response.text
         else:
+            # Legacy path: pass system_instruction to GenerativeModel constructor
+            # when supported, otherwise fall back to flat combined prompt.
+            gen_config_kwargs: dict[str, Any] = {
+                "temperature": _TEMPERATURE,
+                "response_mime_type": "application/json",
+            }
+            model_kwargs: dict[str, Any] = {
+                "model_name": self.model,
+                "generation_config": genai.GenerationConfig(**gen_config_kwargs),
+            }
+            if system_prompt:
+                try:
+                    model_kwargs["system_instruction"] = system_prompt
+                except TypeError:
+                    pass  # SDK version does not support system_instruction
+            # Try to create the model with system_instruction for role separation.
+            # If the installed SDK version does not support it, fall back to the
+            # combined prompt (which concatenates system_prompt + user_input).
+            effective_prompt = prompt  # user-only
             if self._api_key:
                 with _GEMINI_CONFIGURE_LOCK:
                     genai.configure(api_key=self._api_key)
-                    model_client = genai.GenerativeModel(
-                        model_name=self.model,
-                        generation_config=genai.GenerationConfig(
-                            temperature=_TEMPERATURE,
-                            response_mime_type="application/json",
-                        ),
-                    )
+                    try:
+                        model_client = genai.GenerativeModel(**model_kwargs)
+                    except TypeError:
+                        model_kwargs.pop("system_instruction", None)
+                        model_client = genai.GenerativeModel(**model_kwargs)
+                        effective_prompt = full_prompt_legacy or prompt
             else:
-                model_client = genai.GenerativeModel(
-                    model_name=self.model,
-                    generation_config=genai.GenerationConfig(
-                        temperature=_TEMPERATURE,
-                        response_mime_type="application/json",
-                    ),
-                )
+                try:
+                    model_client = genai.GenerativeModel(**model_kwargs)
+                except TypeError:
+                    model_kwargs.pop("system_instruction", None)
+                    model_client = genai.GenerativeModel(**model_kwargs)
+                    effective_prompt = full_prompt_legacy or prompt
             if hasattr(model_client, "generate_content_async"):
-                response = await model_client.generate_content_async(prompt)
+                response = await model_client.generate_content_async(effective_prompt)
             else:
                 loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(None, model_client.generate_content, prompt)
+                response = await loop.run_in_executor(
+                    None, model_client.generate_content, effective_prompt
+                )
             raw_text = response.text
 
         if not raw_text or not raw_text.strip():

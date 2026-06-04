@@ -155,33 +155,34 @@ class PramanixGrpcInterceptor(_InterceptorBase):
 
         # ── stream_unary ──────────────────────────────────────────────────────
         def _guarded_stream_unary(request_iterator: Any, context: Any) -> Any:
-            # Peek at the first message for intent extraction; feed the rest
-            # through a reconstructed iterator so the handler sees all messages.
-            import itertools
-
-            try:
-                first = next(request_iterator)
-            except StopIteration:
+            # Gate EVERY message in the stream, not just the first.
+            # Checking only the first message allows an attacker to send an
+            # innocuous first message (which passes the guard) and then inject
+            # policy-violating content in all subsequent stream messages.
+            buffered: list[Any] = []
+            for msg in request_iterator:
+                if not _check_guard(msg, context):
+                    return None
+                buffered.append(msg)
+            if not buffered:
                 context.abort(_grpc.StatusCode.INVALID_ARGUMENT, "empty request stream")
                 return None
-            combined = itertools.chain([first], request_iterator)
-            if not _check_guard(first, context):
-                return None
-            return handler.stream_unary(combined, context)
+            return handler.stream_unary(iter(buffered), context)
 
         # ── stream_stream ─────────────────────────────────────────────────────
         def _guarded_stream_stream(request_iterator: Any, context: Any) -> Any:
-            import itertools
-
-            try:
-                first = next(request_iterator)
-            except StopIteration:
+            # Gate EVERY message in the stream.  Same rationale as stream_unary.
+            has_messages = False
+            for msg in request_iterator:
+                if not _check_guard(msg, context):
+                    return
+                has_messages = True
+                # Yield each guard-approved message one-by-one to the handler.
+                # This preserves true streaming semantics while enforcing the
+                # guard on every message before it reaches the application.
+                yield from handler.stream_stream(iter([msg]), context)
+            if not has_messages:
                 context.abort(_grpc.StatusCode.INVALID_ARGUMENT, "empty request stream")
-                return
-            combined = itertools.chain([first], request_iterator)
-            if not _check_guard(first, context):
-                return
-            yield from handler.stream_stream(combined, context)
 
         replace_kwargs: dict[str, Any] = {"unary_unary": _guarded_unary_unary}
         if getattr(handler, "unary_stream", None) is not None:

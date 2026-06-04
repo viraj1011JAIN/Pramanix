@@ -26,6 +26,7 @@ Design principles
 
 from __future__ import annotations
 
+import collections
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -208,10 +209,16 @@ class ScopeEnforcer:
         enforcer.enforce("transfer_funds", ctx)  # raises PrivilegeEscalationError
     """
 
+    _MAX_AUDIT_LOG = 10_000
+
     def __init__(self, manifest: CapabilityManifest) -> None:
         self._manifest = manifest
         self._lock = threading.Lock()
-        self._audit_log: list[dict[str, object]] = []
+        # Bounded deque prevents OOM in long-running services (#282).
+        # list.append() + no eviction caused unbounded growth at high RPS.
+        self._audit_log: collections.deque[dict[str, object]] = collections.deque(
+            maxlen=self._MAX_AUDIT_LOG
+        )
 
     def enforce(self, tool_name: str, context: ExecutionContext) -> None:
         """Assert that *context* holds the scopes required by *tool_name*.

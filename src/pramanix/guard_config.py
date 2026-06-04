@@ -57,6 +57,7 @@ class ClockProtocol(Protocol):
 
     def __call__(self) -> float: ...
 
+
 from pramanix.governance_config import GovernanceConfig
 
 # ── Structlog secrets redaction ───────────────────────────────────────────────
@@ -140,13 +141,23 @@ _SHARED_LOG_PROCESSORS: list[Any] = [
     structlog.processors.UnicodeDecoder(),
 ]
 
-structlog.configure(
-    processors=[*_SHARED_LOG_PROCESSORS, structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
+# Guard: only configure structlog if the application has not already done so
+# (#286).  Calling structlog.configure() unconditionally on every import of
+# pramanix overwrites the entire structlog pipeline set by the host application
+# before importing Pramanix — silently dropping security-critical processors
+# (e.g. PII redactors, SIEM formatters) configured upstream.
+# is_configured() returns True once any configure() call has been made.
+if not structlog.is_configured():
+    structlog.configure(
+        processors=[
+            *_SHARED_LOG_PROCESSORS,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
 
 # ── Stdlib logging bridge ─────────────────────────────────────────────────────
 # Structlog is configured with LoggerFactory=stdlib.LoggerFactory() above, so
@@ -819,11 +830,7 @@ class GuardConfig:
                 f"(got {len(self.result_seal_key)} bytes). "
                 "Use secrets.token_bytes(32) or derive from a KMS-managed key."
             )
-        if (
-            _is_prod
-            and self.execution_mode == "async-process"
-            and self.result_seal_key is None
-        ):
+        if _is_prod and self.execution_mode == "async-process" and self.result_seal_key is None:
             raise ConfigurationError(
                 "GuardConfig(result_seal_key=None) is not permitted in "
                 "production (PRAMANIX_ENV=production) with "
@@ -837,11 +844,7 @@ class GuardConfig:
                 "GuardConfig(result_seal_key=vault.get_secret('pramanix-seal'))"
             )
         # ── STOP 3: timing side-channel — require non-zero floor in prod ──────
-        if (
-            _is_prod
-            and self.min_response_ms == 0.0
-            and not self.allow_insecure_timing_leaks
-        ):
+        if _is_prod and self.min_response_ms == 0.0 and not self.allow_insecure_timing_leaks:
             raise ConfigurationError(
                 "GuardConfig(min_response_ms=0.0) is not permitted in "
                 "production (PRAMANIX_ENV=production). "

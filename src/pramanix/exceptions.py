@@ -634,17 +634,21 @@ class ProvenanceError(PramanixError):
 # ── Integrity errors ──────────────────────────────────────────────────────────
 
 
-class IntegrityError(PramanixError):
+class IntegrityError(GuardError):
     """HMAC or cryptographic integrity check failed.
 
     Raised when a serialised artifact (e.g. a :class:`~pramanix.translator.injection_scorer.CalibratedScorer`
     pickle) fails HMAC verification, indicating the file has been tampered with
     or was signed with a different key.
 
+    Now under :class:`GuardError` (#284) so Guard's fail-safe catches it and
+    converts it to ``Decision.error()`` — previously it propagated uncaught.
+
     Attributes:
-        path:  File path that failed verification (if applicable).
+        path:  Internal file path (NOT forwarded to callers — only used for
+               server-side logging to avoid leaking filesystem topology).
     """
 
     def __init__(self, message: str, *, path: str = "") -> None:
-        self.path = path
+        self._path = path  # underscore: private; never embed in public messages
         super().__init__(message)

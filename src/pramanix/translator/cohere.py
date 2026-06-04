@@ -23,6 +23,8 @@ from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMT
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
+from pramanix.translator.base import RedactedSecretsMixin
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -33,7 +35,7 @@ __all__ = ["CohereTranslator"]
 _TEMPERATURE = 0.0
 
 
-class CohereTranslator:
+class CohereTranslator(RedactedSecretsMixin):
     """Translator that calls the Cohere Chat API (Command R / Command R+).
 
     Uses the ``cohere`` Python SDK.  Retries transient errors up to 3 times
@@ -259,12 +261,24 @@ class CohereTranslator:
         except TypeError:
             # Older Cohere SDK does not accept response_format kwarg.
             # M-10: use asyncio.get_running_loop() + run_in_executor, not get_event_loop().
+            import warnings as _warnings
+
+            _warnings.warn(
+                "CohereTranslator: falling back to Cohere SDK v1 path which uses a "
+                "single-message API with no role separation.  This reduces prompt "
+                "injection resistance.  Upgrade to cohere>=5.0 for full protection.",
+                UserWarning,
+                stacklevel=4,
+            )
+            # Strip the role-boundary delimiter from user text to limit injection
+            # surface in the v1 single-message path.
+            safe_text = text.replace("\n\nUser input:\n", " ").replace("\n\nActually,", " ")
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: self._cohere.Client(api_key=self._api_key).chat(
                     model=self.model,
-                    message=f"{system_prompt}\n\nUser input:\n{text}",
+                    message=f"{system_prompt}\n\nUser input:\n{safe_text}",
                     temperature=_TEMPERATURE,
                 ),
             )

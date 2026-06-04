@@ -548,9 +548,49 @@ class NaturalPolicyCompiler:
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
+    @staticmethod
+    def _validate_system_prompt_prefix(prefix: str) -> str:
+        """Reject system_prompt_prefix values that look like injection attempts.
+
+        A compromised or malicious prefix can override the system prompt and
+        instruct the LLM to generate trivially-true policies (always ALLOW).
+        We block the most common injection patterns while still allowing
+        legitimate prefixes (e.g., locale, tenant context).
+        """
+        import re as _re
+
+        _INJECTION_PATTERNS = _re.compile(
+            r"(?i)(ignore\s+(all\s+)?previous\s+instructions?"
+            r"|disregard\s+(all\s+)?previous"
+            r"|override\s+(the\s+)?system"
+            r"|you\s+are\s+now\s+a"
+            r"|new\s+instructions?\s*:"
+            r"|forget\s+(everything|all\s+previous)"
+            r")"
+        )
+        if _INJECTION_PATTERNS.search(prefix):
+            raise ValueError(
+                "system_prompt_prefix contains patterns that look like prompt injection. "
+                "The prefix must not contain instructions that attempt to override the "
+                "compiler's system prompt."
+            )
+        # Limit length to prevent context-window manipulation
+        _MAX_PREFIX_LEN = 2048
+        if len(prefix) > _MAX_PREFIX_LEN:
+            raise ValueError(
+                f"system_prompt_prefix is too long ({len(prefix)} chars, "
+                f"maximum {_MAX_PREFIX_LEN}).  "
+                "Use a concise prefix (locale, tenant ID, brief context)."
+            )
+        return prefix
+
     def _build_prompt(self, english_policy: str) -> str:
         """Build the full prompt text sent to the LLM."""
-        prefix = f"{self._system_prompt_prefix}\n\n" if self._system_prompt_prefix else ""
+        if self._system_prompt_prefix:
+            validated_prefix = self._validate_system_prompt_prefix(self._system_prompt_prefix)
+            prefix = f"{validated_prefix}\n\n"
+        else:
+            prefix = ""
         return (
             f"{prefix}{self._SYSTEM_PROMPT}\n\n"
             "Compile the following policy into JSON:\n\n"

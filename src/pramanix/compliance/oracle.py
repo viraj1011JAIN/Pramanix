@@ -1250,20 +1250,19 @@ class ComplianceOracle:
         )
         evaluated = frozenset(str(v) for v in evaluated_raw if v)
 
-        # Fallback: for ALLOWED records with no explicit evaluated set, infer
-        # from the mapping registry (best-effort).
+        # Do NOT infer evaluated invariants from the registry for ALLOWED records
+        # that lack explicit evaluated_invariants metadata.  Doing so would
+        # generate fraudulent compliance attestations: an ALLOW from a policy with
+        # *any* invariant name matching a registered ControlMapping would produce
+        # a valid-looking SOC2/HIPAA/EU-AI-Act attestation even if the specific
+        # control invariant was never evaluated for that decision.
+        # If evaluated_invariants is absent, return an empty set so attestations
+        # are marked as "insufficient evidence" rather than falsely satisfied.
         if record.allowed and not evaluated:
-            with self._lock:
-                evaluated = frozenset(
-                    m.invariant_label
-                    for mappings in self._registry.values()
-                    for m in mappings
-                    if m.invariant_label is not None
-                )
             _log.debug(
-                "compliance_oracle.evaluated_invariants_inferred decision_id=%s count=%d",
+                "compliance_oracle.no_evaluated_invariants decision_id=%s "
+                "— attestation will have insufficient evidence",
                 record.decision_id,
-                len(evaluated),
             )
 
         return evaluated, violated

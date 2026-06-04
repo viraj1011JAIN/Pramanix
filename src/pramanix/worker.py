@@ -509,7 +509,13 @@ def _worker_solve(
         invariants = policy_cls.invariants()
         result = solve(invariants, values, timeout_ms, rlimit)
         if result.sat:
-            return Decision.safe(solver_time_ms=result.solver_time_ms).to_dict()
+            return Decision.safe(
+                solver_time_ms=result.solver_time_ms,
+                # Populate audit dumps so the decision record in process mode
+                # contains the verified intent/state (was always empty, #271).
+                intent_dump=values,
+                state_dump={},
+            ).to_dict()
         filtered = [inv for inv in result.violated if inv.label]
         explanation = "; ".join(inv.label for inv in filtered if inv.label)
         return Decision.unsafe(

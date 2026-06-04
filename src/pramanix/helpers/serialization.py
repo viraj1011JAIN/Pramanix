@@ -156,14 +156,75 @@ def safe_dump(model: BaseModel) -> dict[str, Any]:
     # ── Guard: no nested Pydantic models ──────────────────────────────────────
     _assert_no_nested_models(result)
 
-    # ── Guard: picklability — always checked, not only in debug builds ─────────
-    # M-27: __debug__ is False in production (-O flag), so we always run this.
-    try:
-        pickle.dumps(result)
-    except Exception as exc:  # broad catch: pickle raises many error types
-        raise TypeError(
-            f"safe_dump: model_dump() result is not picklable. "
-            f"Exception type: {type(exc).__name__}: {exc}"
-        ) from exc
+    # ── Guard: picklability via safe type traversal (never pickle user data) ──
+    # Calling pickle.dumps() on the result would execute __reduce__ on any
+    # custom Python objects that survived model_dump(), enabling code execution
+    # via attacker-supplied types.  Instead, verify picklability by checking
+    # that all leaf values are known-safe built-in types.
+    _assert_pickle_safe(result)
 
     return result
+
+
+_PICKLE_SAFE_LEAF_TYPES = (
+    bool,
+    int,
+    float,
+    str,
+    bytes,
+    bytearray,
+    type(None),
+)
+
+try:
+    from decimal import Decimal as _Decimal
+
+    _PICKLE_SAFE_LEAF_TYPES = (*_PICKLE_SAFE_LEAF_TYPES, _Decimal)  # type: ignore[assignment]
+except ImportError:
+    pass
+
+try:
+    import datetime as _dt
+
+    _PICKLE_SAFE_LEAF_TYPES = (  # type: ignore[assignment]
+        *_PICKLE_SAFE_LEAF_TYPES,
+        _dt.datetime,
+        _dt.date,
+        _dt.time,
+        _dt.timedelta,
+    )
+except ImportError:
+    pass
+
+
+def _assert_pickle_safe(value: Any, path: str = "root") -> None:
+    """Verify that *value* contains only picklable built-in types.
+
+    Replaces ``pickle.dumps()`` as the picklability gate.  This approach
+    rejects custom objects (including those with malicious ``__reduce__``)
+    without executing any pickling code on user-derived data.
+    """
+    if isinstance(value, dict):
+        for k, v in value.items():
+            _assert_pickle_safe(k, f"{path}[key:{k!r}]")
+            _assert_pickle_safe(v, f"{path}[{k!r}]")
+    elif isinstance(value, (list, tuple)):
+        for i, item in enumerate(value):
+            _assert_pickle_safe(item, f"{path}[{i}]")
+    elif isinstance(value, set | frozenset):
+        for item in value:
+            _assert_pickle_safe(item, f"{path}[set-item]")
+    elif isinstance(value, _PICKLE_SAFE_LEAF_TYPES):
+        pass  # known-safe built-in type
+    elif isinstance(value, BaseModel):
+        raise TypeError(
+            f"safe_dump: nested BaseModel at path={path!r}.  "
+            "Call model_dump() recursively or use model_dump(mode='json')."
+        )
+    else:
+        raise TypeError(
+            f"safe_dump: value at path={path!r} has non-picklable type "
+            f"{type(value).__name__!r}.  Only built-in types (bool, int, float, "
+            "str, bytes, Decimal, datetime, list, dict, tuple, set, None) are "
+            "allowed across ProcessPoolExecutor boundaries."
+        )

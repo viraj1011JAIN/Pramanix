@@ -221,7 +221,20 @@ class PramanixFunctionTool:
         state = await self._get_state()
 
         # ── 4. Guard verify ────────────────────────────────────────────────────
-        decision = await self._guard.verify_async(intent=intent, state=state)
+        try:
+            decision = await self._guard.verify_async(intent=intent, state=state)
+        except Exception as exc:
+            _log.error("pramanix.llamaindex.verify_error: %s", exc, exc_info=True)
+            from pramanix.decision import Decision
+
+            error_decision = Decision.error(reason=f"Guard verification error: {exc}")
+            return ToolOutput(
+                content=format_block_feedback(error_decision, intent),
+                tool_name=self._name,
+                raw_input={"input": input},
+                raw_output={},
+                is_error=True,
+            )
 
         # ── 5. ALLOW path — call fn and return result ─────────────────────────
         if decision.allowed:
@@ -445,7 +458,20 @@ class PramanixQueryEngineTool:
         state = await self._get_state()
 
         # ── 4. Guard verify ────────────────────────────────────────────────────
-        decision = await self._guard.verify_async(intent=intent, state=state)
+        try:
+            decision = await self._guard.verify_async(intent=intent, state=state)
+        except Exception as exc:
+            _log.error("pramanix.llamaindex.query_verify_error: %s", exc, exc_info=True)
+            from pramanix.decision import Decision
+
+            error_decision = Decision.error(reason=f"Guard verification error: {exc}")
+            return ToolOutput(
+                content=format_block_feedback(error_decision, intent),
+                tool_name=self._name,
+                raw_input={"input": input},
+                raw_output={},
+                is_error=True,
+            )
 
         # ── 5. BLOCK path ──────────────────────────────────────────────────────
         if not decision.allowed:

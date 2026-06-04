@@ -13,12 +13,15 @@ Requires the ``pramanix[translator]`` extra (``openai``, ``tenacity``).
 
 from __future__ import annotations
 
+import ipaddress
 import os
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any
 
-from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
+from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
+from pramanix.translator.base import RedactedSecretsMixin
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -28,7 +31,35 @@ if TYPE_CHECKING:
 __all__ = ["OpenAICompatTranslator"]
 
 
-class OpenAICompatTranslator:
+def _validate_base_url(url: str) -> str:
+    """Block link-local metadata IPs in base_url (SSRF, #243).
+
+    API keys are transmitted with every request; routing to 169.254.x.x
+    (cloud metadata) exfiltrates credentials. Localhost and RFC-1918 are
+    allowed so on-premise vLLM/LMStudio deployments work unchanged.
+    Set OPENAI_COMPAT_SSRF_ALLOW=1 to disable (testing/pentest only).
+    """
+    if os.environ.get("OPENAI_COMPAT_SSRF_ALLOW", "").strip() == "1":
+        return url
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().strip("[]")
+    if not host:
+        return url
+    try:
+        addr = ipaddress.ip_address(host)
+        if addr.is_link_local:
+            raise ConfigurationError(
+                f"OpenAICompatTranslator: base_url {url!r} resolves to a "
+                f"link-local IP ({addr}) — this is the cloud metadata service "
+                "range (SSRF/credential leak risk). Set "
+                "OPENAI_COMPAT_SSRF_ALLOW=1 to override."
+            )
+    except ValueError:
+        pass  # hostname — DNS resolution not validated here
+    return url
+
+
+class OpenAICompatTranslator(RedactedSecretsMixin):
     """Translator that calls any OpenAI-compatible chat-completion API.
 
     Retries transient network/timeout errors up to 3 times using
@@ -67,7 +98,7 @@ class OpenAICompatTranslator:
         self.model = model
         self._timeout = timeout
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY") or None
-        self._base_url = base_url
+        self._base_url = _validate_base_url(base_url) if base_url else base_url
         self._client = openai.AsyncOpenAI(
             api_key=self._api_key,
             base_url=self._base_url,

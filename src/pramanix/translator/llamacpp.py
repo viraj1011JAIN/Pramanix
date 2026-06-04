@@ -41,6 +41,20 @@ _DEFAULT_N_CTX = 4096
 _MODEL_CACHE: dict[tuple[str, int, int], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
+# Per-model inference lock (#242): llama-cpp-python wraps a C library with no
+# Python-level thread safety.  Concurrent create_chat_completion() calls on the
+# same Llama object corrupt the KV cache and produce cross-policy contamination.
+# Serialise all inference calls for the same model object under a dedicated lock.
+_MODEL_INFERENCE_LOCKS: dict[tuple[str, int, int], threading.Lock] = {}
+_MODEL_INFERENCE_LOCKS_LOCK = threading.Lock()
+
+
+def _get_inference_lock(cache_key: tuple[str, int, int]) -> threading.Lock:
+    with _MODEL_INFERENCE_LOCKS_LOCK:
+        if cache_key not in _MODEL_INFERENCE_LOCKS:
+            _MODEL_INFERENCE_LOCKS[cache_key] = threading.Lock()
+        return _MODEL_INFERENCE_LOCKS[cache_key]
+
 
 class LlamaCppTranslator:
     """Translator backed by a local GGUF model via ``llama-cpp-python``.
@@ -169,7 +183,19 @@ class LlamaCppTranslator:
             ) from exc
 
     def _inference(self, system_prompt: str, user_content: str) -> str:
-        """Run synchronous inference.  Returns raw response text."""
+        """Run synchronous inference under a per-model lock.
+
+        llama-cpp-python wraps a C library with no Python thread safety.
+        Concurrent calls on the same Llama object corrupt the KV cache and
+        produce cross-policy intent contamination (#242).  The lock serialises
+        all inference for the same model file.
+        """
+        cache_key = (self._model_path, self._n_ctx, self._n_gpu_layers)
+        with _get_inference_lock(cache_key):
+            return self._inference_locked(system_prompt, user_content)
+
+    def _inference_locked(self, system_prompt: str, user_content: str) -> str:
+        """Execute inference (caller must hold the per-model inference lock)."""
         response = self._get_llm().create_chat_completion(
             messages=[
                 {"role": "system", "content": system_prompt},

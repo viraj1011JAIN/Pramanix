@@ -48,8 +48,12 @@ def _make_audit_record(decision: Decision, signer: PramanixSigner) -> dict:
         "violated_invariants": list(decision.violated_invariants or []),
         "explanation": decision.explanation or "",
         "policy": str(decision.metadata.get("policy", "") if decision.metadata else ""),
+        "policy_name": decision.policy_name,
         "intent_dump": decision.intent_dump or {},
         "state_dump": decision.state_dump or {},
+        # error_domain is now part of the canonical hash (#150); must be
+        # included in audit records so _recompute_hash() matches decision_hash.
+        "error_domain": decision.error_domain,
     }
 
 

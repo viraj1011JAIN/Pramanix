@@ -23,12 +23,45 @@ Example::
 
 from __future__ import annotations
 
+import ipaddress
 import os
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, Any
 
-from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
+from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
+from pramanix.translator.base import RedactedSecretsMixin
+
+
+def _validate_translator_url(url: str) -> str:
+    """Block link-local metadata IPs in base_url (SSRF, #243).
+
+    169.254.0.0/16 is the cloud metadata service range used by AWS IMDS
+    (169.254.169.254), Azure IMDS (169.254.169.254), and GCP metadata
+    (169.254.169.254).  Routing Ollama requests there exfiltrates prompts
+    to the metadata service.  Localhost and RFC-1918 are NOT blocked so
+    that development and on-premise deployments work without configuration.
+
+    Set OLLAMA_SSRF_ALLOW=1 to disable all checks (testing/pentest only).
+    """
+    if os.environ.get("OLLAMA_SSRF_ALLOW", "").strip() == "1":
+        return url
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().strip("[]")
+    if not host:
+        return url
+    try:
+        addr = ipaddress.ip_address(host)
+        if addr.is_link_local:
+            raise ConfigurationError(
+                f"OllamaTranslator: base_url {url!r} resolves to a link-local IP "
+                f"({addr}) — this is the cloud metadata service range (SSRF risk). "
+                "If this is intentional, set OLLAMA_SSRF_ALLOW=1 to override."
+            )
+    except ValueError:
+        pass  # hostname — DNS resolution not validated here
+    return url
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -40,7 +73,7 @@ __all__ = ["OllamaTranslator"]
 _DEFAULT_BASE_URL = "http://localhost:11434"
 
 
-class OllamaTranslator:
+class OllamaTranslator(RedactedSecretsMixin):
     """Translator that calls a local Ollama server via ``/api/chat``.
 
     Communicates with Ollama using ``httpx.AsyncClient``.  Passes
@@ -84,7 +117,7 @@ class OllamaTranslator:
 
         self.model = model
         resolved_url = base_url or os.environ.get("OLLAMA_BASE_URL") or _DEFAULT_BASE_URL
-        self._base_url = resolved_url.rstrip("/")
+        self._base_url = _validate_translator_url(resolved_url.rstrip("/"))
         self._timeout = timeout
         self._temperature = temperature
         self._client = httpx.AsyncClient(timeout=timeout)

@@ -25,6 +25,20 @@
 
 name: Pramanix CI
 
+# Supply-chain hardening: restrict GITHUB_TOKEN permissions for all jobs.
+# Individual jobs that need additional permissions declare them explicitly.
+# Reference: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#permissions
+permissions:
+  contents: read
+
+# TODO(security): Pin ALL third-party actions to commit SHAs, not mutable
+# tags.  Current state after partial hardening:
+#   - semgrep/semgrep-action@v1          — mutable tag, needs SHA pin
+#   - codecov/codecov-action@v4          — mutable tag, needs SHA pin
+#   - aquasecurity/trivy-action@v0.20.0  — pinned to release (was @master)
+#   - github/codeql-action/upload-sarif@v3 — mutable tag, needs SHA pin
+# Run: `gh api repos/OWNER/REPO/git/refs/tags/TAG` to get SHAs.
+
 on:
   push:
     branches: ["main", "dev", "feature/**", "fix/**"]
@@ -401,7 +415,7 @@ jobs:
         run: docker build -f Dockerfile.production -t pramanix:ci-scan .
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.20.0  # pinned from @master — TODO: pin to SHA
         with:
           image-ref: "pramanix:ci-scan"
           format: "table"

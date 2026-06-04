@@ -21,6 +21,8 @@ from pramanix.exceptions import ConfigurationError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
+from pramanix.translator.base import RedactedSecretsMixin
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -31,7 +33,7 @@ __all__ = ["MistralTranslator"]
 _TEMPERATURE = 0.0
 
 
-class MistralTranslator:
+class MistralTranslator(RedactedSecretsMixin):
     """Translator that calls the Mistral AI Chat Completions API.
 
     Uses the ``mistralai`` Python SDK.  Retries transient errors up to 3 times

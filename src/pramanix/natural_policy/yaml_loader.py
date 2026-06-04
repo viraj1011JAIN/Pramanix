@@ -199,8 +199,17 @@ def _parse_expr(
         PolicySyntaxError: If the expression is syntactically invalid or
                            uses disallowed constructs.
     """
+    _MAX_EXPR_LEN = 4096
+    stripped = source.strip()
+    if len(stripped) > _MAX_EXPR_LEN:
+        raise PolicySyntaxError(
+            f"Invariant {invariant_name!r}: expression is too long "
+            f"({len(stripped)} chars, maximum {_MAX_EXPR_LEN}).  "
+            "Deeply nested or overly long expressions are rejected to prevent "
+            "quadratic memory consumption in ast.parse()."
+        )
     try:
-        tree = _ast.parse(source.strip(), mode="eval")
+        tree = _ast.parse(stripped, mode="eval")
     except SyntaxError as exc:
         raise PolicySyntaxError(
             f"Invariant {invariant_name!r}: syntax error in expression " f"{source!r}: {exc}"

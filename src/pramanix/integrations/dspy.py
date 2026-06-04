@@ -143,13 +143,33 @@ class PramanixGuardedModule(_ModuleBase):
         Raises:
             GuardViolationError: Guard blocked the action.
         """
+        from pramanix.decision import Decision
         from pramanix.exceptions import GuardViolationError
 
         st: _PramanixState = object.__getattribute__(self, "_pramanix")
 
-        intent = st.intent_builder(**kwargs)
-        state = st.state_provider()
-        decision = st.guard.verify(intent=intent, state=state)
+        try:
+            intent = st.intent_builder(**kwargs)
+        except Exception as exc:
+            raise GuardViolationError(
+                Decision.error(reason=f"Intent builder error: {exc}")
+            ) from exc
+
+        try:
+            state = st.state_provider()
+        except Exception as exc:
+            raise GuardViolationError(
+                Decision.error(reason=f"State provider error: {exc}")
+            ) from exc
+
+        try:
+            decision = st.guard.verify(intent=intent, state=state)
+        except Exception as exc:
+            # Infrastructure failure → convert to GuardViolationError so callers
+            # that catch GuardViolationError handle all failure modes uniformly.
+            raise GuardViolationError(
+                Decision.error(reason=f"Guard verification error: {exc}")
+            ) from exc
 
         if not decision.allowed:
             raise GuardViolationError(decision)

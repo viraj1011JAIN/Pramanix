@@ -17,6 +17,8 @@ from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
+from pramanix.translator.base import RedactedSecretsMixin
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
 __all__ = ["AnthropicTranslator"]
 
 
-class AnthropicTranslator:
+class AnthropicTranslator(RedactedSecretsMixin):
     """Translator that calls the Anthropic Messages API (Claude models).
 
     Retries transient network/timeout errors up to 3 times using

@@ -19,7 +19,52 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-__all__ = ["Translator", "TranslatorContext"]
+__all__ = ["Translator", "TranslatorContext", "RedactedSecretsMixin"]
+
+# ── Secret-redaction mixin ────────────────────────────────────────────────────
+
+#: Attribute names that contain credentials and must never appear in
+#: repr(), pickle, or crash dumps (#237).
+_SECRET_ATTRS = frozenset(
+    {
+        "_api_key",
+        "_aws_access_key_id",
+        "_aws_secret_access_key",
+        "_aws_session_token",
+        "_vertex_credentials",
+    }
+)
+
+
+class RedactedSecretsMixin:
+    """Mixin that prevents API keys from leaking via repr / pickle / heap dumps.
+
+    Translators that store credentials as instance attributes should inherit
+    from this mixin.  It overrides ``__repr__`` to show ``***`` for secret
+    fields and ``__getstate__`` to exclude them from pickle output.
+    """
+
+    def __repr__(self) -> str:
+        safe = {
+            k: "***" if k in _SECRET_ATTRS else v
+            for k, v in vars(self).items()
+            if not k.startswith("__")
+        }
+        return f"{type(self).__name__}({safe!r})"
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = dict(vars(self))
+        for attr in _SECRET_ATTRS:
+            state.pop(attr, None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        # Restore secret attrs as None so the object is usable (callers will
+        # get clear AttributeError / auth failures rather than silent wrong-key).
+        for attr in _SECRET_ATTRS:
+            if attr not in self.__dict__:
+                self.__dict__[attr] = None
 
 
 @runtime_checkable

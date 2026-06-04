@@ -173,22 +173,6 @@ class ScopedMemoryPartition:
         Raises:
             MemoryViolationError: When the write violates label policy.
         """
-        # Block UNTRUSTED data in high-sensitivity partitions.
-        if label == TrustLabel.UNTRUSTED and self.min_label >= TrustLabel.CONFIDENTIAL:
-            _log.warning(
-                "memory.write_blocked: key=%s label=UNTRUSTED tenant=%s workflow=%s",
-                key,
-                self.tenant_id,
-                self.workflow_id,
-            )
-            raise MemoryViolationError(
-                f"Cannot write UNTRUSTED data to partition with "
-                f"min_label={self.min_label.name} "
-                f"(tenant={self.tenant_id!r}, workflow={self.workflow_id!r}).",
-                partition_id=f"{self.tenant_id}/{self.workflow_id}",
-                operation="write",
-                reason=f"UNTRUSTED data rejected by sensitivity floor {self.min_label.name}",
-            )
         entry = MemoryEntry(
             key=key,
             value=value,
@@ -199,7 +183,25 @@ class ScopedMemoryPartition:
             lineage=lineage,
             metadata=metadata or {},
         )
+        # Perform the label check and the write atomically under the lock to
+        # eliminate the TOCTOU race where min_label is raised between the
+        # check and the append (#281).
         with self._lock:
+            if label == TrustLabel.UNTRUSTED and self.min_label >= TrustLabel.CONFIDENTIAL:
+                _log.warning(
+                    "memory.write_blocked: key=%s label=UNTRUSTED tenant=%s workflow=%s",
+                    key,
+                    self.tenant_id,
+                    self.workflow_id,
+                )
+                raise MemoryViolationError(
+                    f"Cannot write UNTRUSTED data to partition with "
+                    f"min_label={self.min_label.name} "
+                    f"(tenant={self.tenant_id!r}, workflow={self.workflow_id!r}).",
+                    partition_id=f"{self.tenant_id}/{self.workflow_id}",
+                    operation="write",
+                    reason=f"UNTRUSTED data rejected by sensitivity floor {self.min_label.name}",
+                )
             self._entries.append(entry)  # deque(maxlen=N) auto-evicts oldest
         _log.debug(
             "memory.written: key=%s label=%s tenant=%s workflow=%s entry_id=%s",

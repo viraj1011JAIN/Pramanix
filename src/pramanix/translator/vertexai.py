@@ -42,6 +42,8 @@ from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMT
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
+from pramanix.translator.base import RedactedSecretsMixin
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -52,7 +54,7 @@ __all__ = ["VertexAITranslator"]
 _TEMPERATURE = 0.0
 
 
-class VertexAITranslator:
+class VertexAITranslator(RedactedSecretsMixin):
     """Translator that calls Google Vertex AI generative models.
 
     Wraps the synchronous ``google-cloud-aiplatform`` SDK in an asyncio

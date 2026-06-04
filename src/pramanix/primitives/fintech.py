@@ -136,33 +136,71 @@ def VelocityCheck(tx_count: Field, window_limit: int) -> ConstraintExpr:
     )
 
 
-def AntiStructuring(cumulative_amount: Field, threshold: Decimal) -> ConstraintExpr:
-    """Detect potential structuring below the CTR filing threshold.
+def CTRThresholdCheck(cumulative_amount: Field, threshold: Decimal) -> ConstraintExpr:
+    """Block cumulative transfers that reach the CTR mandatory-reporting threshold.
 
     DSL: ``E(cumulative_amount) < threshold``
 
-    Regulatory: 31 CFR § 1020.320 — "structuring" is the practice of breaking
-    transactions below $10,000 to evade Currency Transaction Report (CTR) filing.
-    This constraint flags any cumulative amount that approaches but stays under
-    the threshold, allowing downstream SAR-filing logic to trigger.
+    An AI agent must not execute a transfer when the rolling cumulative total
+    would meet or exceed *threshold* (default $10,000), because that triggers a
+    mandatory Currency Transaction Report (CTR) under 31 CFR § 1020.313.
+    Transfers of exactly or above *threshold* must be routed through a supervised
+    compliance review, not executed autonomously.
 
-    Note: This primitive asserts that the cumulative amount must remain strictly
-    *below* threshold.  A violation (SAT=False) signals a structuring pattern
-    that warrants Suspicious Activity Report investigation.
+    Note: This is **NOT** a structuring-detection primitive.  Structuring is
+    keeping amounts *below* the threshold to evade CTR filing; detecting that
+    pattern requires a separate SAR-logic layer outside this constraint.
+    This primitive simply enforces that the AI agent cannot autonomously
+    execute CTR-threshold transactions.
+
+    Args:
+        cumulative_amount: Field (Decimal, Real) — rolling 24-h aggregate.
+        threshold:         CTR filing threshold (default $10,000 per 31 CFR § 1020.313).
+    """
+    if threshold <= Decimal("0"):
+        raise ValueError(
+            f"CTRThresholdCheck: threshold must be positive, got {threshold!r}"
+        )
+    return (
+        (E(cumulative_amount) < threshold)
+        .named("ctr_threshold_check")
+        .explain(
+            "CTR threshold reached: cumulative amount ({cumulative_amount}) "
+            f"meets or exceeds the mandatory-reporting threshold of {threshold}. "
+            "This transfer requires supervised compliance review. "
+            "(31 CFR § 1020.313 — BSA Currency Transaction Report)"
+        )
+    )
+
+
+def AntiStructuring(cumulative_amount: Field, threshold: Decimal) -> ConstraintExpr:
+    """Detect potential structuring below the CTR filing threshold.
+
+    .. deprecated::
+        :func:`AntiStructuring` was misnamed — its constraint ``< threshold``
+        ALLOWS sub-threshold amounts (the suspicious ones) and BLOCKS at-or-above
+        threshold (legitimate CTR-triggering amounts), which is the inverse of
+        true anti-structuring semantics.
+
+        Use :func:`CTRThresholdCheck` to block autonomous CTR-threshold transfers,
+        or implement a dedicated SAR-detection layer that monitors cumulative
+        sub-threshold patterns for structuring intent.
 
     Args:
         cumulative_amount: Field (Decimal, Real) — rolling 24-h aggregate.
         threshold:         CTR filing threshold (default $10,000 per 31 CFR § 1020.320).
     """
-    return (
-        (E(cumulative_amount) < threshold)
-        .named("anti_structuring")
-        .explain(
-            "Structuring alert: cumulative amount ({cumulative_amount}) "
-            f"meets or exceeds CTR threshold of {threshold}. "
-            "(31 CFR § 1020.320 — BSA structuring rule)"
-        )
+    import warnings
+
+    warnings.warn(
+        "AntiStructuring is deprecated and semantically incorrect: it allows "
+        "sub-threshold amounts (the suspicious structuring pattern) and blocks "
+        "at-or-above threshold (legitimate CTR-requiring transfers). "
+        "Use CTRThresholdCheck to block autonomous CTR-threshold transfers.",
+        DeprecationWarning,
+        stacklevel=2,
     )
+    return CTRThresholdCheck(cumulative_amount, threshold)
 
 
 def WashSaleDetection(
