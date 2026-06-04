@@ -85,13 +85,31 @@ class DryRunResult:
             )
 
 
-_DRY_RUN_CONFIG = GuardConfig(
-    execution_mode="sync",
-    # Disable timing jitter so dry runs complete without artificial delay.
-    min_response_ms=0.0,
-    # Disable all audit sinks — dry runs must have zero side-effects.
-    audit_sinks=(),
-)
+def _make_dry_run_config() -> "GuardConfig":
+    """Build a dry-run GuardConfig lazily to avoid import-time failure (#294).
+
+    A module-level ``GuardConfig(audit_sinks=())`` construction raises
+    ``ConfigurationError`` when ``PRAMANIX_ENV=production`` because the
+    production mode requires at least one audit sink.  Lazy construction lets
+    ``import pramanix.dry_run`` succeed in all environments; the error only
+    fires if someone actually tries to run a dry-run in a production process
+    without a sink, which is the correct time to surface that misconfiguration.
+    """
+    return GuardConfig(
+        execution_mode="sync",
+        min_response_ms=0.0,
+        audit_sinks=(),
+    )
+
+
+_DRY_RUN_CONFIG: "GuardConfig | None" = None
+
+
+def _get_dry_run_config() -> "GuardConfig":
+    global _DRY_RUN_CONFIG
+    if _DRY_RUN_CONFIG is None:
+        _DRY_RUN_CONFIG = _make_dry_run_config()
+    return _DRY_RUN_CONFIG
 
 
 class PolicyDryRun:
@@ -140,7 +158,7 @@ class PolicyDryRun:
             raise ValueError("examples must not be empty — provide at least one pair.")
         self._policy = policy
         self._examples = list(examples)
-        self._config = config if config is not None else _DRY_RUN_CONFIG
+        self._config = config if config is not None else _get_dry_run_config()
 
     @property
     def policy(self) -> type[Policy]:

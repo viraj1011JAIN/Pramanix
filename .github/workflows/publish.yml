@@ -1,8 +1,8 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+﻿# SPDX-License-Identifier: AGPL-3.0-only
 # Pramanix PyPI Publish Workflow
 #
 # Trigger: push of a version tag (v*)
-# Uses GitHub OIDC trusted publishing — no stored API token required.
+# Uses GitHub OIDC trusted publishing â€” no stored API token required.
 # Configure a trusted publisher on PyPI: owner=viraj1011JAIN, repo=Pramanix,
 # workflow=publish.yml, environment=pypi.
 
@@ -29,11 +29,11 @@ jobs:
     environment: pypi
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -74,7 +74,7 @@ jobs:
           twine check dist/*
 
       - name: Publish to PyPI (OIDC)
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
         with:
           print-hash: true
 
@@ -85,3 +85,4 @@ jobs:
           REF_NAME="${{ github.ref_name }}"
           /tmp/smoke-venv/bin/pip install pramanix=="${REF_NAME#v}"
           /tmp/smoke-venv/bin/python -c "from pramanix import Guard; print('pramanix import OK')"
+

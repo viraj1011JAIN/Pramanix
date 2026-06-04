@@ -475,7 +475,10 @@ class ControlMapping(BaseModel):
             )
 
         pattern = _CONTROL_ID_PATTERNS.get(self.framework.value)
-        if pattern is not None and not pattern.search(self.control_id):
+        # Use fullmatch() not search() (#292): search() with ^ accepts arbitrary
+        # suffixes — "Art.14XYZ_INJECTION" passes because the regex only anchors
+        # the start.  fullmatch() requires the entire string to match.
+        if pattern is not None and not pattern.fullmatch(self.control_id):
             if self.custom_control:
                 warnings.warn(
                     f"ControlMapping({self.framework.value!r}, {self.control_id!r}): "

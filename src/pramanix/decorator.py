@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pramanix.exceptions import GuardViolationError
@@ -99,18 +100,25 @@ def guard(
 
     def decorator(fn: Any) -> Any:
         """Wrap fn with guard enforcement, choosing sync or async path automatically."""
+        # Detect instance methods: if fn's first parameter is "self" or "cls",
+        # args[0] is the instance/class, not intent — offset by 1 (#293).
+        _fn_params = list(inspect.signature(fn).parameters)
+        _is_method = bool(_fn_params and _fn_params[0] in ("self", "cls"))
+        _intent_offset = 1 if _is_method else 0
+
         if asyncio.iscoroutinefunction(fn):
 
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 """Run guard.verify_async() before delegating to the original coroutine."""
                 # Extract intent and state from positional / keyword args.
-                # Convention: first two positional args are (intent, state).
-                if len(args) < 2:
+                # Convention: first two positional args after any self/cls are (intent, state).
+                _needed = _intent_offset + 2
+                if len(args) < _needed:
                     intent = kwargs.get("intent", {})
                     state = kwargs.get("state", {})
                 else:
-                    intent, state = args[0], args[1]
+                    intent, state = args[_intent_offset], args[_intent_offset + 1]
 
                 decision: Decision = await _guard_instance.verify_async(intent=intent, state=state)
 
@@ -131,11 +139,12 @@ def guard(
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 """Run guard.verify() before delegating to the original function."""
                 # Same intent/state extraction convention as the async path.
-                if len(args) < 2:
+                _needed_sync = _intent_offset + 2
+                if len(args) < _needed_sync:
                     intent = kwargs.get("intent", {})
                     state = kwargs.get("state", {})
                 else:
-                    intent, state = args[0], args[1]
+                    intent, state = args[_intent_offset], args[_intent_offset + 1]
 
                 decision: Decision = _guard_instance.verify(intent=intent, state=state)
 

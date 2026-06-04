@@ -115,6 +115,7 @@ from pramanix.exceptions import (
     OversightRequiredError,
     PolicyCompilationError,
     PolicyError,
+    PolicySyntaxError,
     PramanixError,
     PrivilegeEscalationError,
     ProvenanceError,
@@ -376,6 +377,7 @@ __all__ = [
     "PolicyAuditor",
     "PolicyCompilationError",
     "PolicyError",
+    "PolicySyntaxError",
     "PolicyMigration",
     "PostgresExecutionTokenVerifier",
     # Integrations — beta

@@ -368,11 +368,20 @@ class FieldDeclaration(BaseModel):
         ..., min_length=1, description="Human-readable description for documentation."
     )
 
+    _MAX_FIELD_PATH_DEPTH = 6
+
     @field_validator("name")
     @classmethod
     def _check_name(cls, v: str) -> str:
         # Allow dotted paths for nested fields (e.g. "account.balance")
         parts = v.split(".")
+        # Enforce depth limit to prevent stack-overflow DoS via deeply nested
+        # paths like "a.b.c.d....z" (100 levels) (#303).
+        if len(parts) > cls._MAX_FIELD_PATH_DEPTH:
+            raise ValueError(
+                f"Field path {v!r} has {len(parts)} levels — maximum is "
+                f"{cls._MAX_FIELD_PATH_DEPTH}. Use a flat schema design."
+            )
         for part in parts:
             if not re.match(r"^[a-z][a-z0-9_]*$", part):
                 raise ValueError(

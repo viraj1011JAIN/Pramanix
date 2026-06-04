@@ -103,10 +103,13 @@ class InputTooLongError(PramanixError):
     def __init__(self, actual: int, limit: int, truncated_preview: str) -> None:
         self.actual = actual
         self.limit = limit
-        self.truncated_preview = truncated_preview
+        # Never embed user input in the public exception message — the preview
+        # may contain PII (names, account numbers, medical info) and would
+        # propagate to Sentry/Datadog/CloudWatch (#295).  Store privately for
+        # server-side diagnostic logs only.
+        self._truncated_preview = truncated_preview
         super().__init__(
-            f"Input too long: {actual} chars exceeds limit of {limit}. "
-            f"Preview: {truncated_preview!r}"
+            f"Input too long: {actual} chars exceeds limit of {limit}."
         )
 
 

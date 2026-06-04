@@ -55,15 +55,22 @@ class RedisStateLoader:
             raise StateLoadError(f"Redis error loading state: {e}") from e
 
         if raw is None:
+            # Never embed claims.sub (user identifier) in the exception message
+            # — it flows to Sentry/Datadog/CloudWatch and constitutes PII
+            # leakage under GDPR/HIPAA (#288).  Log the sub server-side only.
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "redis_loader: no state found for sub (redacted for PII)",
+            )
             raise StateLoadError(
-                f"No state found for sub={claims.sub!r}. "
+                "No state found for the authenticated principal. "
                 "Pre-load state into Redis before requests arrive."
             )
 
         try:
             state = json.loads(raw, parse_float=Decimal)
         except json.JSONDecodeError as e:
-            raise StateLoadError(f"Invalid JSON in state for sub={claims.sub!r}: {e}") from e
+            raise StateLoadError(f"Invalid JSON in state for principal: {e}") from e
 
         if "state_version" not in state:
             raise StateLoadError(

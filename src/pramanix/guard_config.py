@@ -211,12 +211,7 @@ try:
     _OTEL_AVAILABLE = True
 
 except ImportError:
-    warnings.warn(
-        "opentelemetry is not installed — OTel spans will be no-ops. "
-        "Install tracing support with: pip install 'pramanix[otel]'",
-        UserWarning,
-        stacklevel=2,
-    )
+    pass  # OTel is optional — no import-time warning to avoid breaking -W error CI (#299)
 
     _span = _noop_span
     _OTEL_AVAILABLE = False

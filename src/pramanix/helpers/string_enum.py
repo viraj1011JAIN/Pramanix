@@ -90,7 +90,10 @@ class StringEnumField:
         if not values:
             raise ValueError(f"StringEnumField({name!r}): values list must not be empty.")
         if len(values) != len(set(values)):
-            dupes = [v for v in values if values.count(v) > 1]
+            # O(N) duplicate detection using Counter instead of O(N²) list.count (#296).
+            from collections import Counter
+            counts = Counter(values)
+            dupes = [v for v, n in counts.items() if n > 1]
             raise ValueError(
                 f"StringEnumField({name!r}): values must be unique. "
                 f"Duplicates found: {list(dict.fromkeys(dupes))!r}"

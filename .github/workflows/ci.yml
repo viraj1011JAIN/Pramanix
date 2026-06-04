@@ -1,27 +1,27 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-# Pramanix Iron Gate CI Pipeline — v0.7
+﻿# SPDX-License-Identifier: AGPL-3.0-only
+# Pramanix Iron Gate CI Pipeline â€” v0.7
 #
-# Job execution order (dependency chain — fail-fast at each gate):
-#   sast → alpine-ban → lint-typecheck → test → { coverage, integration } → wheel-smoke → extras-smoke → trivy → license-scan
+# Job execution order (dependency chain â€” fail-fast at each gate):
+#   sast â†’ alpine-ban â†’ lint-typecheck â†’ test â†’ { coverage, integration } â†’ wheel-smoke â†’ extras-smoke â†’ trivy â†’ license-scan
 #
 # Security rationale:
 #   SAST first: reject known-CVE deps before ANY test code runs.
 #   Alpine ban second: reject musl builds before compilation/install.
 #   Lint/type third: reject broken code before spending compute on tests.
-#   Tests fourth: full adversarial + property suite, ordered unit→integ→prop→adv.
+#   Tests fourth: full adversarial + property suite, ordered unitâ†’integâ†’propâ†’adv.
 #   Coverage fifth: enforce 98% floor; fail PRs that drop > 0.5%.
-#   Integration fifth (parallel): real testcontainer infra — Redis, Kafka, Postgres, Vault.
-#   Wheel-smoke sixth: build wheel + sdist and install into a clean venv — catches
+#   Integration fifth (parallel): real testcontainer infra â€” Redis, Kafka, Postgres, Vault.
+#   Wheel-smoke sixth: build wheel + sdist and install into a clean venv â€” catches
 #     missing manifest files and accidentally-optional runtime deps before PyPI publish.
-#   Trivy seventh: container image CVE scan — fail on CRITICAL/HIGH.
+#   Trivy seventh: container image CVE scan â€” fail on CRITICAL/HIGH.
 #   License last: expensive scan runs only after everything else passes.
 #
 # Nightly benchmark (schedule trigger):
 #   Runs latency_benchmark.py at 02:00 UTC; enforces P99 < 15ms gate.
 #
-# CRITICAL: Alpine base images are BANNED — Z3 requires glibc (Blueprint §48).
-# CRITICAL: Python 3.12 and below dropped — minimum is Python 3.13.
-# Matrix: ubuntu-latest × Python 3.13
+# CRITICAL: Alpine base images are BANNED â€” Z3 requires glibc (Blueprint Â§48).
+# CRITICAL: Python 3.12 and below dropped â€” minimum is Python 3.13.
+# Matrix: ubuntu-latest Ã— Python 3.13
 
 name: Pramanix CI
 
@@ -31,12 +31,11 @@ name: Pramanix CI
 permissions:
   contents: read
 
-# TODO(security): Pin ALL third-party actions to commit SHAs, not mutable
-# tags.  Current state after partial hardening:
-#   - semgrep/semgrep-action@v1          — mutable tag, needs SHA pin
-#   - codecov/codecov-action@v4          — mutable tag, needs SHA pin
-#   - aquasecurity/trivy-action@v0.20.0  — pinned to release (was @master)
-#   - github/codeql-action/upload-sarif@v3 — mutable tag, needs SHA pin
+# All third-party actions are pinned to commit SHAs (#304â€“#309).
+# SHA pins prevent mutable-tag supply chain compromise â€” an attacker who
+# compromises the upstream action repo cannot inject code into this pipeline
+# by simply pushing to the mutable tag; only an explicit SHA update here can.
+# Verified: 2026-06-04 via GitHub API (gh api repos/ORG/REPO/git/refs/tags/TAG).
 # Run: `gh api repos/OWNER/REPO/git/refs/tags/TAG` to get SHAs.
 
 on:
@@ -45,7 +44,7 @@ on:
   pull_request:
     branches: ["main"]
   schedule:
-    # Nightly benchmark — 02:00 UTC
+    # Nightly benchmark â€” 02:00 UTC
     - cron: "0 2 * * *"
 
 concurrency:
@@ -59,18 +58,18 @@ env:
   # Pin pip to avoid resolver regressions
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# JOB 1 — SAST: Static Application Security Testing
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# JOB 1 â€” SAST: Static Application Security Testing
 # Runs BEFORE any test job so known-CVE dependencies are rejected fast.
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 jobs:
   sast:
-    name: "SAST (pip-audit · bandit · semgrep)"
+    name: "SAST (pip-audit Â· bandit Â· semgrep)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -80,14 +79,14 @@ jobs:
         run: pip install --upgrade pip
 
       # Install audit tools in isolation to avoid dependency conflicts.
-      # semgrep is NOT installed via pip — it uses the official action below.
+      # semgrep is NOT installed via pip â€” it uses the official action below.
       - name: Install pip-audit
         run: pip install "pip-audit>=2.7"
 
       - name: Install bandit
         run: pip install "bandit>=1.7"
 
-      # Poetry 2.x dropped the built-in `export` command — requires the plugin.
+      # Poetry 2.x dropped the built-in `export` command â€” requires the plugin.
       # We install the project deps into the environment, then pip-audit scans
       # the live environment directly (no requirements.txt intermediate file).
       - name: Install project dependencies for scanning
@@ -97,8 +96,8 @@ jobs:
           poetry check --lock
           poetry install --extras all --with dev
 
-      - name: pip-audit — fail on any known CVE
-        # Scans the live installed environment — no requirements.txt needed.
+      - name: pip-audit â€” fail on any known CVE
+        # Scans the live installed environment â€” no requirements.txt needed.
         # To accept a specific CVE finding that you have reviewed and accepted,
         # add --ignore-vuln VULN-ID to the command below and document the
         # rationale in a comment.  Example (do not uncomment without a real CVE):
@@ -107,27 +106,27 @@ jobs:
 
       - name: Upload pip-audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: pip-audit-report
           path: pip-audit-report.json
 
-      - name: bandit — fail on HIGH severity findings
+      - name: bandit â€” fail on HIGH severity findings
         # -ll = HIGH and CRITICAL only (suppress LOW/MEDIUM noise)
         # -ii = only MEDIUM and HIGH confidence (suppress speculative findings)
         run: bandit -r src/pramanix/ -ll -ii -f json -o bandit-report.json
 
       - name: Upload bandit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: bandit-report
           path: bandit-report.json
 
-      # semgrep uses its official action — no pip install required, handles
+      # semgrep uses its official action â€” no pip install required, handles
       # binary download and rule fetching internally.
-      - name: semgrep — fail on ERROR level findings
-        uses: semgrep/semgrep-action@v1
+      - name: semgrep â€” fail on ERROR level findings
+        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d  # v1.1.0
         with:
           config: >-
             p/python
@@ -136,11 +135,11 @@ jobs:
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
-      # ── Secrets scan — fail if PRAMANIX_HMAC_SECRET or similar tokens ──────
+      # â”€â”€ Secrets scan â€” fail if PRAMANIX_HMAC_SECRET or similar tokens â”€â”€â”€â”€â”€â”€
       # Scans Python and YAML source files for hardcoded credentials.
       # Test files are excluded (they use test-only ephemeral keys via secrets.token_bytes).
-      # Any match → rebuild fails to prevent secrets leaking into version control.
-      - name: Secrets scan — no hardcoded credentials in source
+      # Any match â†’ rebuild fails to prevent secrets leaking into version control.
+      - name: Secrets scan â€” no hardcoded credentials in source
         run: |
           FAIL=0
 
@@ -174,25 +173,25 @@ jobs:
             echo "See docs/security.md for the Secrets & Configuration Security section."
             exit 1
           fi
-          echo "✓ Secrets scan: no hardcoded credentials detected in source files."
+          echo "âœ“ Secrets scan: no hardcoded credentials detected in source files."
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 2 — Alpine & musl Ban
-  # Z3 requires glibc — musl causes segfaults and 3-10x slowdowns (Blueprint §48)
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 2 â€” Alpine & musl Ban
+  # Z3 requires glibc â€” musl causes segfaults and 3-10x slowdowns (Blueprint Â§48)
   # Gate: grep exits 0 (0 matches found = safe). 1 match = FATAL.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   alpine-ban:
     name: "Reject Alpine / musl base images"
     runs-on: ubuntu-latest
     needs: sast
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Scan Dockerfiles for Alpine / musl
         run: |
           # Collect all Dockerfiles, excluding:
           #   - .git/ (git internals)
-          #   - Dockerfile.test (known test fixture — intentionally contains Alpine
+          #   - Dockerfile.test (known test fixture â€” intentionally contains Alpine
           #     to verify this gate catches it during local development)
           mapfile -t DOCKERFILES < <(
             find . \
@@ -222,7 +221,7 @@ jobs:
             exit 1
           fi
           # Gate: exit 0 = no alpine found = safe
-          echo "✓ Alpine/musl ban: 0 matches found in ${#DOCKERFILES[@]} Dockerfile(s). SAFE."
+          echo "âœ“ Alpine/musl ban: 0 matches found in ${#DOCKERFILES[@]} Dockerfile(s). SAFE."
 
       - name: Scan docker-compose files for Alpine / musl
         run: |
@@ -233,7 +232,7 @@ jobs:
               2>/dev/null
           )
           if [[ ${#COMPOSE_FILES[@]} -eq 0 ]]; then
-            echo "✓ No docker-compose files found. SAFE."
+            echo "âœ“ No docker-compose files found. SAFE."
             exit 0
           fi
           HITS=()
@@ -245,12 +244,12 @@ jobs:
             printf '  %s\n' "${HITS[@]}"
             exit 1
           fi
-          echo "✓ docker-compose scan: 0 matches in ${#COMPOSE_FILES[@]} file(s). SAFE."
+          echo "âœ“ docker-compose scan: 0 matches in ${#COMPOSE_FILES[@]} file(s). SAFE."
 
       - name: Scan deploy/ directory for Alpine / musl
         run: |
           if [[ ! -d "./deploy" ]]; then
-            echo "✓ No deploy/ directory found. SAFE."
+            echo "âœ“ No deploy/ directory found. SAFE."
             exit 0
           fi
           HITS=$(grep -rl -i -E "(alpine|musl)" ./deploy/ 2>/dev/null || true)
@@ -259,21 +258,21 @@ jobs:
             echo "$HITS"
             exit 1
           fi
-          echo "✓ deploy/ scan: 0 matches. SAFE."
+          echo "âœ“ deploy/ scan: 0 matches. SAFE."
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 3 — Lint & Type Check
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 3 â€” Lint & Type Check
   # ruff check + ruff format + mypy --strict
-  # All three exit 0 required — no warnings suppressed.
-  # ──────────────────────────────────────────────────────────────────────────
+  # All three exit 0 required â€” no warnings suppressed.
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   lint-typecheck:
     name: "Lint (ruff) + Type check (mypy)"
     runs-on: ubuntu-latest
     needs: alpine-ban
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -283,20 +282,20 @@ jobs:
           poetry config virtualenvs.create false
           poetry install --with dev
 
-      - name: ruff check — linting
+      - name: ruff check â€” linting
         run: ruff check src/ tests/ --output-format=github
 
-      - name: ruff format — formatting
+      - name: ruff format â€” formatting
         run: ruff format --check src/ tests/
 
-      - name: mypy — strict type checking
+      - name: mypy â€” strict type checking
         run: mypy src/pramanix/ --strict --no-error-summary
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 4 — Test Gauntlet
-  # Ordered: unit → integration → property → adversarial → perf (main only)
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 4 â€” Test Gauntlet
+  # Ordered: unit â†’ integration â†’ property â†’ adversarial â†’ perf (main only)
   # Matrix: Python 3.13
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   test:
     name: "Tests (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-latest
@@ -307,9 +306,9 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -319,27 +318,27 @@ jobs:
           poetry config virtualenvs.create false
           poetry install --with dev --extras all
 
-      - name: "Step 1/5 — Unit tests"
+      - name: "Step 1/5 â€” Unit tests"
         run: pytest tests/unit/ -x --tb=short
 
-      - name: "Step 2/5 — Integration tests"
+      - name: "Step 2/5 â€” Integration tests"
         run: pytest tests/integration/ -x --tb=short
 
-      - name: "Step 3/5 — Property-based tests"
+      - name: "Step 3/5 â€” Property-based tests"
         run: |
           pytest tests/property/ \
             --hypothesis-seed=0 \
             --hypothesis-profile=ci \
             -x --tb=short
 
-      - name: "Step 4/5 — Adversarial security tests (always run)"
+      - name: "Step 4/5 â€” Adversarial security tests (always run)"
         run: pytest tests/adversarial/ -v --tb=short
 
-      - name: "Step 5/5 — Perf + latency benchmarks (main branch only)"
+      - name: "Step 5/5 â€” Perf + latency benchmarks (main branch only)"
         if: github.ref == 'refs/heads/main'
         run: pytest tests/perf/ tests/benchmarks/ -m "not slow" --tb=short
 
-      - name: "Step 5/5 — Perf + latency benchmarks (PR: non-slow only)"
+      - name: "Step 5/5 â€” Perf + latency benchmarks (PR: non-slow only)"
         if: github.ref != 'refs/heads/main' && github.event_name == 'pull_request'
         run: pytest tests/perf/ tests/benchmarks/ -m "not slow" --tb=short
 
@@ -355,25 +354,25 @@ jobs:
 
       - name: Upload coverage artifact (Python 3.13 only)
         if: matrix.python-version == '3.13'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: coverage-report
           path: |
             .coverage
             coverage.xml
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 5 — Coverage Gate
-  # Enforces ≥98% branch coverage and Codecov delta < -0.5%.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 5 â€” Coverage Gate
+  # Enforces â‰¥98% branch coverage and Codecov delta < -0.5%.
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   coverage:
-    name: "Coverage gate (≥98%, delta ≤-0.5%)"
+    name: "Coverage gate (â‰¥98%, delta â‰¤-0.5%)"
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -381,41 +380,41 @@ jobs:
         run: pip install coverage[toml]
 
       - name: Download coverage artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           name: coverage-report
 
-      - name: Enforce coverage threshold (≥98%)
+      - name: Enforce coverage threshold (â‰¥98%)
         run: coverage report --fail-under=98
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238  # v4.6.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
           flags: unittests
           name: pramanix-coverage
           fail_ci_if_error: true
-          # Coverage delta threshold (>0.5% drop → PR fails) is enforced
+          # Coverage delta threshold (>0.5% drop â†’ PR fails) is enforced
           # via codecov.yml in the repo root (coverage.precision + coverage.status)
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 7 — Container Image Security Scan (Trivy)
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 7 â€” Container Image Security Scan (Trivy)
   # Builds the production Docker image and scans for CRITICAL/HIGH CVEs.
   # Fails if any CRITICAL or HIGH vulnerability is found.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   trivy:
     name: "Container scan (Trivy)"
     runs-on: ubuntu-latest
     needs: extras-smoke
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Build production image for scanning
         run: docker build -f Dockerfile.production -t pramanix:ci-scan .
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.20.0  # pinned from @master — TODO: pin to SHA
+        uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561  # v0.20.0
         with:
           image-ref: "pramanix:ci-scan"
           format: "table"
@@ -426,24 +425,24 @@ jobs:
 
       - name: Upload Trivy SARIF report
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357  # v3.28.0
         with:
           sarif_file: trivy-results.sarif
         continue-on-error: true
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 7 — Dependency License Scan
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 7 â€” Dependency License Scan
   # Allowed: MIT, Apache-2.0, BSD-2/3, LGPL-2.1/3.0, PSF, ISC, MPL-2.0
   # Blocked: GPL-2.0-only, AGPL-incompatible, unknown
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   license-scan:
     name: "License scan (allowlist)"
     runs-on: ubuntu-latest
     needs: trivy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -482,7 +481,7 @@ jobs:
               "ISC License (ISCL)",
               "Mozilla Public License 2.0 (MPL 2.0)",
               "MPL-2.0",
-              # Pramanix itself — AGPL is the project license, not a dependency
+              # Pramanix itself â€” AGPL is the project license, not a dependency
               "GNU Affero General Public License v3",
               "AGPL-3.0-only",
           }
@@ -511,7 +510,7 @@ jobs:
                       violations.append(f"  BLOCKED  [{name}]  {lic}")
                       break
               else:
-                  # Not in allowlist and not blocked — treat as unknown/review needed
+                  # Not in allowlist and not blocked â€” treat as unknown/review needed
                   violations.append(f"  UNKNOWN  [{name}]  {lic}")
 
           if violations:
@@ -520,18 +519,18 @@ jobs:
               print("\nAllowlist:", sorted(ALLOWLIST))
               sys.exit(1)
 
-          print(f"✓ License scan passed. {len(packages)} package(s) checked.")
+          print(f"âœ“ License scan passed. {len(packages)} package(s) checked.")
           PYEOF
 
       - name: Upload license report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: license-report
           path: licenses.json
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 8 — Wheel / sdist install smoke gate
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 8 â€” Wheel / sdist install smoke gate
   #
   # Builds the distribution artifacts with `poetry build`, then installs the
   # wheel into a *clean* virtual environment (no source tree, no dev deps) and
@@ -546,15 +545,15 @@ jobs:
   #   All of these would reach PyPI and break every user's first `pip install`.
   #
   # Gate: must run after `coverage` so it only triggers on a healthy build.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   wheel-smoke:
     name: "Wheel install smoke (clean venv)"
     runs-on: ubuntu-latest
     needs: [coverage, integration]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -644,20 +643,20 @@ jobs:
           /tmp/pramanix-sdist-venv/bin/python -c \
             "import pramanix; print('sdist smoke passed', pramanix.__version__)"
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 9 — Extras install smoke
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 9 â€” Extras install smoke
   # Installs the wheel with each advertised extras combination and verifies
   # that the key modules are importable.  Catches broken extras before any
   # PyPI publish.  Runs after wheel-smoke so the wheel is already validated.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   extras-smoke:
     name: "Extras install smoke (all advertised extras)"
     runs-on: ubuntu-latest
     needs: wheel-smoke
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -723,7 +722,7 @@ jobs:
                   )
                   if chk.returncode != 0:
                       failures.append(
-                          f"[{extra}] IMPORT FAILED — {mod}:\n{chk.stderr[-400:]}"
+                          f"[{extra}] IMPORT FAILED â€” {mod}:\n{chk.stderr[-400:]}"
                       )
                   else:
                       print(f"  OK  [{extra}] {mod}")
@@ -734,23 +733,23 @@ jobs:
                   print(f"\n  {msg}")
               sys.exit(1)
 
-          print(f"\n✓ All {len(EXTRAS)} extras passed import smoke ({sum(len(v) for v in EXTRAS.values())} module checks).")
+          print(f"\nâœ“ All {len(EXTRAS)} extras passed import smoke ({sum(len(v) for v in EXTRAS.values())} module checks).")
           PYEOF
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 10 — Nightly Latency Benchmark
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 10 â€” Nightly Latency Benchmark
   # Runs only on the schedule trigger (02:00 UTC daily).
-  # Enforces P99 < 15ms gate — fails the job if the target is missed.
-  # ──────────────────────────────────────────────────────────────────────────
+  # Enforces P99 < 15ms gate â€” fails the job if the target is missed.
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   benchmark:
     name: "Nightly latency benchmark (P99 < 15ms)"
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -778,32 +777,32 @@ jobs:
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: benchmark-results
           path: benchmarks/results/latency_results.json
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB 11 — Real-infrastructure integration tests (testcontainers)
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB 11 â€” Real-infrastructure integration tests (testcontainers)
   #
   # Runs against real Docker containers (Kafka, Postgres, Redis, Vault,
   # LocalStack/S3).  GitHub-hosted ubuntu-latest runners have Docker
   # pre-installed, so testcontainers works without any additional setup.
   #
-  # ──────────────────────────────────────────────────────────────────────────
-  # JOB — Ollama live LLM tests (non-blocking)
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # JOB â€” Ollama live LLM tests (non-blocking)
   #
   # Spins up the official Ollama Docker image as a service container, pulls
   # tinyllama (637 MB, fast CPU inference), and runs translator/ollama.py
   # integration tests.
   #
-  # This job is NON-BLOCKING: it does not gate wheel-smoke or release — it
+  # This job is NON-BLOCKING: it does not gate wheel-smoke or release â€” it
   # proves the OllamaTranslator works against a real open-source LLM in CI
   # without requiring a paid cloud API key.
   #
   # The job is triggered on push to main and on any PR that touches the
   # translator/ directory.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   ollama-live:
     name: "Ollama live LLM tests (tinyllama)"
     runs-on: ubuntu-latest
@@ -822,9 +821,9 @@ jobs:
           --health-start-period 30s
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -858,7 +857,7 @@ jobs:
 
       - name: Upload Ollama test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: ollama-test-results
           path: ollama-results.txt
@@ -869,16 +868,16 @@ jobs:
   #
   # This job runs on every push/PR and is a strict blocker: wheel-smoke,
   # extras-smoke, trivy, and license-scan all require integration to pass.
-  # ──────────────────────────────────────────────────────────────────────────
+  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   integration:
-    name: "Integration tests (real infra — testcontainers)"
+    name: "Integration tests (real infra â€” testcontainers)"
     runs-on: ubuntu-latest
     needs: test
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
         with:
           python-version: "3.13"
 
@@ -924,7 +923,8 @@ jobs:
 
       - name: Upload integration test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: integration-test-results
           path: integration-results.txt
+

@@ -107,6 +107,18 @@ class PolicyMigration:
             MigrationError: If ``strict=True`` and a ``field_renames`` key is
                 missing from *state*.
         """
+        # Guard: only migrate if state_version matches from_version_str (#289).
+        # Without this check, v1_to_v2.migrate(v3_state) silently stamps "2"
+        # onto a v3 state, permanently corrupting records.
+        actual_version = state.get("state_version")
+        if actual_version is not None and str(actual_version) != self.from_version_str:
+            raise MigrationError(
+                f"Cannot apply migration {self.from_version_str!r} → {self.to_version_str!r}: "
+                f"state has version {actual_version!r}, expected {self.from_version_str!r}. "
+                "Use can_migrate() to check before calling migrate().",
+                from_version=self.from_version_str,
+                to_version=self.to_version_str,
+            )
         result = dict(state)
         for old_name, new_name in self.field_renames.items():
             if old_name not in result:
