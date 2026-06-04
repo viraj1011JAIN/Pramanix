@@ -266,12 +266,21 @@ class TestTransposeCmpOpRightSidePromotedField:
         # The result should be an equality formula
         assert z3.is_eq(result)
 
-    def test_right_side_string_field_value_not_in_encoding_uses_minus_one(self) -> None:
-        """Promotion encodes unknown values as -1 (`.get(value, -1)`)."""
+    def test_right_side_string_field_value_not_in_encoding_raises_field_type_error(
+        self,
+    ) -> None:
+        """Unknown string values in promoted fields raise FieldTypeError (#68/#69).
+
+        Previously used .get(value, -1) sentinel which produced a vacuously-true
+        Z3 constraint (fail-open security violation).  Now raises FieldTypeError
+        so unknown values are caught at compile time, not silently bypassed.
+        """
+        from pramanix.exceptions import FieldTypeError
+
         node = _CmpOp(op="eq", left=_Literal("unknown_val"), right=_FieldRef(_str_field))
         promotions = {"status": {"active": 0, "inactive": 1}}
-        result = transpile(node, promotions=promotions)
-        assert result is not None
+        with pytest.raises(FieldTypeError, match="unknown_val"):
+            transpile(node, promotions=promotions)
 
 
 # ── transpile: _ModOp non-literal divisor (line 515) ─────────────────────────

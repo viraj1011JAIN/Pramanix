@@ -74,6 +74,7 @@ _EXPECTED_ALL: frozenset[str] = frozenset(
         "LLMTimeoutError",
         "PolicyCompilationError",
         "PolicyError",
+        "PolicySyntaxError",
         "PramanixError",
         "SemanticPolicyViolation",
         "SolverError",

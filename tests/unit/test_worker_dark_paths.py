@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import multiprocessing
 import pickle
+import secrets
 import threading
 import time
 import types
@@ -774,57 +775,68 @@ class TestWorkerSolveSealedAndUnseal:
     def test_unseal_returns_correct_dict_for_valid_envelope(self) -> None:
         from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
-        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes)
-        result = _unseal_decision(envelope)
+        nonce = secrets.token_hex(16)
+        envelope = _worker_solve_sealed(
+            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes, nonce=nonce
+        )
+        result = _unseal_decision(envelope, expected_nonce=nonce)
         assert "allowed" in result
 
     def test_unseal_raises_on_tampered_tag(self) -> None:
         """Flipping one character in _t must raise ValueError."""
         from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
-        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes)
-        # Flip last character of HMAC tag
+        nonce = secrets.token_hex(16)
+        envelope = _worker_solve_sealed(
+            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes, nonce=nonce
+        )
+        # Flip last character of HMAC tag; preserve _n so nonce check passes first
         bad_tag = envelope["_t"][:-1] + ("a" if envelope["_t"][-1] != "a" else "b")
         tampered = {**envelope, "_t": bad_tag}
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(tampered)
+            _unseal_decision(tampered, expected_nonce=nonce)
 
     def test_unseal_raises_on_tampered_payload(self) -> None:
         """Modifying _p while leaving _t intact must raise ValueError."""
         from pramanix.worker import _RESULT_SEAL_KEY, _unseal_decision, _worker_solve_sealed
 
-        envelope = _worker_solve_sealed(_P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes)
+        nonce = secrets.token_hex(16)
+        envelope = _worker_solve_sealed(
+            _P, {"amount": Decimal("50")}, 5000, _RESULT_SEAL_KEY.bytes, nonce=nonce
+        )
         # Append a byte to the payload (tag now mismatches)
         tampered = {**envelope, "_p": envelope["_p"] + "X"}
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(tampered)
+            _unseal_decision(tampered, expected_nonce=nonce)
 
     def test_unseal_raises_key_error_on_missing_payload_key(self) -> None:
-        """Envelope missing _p raises KeyError."""
+        """Envelope missing _p raises KeyError (nonce check may fire first)."""
         from pramanix.worker import _unseal_decision
 
-        with pytest.raises(KeyError):
-            _unseal_decision({"_t": "abc123"})
+        nonce = secrets.token_hex(16)
+        with pytest.raises((KeyError, ValueError)):
+            _unseal_decision({"_t": "abc123", "_n": nonce}, expected_nonce=nonce)
 
     def test_unseal_raises_key_error_on_missing_tag_key(self) -> None:
         """Envelope missing _t raises KeyError."""
         from pramanix.worker import _unseal_decision
 
+        nonce = secrets.token_hex(16)
         with pytest.raises(KeyError):
-            _unseal_decision({"_p": '{"allowed": false}'})
+            _unseal_decision(
+                {"_p": '{"allowed": false}', "_n": nonce}, expected_nonce=nonce
+            )
 
     def test_wrong_seal_key_raises_value_error(self) -> None:
         """Envelope signed with key A must fail verification with key B."""
-        import secrets
-
         key_a = secrets.token_bytes(32)
         key_b = secrets.token_bytes(32)
-        # Ensure the two keys differ (astronomically unlikely to collide but guard anyway)
         assert key_a != key_b
 
         import pramanix.worker as _worker_mod
         from pramanix.worker import _EphemeralKey, _unseal_decision, _worker_solve_sealed
 
+        nonce = secrets.token_hex(16)
         # Temporarily swap the module-level seal key so _unseal_decision uses key_b
         original_key = _worker_mod._RESULT_SEAL_KEY
         _worker_mod._RESULT_SEAL_KEY = _EphemeralKey(key_b)
@@ -834,9 +846,10 @@ class TestWorkerSolveSealedAndUnseal:
                 {"amount": Decimal("50")},
                 5000,
                 key_a,  # signed with key_a
+                nonce=nonce,
             )
             with pytest.raises(ValueError, match="HMAC mismatch"):
-                _unseal_decision(envelope)  # verified with key_b
+                _unseal_decision(envelope, expected_nonce=nonce)  # verified with key_b
         finally:
             _worker_mod._RESULT_SEAL_KEY = original_key
 
