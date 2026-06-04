@@ -339,7 +339,7 @@ def _emit_decision_metrics(
         if _GUARD_DECISION_COUNTER:
             if decision.allowed:
                 outcome = "allow"
-            elif getattr(decision, "status", None) and decision.status.name == "ERROR":
+            elif getattr(decision, "status", None) and decision.status.value == "error":
                 outcome = "error"
             else:
                 outcome = "block"
@@ -997,6 +997,11 @@ class Guard:
                 _raw_state: dict[str, Any] = (
                     state if isinstance(state, dict) else state.model_dump()
                 )
+                # default=str is intentional: after model_dump() the dict
+                # should contain only standard Python types (Decimal, int, etc).
+                # Decimal's str() repr is a faithful size estimate.  Custom
+                # objects with a tiny str() but large memory footprint would
+                # need to survive Pydantic model_dump() serialization (#259 partial).
                 _payload_size = len(
                     _json_size.dumps({"i": _raw_intent, "s": _raw_state}, default=str).encode()
                 )

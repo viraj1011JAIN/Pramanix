@@ -930,6 +930,24 @@ class ComplianceOracle:
                 "Pass matching values to avoid silent miscategorisation."
             )
         with self._lock:
+            # Deduplicate by (control_id, invariant_label) to prevent compliance
+            # count inflation from double-registration (#285).  A retry loop or
+            # multiple module imports calling register_mapping with the same
+            # mapping would otherwise create duplicate attestation evidence,
+            # misleading auditors into inferring stronger compliance coverage.
+            _existing = self._registry[framework]
+            _key = (mapping.control_id, mapping.invariant_label)
+            if any(
+                (m.control_id, m.invariant_label) == _key for m in _existing
+            ):
+                _log.debug(
+                    "compliance_oracle.mapping_skipped_duplicate framework=%s "
+                    "control_id=%r invariant_label=%r",
+                    framework.value,
+                    mapping.control_id,
+                    mapping.invariant_label,
+                )
+                return
             self._registry[framework].append(mapping)
         _log.debug(
             "compliance_oracle.mapping_registered framework=%s control_id=%r "
