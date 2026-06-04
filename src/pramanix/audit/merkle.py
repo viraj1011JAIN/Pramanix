@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import threading
 import weakref
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -84,39 +85,45 @@ class MerkleAnchor:
     def __init__(self) -> None:
         self._leaves: list[str] = []
         self._ids: set[str] = set()  # O(1) duplicate guard
+        self._lock = threading.Lock()  # guards _leaves and _ids (#170)
 
     def add(self, decision_id: str) -> None:
         """Hash and add decision_id as a leaf; raises ValueError on duplicates."""
-        if decision_id in self._ids:
-            raise ValueError(
-                f"Duplicate decision_id {decision_id!r} already anchored in this MerkleAnchor. "
-                "Each decision_id must be unique within a single audit batch."
-            )
-        self._ids.add(decision_id)
-        # H-07: prefix real leaf nodes with \x00 to distinguish them from
-        # duplicated padding nodes (which use \x01 prefix).  This prevents
-        # the Bitcoin-CVE-2012-style second-preimage attack where two distinct
-        # odd-length leaf sequences can produce the same Merkle root.
         leaf_hash = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
-        self._leaves.append(leaf_hash)
+        with self._lock:
+            if decision_id in self._ids:
+                raise ValueError(
+                    f"Duplicate decision_id {decision_id!r} already anchored in this MerkleAnchor. "
+                    "Each decision_id must be unique within a single audit batch."
+                )
+            self._ids.add(decision_id)
+            # H-07: prefix real leaf nodes with \x00 to distinguish them from
+            # duplicated padding nodes (which use \x01 prefix).  This prevents
+            # the Bitcoin-CVE-2012-style second-preimage attack.
+            self._leaves.append(leaf_hash)
 
     def root(self) -> str | None:
         """Return the current Merkle root hash, or None if no leaves have been added."""
-        if not self._leaves:
-            return None
-        return self._build_root(self._leaves[:])
+        with self._lock:
+            if not self._leaves:
+                return None
+            return self._build_root(self._leaves[:])
 
     def prove(self, decision_id: str) -> MerkleProof | None:
         """Return an inclusion proof for decision_id, or None if not in this tree."""
         # H-07: use the same \x00 prefix as add() to locate the leaf
         target = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
-        try:
-            idx = self._leaves.index(target)
-        except ValueError:
-            return None
+        with self._lock:
+            try:
+                idx = self._leaves.index(target)
+            except ValueError:
+                return None
+            # Take a snapshot under the lock so concurrent add() calls cannot
+            # mutate _leaves mid-traversal (data race #170).
+            leaves_snapshot = self._leaves[:]
 
         proof_path: list[tuple[str, str]] = []
-        current_level = self._leaves[:]
+        current_level = leaves_snapshot
         current_idx = idx
 
         while len(current_level) > 1:

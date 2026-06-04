@@ -261,6 +261,15 @@ class FlowPolicy:
                 permitted=False,
                 reason="REGULATED data must not flow to CONFIDENTIAL sinks.",
             ),
+            # CONFIDENTIAL → REGULATED: permitted (#148 fix — docstring says
+            # "CONFIDENTIAL may flow to CONFIDENTIAL or REGULATED sinks" but
+            # the original code had no such rule, so default_deny=True blocked it).
+            FlowRule(
+                TrustLabel.CONFIDENTIAL,
+                TrustLabel.REGULATED,
+                permitted=True,
+                reason="CONFIDENTIAL → REGULATED: permitted for compliance audit sinks.",
+            ),
             # UNTRUSTED: never to low-trust outputs
             FlowRule(
                 TrustLabel.UNTRUSTED,

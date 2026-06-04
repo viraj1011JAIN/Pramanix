@@ -217,14 +217,23 @@ class TestOversightGate:
         return guard, workflow
 
     def test_sync_no_request_id_triggers_new_request(self) -> None:
-        """Missing oversight_request_id → request_approval → GOVERNANCE_BLOCKED."""
+        """Missing oversight_request_id → request_approval → GOVERNANCE_BLOCKED.
+
+        The request_id is NOT embedded in decision.metadata (#262/#273) because
+        returning it to the AI agent caller enables self-approval replay attacks.
+        Human reviewers obtain the request_id from the structured audit log
+        (keyed by decision_id) or directly from the oversight workflow backend.
+        """
         guard, workflow = self._make_guard()
         decision = guard.verify(intent=_GOV_INTENT_ALLOW, state=_GOV_STATE)
 
         assert not decision.allowed
         assert decision.status == SolverStatus.GOVERNANCE_BLOCKED
         assert decision.metadata.get("stage") == "oversight"
-        assert "oversight_request_id" in decision.metadata
+        # request_id is NOT in metadata (security fix #262) — only in audit log.
+        assert "oversight_request_id" not in decision.metadata
+        # Workflow has a pending request that can be retrieved server-side.
+        assert len(workflow.pending()) == 1
 
     def test_sync_invalid_request_id_blocks(self) -> None:
         """Unknown/unapproved oversight_request_id → check returns False → BLOCKED."""
@@ -237,13 +246,21 @@ class TestOversightGate:
         assert decision.metadata.get("stage") == "oversight"
 
     def test_sync_approved_request_id_allows(self) -> None:
-        """Approved oversight_request_id → check returns True → ALLOW."""
+        """Approved oversight_request_id → check returns True → ALLOW.
+
+        The request_id is obtained from the workflow backend (server-side),
+        not from the decision metadata returned to the caller (#262).
+        """
         guard, workflow = self._make_guard()
 
-        # First call creates a request (BLOCKED but we get the request ID).
+        # First call creates a request (BLOCKED); request_id is server-side only.
         blocked = guard.verify(intent=_GOV_INTENT_ALLOW, state=_GOV_STATE)
         assert not blocked.allowed
-        rid = blocked.metadata["oversight_request_id"]
+        # Obtain request_id from the oversight workflow (server-side path),
+        # not from decision.metadata (which no longer exposes it).
+        pending = workflow.pending()
+        assert len(pending) == 1
+        rid = pending[0].request_id
 
         # Reviewer approves the request.
         workflow.approve(rid, reviewer_id="test_reviewer", comment="Approved for test")

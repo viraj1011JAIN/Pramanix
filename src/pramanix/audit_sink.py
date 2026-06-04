@@ -578,7 +578,7 @@ class SplunkHecAuditSink:
             if payload is None:
                 break  # sentinel received — all queued events have been processed
             try:
-                self._client.post(
+                resp = self._client.post(
                     self._url,
                     content=payload,
                     headers={
@@ -586,6 +586,17 @@ class SplunkHecAuditSink:
                         "Content-Type": "application/json",
                     },
                 )
+                # HTTP-level errors (401 rotated token, 429 rate-limit, 503
+                # HEC backpressure) do NOT raise — check the status code so
+                # decisions are never silently dropped on non-2xx responses
+                # (#171).
+                if resp.status_code >= 400:
+                    _increment_send_error_metric("splunk")
+                    log.error(
+                        "SplunkHecAuditSink: HTTP %d from HEC endpoint — "
+                        "decision may be lost. Check token/index config.",
+                        resp.status_code,
+                    )
             except Exception as exc:
                 _increment_send_error_metric("splunk")
                 log.error("SplunkHecAuditSink: send error: %s", exc, exc_info=True)
@@ -722,7 +733,19 @@ class DatadogAuditSink:
                     message=message,
                     service=self._service,
                 )
-                self._logs_api.submit_log(HTTPLog([log_item]))
+                resp = self._logs_api.submit_log(HTTPLog([log_item]))
+                # submit_log() returns an ApiResponse; check HTTP status to
+                # catch auth failures (403), rate limits (429), and upstream
+                # errors (5xx) that do NOT raise exceptions (#172).
+                status = getattr(resp, "status", None) or getattr(
+                    getattr(resp, "http_info", None), "status", None
+                )
+                if status is not None and status >= 400:
+                    _increment_send_error_metric("datadog")
+                    log.error(
+                        "DatadogAuditSink: HTTP %d from API — decision may be lost.",
+                        status,
+                    )
             except Exception as exc:
                 _increment_send_error_metric("datadog")
                 log.error(

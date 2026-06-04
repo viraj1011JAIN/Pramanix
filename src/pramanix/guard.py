@@ -819,7 +819,12 @@ class Guard:
                             f"Oversight request '{_approval_id}' has not been "
                             "approved or has expired. Obtain approval before retrying."
                         ),
-                        metadata={"oversight_request_id": _approval_id},
+                        # oversight_request_id is kept server-side via the log
+                        # below (#262/#273).  Embedding it in metadata returns it
+                        # to the AI agent caller, enabling self-approval by replaying
+                        # the token.  Operators who legitimately need it can read
+                        # the structured audit log keyed by decision_id.
+                        metadata={},
                         intent_dump=intent_values,
                         state_dump=state_values,
                     )
@@ -847,7 +852,8 @@ class Guard:
                     _gb = Decision.governance_blocked(
                         stage="oversight",
                         reason=str(_exc),
-                        metadata={"oversight_request_id": _exc.request_id},
+                        # Do not embed request_id in metadata — see above (#262).
+                        metadata={},
                         intent_dump=intent_values,
                         state_dump=state_values,
                     )

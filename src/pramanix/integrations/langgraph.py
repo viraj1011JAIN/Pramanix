@@ -140,28 +140,11 @@ def _suggest_remediation(
     intent_payload: dict[str, Any],
     state_payload: dict[str, Any],
 ) -> str:
-    violated = [v.lower() for v in decision.violated_invariants]
-    for rule in violated:
-        if "limit" in rule or "max" in rule or "cap" in rule or "budget" in rule:
-            numeric_intent = [
-                (k, v)
-                for k, v in intent_payload.items()
-                if isinstance(v, int | float) and not isinstance(v, bool)
-            ]
-            numeric_state = [
-                (k, v)
-                for k, v in state_payload.items()
-                if isinstance(v, int | float) and not isinstance(v, bool)
-            ]
-            if numeric_intent and numeric_state:
-                key_i, val_i = numeric_intent[0]
-                key_s, val_s = numeric_state[0]
-                if val_i > val_s:
-                    return (
-                        f"Consider updating '{key_s}' "
-                        f"from {val_s} to at least {val_i} "
-                        f"for request field '{key_i}'."
-                    )
+    # Remediation suggestions must not embed raw numeric field values from
+    # intent or state into the output — those values flow into every
+    # downstream LangGraph node's state and enable binary-search policy
+    # probing (#136).  Only invariant labels (already in violated_invariants)
+    # are safe to surface.
     if decision.violated_invariants:
         first = decision.violated_invariants[0]
         return f"Review invariant '{first}' and adjust request or policy."
@@ -183,7 +166,7 @@ class PramanixGuardNode:
         on_fail: str = "halt",
         shadow: bool = False,
         timeout_ms: int = 100,
-        bypass_on_timeout: bool = True,
+        bypass_on_timeout: bool = False,
         sidecar_key: str = "_pramanix_policy_verdict",
         intent_extractor: (Callable[[dict[str, Any]], dict[str, Any]] | None) = None,
         state_extractor: (Callable[[dict[str, Any]], dict[str, Any]] | None) = None,
@@ -447,7 +430,7 @@ def pramanix_node(
     on_fail: str = "halt",
     shadow: bool = False,
     timeout_ms: int = 100,
-    bypass_on_timeout: bool = True,
+    bypass_on_timeout: bool = False,
     sidecar_key: str = "_pramanix_policy_verdict",
     intent_extractor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     state_extractor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,

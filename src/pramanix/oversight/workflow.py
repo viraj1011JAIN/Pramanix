@@ -36,6 +36,7 @@ from __future__ import annotations
 import collections
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -279,32 +280,46 @@ class OversightRecord:
         """
         try:
             stored_tag: str = str(data["hmac_tag"])
-            payload = (
-                f"{data['request_id']}|"
-                f"{data.get('principal_id', '')}|"
-                f"{data.get('action', '')}|"
-                f"{data.get('decision_id', '')}|"
-                f"{data.get('policy_hash', '')}|"
-                f"{data['status']}|"
-                f"{data.get('reviewer_id', '')}|"
-                f"{data.get('decided_at', 0.0)}"
-            ).encode()
+            payload = json.dumps(
+                {
+                    "action": data.get("action", ""),
+                    "decided_at": repr(data.get("decided_at", 0.0)),
+                    "decision_id": data.get("decision_id", ""),
+                    "policy_hash": data.get("policy_hash", ""),
+                    "principal_id": data.get("principal_id", ""),
+                    "request_id": data["request_id"],
+                    "reviewer_id": data.get("reviewer_id", ""),
+                    "status": data["status"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("utf-8")
             expected = hmac.HMAC(signing_key, payload, hashlib.sha256).hexdigest()
             return hmac.compare_digest(stored_tag, expected)
         except (KeyError, TypeError, ValueError):
             return False
 
     def _compute_tag(self) -> str:
-        payload = (
-            f"{self.request.request_id}|"
-            f"{self.request.principal_id}|"
-            f"{self.request.action}|"
-            f"{self.request.decision_id}|"
-            f"{self.request.policy_hash}|"
-            f"{self.decision.status.value}|"
-            f"{self.decision.reviewer_id}|"
-            f"{self.decision.decided_at}"
-        ).encode()
+        # Canonical JSON payload: field-boundary collisions from pipe-delimited
+        # f-strings (#82) are eliminated by using JSON with explicit field names.
+        # sort_keys=True and separators=(",",":") guarantee deterministic output.
+        # decided_at is repr'd as a string to avoid float-formatting ambiguity.
+        payload = json.dumps(
+            {
+                "action": self.request.action,
+                "decided_at": repr(self.decision.decided_at),
+                "decision_id": self.request.decision_id,
+                "policy_hash": self.request.policy_hash,
+                "principal_id": self.request.principal_id,
+                "request_id": self.request.request_id,
+                "reviewer_id": self.decision.reviewer_id,
+                "status": self.decision.status.value,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
         return hmac.HMAC(self._key, payload, hashlib.sha256).hexdigest()
 
 

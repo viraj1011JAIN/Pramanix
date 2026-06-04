@@ -155,6 +155,7 @@ class MistralTranslator:
                 user_content = f"{text}\n\nContext: {extra}"
 
         attempts = 0
+        raw: str = ""
         try:
             async for attempt in AsyncRetrying(
                 retry=retry_if_exception_type(_retryable),
@@ -168,13 +169,20 @@ class MistralTranslator:
                         system_prompt=system_prompt,
                         user_content=user_content,
                     )
+                    # Return inside the retry loop so the result is always
+                    # taken from the last successful call, not from a shared
+                    # variable that could be unbound if the loop exits via
+                    # reraise (#247).
+                    return parse_llm_response(raw, model_name=self.model)
         except _retryable as exc:
             raise LLMTimeoutError(
                 f"MistralTranslator: all retry attempts exhausted for model {self.model!r} "
                 f"after {attempts} attempt(s): {exc}",
             ) from exc
-
-        return parse_llm_response(raw, model_name=self.model)
+        # Unreachable in normal operation; satisfies type-checkers.
+        raise ExtractionFailureError(  # type: ignore[unreachable]
+            f"MistralTranslator: no successful response from model {self.model!r}"
+        )
 
     async def _single_call(
         self,

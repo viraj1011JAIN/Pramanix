@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import collections
 import logging
 import threading
 from typing import TYPE_CHECKING, Any
@@ -81,7 +82,11 @@ class FlowEnforcer:
         self._audit_sink = audit_sink
         self._lock = threading.Lock()
         self._max_audit_log_size = max_audit_log_size
-        self._audit_log: list[dict[str, object]] = []
+        # deque(maxlen=N) provides O(1) append-and-evict under the lock;
+        # the previous list.pop(0) was O(N) (#149).
+        self._audit_log: collections.deque[dict[str, object]] = collections.deque(
+            maxlen=max_audit_log_size
+        )
 
     # ── Core gate ─────────────────────────────────────────────────────────
 
@@ -212,9 +217,7 @@ class FlowEnforcer:
             "lineage": list(data.lineage),
         }
         with self._lock:
-            self._audit_log.append(entry)
-            if len(self._audit_log) > self._max_audit_log_size:
-                self._audit_log.pop(0)
+            self._audit_log.append(entry)  # deque(maxlen) auto-evicts oldest
         if self._audit_sink is not None:
             try:
                 self._audit_sink(data, sink_component, permitted)

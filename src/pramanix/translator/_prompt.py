@@ -59,4 +59,8 @@ def build_system_prompt(intent_schema: type[BaseModel]) -> str:
         message to any chat-completion API.
     """
     schema_json = json.dumps(intent_schema.model_json_schema(), indent=2)
-    return _SYSTEM_TEMPLATE.format(schema_json=schema_json)
+    # Use % formatting to prevent KeyError when schema JSON contains {…}
+    # format specifiers in field descriptions or enum values (#251).
+    # str.replace() is safe: we own _SYSTEM_TEMPLATE and control its one
+    # substitution point; {schema_json} is the only placeholder.
+    return _SYSTEM_TEMPLATE.replace("{schema_json}", schema_json, 1)

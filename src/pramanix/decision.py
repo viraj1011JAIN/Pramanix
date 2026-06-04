@@ -126,6 +126,7 @@ def _build_decision_canonical(
     status: str,
     violated_invariants: Any,
     policy_name: str | None = None,
+    error_domain: str | None = None,
 ) -> dict[str, Any]:
     """Build the canonical dict used for :meth:`Decision._compute_hash`.
 
@@ -142,15 +143,17 @@ def _build_decision_canonical(
         state_dump:          Serialised state dict (``Decision.state_dump``).
         status:              ``SolverStatus`` value string.
         violated_invariants: Iterable of invariant label strings.
-        policy_name:         Human-readable policy class name (e.g. ``'PaymentPolicy'``).
-                             Stored as ``"policy_name"`` in the canonical dict so
-                             offline verifiers can identify the policy by name.
+        policy_name:         Human-readable policy class name.
+        error_domain:        Operational fault domain string or ``None``.
+                             Included in the hash so on-call routing fields
+                             cannot be forged in the wire format (#150).
 
     Returns:
         Canonical ``dict`` ready for :func:`_canonical_bytes`.
     """
     return {
         "allowed": bool(allowed),
+        "error_domain": str(error_domain) if error_domain is not None else None,
         "explanation": str(explanation or ""),
         "hash_alg": "sha256-v1",
         "intent_dump": _make_json_safe(dict(intent_dump) if intent_dump else {}),
@@ -192,6 +195,47 @@ via ``Decision.error(error_domain=...)``.  Never conflate ``"system_fault"``
 with ``"policy_violation"`` in dashboards — the former pages on-call; the
 latter is expected policy behaviour.
 """
+
+
+# ── Immutable metadata dict ───────────────────────────────────────────────────
+
+
+class _FrozenDict(dict):  # type: ignore[type-arg]
+    """A dict subclass that raises TypeError on any mutation attempt.
+
+    Used for :attr:`Decision.metadata` so that the ``frozen=True`` dataclass
+    guarantee extends to the dict's *contents*, not just its binding (#151).
+
+    Inherits from ``dict`` (not ``MappingProxyType``) to remain pickle-
+    compatible and work correctly with ``dataclasses.asdict()`` /
+    ``copy.deepcopy()``.
+    """
+
+    _IMMUTABLE_MSG = (
+        "Decision.metadata is immutable. "
+        "Use dataclasses.replace(decision, metadata={...}) to create a new Decision."
+    )
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        raise TypeError(self._IMMUTABLE_MSG)
+
+    def __delitem__(self, key: Any) -> None:
+        raise TypeError(self._IMMUTABLE_MSG)
+
+    def clear(self) -> None:
+        raise TypeError(self._IMMUTABLE_MSG)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError(self._IMMUTABLE_MSG)
+
+    def pop(self, *args: Any) -> Any:
+        raise TypeError(self._IMMUTABLE_MSG)
+
+    def popitem(self) -> tuple[Any, Any]:
+        raise TypeError(self._IMMUTABLE_MSG)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        raise TypeError(self._IMMUTABLE_MSG)
 
 
 # ── SolverStatus ──────────────────────────────────────────────────────────────
@@ -358,6 +402,14 @@ class Decision:
                 "Decision(allowed=False, status=SAFE) is inconsistent. "
                 "SAFE status implies the action is permitted."
             )
+        # Upgrade metadata to _FrozenDict so that frozen=True actually
+        # prevents mutation of the dict contents (#151).  Callers that try
+        # decision.metadata["key"] = "value" will now get a clear TypeError
+        # instead of silently corrupting the "immutable" object's state.
+        # _FrozenDict inherits from dict so pickle, deepcopy, and
+        # dataclasses.asdict() all work correctly.
+        if type(self.metadata) is dict:
+            object.__setattr__(self, "metadata", _FrozenDict(self.metadata))
         # Auto-populate error_domain if not explicitly set by the factory.
         # The domain is derived from status; ERROR callers may override it.
         if self.error_domain is None:
@@ -391,13 +443,14 @@ class Decision:
         status = str(self.status.value if hasattr(self.status, "value") else self.status)
         canonical = _build_decision_canonical(
             allowed=self.allowed,
+            error_domain=self.error_domain,
             explanation=self.explanation,
             intent_dump=self.intent_dump,
             policy=policy,
+            policy_name=self.policy_name,
             state_dump=self.state_dump,
             status=status,
             violated_invariants=self.violated_invariants,
-            policy_name=self.policy_name,
         )
         try:
             serialized = _canonical_bytes(canonical)

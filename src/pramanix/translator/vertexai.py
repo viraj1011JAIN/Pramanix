@@ -162,7 +162,7 @@ class VertexAITranslator:
 
         invoke_fn = _invoke_palm if _is_palm(model_lower) else _invoke_gemini
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             raw = await asyncio.wait_for(
                 loop.run_in_executor(None, invoke_fn),

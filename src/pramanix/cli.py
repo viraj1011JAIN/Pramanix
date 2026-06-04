@@ -778,9 +778,11 @@ def _recompute_hash(record: dict[str, Any]) -> str:
 
     canonical = _build_decision_canonical(
         allowed=bool(record.get("allowed", False)),
+        error_domain=record.get("error_domain"),
         explanation=str(record.get("explanation", "")),
         intent_dump=record.get("intent_dump") or {},
         policy=str(record.get("policy", "")),
+        policy_name=record.get("policy_name"),
         state_dump=record.get("state_dump") or {},
         status=str(record.get("status", "")),
         violated_invariants=record.get("violated_invariants") or [],

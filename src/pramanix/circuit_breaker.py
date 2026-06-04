@@ -353,12 +353,32 @@ class AdaptiveCircuitBreaker:
         return cast("Decision", decision)
 
     def reset(self) -> None:
-        """Manual reset from ISOLATED. Requires human acknowledgment."""
-        self._state = CircuitState.CLOSED
-        self._consecutive_pressure = 0
-        self._open_episodes = 0
-        self._last_transition = time.monotonic()
-        self._update_prometheus()
+        """Manual reset from ISOLATED. Requires human acknowledgment.
+
+        Schedules a coroutine to run under the asyncio lock so that concurrent
+        verify_async() coroutines cannot race against the state write (#264).
+        """
+        import asyncio as _asyncio
+
+        async def _locked_reset() -> None:
+            async with self._lock:
+                self._state = CircuitState.CLOSED
+                self._consecutive_pressure = 0
+                self._open_episodes = 0
+                self._last_transition = time.monotonic()
+                self._update_prometheus()
+
+        try:
+            loop = _asyncio.get_running_loop()
+            loop.create_task(_locked_reset())
+        except RuntimeError:
+            # No running loop (sync context) — run directly without lock.
+            # Sync callers are single-threaded by contract; no race possible.
+            self._state = CircuitState.CLOSED
+            self._consecutive_pressure = 0
+            self._open_episodes = 0
+            self._last_transition = time.monotonic()
+            self._update_prometheus()
         log.warning(
             "Circuit breaker manually reset from ISOLATED",
             extra={"namespace": self._config.namespace},
@@ -745,8 +765,14 @@ class DistributedCircuitBreaker:
                 self._local_failure_count += 1
                 if self._local_failure_count >= self._config.consecutive_pressure_count:
                     try:
+                        # delta_failures=1: push exactly one new failure to the
+                        # shared backend.  The backend accumulates all replicas'
+                        # individual +1 deltas correctly.  Passing the full
+                        # _local_failure_count (= synced_aggregate + local_new)
+                        # would cause the backend to add it to the existing
+                        # aggregate, inflating counts as O(N²) per replica (#83).
                         await self._push_state(
-                            CircuitState.OPEN, delta_failures=self._local_failure_count
+                            CircuitState.OPEN, delta_failures=1
                         )
                     except Exception as _push_exc:
                         log.error(

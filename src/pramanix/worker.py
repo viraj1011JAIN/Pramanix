@@ -624,7 +624,12 @@ def _unseal_decision(
                      ``_n`` keys).
     """
     # ── 1. Nonce replay check (fast, before HMAC computation) ─────────────────
-    if expected_nonce and not _hmac_mod.compare_digest(sealed.get("_n", ""), expected_nonce):
+    stored_nonce = sealed.get("_n", "")
+    if not expected_nonce:
+        raise ValueError(
+            "_unseal_decision: expected_nonce must be non-empty for replay protection."
+        )
+    if not _hmac_mod.compare_digest(stored_nonce, expected_nonce):
         raise ValueError(
             "Decision replay detected: nonce mismatch. "
             "Envelope nonce does not match the per-request nonce issued by the host."
@@ -904,6 +909,10 @@ class WorkerPool:
                         "WorkerPool: worker process exceeded host deadline (%.1fs)",
                         _host_timeout_s,
                     )
+                    # Release the shed-limiter slot before returning (#267).
+                    # Without this, every timeout permanently occupies one
+                    # active-slot counter unit, eventually starving the pool.
+                    self._shed_limiter.release(_FAILED_DISPATCH_PENALTY_MS)
                     return Decision.error(
                         reason="Worker process timeout — host-side deadline exceeded."
                     )
