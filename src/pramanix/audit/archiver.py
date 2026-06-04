@@ -269,13 +269,27 @@ class ArchiveKeySet:
         self._lock: threading.Lock = threading.Lock()
 
     def add(self, key_id: str, key: bytes) -> None:
-        """Add *key* under *key_id*.  Overwrites silently if the ID already exists."""
+        """Add *key* under *key_id*.
+
+        Raises:
+            ValueError: If *key* is not 32 bytes.
+            KeyError: If *key_id* already exists with **different** key bytes
+                (idempotent re-registration of the same bytes is allowed).
+        """
         if len(key) != 32:
             raise ValueError(
                 f"ArchiveKeySet.add({key_id!r}): key must be exactly 32 bytes "
                 f"(got {len(key)}).  Generate one with secrets.token_bytes(32)."
             )
         with self._lock:
+            existing = self._keys.get(key_id)
+            if existing is not None and not hmac.compare_digest(existing, key):
+                raise KeyError(
+                    f"ArchiveKeySet.add({key_id!r}): key_id already exists with "
+                    "different key bytes.  Historical archives encrypted with the "
+                    "original key would become permanently unreadable.  Use a "
+                    "different key_id for new keys, or call rotate()."
+                )
             self._keys[key_id] = key
 
     def remove(self, key_id: str) -> None:
@@ -303,17 +317,32 @@ class ArchiveKeySet:
             self._active_key_id = key_id
 
     def rotate(self, new_key_id: str, new_key: bytes) -> str:
-        """Add *new_key* as *new_key_id* and promote it to active.
+        """Add *new_key* as *new_key_id* and promote it to active atomically.
 
-        The old active key remains in the set for decrypting historical
-        archives.  Returns the previously active key_id so the caller
-        can schedule its eventual removal.
+        Both the key insertion and the active-key promotion happen inside a
+        single lock acquisition to prevent TOCTOU races in concurrent callers.
+        The old active key remains in the set for decrypting historical archives.
+
+        Returns the previously active key_id so the caller can schedule its
+        eventual removal.
 
         Raises:
+            ValueError: If *new_key* is not 32 bytes.
             RuntimeError: If no active key has been set yet.
         """
-        self.add(new_key_id, new_key)
+        if len(new_key) != 32:
+            raise ValueError(
+                f"ArchiveKeySet.rotate({new_key_id!r}): key must be exactly 32 bytes "
+                f"(got {len(new_key)}).  Generate one with secrets.token_bytes(32)."
+            )
         with self._lock:
+            existing = self._keys.get(new_key_id)
+            if existing is not None and not hmac.compare_digest(existing, new_key):
+                raise KeyError(
+                    f"ArchiveKeySet.rotate({new_key_id!r}): key_id already exists "
+                    "with different key bytes."
+                )
+            self._keys[new_key_id] = new_key
             old_id = self._active_key_id
             if old_id is None:
                 raise RuntimeError(
@@ -322,6 +351,21 @@ class ArchiveKeySet:
                 )
             self._active_key_id = new_key_id
         return old_id
+
+    def active_key_pair(self) -> tuple[str, bytes]:
+        """Return *(key_id, key_bytes)* for the active key under a single lock.
+
+        Use this instead of accessing :attr:`active_key_id` and
+        :attr:`active_key` separately to avoid a TOCTOU race during concurrent
+        key rotation.
+        """
+        with self._lock:
+            if self._active_key_id is None:
+                raise RuntimeError(
+                    "ArchiveKeySet has no active key. "
+                    "Call add(key_id, key) then set_active(key_id)."
+                )
+            return self._active_key_id, self._keys[self._active_key_id]
 
     @property
     def active_key_id(self) -> str:
@@ -408,7 +452,11 @@ class RotatingKeyArchiveWriter:
         """Encrypt *content* and write to ``path.with_suffix('.enc')``."""
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-        key_id = self._key_set.active_key_id
+        # Read both key_id and key_bytes in a single atomic lock acquisition to
+        # prevent a TOCTOU race where a concurrent rotate() changes the active
+        # key between the two reads (which would cause key_id/ciphertext mismatch
+        # making the archive permanently unreadable).
+        key_id, key_bytes = self._key_set.active_key_pair()
         key_id_bytes = key_id.encode("utf-8")
         if len(key_id_bytes) > self._MAX_KEY_ID_BYTES:
             raise ValueError(
@@ -417,7 +465,7 @@ class RotatingKeyArchiveWriter:
             )
 
         nonce = secrets.token_bytes(self._NONCE_BYTES)
-        ciphertext = AESGCM(self._key_set.active_key).encrypt(nonce, content, None)
+        ciphertext = AESGCM(key_bytes).encrypt(nonce, content, None)
 
         payload = (
             self._MAGIC + len(key_id_bytes).to_bytes(2, "big") + key_id_bytes + nonce + ciphertext
@@ -609,10 +657,16 @@ class MerkleArchiver:
             An :class:`ArchiveResult` if archival was triggered, else ``None``.
         """
         ts = timestamp if timestamp is not None else time.time()
-        leaf_hash = hashlib.sha256(decision_id.encode()).hexdigest()
+        # Use \x00-prefixed leaf hash to match MerkleAnchor (H-07 domain separation:
+        # leaf nodes use \x00 prefix, internal nodes use \x01 prefix).  Without the
+        # prefix the archiver and live anchor produce different hashes for the same
+        # decision_id, breaking cross-system audit verification.
+        leaf_hash = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
         with self._lock:
             self._active.append(_Leaf(decision_id=decision_id, leaf_hash=leaf_hash, ts=ts))
             if len(self._active) >= self._max_active:
+                # _archive_segment() does I/O; release the lock around the write
+                # so slow disk/KMS calls don't block concurrent add() callers.
                 return self._archive_segment()
         return None
 
@@ -755,12 +809,16 @@ class MerkleArchiver:
     # ── Internal ───────────────────────────────────────────────────────────────
 
     def _archive_segment(self) -> ArchiveResult | None:
-        """Archive the oldest segment and replace with a checkpoint leaf."""
+        """Archive the oldest segment and replace with a checkpoint leaf.
+
+        The caller MUST hold ``self._lock``.  This method snapshots the data to
+        archive, releases the lock for I/O (to prevent holding the lock during
+        potentially slow disk/KMS operations), then re-acquires the lock to
+        update the active chain.
+        """
         cutoff_ts = time.time() - self._segment_days * 86_400
-        # Entries older than segment_days go to archive.
         to_archive = [leaf for leaf in self._active if leaf.ts <= cutoff_ts]
 
-        # If nothing is old enough (all entries are fresh), archive the oldest half.
         if not to_archive:
             split = max(1, len(self._active) // 2)
             to_archive = self._active[:split]
@@ -769,12 +827,15 @@ class MerkleArchiver:
             return None
 
         archive_date = time.strftime("%Y%m%d", time.gmtime(to_archive[0].ts))
-        archive_path = self._base_path / f".merkle.archive.{archive_date}"
+        # Include a millisecond-precision timestamp suffix to prevent filename
+        # collision when _archive_segment is called more than once on the same
+        # calendar day (second call would silently overwrite the first archive).
+        archive_ts_ms = int(time.time() * 1000)
+        archive_path = self._base_path / f".merkle.archive.{archive_date}.{archive_ts_ms}"
 
         root_hash = _build_root([leaf.leaf_hash for leaf in to_archive])
         checkpoint_id = f"__checkpoint__{archive_date}__{root_hash[:8]}"
 
-        # Write archive file.
         lines: list[str] = [
             json.dumps(
                 {
@@ -801,17 +862,27 @@ class MerkleArchiver:
             )
         self._base_path.mkdir(parents=True, exist_ok=True)
         content_bytes = ("\n".join(lines) + "\n").encode("utf-8")
-        # Delegate to the configured writer (default: plaintext atomic write;
-        # custom: caller-supplied encrypted writer for compliance deployments).
-        self._writer(archive_path, content_bytes)
 
-        # Replace archived entries with a checkpoint leaf in the active chain.
+        # Snapshot the set of archived IDs before releasing the lock.
         archived_ids = {leaf.decision_id for leaf in to_archive}
-        remaining = [leaf for leaf in self._active if leaf.decision_id not in archived_ids]
 
+        # Release the lock before calling the writer.  The writer may perform
+        # synchronous file I/O with fsync, call a KMS for key material, or
+        # execute arbitrary user-supplied code — all of which can block for
+        # seconds.  Holding the lock during I/O would block every concurrent
+        # add() / archive() / active_count() call and risk deadlock if the
+        # writer re-enters the archiver.
+        self._lock.release()
+        try:
+            self._writer(archive_path, content_bytes)
+        finally:
+            self._lock.acquire()
+
+        # Update the active chain: replace archived entries with a checkpoint.
+        remaining = [leaf for leaf in self._active if leaf.decision_id not in archived_ids]
         checkpoint_leaf = _Leaf(
             decision_id=checkpoint_id,
-            leaf_hash=hashlib.sha256(checkpoint_id.encode()).hexdigest(),
+            leaf_hash=hashlib.sha256(b"\x00" + checkpoint_id.encode()).hexdigest(),
             ts=time.time(),
         )
         self._active = [checkpoint_leaf, *remaining]

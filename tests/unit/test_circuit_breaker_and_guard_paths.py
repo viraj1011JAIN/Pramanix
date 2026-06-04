@@ -525,14 +525,17 @@ class TestCryptoSigningFailureCounter:
         _crypto_mod._signing_failure_counter = None
 
     def test_sign_exception_increments_failure_counter(self) -> None:
-        """PramanixSigner.sign() swallows exceptions and returns empty string."""
+        """PramanixSigner.sign() raises SigningError and increments the failure counter."""
+        import pramanix.crypto as _crypto_mod2
         from pramanix.crypto import PramanixSigner
+        from pramanix.exceptions import SigningError
 
+        _crypto_mod2._signing_failure_counter = None
         signer = PramanixSigner(force_ephemeral=True)
         signer._private_key = _BrokenPrivateKey()
 
-        result = signer.sign(_make_safe_decision())
-        assert result == ""
+        with pytest.raises(SigningError):
+            signer.sign(_make_safe_decision())
 
     def test_verify_decision_exception_returns_false(self) -> None:
         """PramanixVerifier.verify_decision() returns False on unexpected exception."""
@@ -1243,8 +1246,12 @@ class TestArchiverSegmentWriteFailure:
             return fh
 
         monkeypatch.setattr(os, "fdopen", _failing_fdopen)
+        # _archive_segment() requires the caller to hold self._lock (it
+        # temporarily releases it during I/O to avoid holding the lock across
+        # slow disk/KMS operations).  Acquire the lock before calling directly.
         with contextlib.suppress(OSError):
-            archiver._archive_segment()
+            with archiver._lock:
+                archiver._archive_segment()
 
         # No partial tmp files should remain
         partials = list(tmp_path.glob(".merkle.tmp.*"))

@@ -101,7 +101,9 @@ class TestPramanixSignerEnvVar:
 
 
 class TestPramanixSignerEdgeCases:
-    def test_sign_empty_decision_hash_returns_empty(self) -> None:
+    def test_sign_empty_decision_hash_raises_signing_error(self) -> None:
+        from pramanix.exceptions import SigningError
+
         signer = PramanixSigner.generate()
         d = Decision.safe(
             intent_dump={},
@@ -109,8 +111,8 @@ class TestPramanixSignerEdgeCases:
         )
         # Bypass frozen dataclass to force an empty decision_hash.
         object.__setattr__(d, "decision_hash", "")
-        result = signer.sign(d)
-        assert result == ""
+        with pytest.raises(SigningError):
+            signer.sign(d)
 
     def test_signer_verify_delegates_to_verifier(self) -> None:
         signer = PramanixSigner.generate()
@@ -150,11 +152,14 @@ class TestRS256Signer:
         assert len(sig) > 0
         assert "=" not in sig
 
-    def test_sign_empty_hash_returns_empty(self) -> None:
+    def test_sign_empty_hash_raises_signing_error(self) -> None:
+        from pramanix.exceptions import SigningError
+
         signer = RS256Signer.generate()
         d = _make_decision()
         object.__setattr__(d, "decision_hash", "")
-        assert signer.sign(d) == ""
+        with pytest.raises(SigningError):
+            signer.sign(d)
 
     def test_verify_valid_signature_true(self) -> None:
         signer = RS256Signer.generate()
@@ -282,11 +287,14 @@ class TestES256Signer:
         assert len(sig) > 0
         assert "=" not in sig
 
-    def test_sign_empty_hash_returns_empty(self) -> None:
+    def test_sign_empty_hash_raises_signing_error(self) -> None:
+        from pramanix.exceptions import SigningError
+
         signer = ES256Signer.generate()
         d = _make_decision()
         object.__setattr__(d, "decision_hash", "")
-        assert signer.sign(d) == ""
+        with pytest.raises(SigningError):
+            signer.sign(d)
 
     def test_verify_valid_signature_true(self) -> None:
         signer = ES256Signer.generate()

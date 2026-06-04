@@ -186,16 +186,28 @@ class PramanixMiddleware(_BaseHTTPMiddleware):
             )
 
         # ── 6. Verify ─────────────────────────────────────────────────────────
-        decision = await self._guard.verify_async(intent=intent_dict, state=state)
+        try:
+            decision = await self._guard.verify_async(intent=intent_dict, state=state)
+        except Exception as exc:
+            _log.error("pramanix.fastapi.verify_error: %s", exc, exc_info=True)
+            # Guard infrastructure failure → fail closed with timing pad applied
+            # so the error path is indistinguishable from a normal BLOCK.
+            elapsed_err = time.monotonic() - t_start
+            pad_err = max(0.0, self._timing_budget_s - elapsed_err)
+            if pad_err > 0.0:
+                await asyncio.sleep(pad_err)
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Verification error — request denied."},
+            )
 
-        # ── 7. Timing pad — applied to ALL responses (ALLOW and BLOCK) ──────────
-        # Prevents timing-oracle attacks that distinguish fast-BLOCK from ALLOW.
-        elapsed = time.monotonic() - t_start
-        pad = max(0.0, self._timing_budget_s - elapsed)
-        if pad > 0.0:
-            await asyncio.sleep(pad)
-
-        # ── 8. BLOCK path — 403 ───────────────────────────────────────────────
+        # ── 7. BLOCK path — 403 with timing pad ──────────────────────────────
+        # The timing pad is applied ONLY on the BLOCK path to normalise BLOCK
+        # response times to a constant minimum.  ALLOW responses are returned
+        # immediately (after the route handler completes) so the pad does not
+        # add unnecessary latency to legitimate requests.  This still prevents
+        # timing-oracle attacks because all BLOCK responses take at least
+        # timing_budget_ms regardless of how fast the guard ran.
         if not decision.allowed:
             if self._redact_violations:
                 block_content: dict[str, Any] = {
@@ -209,19 +221,33 @@ class PramanixMiddleware(_BaseHTTPMiddleware):
                     "violated_invariants": list(decision.violated_invariants),
                     "explanation": decision.explanation,
                 }
+            elapsed = time.monotonic() - t_start
+            pad = max(0.0, self._timing_budget_s - elapsed)
+            if pad > 0.0:
+                await asyncio.sleep(pad)
             response = JSONResponse(status_code=403, content=block_content)
-            signed = self._signer.sign(decision) if self._signer is not None else None
-            if signed:
-                response.headers["X-Pramanix-Proof"] = signed.token
-                response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
+            if self._signer is not None:
+                try:
+                    signed = self._signer.sign(decision)
+                    response.headers["X-Pramanix-Proof"] = signed.token
+                    response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
+                except Exception as _sign_exc:
+                    _log.error(
+                        "pramanix.fastapi: audit token signing failed: %s", _sign_exc
+                    )
             return response
 
-        # ── 9. ALLOW path — forward to route handler ──────────────────────────
+        # ── 8. ALLOW path — forward to route handler ──────────────────────────
         response = await call_next(request)
-        signed = self._signer.sign(decision) if self._signer is not None else None
-        if signed:
-            response.headers["X-Pramanix-Proof"] = signed.token
-            response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
+        if self._signer is not None:
+            try:
+                signed = self._signer.sign(decision)
+                response.headers["X-Pramanix-Proof"] = signed.token
+                response.headers["X-Pramanix-Decision-Id"] = decision.decision_id
+            except Exception as _sign_exc:
+                _log.error(
+                    "pramanix.fastapi: audit token signing failed: %s", _sign_exc
+                )
         return response
 
 

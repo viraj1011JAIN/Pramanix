@@ -204,18 +204,19 @@ class TestPramanixSignerEnvWrongType:
 
 
 class TestSignEmptyDecisionHash:
-    """Lines 236-237: sign() logs error and returns '' when decision_hash is empty."""
+    """sign() raises SigningError when decision_hash is empty."""
 
-    def test_sign_empty_hash_returns_empty_string(self, _ed25519_pem_bytes: bytes) -> None:
+    def test_sign_empty_hash_raises_signing_error(self, _ed25519_pem_bytes: bytes) -> None:
         pytest.importorskip("cryptography")
         from pramanix.crypto import PramanixSigner
         from pramanix.decision import Decision
+        from pramanix.exceptions import SigningError
 
         signer = PramanixSigner(private_key_pem=_ed25519_pem_bytes)
         decision = Decision.safe()
         object.__setattr__(decision, "decision_hash", "")
-        result = signer.sign(decision)
-        assert result == ""
+        with pytest.raises(SigningError):
+            signer.sign(decision)
 
 
 class TestSignerVerifyDelegation:

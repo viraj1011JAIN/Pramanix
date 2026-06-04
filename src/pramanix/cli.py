@@ -982,23 +982,63 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
 
     policy_path = args.policy
     policy_var = getattr(args, "policy_var", "policy")
-    _suffix = _pathlib.Path(policy_path).suffix.lower()
+    _resolved_path = _pathlib.Path(policy_path).resolve()
+    _suffix = _resolved_path.suffix.lower()
+
+    # Safety: --policy must point to a regular file (not a symlink to /proc,
+    # /dev, or arbitrary paths that could be used for path-traversal RCE).
+    if not _resolved_path.is_file():
+        print(
+            f"ERROR: --policy path does not resolve to a regular file: {policy_path}",
+            file=sys.stderr,
+        )
+        return 2
 
     policy: Any = None
     if _suffix in (".yaml", ".yml", ".toml"):
+        if getattr(args, "policy_var", "policy") != "policy":
+            print(
+                "WARNING: --policy-var is ignored for YAML/TOML policy files.",
+                file=sys.stderr,
+            )
         try:
             from pramanix.natural_policy.yaml_loader import load_policy_file
 
-            policy = load_policy_file(policy_path)
+            policy = load_policy_file(str(_resolved_path))
         except FileNotFoundError:
             print(f"ERROR: Policy file not found: {policy_path}", file=sys.stderr)
             return 2
         except Exception as exc:
             print(f"ERROR: Failed to compile policy file: {exc}", file=sys.stderr)
             return 2
-    else:
+    elif _suffix == ".py":
+        # Python policy files are loaded via importlib.  Restrict to .py extension
+        # only — other extensions (no extension, .pyc, .pth) are rejected to
+        # prevent accidentally executing non-policy files.
+        #
+        # Opt-in path restriction for CI/CD environments where --policy may be
+        # populated from user-controlled input.  When
+        # PRAMANIX_RESTRICT_POLICY_TO_CWD=1 is set, Python policy files must
+        # reside within the current working directory to prevent path-traversal
+        # execution of arbitrary .py files.  Not enforced by default so that
+        # interactive CLI usage (policy files in any directory) is unaffected.
+        if os.environ.get("PRAMANIX_RESTRICT_POLICY_TO_CWD", "").strip().lower() == "1":
+            _cwd = _pathlib.Path.cwd()
+            try:
+                _resolved_path.relative_to(_cwd)
+            except ValueError:
+                print(
+                    f"ERROR: PRAMANIX_RESTRICT_POLICY_TO_CWD=1 is set. "
+                    f"--policy .py files must be within the current working "
+                    f"directory ({_cwd}).\n"
+                    f"  Resolved path: {_resolved_path}",
+                    file=sys.stderr,
+                )
+                return 2
         try:
-            spec = importlib.util.spec_from_file_location("_pramanix_sim_policy", policy_path)
+            spec = importlib.util.spec_from_file_location(
+                "_pramanix_sim_policy", str(_resolved_path)
+            )
             if spec is None or spec.loader is None:
                 print(f"ERROR: Cannot load module spec from {policy_path}", file=sys.stderr)
                 return 2
@@ -1019,6 +1059,13 @@ def _cmd_simulate(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+    else:
+        print(
+            f"ERROR: --policy must be a .py, .yaml, .yml, or .toml file; "
+            f"got extension {_suffix!r} for path {policy_path!r}",
+            file=sys.stderr,
+        )
+        return 2
 
     meta = getattr(policy, "Meta", None)
     intent_model = getattr(meta, "intent_model", None)
@@ -1442,6 +1489,9 @@ def _cmd_calibrate_injection(args: argparse.Namespace) -> int:
         hmac_key = _secrets.token_bytes(32)
         key_path = output_path.with_suffix(output_path.suffix + ".key")
         key_path.write_text(hmac_key.hex() + "\n", encoding="utf-8")
+        import stat as _stat
+
+        key_path.chmod(_stat.S_IRUSR | _stat.S_IWUSR)  # 0600 — owner only
         print(
             f"WARNING: No HMAC key supplied.  A random 32-byte key has been auto-generated "
             f"and written to {key_path}.\n"

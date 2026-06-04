@@ -226,7 +226,8 @@ def _realize_node(node: Any, values: dict[str, Any]) -> Any:
     """
     if isinstance(node, _ForAllOp):
         af = node.array_field
-        actual: list[Any] = values.get(af.name) or []
+        raw = values.get(af.name)
+        actual: list[Any] = raw if raw is not None else []
         n = len(actual)
         if n == 0:
             # Fail-closed by default (STOP 4): an empty array BLOCKS unless the
@@ -239,7 +240,8 @@ def _realize_node(node: Any, values: dict[str, Any]) -> Any:
 
     if isinstance(node, _ExistsOp):
         af = node.array_field
-        actual = values.get(af.name) or []
+        _raw_exists = values.get(af.name)
+        actual = _raw_exists if _raw_exists is not None else []
         n = len(actual)
         if n == 0:
             return _Literal(False)  # nothing exists in empty array

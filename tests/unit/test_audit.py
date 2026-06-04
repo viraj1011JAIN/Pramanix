@@ -104,7 +104,15 @@ class TestDecisionSigner:
         signer = DecisionSigner(signing_key=_KEY_64)
         assert signer.is_active is True
 
-    def test_sign_never_raises_on_garbage_input(self, monkeypatch):
+    def test_sign_raises_signing_error_on_failure(self, monkeypatch):
+        """sign() must raise SigningError on internal failure (not return None/empty string).
+
+        SigningError propagates to callers so they cannot silently accept an
+        unsigned decision — Guard._sign_decision catches it and returns
+        Decision.error() (fail-closed).
+        """
+        from pramanix.exceptions import SigningError
+
         signer = DecisionSigner(signing_key=_KEY_64)
         d = _make_block_decision()
 
@@ -112,8 +120,8 @@ class TestDecisionSigner:
             raise RuntimeError("simulated canonicalize failure")
 
         monkeypatch.setattr(signer, "_canonicalize", _boom)
-        result = signer.sign(d)
-        assert result is None
+        with pytest.raises(SigningError, match="simulated canonicalize failure"):
+            signer.sign(d)
 
 
 # ── TestIncSigningFailure ─────────────────────────────────────────────────────

@@ -30,6 +30,7 @@ Hierarchy::
     │   ├── SemanticPolicyViolation     # post-consensus business-rule check (M3)
     │   ├── InjectionBlockedError       # pre-LLM injection scorer blocked input (M3)
     │   ├── MeshAuthenticationError     # Pillar 2 Zero-Trust Mesh JWT-SVID failure
+    │   ├── SigningError                # cryptographic signing infrastructure failure
     │   └── VerificationError           # cryptographic infrastructure failure
     ├── ConfigurationError              # Guard / Policy misconfiguration
     └── IntegrityError                  # HMAC / cryptographic artifact verification failure
@@ -64,6 +65,7 @@ __all__ = [
     "ResolverConflictError",
     # Hardening exceptions (Phase 4)
     "SemanticPolicyViolation",
+    "SigningError",
     "SolverError",
     "SolverTimeoutError",
     "StateValidationError",
@@ -267,6 +269,24 @@ class MeshAuthenticationError(GuardError):
         self.reason = reason
         self.token_preview = token_preview
         super().__init__(message)
+
+
+class SigningError(GuardError):
+    """Cryptographic signing of a Decision failed.
+
+    Raised by :meth:`~pramanix.crypto.PramanixSigner.sign`,
+    :meth:`~pramanix.crypto.RS256Signer.sign`,
+    :meth:`~pramanix.crypto.ES256Signer.sign`, and
+    :meth:`~pramanix.audit.signer.DecisionSigner.sign` when the signing
+    operation fails for any reason (corrupted private key, memory error,
+    cryptography library bug).
+
+    Callers must never silently swallow this exception — a signing failure
+    means the audit trail's chain-of-custody guarantee is broken.
+    ``Guard._sign_decision`` catches this and returns ``Decision.error()``
+    (fail-closed) rather than returning an unsigned decision that cannot be
+    distinguished from one where no signer was configured.
+    """
 
 
 class VerificationError(GuardError):

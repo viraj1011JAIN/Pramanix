@@ -423,13 +423,14 @@ class TestGuardSigningIntegration:
         assert isinstance(result, bool)
 
     def test_signing_failure_returns_error_decision(self, monkeypatch):
-        """Guard._sign_decision() must return Decision.error() if sign() returns empty string.
+        """Guard._sign_decision() must return Decision.error() if sign() raises SigningError.
 
         This is the fail-closed property: a signing failure must block the decision
         from being returned unsigned rather than silently returning an unsigned record.
         """
         from pramanix import E, Field, Guard, GuardConfig, Policy
         from pramanix.decision import SolverStatus
+        from pramanix.exceptions import SigningError
 
         _amount = Field("amount", Decimal, "Real")
 
@@ -446,8 +447,12 @@ class TestGuardSigningIntegration:
                 return [(E(_amount) >= Decimal("0")).named("pos").explain("ok")]
 
         signer = PramanixSigner.generate()
-        # Force sign() to return "" simulating a key failure
-        monkeypatch.setattr(signer, "sign", lambda d: "")
+
+        def _fail(_d: object) -> str:
+            raise SigningError("simulated key failure")
+
+        # Force sign() to raise SigningError simulating a key failure
+        monkeypatch.setattr(signer, "sign", _fail)
 
         guard = Guard(_P, GuardConfig(execution_mode="sync", signer=signer))
         d = guard.verify(

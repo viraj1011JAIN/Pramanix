@@ -1065,15 +1065,20 @@ class TestAdditionalHardeningGaps:
         assert "policy_hash" in record
         assert record["policy_hash"] is None
 
-    def test_fail_closed_signing_returns_error_on_empty_sig(self, monkeypatch):
-        """Guard._sign_decision() must return Decision.error() on signing failure."""
+    def test_fail_closed_signing_returns_error_on_signing_error(self, monkeypatch):
+        """Guard._sign_decision() must return Decision.error() when sign() raises SigningError."""
         pytest.importorskip("cryptography", reason="cryptography not installed")
         from pramanix import Guard, GuardConfig, PramanixSigner
         from pramanix.decision import SolverStatus
+        from pramanix.exceptions import SigningError
 
         p = _make_policy()
         signer = PramanixSigner.generate()
-        monkeypatch.setattr(signer, "sign", lambda d: "")
+
+        def _fail(_d: object) -> str:
+            raise SigningError("simulated HSM failure")
+
+        monkeypatch.setattr(signer, "sign", _fail)
 
         guard = Guard(p, GuardConfig(execution_mode="sync", signer=signer))
         d = guard.verify(

@@ -297,18 +297,27 @@ class PramanixSigner:
         """Sign decision.decision_hash with Ed25519.
 
         Returns base64url-encoded signature (86 chars, 64 raw bytes).
-        Never raises — signing failures log ERROR and return empty string.
+
+        Raises:
+            SigningError: If the decision_hash is empty or the signing
+                operation fails for any reason. Callers must never silently
+                ignore this — it means the audit chain-of-custody is broken.
         """
+        from pramanix.exceptions import SigningError
+
+        if not decision.decision_hash:
+            _increment_signing_failure_counter()
+            raise SigningError(
+                "Cannot sign Decision with empty decision_hash. "
+                "Ensure the Decision was produced by Guard.verify() before signing."
+            )
         try:
-            if not decision.decision_hash:
-                log.error("Cannot sign Decision with empty decision_hash")
-                return ""
             sig_bytes = self._private_key.sign(decision.decision_hash.encode("utf-8"))
             return _b64url(sig_bytes)
-        except Exception as e:
-            log.error("Decision signing failed: %s", e, exc_info=True)
+        except Exception as exc:
+            log.error("Ed25519 signing failed: %s", exc, exc_info=True)
             _increment_signing_failure_counter()
-            return ""
+            raise SigningError(f"Ed25519 signing failed: {exc}") from exc
 
     def public_key_pem(self) -> bytes:
         """Return public key in PEM format. Safe to log and publish."""
@@ -562,12 +571,20 @@ class RS256Signer:
     def sign(self, decision: Decision) -> str:
         """Sign ``decision.decision_hash`` with RSA-PKCS1v15-SHA256.
 
-        Returns a base64url-encoded signature.  Never raises; failures log ERROR.
+        Returns a base64url-encoded signature.
+
+        Raises:
+            SigningError: If the decision_hash is empty or RSA signing fails.
         """
+        from pramanix.exceptions import SigningError
+
+        if not decision.decision_hash:
+            _increment_signing_failure_counter()
+            raise SigningError(
+                "Cannot sign Decision with empty decision_hash. "
+                "Ensure the Decision was produced by Guard.verify() before signing."
+            )
         try:
-            if not decision.decision_hash:
-                log.error("Cannot sign Decision with empty decision_hash")
-                return ""
             from cryptography.hazmat.primitives import hashes
             from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -580,7 +597,7 @@ class RS256Signer:
         except Exception as exc:
             log.error("RS256 signing failed: %s", exc, exc_info=True)
             _increment_signing_failure_counter()
-            return ""
+            raise SigningError(f"RS256 signing failed: {exc}") from exc
 
     def public_key_pem(self) -> bytes:
         """Return RSA public key in PEM (SubjectPublicKeyInfo) format."""
@@ -787,12 +804,20 @@ class ES256Signer:
     def sign(self, decision: Decision) -> str:
         """Sign ``decision.decision_hash`` with ECDSA-P256-SHA256.
 
-        Returns a base64url-encoded DER-encoded signature.  Never raises; failures log ERROR.
+        Returns a base64url-encoded DER-encoded signature.
+
+        Raises:
+            SigningError: If the decision_hash is empty or ECDSA signing fails.
         """
+        from pramanix.exceptions import SigningError
+
+        if not decision.decision_hash:
+            _increment_signing_failure_counter()
+            raise SigningError(
+                "Cannot sign Decision with empty decision_hash. "
+                "Ensure the Decision was produced by Guard.verify() before signing."
+            )
         try:
-            if not decision.decision_hash:
-                log.error("Cannot sign Decision with empty decision_hash")
-                return ""
             from cryptography.hazmat.primitives import hashes
             from cryptography.hazmat.primitives.asymmetric.ec import ECDSA
 
@@ -804,7 +829,7 @@ class ES256Signer:
         except Exception as exc:
             log.error("ES256 signing failed: %s", exc, exc_info=True)
             _increment_signing_failure_counter()
-            return ""
+            raise SigningError(f"ES256 signing failed: {exc}") from exc
 
     def public_key_pem(self) -> bytes:
         """Return EC public key in PEM (SubjectPublicKeyInfo) format."""

@@ -589,11 +589,13 @@ class Guard:
     # ── verify ────────────────────────────────────────────────────────────────
 
     def _sign_decision(self, decision: Decision) -> Decision:
-        """Apply Ed25519 signature + policy_hash; redact violations if configured.
+        """Apply Ed25519/RS256/ES256 signature + policy_hash; redact violations if configured.
 
-        Fail-closed: if sign() returns an empty string (signing failure),
-        returns Decision.error() rather than returning an unsigned decision.
-        This prevents the audit trail from silently containing unsigned records.
+        Fail-closed: if sign() raises SigningError (signing infrastructure
+        failure), returns Decision.error() rather than returning an unsigned
+        decision.  This prevents the audit trail from silently containing
+        unsigned records that are indistinguishable from intentionally unsigned
+        ones (when signer=None).
 
         Redaction (``redact_violations=True``): replaces ``explanation`` and
         ``violated_invariants`` on BLOCK decisions with a generic message before
@@ -601,6 +603,8 @@ class Guard:
         computed over the *real* fields, so the server-side audit log remains
         fully verifiable.
         """
+        from pramanix.exceptions import SigningError
+
         # Attach policy fingerprint and recompute decision_hash to include it.
         # Reset decision_hash to "" so __post_init__ recomputes it with policy_hash.
         decision = dataclasses.replace(decision, policy_hash=self._policy_hash, decision_hash="")
@@ -615,14 +619,22 @@ class Guard:
                 )
             return decision
 
-        sig = self._config.signer.sign(decision)
-        if not sig:
+        try:
+            sig = self._config.signer.sign(decision)
+        except SigningError as exc:
+            _log.error(
+                "pramanix.guard: signing failed for decision_id=%s — "
+                "returning Decision.error() to prevent unsigned record in audit trail: %s",
+                decision.decision_id,
+                exc,
+            )
             return Decision.error(
                 reason=(
                     "Signing failed — audit trail integrity compromised. "
                     "Check signer configuration and key availability."
                 )
             )
+
         decision = dataclasses.replace(
             decision,
             signature=sig,
@@ -675,15 +687,25 @@ class Guard:
         self,
         intent: dict[str, Any] | BaseModel,
         state: dict[str, Any] | BaseModel,
+        *,
+        trusted_state: dict[str, Any] | None = None,
     ) -> Decision:
         """Verify *intent* and *state* against the policy invariants, then sign.
 
-        Delegates to _verify_core() and attaches an Ed25519 signature when
+        Delegates to _verify_core() and attaches a cryptographic signature when
         a signer is configured in GuardConfig.  Applies min_response_ms timing
         padding to defeat side-channel timing analysis.
+
+        Args:
+            intent:        Caller-supplied intent data.
+            state:         Caller-supplied state data.
+            trusted_state: Infrastructure-injected state fields that override
+                any matching keys in *state*.  Use for system clock, circuit
+                breaker state, RBAC role, and any other fields that must be
+                authoritative.  See ``_verify_core`` for details.
         """
         _t0 = time.perf_counter()
-        decision = self._sign_decision(self._verify_core(intent, state))
+        decision = self._sign_decision(self._verify_core(intent, state, trusted_state))
         # ── Timing jitter buffer (side-channel mitigation) ─────────────────────
         # Loop until the minimum has truly elapsed.  time.sleep() can return
         # early when interrupted by a signal (e.g. SIGCHLD from a subprocess);
@@ -910,6 +932,7 @@ class Guard:
         self,
         intent: dict[str, Any] | BaseModel,
         state: dict[str, Any] | BaseModel,
+        trusted_state: dict[str, Any] | None = None,
     ) -> Decision:
         """Verify *intent* and *state* against the policy invariants.
 
@@ -935,8 +958,17 @@ class Guard:
         Args:
             intent: Intent data — either a validated ``BaseModel`` instance or
                 a raw ``dict`` (validated internally if a model is registered).
-            state:  State data — either a validated ``BaseModel`` instance or
-                a raw ``dict`` (validated internally if a model is registered).
+            state:  Caller-supplied state data — either a validated ``BaseModel``
+                instance or a raw ``dict``.  Values are overridden by any keys
+                present in ``trusted_state``.
+            trusted_state: Infrastructure-injected state that cannot be
+                overridden by the caller.  Merged *after* ``state`` (overrides
+                any matching keys).  Use this for fields that must be
+                authoritative — e.g. the system clock (``now_ts``), circuit
+                breaker state fetched from Redis (``circuit_state``), or RBAC
+                role from an authentication middleware token.  If ``None`` (the
+                default), no override is applied and the caller controls all
+                state fields.
 
         Returns:
             One of:
@@ -1018,6 +1050,15 @@ class Guard:
                     state_values: dict[str, Any] = (
                         flatten_model(state) if isinstance(state, BaseModel) else dict(state)
                     )
+
+                    # ── trusted_state override ─────────────────────────────────────────
+                    # Infrastructure-managed fields (system clock, circuit-breaker state,
+                    # RBAC role from auth middleware) are merged AFTER caller state so
+                    # they cannot be tampered with via a caller-controlled state dict.
+                    # See flaw #233: without this, any temporal/role primitive is
+                    # universally bypassable by setting now_ts=0, circuit_state="CLOSED".
+                    if trusted_state:
+                        state_values.update(trusted_state)
 
                     # ── StringEnumField auto-coercion ─────────────────────────────────
                     # Encode string enum labels to their Int codes before Z3 runs.
@@ -1104,9 +1145,21 @@ class Guard:
                     # ── Step 5 prep: merge field dicts ────────────────────────────────
                     conflicting = intent_values.keys() & state_values.keys()
                     if conflicting:
-                        raise ValueError(
-                            f"Intent and state share conflicting keys: {sorted(conflicting)}. "
-                            "Each key must appear in exactly one of intent or state."
+                        # Log the actual field names at WARNING for diagnostics, but
+                        # raise a ValidationError with a generic message so that
+                        # redact_violations=True cannot be bypassed by this error path.
+                        # (ValueError caught by the bare except-Exception handler would
+                        # embed the field names in the decision reason regardless of
+                        # the redaction setting — exposing internal policy schema.)
+                        log.warning(
+                            "pramanix.guard: intent and state share conflicting keys "
+                            "for policy=%s: %s",
+                            self._policy.__name__,
+                            sorted(conflicting),
+                        )
+                        raise ValidationError(
+                            "Intent and state contain overlapping keys. "
+                            "Each field must appear in exactly one of intent or state."
                         )
                     values: dict[str, Any] = {**intent_values, **state_values}
 
@@ -1305,6 +1358,8 @@ class Guard:
         self,
         intent: dict[str, Any] | BaseModel,
         state: dict[str, Any] | BaseModel,
+        *,
+        trusted_state: dict[str, Any] | None = None,
     ) -> Decision:
         """Async-aware policy verification entrypoint.
 
@@ -1323,8 +1378,10 @@ class Guard:
         ``Decision(allowed=False)``.
 
         Args:
-            intent: Intent data (dict or validated BaseModel).
-            state:  State data (dict or validated BaseModel).
+            intent:        Intent data (dict or validated BaseModel).
+            state:         Caller-supplied state data (dict or BaseModel).
+            trusted_state: Infrastructure-injected state that overrides any
+                matching keys in *state*.  See :meth:`verify` for details.
 
         Returns:
             A :class:`Decision`.
@@ -1356,7 +1413,10 @@ class Guard:
         # across the thread boundary (Python 3.11 does not copy automatically).
         if mode == "sync":
             _ctx = contextvars.copy_context()
-            return await asyncio.to_thread(_ctx.run, self.verify, intent, state)
+            return await asyncio.to_thread(
+                _ctx.run,
+                lambda: self.verify(intent, state, trusted_state=trusted_state),
+            )
 
         # ── H-01: max_input_bytes DoS pre-check (mirrors _verify_core) ────────
         if self._config.max_input_bytes > 0:
@@ -1416,6 +1476,12 @@ class Guard:
             state_values: dict[str, Any] = (
                 flatten_model(state) if isinstance(state, BaseModel) else dict(state)
             )
+
+            # Apply trusted_state override before any policy checks so that
+            # infrastructure-injected values (system clock, circuit state, RBAC
+            # role) cannot be bypassed via a caller-controlled state dict.
+            if trusted_state:
+                state_values.update(trusted_state)
 
             if self._policy_semver is not None:
                 actual_version = state_values.get("state_version")
@@ -1480,9 +1546,15 @@ class Guard:
 
             conflicting = intent_values.keys() & state_values.keys()
             if conflicting:
-                raise ValueError(
-                    f"Intent and state share conflicting keys: {sorted(conflicting)}. "
-                    "Each key must appear in exactly one of intent or state."
+                log.warning(
+                    "pramanix.guard: intent and state share conflicting keys "
+                    "for policy=%s: %s",
+                    self._policy.__name__,
+                    sorted(conflicting),
+                )
+                raise ValidationError(
+                    "Intent and state contain overlapping keys. "
+                    "Each field must appear in exactly one of intent or state."
                 )
             values: dict[str, Any] = {**intent_values, **state_values}
 

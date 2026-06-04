@@ -484,7 +484,15 @@ def transpile(
                     and isinstance(r, _Literal)
                     and isinstance(r.value, str)
                 ):
-                    rz = z3.IntVal(promotions[l.field.name].get(r.value, -1), ctx)
+                    enc = promotions[l.field.name]
+                    if r.value not in enc:
+                        raise FieldTypeError(
+                            f"String value {r.value!r} is not in the encoding table "
+                            f"for promoted field '{l.field.name}'. "
+                            "All compared string values must appear in the policy's "
+                            "field definition to prevent vacuous safety constraints."
+                        )
+                    rz = z3.IntVal(enc[r.value], ctx)
                 elif (
                     isinstance(r, _FieldRef)
                     and r.field.z3_type == "String"
@@ -492,7 +500,15 @@ def transpile(
                     and isinstance(l, _Literal)
                     and isinstance(l.value, str)
                 ):
-                    lz = z3.IntVal(promotions[r.field.name].get(l.value, -1), ctx)
+                    enc = promotions[r.field.name]
+                    if l.value not in enc:
+                        raise FieldTypeError(
+                            f"String value {l.value!r} is not in the encoding table "
+                            f"for promoted field '{r.field.name}'. "
+                            "All compared string values must appear in the policy's "
+                            "field definition to prevent vacuous safety constraints."
+                        )
+                    lz = z3.IntVal(enc[l.value], ctx)
 
             # eq/ne use Z3_mk_eq directly so that all sorts are handled
             # correctly — including String (SeqRef), whose Python __eq__
@@ -544,26 +560,33 @@ def transpile(
                 and l.field.z3_type == "String"
                 and l.field.name in promotions
             )
-            disjuncts = [
-                cast(
-                    "z3.ExprRef",
-                    z3.BoolRef(
-                        z3.Z3_mk_eq(
-                            lz.ctx_ref(),
-                            lz.as_ast(),
-                            (
-                                z3.IntVal((promotions or {})[l.field.name].get(v.value, -1), ctx)
-                                if _promoted_field
-                                and isinstance(v, _Literal)
-                                and isinstance(v.value, str)
-                                else transpile(v, ctx, promotions, clock)
-                            ).as_ast(),
+            disjuncts = []
+            for v in vs:
+                if (
+                    _promoted_field
+                    and isinstance(v, _Literal)
+                    and isinstance(v.value, str)
+                ):
+                    enc = (promotions or {})[l.field.name]  # type: ignore[index]
+                    if v.value not in enc:
+                        raise FieldTypeError(
+                            f"String value {v.value!r} is not in the encoding table "
+                            f"for promoted field '{l.field.name}'. "
+                            "All compared string values must appear in the policy's "
+                            "field definition to prevent vacuous safety constraints."
+                        )
+                    rhs = z3.IntVal(enc[v.value], ctx)
+                else:
+                    rhs = transpile(v, ctx, promotions, clock)
+                disjuncts.append(
+                    cast(
+                        "z3.ExprRef",
+                        z3.BoolRef(
+                            z3.Z3_mk_eq(lz.ctx_ref(), lz.as_ast(), rhs.as_ast()),
+                            lz.ctx,
                         ),
-                        lz.ctx,
-                    ),
+                    )
                 )
-                for v in vs
-            ]
             if len(disjuncts) == 1:
                 return disjuncts[0]
             return cast("z3.ExprRef", z3.Or(*disjuncts))

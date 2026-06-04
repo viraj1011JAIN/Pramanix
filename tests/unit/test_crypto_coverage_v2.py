@@ -322,10 +322,10 @@ class TestRS256SignerEdgePaths:
         with pytest.raises(ValueError, match="RSA private key"):
             RS256Signer(private_key_pem=pem)
 
-    def test_rs256_signer_sign_exception_is_swallowed(
+    def test_rs256_signer_sign_exception_raises_signing_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Lines 560-563: exception in sign() logs error and returns empty string.
+        """exception in RS256Signer.sign() raises SigningError (no longer swallowed).
 
         Patches _b64url (post-sign encoding) since RSAPrivateKey.sign is
         Rust-backed and its attribute is read-only.
@@ -334,6 +334,7 @@ class TestRS256SignerEdgePaths:
         import pramanix.crypto as _crypto_mod
         from pramanix.crypto import RS256Signer
         from pramanix.decision import Decision, SolverStatus
+        from pramanix.exceptions import SigningError
 
         signer = RS256Signer.generate()
         d = Decision(
@@ -347,8 +348,8 @@ class TestRS256SignerEdgePaths:
             raise RuntimeError("base64 encode failed — signing buffer corrupt")
 
         monkeypatch.setattr(_crypto_mod, "_b64url", _bad_b64url)
-        result = signer.sign(d)
-        assert result == ""
+        with pytest.raises(SigningError, match="RS256 signing failed"):
+            signer.sign(d)
 
     def test_rs256_signer_force_ephemeral_generates_key(self) -> None:
         """RS256Signer generates key when force_ephemeral=True and no env var set."""
@@ -535,8 +536,10 @@ class TestES256Signer:
         signer = ES256Signer()
         assert signer.public_key_pem() is not None
 
-    def test_es256_signer_sign_exception_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Lines 768-771: exception in sign() returns empty string.
+    def test_es256_signer_sign_exception_raises_signing_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """exception in ES256Signer.sign() raises SigningError (no longer swallowed).
 
         Patches _b64url since EllipticCurvePrivateKey.sign is Rust-backed
         and its attribute is read-only.
@@ -545,6 +548,7 @@ class TestES256Signer:
         import pramanix.crypto as _crypto_mod
         from pramanix.crypto import ES256Signer
         from pramanix.decision import Decision, SolverStatus
+        from pramanix.exceptions import SigningError
 
         signer = ES256Signer.generate()
         d = Decision(
@@ -558,8 +562,8 @@ class TestES256Signer:
             raise RuntimeError("base64 encode failed — signing buffer corrupt")
 
         monkeypatch.setattr(_crypto_mod, "_b64url", _bad_b64url)
-        result = signer.sign(d)
-        assert result == ""
+        with pytest.raises(SigningError, match="ES256 signing failed"):
+            signer.sign(d)
 
     def test_es256_signer_verify_delegates_to_verifier(self) -> None:
         """ES256Signer.verify() delegates to ES256Verifier."""

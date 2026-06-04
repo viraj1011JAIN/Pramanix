@@ -85,7 +85,10 @@ _TIMEOUT_MS = 5000
 def _make_sealed(values: dict, key: bytes | None = None) -> dict:
     """Produce a sealed envelope for *values* using the given or host key."""
     actual_key = key if key is not None else _RESULT_SEAL_KEY.bytes
-    return _worker_solve_sealed(_SealTestPolicy, values, _TIMEOUT_MS, actual_key)
+    nonce = secrets.token_hex(16)
+    return _worker_solve_sealed(
+        _SealTestPolicy, values, _TIMEOUT_MS, actual_key, nonce=nonce
+    )
 
 
 # ── Round-trip tests ──────────────────────────────────────────────────────────
@@ -97,14 +100,14 @@ class TestHMACRoundTrip:
     def test_safe_result_round_trip(self) -> None:
         """SAFE decision survives seal → unseal without modification."""
         sealed = _make_sealed(_SAFE_VALUES)
-        inner = _unseal_decision(sealed)
+        inner = _unseal_decision(sealed, expected_nonce=sealed["_n"])
         assert inner["allowed"] is True
         assert inner["status"] == "safe"
 
     def test_unsafe_result_round_trip(self) -> None:
         """UNSAFE decision survives seal → unseal without modification."""
         sealed = _make_sealed(_UNSAFE_VALUES)
-        inner = _unseal_decision(sealed)
+        inner = _unseal_decision(sealed, expected_nonce=sealed["_n"])
         assert inner["allowed"] is False
         assert inner["status"] == "unsafe"
 
@@ -131,13 +134,14 @@ class TestHMACTamperDetection:
         assert inner_dict["allowed"] is False, "Pre-condition: must be unsafe"
 
         # ATTACKER: directly mutate the payload string to flip the flag.
+        # Attacker also preserves the nonce (_n) — HMAC check catches the tamper.
         tampered_dict = dict(inner_dict)
         tampered_dict["allowed"] = True
         tampered_payload = _json_mod.dumps(tampered_dict, sort_keys=True, separators=(",", ":"))
-        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"]}  # reuse old tag
+        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"], "_n": sealed["_n"]}
 
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(tampered_envelope)
+            _unseal_decision(tampered_envelope, expected_nonce=sealed["_n"])
 
     def test_tampered_status_field_raises(self) -> None:
         """Flip ``status`` from ``unsafe`` → ``safe`` → HMAC fails."""
@@ -145,10 +149,10 @@ class TestHMACTamperDetection:
         inner_dict = _json_mod.loads(sealed["_p"])
         inner_dict["status"] = "safe"
         tampered_payload = _json_mod.dumps(inner_dict, sort_keys=True, separators=(",", ":"))
-        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"]}
+        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"], "_n": sealed["_n"]}
 
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(tampered_envelope)
+            _unseal_decision(tampered_envelope, expected_nonce=sealed["_n"])
 
     def test_tampered_violated_invariants_field_raises(self) -> None:
         """Clear ``violated_invariants`` list in a blocked result → HMAC fails."""
@@ -156,10 +160,10 @@ class TestHMACTamperDetection:
         inner_dict = _json_mod.loads(sealed["_p"])
         inner_dict["violated_invariants"] = []
         tampered_payload = _json_mod.dumps(inner_dict, sort_keys=True, separators=(",", ":"))
-        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"]}
+        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"], "_n": sealed["_n"]}
 
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(tampered_envelope)
+            _unseal_decision(tampered_envelope, expected_nonce=sealed["_n"])
 
     def test_appended_field_raises(self) -> None:
         """Adding a new field to the payload → HMAC fails (payload changed)."""
@@ -167,18 +171,18 @@ class TestHMACTamperDetection:
         inner_dict = _json_mod.loads(sealed["_p"])
         inner_dict["injected_field"] = "malicious value"
         tampered_payload = _json_mod.dumps(inner_dict, sort_keys=True, separators=(",", ":"))
-        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"]}
+        tampered_envelope = {"_p": tampered_payload, "_t": sealed["_t"], "_n": sealed["_n"]}
 
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(tampered_envelope)
+            _unseal_decision(tampered_envelope, expected_nonce=sealed["_n"])
 
     def test_truncated_payload_raises(self) -> None:
         """Partial payload (truncation attack) → HMAC fails."""
         sealed = _make_sealed(_SAFE_VALUES)
-        truncated_envelope = {"_p": sealed["_p"][:10], "_t": sealed["_t"]}
+        truncated_envelope = {"_p": sealed["_p"][:10], "_t": sealed["_t"], "_n": sealed["_n"]}
 
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(truncated_envelope)
+            _unseal_decision(truncated_envelope, expected_nonce=sealed["_n"])
 
 
 # ── Missing / malformed envelope structure ────────────────────────────────────
@@ -190,18 +194,18 @@ class TestMalformedEnvelope:
     def test_missing_tag_key_raises(self) -> None:
         """Envelope without ``_t`` → KeyError before HMAC check."""
         sealed = _make_sealed(_SAFE_VALUES)
-        stripped = {"_p": sealed["_p"]}  # no _t key
+        stripped = {"_p": sealed["_p"], "_n": sealed["_n"]}  # no _t key
 
         with pytest.raises(KeyError):
-            _unseal_decision(stripped)
+            _unseal_decision(stripped, expected_nonce=sealed["_n"])
 
     def test_missing_payload_key_raises(self) -> None:
         """Envelope without ``_p`` → KeyError before HMAC check."""
         sealed = _make_sealed(_SAFE_VALUES)
-        stripped = {"_t": sealed["_t"]}  # no _p key
+        stripped = {"_t": sealed["_t"], "_n": sealed["_n"]}  # no _p key
 
         with pytest.raises((KeyError, AttributeError)):
-            _unseal_decision(stripped)
+            _unseal_decision(stripped, expected_nonce=sealed["_n"])
 
     def test_wrong_key_raises(self) -> None:
         """Envelope signed with a different key → HMAC fails."""
@@ -210,13 +214,19 @@ class TestMalformedEnvelope:
 
         # Host uses its own _RESULT_SEAL_KEY — will not match attacker's key.
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision(sealed_with_wrong_key)
+            _unseal_decision(
+                sealed_with_wrong_key,
+                expected_nonce=sealed_with_wrong_key["_n"],
+            )
 
     def test_empty_tag_raises(self) -> None:
         """Empty string tag → HMAC compare fails (length mismatch → False)."""
         sealed = _make_sealed(_SAFE_VALUES)
         with pytest.raises(ValueError, match="HMAC mismatch"):
-            _unseal_decision({"_p": sealed["_p"], "_t": ""})
+            _unseal_decision(
+                {"_p": sealed["_p"], "_t": "", "_n": sealed["_n"]},
+                expected_nonce=sealed["_n"],
+            )
 
 
 # ── Replay limitation documentation ──────────────────────────────────────────
@@ -243,13 +253,18 @@ class TestReplayLimitation:
 
     def test_replayed_envelope_passes_hmac_by_design(self) -> None:
         """
-        A sealed result from a prior call with the same key re-validates.
-        This is the documented replay limitation — HMAC provides integrity only.
+        A sealed result from a prior call re-validates when the nonce matches.
+
+        HMAC + nonce together prevent replay attacks when the host never re-issues
+        the same nonce.  This test documents the residual limitation: if an attacker
+        can replay both the sealed envelope AND knows the original nonce (e.g. via
+        IPC sniffing), the check would pass.  Final replay prevention is at the
+        application layer (WorkerPool tracks consumed nonces via a per-request set).
         """
         sealed_first = _make_sealed(_SAFE_VALUES)
-        # "Replay" it — unseal again with the same host key.
-        inner = _unseal_decision(sealed_first)
-        # It passes — this is EXPECTED.  Freshness must be enforced externally.
+        # "Replay" with correct nonce — passes because nonce was not consumed.
+        inner = _unseal_decision(sealed_first, expected_nonce=sealed_first["_n"])
+        # It passes — freshness/single-use enforcement is in WorkerPool, not here.
         assert inner["allowed"] is True
         # The test exists to document this behaviour for CISOs, not to signal a bug.
 

@@ -88,7 +88,10 @@ class DecisionSigner:
 
         signer = DecisionSigner.optional()   # returns None if no key configured
         if signer:
-            signed = signer.sign(decision)
+            try:
+                signed = signer.sign(decision)
+            except SigningError:
+                log.error("audit token signing failed")
 
     Generate a production key::
 
@@ -143,7 +146,12 @@ class DecisionSigner:
         decision signing::
 
             signer = DecisionSigner.optional()
-            token = signer.sign(decision) if signer else None
+            if signer:
+                try:
+                    signed = signer.sign(decision)
+                except SigningError:
+                    log.error("audit token signing failed")
+                    signed = None
 
         Returns ``None`` when no key is set rather than raising, making
         "signing is optional" an explicit, readable design choice instead of
@@ -159,14 +167,18 @@ class DecisionSigner:
         """Always True — a DecisionSigner with a valid key is always active."""
         return True
 
-    def sign(self, decision: Decision) -> SignedDecision | None:
+    def sign(self, decision: Decision) -> SignedDecision:
         """Sign a Decision and return a JWS compact token.
 
-        Returns a :class:`SignedDecision` on success, or ``None`` if an
-        internal signing error occurs (logged at ERROR with full traceback).
-        Never raises — callers must treat ``None`` as a signing failure and
-        alert accordingly (e.g. emit a metric, skip the audit record, retry).
+        Returns a :class:`SignedDecision` on success.
+
+        Raises:
+            SigningError: If the signing operation fails for any reason.
+                Callers must never silently swallow this — a signing failure
+                means the audit trail's chain-of-custody guarantee is broken.
         """
+        from pramanix.exceptions import SigningError
+
         try:
             header = self._b64url(
                 json.dumps(
@@ -196,16 +208,21 @@ class DecisionSigner:
                 decision_id=decision.decision_id,
                 issued_at=int(time.time() * 1000),
             )
+        except SigningError:
+            raise
         except Exception as exc:
             _log.error(
                 "pramanix.audit.signer: sign() failed for decision_id=%s — "
-                "no signed token produced (audit trail integrity gap): %s",
+                "audit trail integrity gap: %s",
                 getattr(decision, "decision_id", "<unknown>"),
                 exc,
                 exc_info=True,
             )
             _inc_signing_failure()
-            return None
+            raise SigningError(
+                f"DecisionSigner.sign() failed for decision_id="
+                f"{getattr(decision, 'decision_id', '<unknown>')}: {exc}"
+            ) from exc
 
     def _canonicalize(self, decision: Decision) -> dict[str, Any]:
         """Produce a deterministic canonical dict from a Decision.
