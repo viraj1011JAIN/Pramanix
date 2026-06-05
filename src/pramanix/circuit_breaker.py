@@ -390,11 +390,35 @@ class AdaptiveCircuitBreaker:
 
         return cast("Decision", decision)
 
+    async def reset_async(self) -> None:
+        """Async reset — awaits the lock before returning.
+
+        Prefer this in async contexts so the state transition completes
+        before the caller checks ``state``.  ``reset()`` in an async context
+        schedules the reset as a background task, which may not execute before
+        the next line of caller code.
+        """
+        async with self._lock:
+            self._state = CircuitState.CLOSED
+            self._consecutive_pressure = 0
+            self._open_episodes = 0
+            self._last_transition = time.monotonic()
+            self._update_prometheus()
+        log.warning(
+            "Circuit breaker manually reset from ISOLATED (async)",
+            extra={"namespace": self._config.namespace},
+        )
+
     def reset(self) -> None:
         """Manual reset from ISOLATED. Requires human acknowledgment.
 
-        Schedules a coroutine to run under the asyncio lock so that concurrent
-        verify_async() coroutines cannot race against the state write (#264).
+        In **async** contexts, call ``await reset_async()`` instead.  When
+        called from within a running event loop, the state update is scheduled
+        as a background task and may not be visible immediately after this
+        method returns — use ``reset_async()`` to guarantee the transition has
+        completed before proceeding.
+
+        In sync contexts this returns only after the state has been set.
         """
         import asyncio as _asyncio
 
@@ -408,6 +432,12 @@ class AdaptiveCircuitBreaker:
 
         try:
             loop = _asyncio.get_running_loop()
+            log.warning(
+                "AdaptiveCircuitBreaker.reset() called from async context "
+                "(namespace=%r) — use 'await reset_async()' to guarantee the "
+                "state transition completes before the next line of caller code.",
+                self._config.namespace,
+            )
             _reset_task = loop.create_task(_locked_reset())
             _reset_task.add_done_callback(lambda _t: None)  # RUF006: hold ref
         except RuntimeError:

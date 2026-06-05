@@ -316,7 +316,9 @@ class TestCircuitBreakerIsolation:
         # without relying on multiple open episodes to reach isolation.
         breaker._state = CircuitState.ISOLATED
 
-        breaker.reset()
+        # Use reset_async() in async context — reset() schedules a task that
+        # may not execute before the next assertion (fire-and-forget semantics).
+        await breaker.reset_async()
         assert breaker.state == CircuitState.CLOSED
 
 
