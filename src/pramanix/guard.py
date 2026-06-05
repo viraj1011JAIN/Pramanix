@@ -130,6 +130,31 @@ if TYPE_CHECKING:
 __all__ = ["Guard", "GuardConfig", "PolicyCoverageReport"]
 
 
+def _domain_json_default(obj: Any) -> str:
+    """Type-safe JSON default for the max_input_bytes size estimation pass.
+
+    Handles the domain types most commonly found in policy intent/state dicts
+    (``Decimal``, ``datetime``, ``UUID``) that are not natively JSON-serializable
+    but have well-defined, compact string representations.
+
+    Any other type raises ``TypeError`` — this ensures that custom objects with
+    a misleadingly small ``str()`` repr but large in-memory footprint (the attack
+    vector described in audit flaw #259) still cause ``json.dumps`` to raise and
+    the request to be blocked by the caller.
+    """
+    from datetime import date, datetime
+    from decimal import Decimal
+    from uuid import UUID
+
+    if isinstance(obj, Decimal):
+        return str(obj)
+    if isinstance(obj, datetime | date):
+        return obj.isoformat()
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__!r} is not size-estimable")
+
+
 @dataclasses.dataclass(frozen=True)
 class PolicyCoverageReport:
     """Snapshot of per-invariant coverage statistics from a :class:`Guard` instance.
@@ -1007,14 +1032,19 @@ class Guard:
                 _raw_state: dict[str, Any] = (
                     state if isinstance(state, dict) else state.model_dump()
                 )
-                # Do NOT use default=str — it coerces non-JSON-native objects
-                # to their str() repr (e.g. "<MyObj at 0x7f…>"), making a 10 MB
-                # in-memory object appear as a tiny 20-byte string and bypass the
-                # size check entirely.  After model_dump() all values should be
-                # JSON-serializable Python primitives.  If json.dumps raises
-                # TypeError, a non-serializable value survived model_dump() —
-                # that is itself a validation error; block the request.
-                _payload_size = len(_json_size.dumps({"i": _raw_intent, "s": _raw_state}).encode())
+                # Use _domain_json_default for size estimation: handles known
+                # policy-field types (Decimal, datetime, UUID) that are not
+                # natively JSON-serializable but have well-defined compact
+                # string representations.  Arbitrary custom objects still raise
+                # TypeError (→ request blocked), so the attack vector from #259
+                # (custom object with tiny str() but huge in-memory footprint)
+                # is not reintroduced.
+                _payload_size = len(
+                    _json_size.dumps(
+                        {"i": _raw_intent, "s": _raw_state},
+                        default=_domain_json_default,
+                    ).encode()
+                )
                 if _payload_size > self._config.max_input_bytes:
                     return Decision.error(
                         reason=(
@@ -1172,7 +1202,7 @@ class Guard:
                         # (ValueError caught by the bare except-Exception handler would
                         # embed the field names in the decision reason regardless of
                         # the redaction setting — exposing internal policy schema.)
-                        log.warning(
+                        _log.warning(
                             "pramanix.guard: intent and state share conflicting keys "
                             "for policy=%s: %s",
                             self._policy.__name__,
@@ -1471,7 +1501,10 @@ class Guard:
                     state if isinstance(state, dict) else state.model_dump()
                 )
                 _payload_size_async = len(
-                    _json_size_async.dumps({"i": _raw_intent_async, "s": _raw_state_async}).encode()
+                    _json_size_async.dumps(
+                        {"i": _raw_intent_async, "s": _raw_state_async},
+                        default=_domain_json_default,
+                    ).encode()
                 )
                 if _payload_size_async > self._config.max_input_bytes:
                     _d = self._sign_decision(
@@ -1585,8 +1618,9 @@ class Guard:
 
             conflicting = intent_values.keys() & state_values.keys()
             if conflicting:
-                log.warning(
-                    "pramanix.guard: intent and state share conflicting keys " "for policy=%s: %s",
+                _log.warning(
+                    "pramanix.guard: intent and state share conflicting keys "
+                    "for policy=%s: %s",
                     self._policy.__name__,
                     sorted(conflicting),
                 )

@@ -567,9 +567,7 @@ class TestDatadogAuditSinkInit:
         pytest.importorskip("datadog_api_client")
         from pramanix.audit_sink import DatadogAuditSink
 
-        sink = DatadogAuditSink(
-            api_key="dd-test-key", service="my-service", source="my-src"
-        )
+        sink = DatadogAuditSink(api_key="dd-test-key", service="my-service", source="my-src")
         try:
             assert sink._service == "my-service"
             assert sink._source == "my-src"
@@ -1204,9 +1202,8 @@ class TestArchiverSegmentWriteFailure:
         # _archive_segment() requires the caller to hold self._lock (it
         # temporarily releases it during I/O to avoid holding the lock across
         # slow disk/KMS operations).  Acquire the lock before calling directly.
-        with contextlib.suppress(OSError):
-            with archiver._lock:
-                archiver._archive_segment()
+        with contextlib.suppress(OSError), archiver._lock:
+            archiver._archive_segment()
 
         # No partial tmp files should remain
         partials = list(tmp_path.glob(".merkle.tmp.*"))
@@ -1307,7 +1304,9 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient(secret_string="FAKE_PEM")
-        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
+        p = AwsKmsKeyProvider._for_testing(
+            mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+        )
         assert p.private_key_pem() == b"FAKE_PEM"
 
     def test_aws_key_version_cache_miss_triggers_refresh(self) -> None:
@@ -1315,7 +1314,9 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient(secret_string="FAKE_PEM", version_id="v-99")
-        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
+        p = AwsKmsKeyProvider._for_testing(
+            mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+        )
         assert p.key_version() == "v-99"
 
     def test_gcp_public_key_pem_calls_derive(self) -> None:
@@ -1328,7 +1329,9 @@ class TestKeyProviderSupportsRotation:
         private_pem = signer.private_key_pem()
         expected_public_pem = signer.public_key_pem()
 
-        p = GcpKmsKeyProvider._for_testing(_GcpSecretClient())
+        # Inject the real private PEM via cached_pem so public_key_pem() can
+        # derive the matching public key without a real GCP network call.
+        p = GcpKmsKeyProvider._for_testing(_GcpSecretClient(), cached_pem=private_pem)
         result = p.public_key_pem()
         assert result == expected_public_pem
 
@@ -1336,7 +1339,9 @@ class TestKeyProviderSupportsRotation:
         """Line 332: AwsKmsKeyProvider.supports_rotation returns True."""
         from pramanix.key_provider import AwsKmsKeyProvider
 
-        p = AwsKmsKeyProvider._for_testing(_AwsSecretsClient(), secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
+        p = AwsKmsKeyProvider._for_testing(
+            _AwsSecretsClient(), secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+        )
         assert p.supports_rotation is True
 
     def test_aws_private_key_pem_cache_hit_skips_refresh(self) -> None:
@@ -1344,7 +1349,9 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient()
-        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
+        p = AwsKmsKeyProvider._for_testing(
+            mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+        )
         result = p.private_key_pem()
         assert result == b"CACHED_PEM"
         assert mc.calls == 0
@@ -1354,7 +1361,9 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient()
-        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
+        p = AwsKmsKeyProvider._for_testing(
+            mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+        )
         result = p.key_version()
         assert result == "v-cached"
         assert mc.calls == 0
@@ -1409,3 +1418,200 @@ class TestWorkerEdgePaths:
                 raise RuntimeError("boom")
 
         WorkerPool._emergency_shutdown([_BoomExecutor()])  # must not raise
+
+
+# ── AdaptiveCircuitBreaker: #269 double-probe race + #272 stuck HALF_OPEN ─────
+
+
+class _ImmediateGuard:
+    """Protocol-compliant guard that resolves instantly with an ALLOW decision."""
+
+    async def verify_async(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Any:
+        from pramanix.decision import Decision, SolverStatus
+
+        return Decision(
+            allowed=True,
+            status=SolverStatus.SAFE,
+            violated_invariants=(),
+            explanation="immediate-ok",
+        )
+
+
+class _CancellingGuard:
+    """Protocol-compliant guard that raises CancelledError to simulate task cancellation."""
+
+    async def verify_async(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Any:
+        raise asyncio.CancelledError("test cancellation")
+
+
+class _SlowGuard:
+    """Protocol-compliant guard that introduces a configurable delay.
+
+    Used to create a timing window where two concurrent callers both see
+    HALF_OPEN state simultaneously, verifying only one is admitted as probe.
+    """
+
+    def __init__(self, delay_s: float = 0.05) -> None:
+        self._delay = delay_s
+        self.call_count = 0
+
+    async def verify_async(self, *, intent: dict[str, Any], state: dict[str, Any]) -> Any:
+        self.call_count += 1
+        await asyncio.sleep(self._delay)
+        from pramanix.decision import Decision, SolverStatus
+
+        return Decision(
+            allowed=True,
+            status=SolverStatus.SAFE,
+            violated_invariants=(),
+            explanation="slow-ok",
+        )
+
+
+class TestAdaptiveCircuitBreakerProbeGuarantees:
+    """Production-level tests verifying #269 (double-probe) and #272 (stuck HALF_OPEN) fixes."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_during_probe_transitions_to_open(self) -> None:
+        """#272 fix: CancelledError during HALF_OPEN probe must transition to OPEN.
+
+        Before the fix, _record_solve was placed AFTER the try/finally block so
+        a CancelledError would bypass it, leaving the breaker permanently stuck
+        in HALF_OPEN with _probing=False — allowing infinite sequential probes
+        that never resolved the state machine.
+        """
+        from pramanix.circuit_breaker import (
+            AdaptiveCircuitBreaker,
+            CircuitBreakerConfig,
+            CircuitState,
+        )
+
+        config = CircuitBreakerConfig(
+            pressure_threshold_ms=1.0,
+            consecutive_pressure_count=1,
+            recovery_seconds=0.001,
+            isolation_threshold=10,
+            namespace="test-cancel-probe",
+        )
+        cb = AdaptiveCircuitBreaker(_CancellingGuard(), config)
+
+        # Manually place in OPEN state with elapsed recovery window.
+        cb._state = CircuitState.OPEN
+        cb._last_transition = time.monotonic() - 999.0
+        cb._open_episodes = 0
+        cb._probing = False
+
+        with pytest.raises(asyncio.CancelledError):
+            await cb.verify_async(intent={}, state={})
+
+        # Breaker must NOT stay in HALF_OPEN — it must have transitioned to OPEN.
+        assert cb.state in (CircuitState.OPEN, CircuitState.ISOLATED), (
+            f"Breaker stuck in {cb.state!r} after CancelledError — "
+            "HALF_OPEN was never resolved (#272 regression)"
+        )
+        # Probe gate must be cleared so the next recovery cycle can attempt a fresh probe.
+        assert cb._probing is False, "_probing must be False after aborted probe"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_error_leaves_probing_false(self) -> None:
+        """#272 fix: _probing is always cleared, even when an exception aborts the probe."""
+        from pramanix.circuit_breaker import (
+            AdaptiveCircuitBreaker,
+            CircuitBreakerConfig,
+            CircuitState,
+        )
+
+        config = CircuitBreakerConfig(namespace="test-cancel-probe-flag")
+        cb = AdaptiveCircuitBreaker(_CancellingGuard(), config)
+        cb._state = CircuitState.OPEN
+        cb._last_transition = time.monotonic() - 999.0
+        cb._probing = False
+
+        with contextlib.suppress(asyncio.CancelledError):
+            await cb.verify_async(intent={}, state={})
+
+        assert cb._probing is False
+
+    @pytest.mark.asyncio
+    async def test_concurrent_callers_only_one_probes(self) -> None:
+        """#269 fix: under concurrent access in HALF_OPEN, exactly one caller probes.
+
+        Strategy: create a SlowGuard that introduces a 50 ms delay.  Place the
+        breaker in HALF_OPEN + _probing=False.  Launch two concurrent coroutines.
+        The first acquires the lock, sets _probing=True, and starts the slow
+        guard.  The second reads HALF_OPEN + _probing=True and must get an OPEN
+        decision immediately without running the guard.
+
+        With the #269 fix, _probing is only cleared INSIDE _record_solve which
+        runs under the same lock as the probe completion — no window exists for a
+        second caller to see HALF_OPEN + _probing=False between clearing the flag
+        and transitioning state.
+        """
+        from pramanix.circuit_breaker import (
+            AdaptiveCircuitBreaker,
+            CircuitBreakerConfig,
+            CircuitState,
+        )
+
+        slow_guard = _SlowGuard(delay_s=0.08)
+        config = CircuitBreakerConfig(
+            pressure_threshold_ms=1000.0,  # high threshold → probe will "succeed"
+            recovery_seconds=0.001,
+            namespace="test-double-probe",
+        )
+        cb = AdaptiveCircuitBreaker(slow_guard, config)
+
+        # Start in OPEN with recovery already elapsed.
+        cb._state = CircuitState.OPEN
+        cb._last_transition = time.monotonic() - 999.0
+        cb._probing = False
+
+        results = await asyncio.gather(
+            cb.verify_async(intent={}, state={}),
+            cb.verify_async(intent={}, state={}),
+            return_exceptions=True,
+        )
+
+        # Exactly one call must have reached the guard (the probe).
+        # The second must have received an OPEN decision without invoking the guard.
+        assert slow_guard.call_count == 1, (
+            f"Guard was called {slow_guard.call_count} times — "
+            "double-probe race still present (#269 regression)"
+        )
+
+        # After both calls complete the breaker must be CLOSED (probe succeeded).
+        assert cb.state == CircuitState.CLOSED
+
+        # Both results must be Decision objects (no exceptions).
+        for r in results:
+            assert not isinstance(r, BaseException), f"Unexpected exception: {r}"
+
+    @pytest.mark.asyncio
+    async def test_probe_success_clears_probing_atomically(self) -> None:
+        """#269 fix: after a successful probe, _probing=False and state=CLOSED atomically.
+
+        A third concurrent caller that arrives AFTER _probing is cleared but
+        BEFORE the state transition would see HALF_OPEN + _probing=False and
+        start a second probe.  The fix ensures both writes happen under the
+        same lock acquisition.
+        """
+        from pramanix.circuit_breaker import (
+            AdaptiveCircuitBreaker,
+            CircuitBreakerConfig,
+            CircuitState,
+        )
+
+        config = CircuitBreakerConfig(
+            pressure_threshold_ms=1000.0,
+            recovery_seconds=0.001,
+            namespace="test-probe-atomic",
+        )
+        cb = AdaptiveCircuitBreaker(_ImmediateGuard(), config)
+        cb._state = CircuitState.OPEN
+        cb._last_transition = time.monotonic() - 999.0
+        cb._probing = False
+
+        await cb.verify_async(intent={}, state={})
+
+        assert cb.state == CircuitState.CLOSED
+        assert cb._probing is False

@@ -337,18 +337,56 @@ class AdaptiveCircuitBreaker:
             # coroutines can check/update state concurrently during the solve.
 
         t0 = time.monotonic()
+        _exc_raised = True
         try:
             decision = await self._guard.verify_async(intent=intent, state=state)
+            _exc_raised = False
         finally:
-            # §4.3: always release the probe gate, even on exception, so a failed
-            # probe doesn't permanently lock out future recovery attempts.
-            if is_probe:
-                async with self._lock:
-                    self._probing = False
-        solve_ms = (time.monotonic() - t0) * 1000
-
-        async with self._lock:
-            self._record_solve(solve_ms)
+            _solve_ms = (time.monotonic() - t0) * 1000
+            # Acquire the lock ONCE and perform all probe/state bookkeeping
+            # atomically.  This eliminates two distinct races:
+            #
+            # #269 — double-probe: clearing _probing in a first lock acquisition
+            # and calling _record_solve in a second acquisition created a window
+            # where another coroutine could claim the probe slot between the two
+            # acquisitions.  Now _probing is cleared inside _record_solve, which
+            # runs under this single lock acquisition.
+            #
+            # #272 — stuck HALF_OPEN: a CancelledError raised inside verify_async
+            # previously bypassed _record_solve (which lives after the try block),
+            # leaving the breaker permanently stuck in HALF_OPEN.  The finally
+            # block always runs, so we explicitly transition to OPEN here.
+            async with self._lock:
+                if is_probe:
+                    if _exc_raised:
+                        # Probe aborted (CancelledError, unhandled exception).
+                        # Clear probe gate and transition OPEN so a future caller
+                        # can attempt a fresh probe after recovery_seconds.
+                        self._probing = False
+                        if self._state == CircuitState.HALF_OPEN:
+                            self._open_episodes += 1
+                            if self._open_episodes >= self._config.isolation_threshold:
+                                self._transition(CircuitState.ISOLATED)
+                                log.critical(
+                                    "Circuit breaker ISOLATED after aborted probe "
+                                    "(namespace=%s)",
+                                    self._config.namespace,
+                                )
+                            else:
+                                self._transition(CircuitState.OPEN)
+                                log.error(
+                                    "Circuit breaker probe aborted: HALF_OPEN → OPEN "
+                                    "(namespace=%s)",
+                                    self._config.namespace,
+                                )
+                    else:
+                        # Normal probe completion — _record_solve clears _probing
+                        # atomically with the state transition under this same lock,
+                        # preventing any concurrent coroutine from seeing
+                        # HALF_OPEN + _probing=False between the two steps.
+                        self._record_solve(_solve_ms)
+                elif not _exc_raised:
+                    self._record_solve(_solve_ms)
 
         return cast("Decision", decision)
 
@@ -370,7 +408,8 @@ class AdaptiveCircuitBreaker:
 
         try:
             loop = _asyncio.get_running_loop()
-            loop.create_task(_locked_reset())
+            _reset_task = loop.create_task(_locked_reset())
+            _reset_task.add_done_callback(lambda _t: None)  # RUF006: hold ref
         except RuntimeError:
             # No running loop (sync context) — run directly without lock.
             # Sync callers are single-threaded by contract; no race possible.
@@ -389,6 +428,11 @@ class AdaptiveCircuitBreaker:
         threshold = self._config.pressure_threshold_ms
 
         if self._state == CircuitState.HALF_OPEN:
+            # Clear the probe gate BEFORE transitioning state (#269 fix).
+            # This is atomic with the transition because we hold the lock —
+            # no concurrent coroutine can see HALF_OPEN + _probing=False between
+            # this line and the _transition() call below.
+            self._probing = False
             if solve_ms <= threshold:
                 self._transition(CircuitState.CLOSED)
                 log.info("Circuit breaker recovered: HALF_OPEN → CLOSED")
@@ -550,6 +594,11 @@ class _DistributedState:
     failure_count: int = 0
     last_failure_time: float = 0.0
     open_episode_count: int = 0
+    # Wall-clock Unix epoch (time.time()) when the OPEN state was last established.
+    # Stored as an absolute timestamp so all replicas — across processes and hosts —
+    # can independently compute how long the circuit has been open without sharing
+    # a monotonic clock baseline.  Used for distributed HALF_OPEN recovery timing.
+    open_at_epoch: float = 0.0
 
 
 class InMemoryDistributedBackend:
@@ -566,6 +615,10 @@ class InMemoryDistributedBackend:
 
     _store: ClassVar[dict[str, _DistributedState]] = {}
     _lock: ClassVar[Any] = _threading.Lock()
+    # Tracks which namespaces currently have an active HALF_OPEN probe token.
+    # Only one replica may hold the probe token per namespace at a time — same
+    # semantics as ``SET NX`` in RedisDistributedBackend.
+    _probe_holders: ClassVar[dict[str, bool]] = {}
 
     def __init__(self) -> None:
         import os as _os
@@ -617,7 +670,40 @@ class InMemoryDistributedBackend:
                 failure_count=existing.failure_count + state.failure_count,
                 last_failure_time=max(existing.last_failure_time, state.last_failure_time),
                 open_episode_count=max(existing.open_episode_count, state.open_episode_count),
+                # Keep the most recent wall-clock epoch when OPEN was established.
+                open_at_epoch=max(existing.open_at_epoch, state.open_at_epoch),
             )
+
+    @classmethod
+    async def try_claim_probe(cls, namespace: str) -> bool:
+        """Atomically claim the HALF_OPEN probe token for *namespace*.
+
+        Mirrors ``SET NX`` semantics from :class:`RedisDistributedBackend`:
+        returns ``True`` if this caller claimed the token (no prior holder),
+        ``False`` if another caller already holds it.
+        """
+        with cls._lock:
+            if cls._probe_holders.get(namespace, False):
+                return False
+            cls._probe_holders[namespace] = True
+            return True
+
+    @classmethod
+    async def release_probe(cls, namespace: str) -> None:
+        """Release the HALF_OPEN probe token for *namespace*."""
+        with cls._lock:
+            cls._probe_holders.pop(namespace, None)
+
+    @classmethod
+    async def force_reset_state(cls, namespace: str) -> None:
+        """Force-reset state to CLOSED, bypassing the conservative merge.
+
+        Used only after a successful HALF_OPEN probe.  Also releases the probe
+        token so a future OPEN cycle can probe again.
+        """
+        with cls._lock:
+            cls._store[namespace] = _DistributedState()
+            cls._probe_holders.pop(namespace, None)
 
     @classmethod
     def clear(cls, namespace: str | None = None) -> None:
@@ -625,8 +711,10 @@ class InMemoryDistributedBackend:
         with cls._lock:
             if namespace is None:
                 cls._store.clear()
+                cls._probe_holders.clear()
             else:
                 cls._store.pop(namespace, None)
+                cls._probe_holders.pop(namespace, None)
 
 
 class DistributedCircuitBreaker:
@@ -637,19 +725,31 @@ class DistributedCircuitBreaker:
     rule is conservative (fail-safe): if ANY replica is OPEN, all replicas
     report OPEN.  Failure counts are summed across replicas.
 
+    Implements distributed HALF_OPEN probing: when the recovery window elapses,
+    exactly one replica claims a Redis probe token (atomic ``SET NX``).  All
+    other replicas continue to return OPEN decisions until the probe result is
+    written back.  This prevents the thundering-herd restart that occurs when
+    all replicas simultaneously admit traffic after an OPEN → CLOSED transition.
+
     Args:
         guard:            The :class:`~pramanix.guard.Guard` to wrap.
         config:           :class:`CircuitBreakerConfig` (same as single-node).
-        backend:          Distributed state backend.  Defaults to
-                          :class:`InMemoryDistributedBackend` (single-process
-                          testing).  Use a Redis-backed backend in production.
+        backend:          Distributed state backend.  **Required** — raises
+                          :exc:`~pramanix.exceptions.ConfigurationError` if
+                          omitted.  Use :class:`InMemoryDistributedBackend` in
+                          tests, :class:`RedisDistributedBackend` in production.
 
     Usage::
 
         # Single-process simulation (testing)
-        breaker1 = DistributedCircuitBreaker(guard, namespace="trade")
-        breaker2 = DistributedCircuitBreaker(guard, namespace="trade")
-        # breaker1 and breaker2 share state via InMemoryDistributedBackend.
+        backend = InMemoryDistributedBackend()
+        breaker1 = DistributedCircuitBreaker(guard, backend=backend)
+        breaker2 = DistributedCircuitBreaker(guard, backend=backend)
+        # breaker1 and breaker2 share state via the same InMemoryDistributedBackend.
+
+        # Production (Redis)
+        backend = RedisDistributedBackend("redis://redis:6379/0")
+        breaker = DistributedCircuitBreaker(guard, backend=backend)
 
     """
 
@@ -673,8 +773,16 @@ class DistributedCircuitBreaker:
             )
         self._backend = backend
         self._local_state = CircuitState.CLOSED
+        # Tracks ONLY failures accumulated since the last _sync_state call.
+        # Reset to 0 on every sync so the threshold comparison is per-replica
+        # and per-sync-interval, not cumulative across all replicas (#270 fix).
         self._local_failure_count = 0
         self._last_transition = time.monotonic()
+        # Wall-clock epoch when the OPEN state was last established (synced from
+        # backend).  Used for cross-process recovery timing in HALF_OPEN probing.
+        self._synced_open_at_epoch: float = 0.0
+        # Fire-and-forget task set — keeps references alive until done.
+        self._reset_tasks: set[asyncio.Task[None]] = set()
         # _lock is a cached_property — see AdaptiveCircuitBreaker for rationale.
         # M-04: Prometheus metrics — same set as AdaptiveCircuitBreaker.
         self._metrics_available = False
@@ -710,21 +818,35 @@ class DistributedCircuitBreaker:
             )
             synced = CircuitState.OPEN
         self._local_state = synced
-        self._local_failure_count = agg.failure_count
+        # Reset to 0 on every sync (#270 fix): _local_failure_count tracks only
+        # NEW failures accumulated since the last sync, not the global aggregate.
+        # Setting it to agg.failure_count caused a replica to compare its own
+        # increments against a cumulative across all replicas, triggering OPEN
+        # after a single local pressure event once the aggregate exceeded the
+        # threshold — an O(N²) inflation per sync cycle under N replicas.
+        self._local_failure_count = 0
+        # Read wall-clock open_at_epoch for cross-process recovery timing (#263).
+        self._synced_open_at_epoch = getattr(agg, "open_at_epoch", 0.0)
         return synced
 
     async def _push_state(self, new_state: CircuitState, delta_failures: int = 0) -> None:
         """Write local state to backend (backend merges conservatively)."""
         self._local_state = new_state
-        now = time.monotonic()
-        self._last_transition = now
+        now_mono = time.monotonic()
+        now_wall = time.time()  # wall-clock for cross-process recovery timing
+        self._last_transition = now_mono
+        if new_state == CircuitState.OPEN:
+            self._synced_open_at_epoch = now_wall
         await self._backend.set_state(
             self._config.namespace,
             _DistributedState(
                 circuit_state=new_state.value,
                 failure_count=delta_failures,
-                last_failure_time=now if delta_failures > 0 else 0.0,
+                last_failure_time=now_wall if delta_failures > 0 else 0.0,
                 open_episode_count=1 if new_state == CircuitState.OPEN else 0,
+                # Carry the wall-clock open epoch so all replicas can compute
+                # recovery elapsed time independently without shared monotonic clock.
+                open_at_epoch=now_wall if new_state == CircuitState.OPEN else 0.0,
             ),
         )
 
@@ -732,8 +854,10 @@ class DistributedCircuitBreaker:
         """Verify with distributed circuit breaker protection.
 
         Syncs state from the backend on each call.  If the aggregate state is
-        OPEN, returns a failsafe :class:`~pramanix.decision.Decision` without
-        invoking Z3.  Otherwise delegates to the underlying Guard.
+        OPEN, checks whether the recovery window has elapsed and attempts to
+        claim the distributed HALF_OPEN probe token (atomic ``SET NX``).
+        Exactly one replica per namespace may probe at a time; all others
+        continue to return OPEN decisions until the probe result is persisted.
         """
         try:
             async with self._lock:
@@ -753,56 +877,164 @@ class DistributedCircuitBreaker:
             _inc_sync_failure_counter()
             return self._make_open_decision(CircuitState.OPEN)
 
-        if current in (CircuitState.OPEN, CircuitState.ISOLATED):
+        if current == CircuitState.ISOLATED:
             return self._make_open_decision(current)
 
-        t0 = time.monotonic()
-        decision = await self._guard.verify_async(intent=intent, state=state)
-        solve_ms = (time.monotonic() - t0) * 1000
+        # ── Distributed HALF_OPEN probing (#263 fix) ─────────────────────────
+        # When current state is OPEN, check if the recovery window has elapsed
+        # using the wall-clock epoch stored in Redis (comparable across replicas
+        # without a shared monotonic clock baseline).  If recovery window elapsed,
+        # attempt atomic probe-token claim — only ONE replica may probe per
+        # namespace.  All other replicas keep returning OPEN decisions.
+        is_probe = False
+        if current == CircuitState.OPEN:
+            open_at = self._synced_open_at_epoch
+            # open_at == 0.0 means the key expired (TTL) or was never set.
+            # Treat TTL-expired state as an immediate probe opportunity — this
+            # is the "thundering herd" scenario the probe token prevents: rather
+            # than all replicas simultaneously admitting traffic when the Redis
+            # key expires, each must claim the probe token atomically first.
+            elapsed = (
+                self._config.recovery_seconds if open_at == 0.0 else time.time() - open_at
+            )
 
-        async with self._lock:
-            if solve_ms > self._config.pressure_threshold_ms:
-                self._local_failure_count += 1
-                if self._local_failure_count >= self._config.consecutive_pressure_count:
-                    try:
-                        # delta_failures=1: push exactly one new failure to the
-                        # shared backend.  The backend accumulates all replicas'
-                        # individual +1 deltas correctly.  Passing the full
-                        # _local_failure_count (= synced_aggregate + local_new)
-                        # would cause the backend to add it to the existing
-                        # aggregate, inflating counts as O(N²) per replica (#83).
-                        await self._push_state(
-                            CircuitState.OPEN, delta_failures=1
-                        )
-                    except Exception as _push_exc:
-                        log.error(
-                            "DistributedCircuitBreaker: Redis state push FAILED for "
-                            "namespace=%r (OPEN transition not persisted — split-brain risk). "
-                            "Error: %s",
-                            self._config.namespace,
-                            _push_exc,
-                            exc_info=True,
-                        )
-                        _inc_sync_failure_counter()
-                    self._local_failure_count = 0
-                    log.error(
-                        "DistributedCircuitBreaker: OPEN (namespace=%s)",
+            if elapsed >= self._config.recovery_seconds:
+                try:
+                    is_probe = await self._backend.try_claim_probe(self._config.namespace)
+                except Exception as _probe_exc:
+                    log.warning(
+                        "DistributedCircuitBreaker: try_claim_probe failed for "
+                        "namespace=%r — returning OPEN (fail-safe): %s",
                         self._config.namespace,
+                        _probe_exc,
+                    )
+                    is_probe = False
+
+                if is_probe:
+                    log.info(
+                        "DistributedCircuitBreaker: HALF_OPEN probe claimed "
+                        "(namespace=%s, elapsed_s=%.1f)",
+                        self._config.namespace,
+                        elapsed,
                     )
                 else:
-                    try:
-                        await self._push_state(CircuitState.CLOSED, delta_failures=1)
-                    except Exception as _push_exc:
-                        log.error(
-                            "DistributedCircuitBreaker: Redis state push FAILED for "
-                            "namespace=%r (failure delta not replicated). Error: %s",
-                            self._config.namespace,
-                            _push_exc,
-                            exc_info=True,
-                        )
-                        _inc_sync_failure_counter()
+                    return self._make_open_decision(current)
             else:
-                self._local_failure_count = 0
+                return self._make_open_decision(current)
+
+        # ── Run the guard ─────────────────────────────────────────────────────
+        t0 = time.monotonic()
+        _exc_raised = True
+        try:
+            decision = await self._guard.verify_async(intent=intent, state=state)
+            _exc_raised = False
+        finally:
+            _solve_ms = (time.monotonic() - t0) * 1000
+            # Probe abort path: if the guard raised an unhandled exception
+            # (including CancelledError), release the probe token and push OPEN
+            # so the circuit doesn't stay permanently stuck waiting for a probe
+            # that will never complete.
+            if is_probe and _exc_raised:
+                try:
+                    await self._backend.release_probe(self._config.namespace)
+                    await self._push_state(CircuitState.OPEN, delta_failures=1)
+                except Exception as _cleanup_exc:
+                    log.error(
+                        "DistributedCircuitBreaker: probe abort cleanup failed "
+                        "for namespace=%r: %s",
+                        self._config.namespace,
+                        _cleanup_exc,
+                    )
+                    _inc_sync_failure_counter()
+
+        if is_probe:
+            # ── Probe result path ─────────────────────────────────────────────
+            if _solve_ms <= self._config.pressure_threshold_ms:
+                # Probe succeeded: force-reset Redis to CLOSED (bypasses the
+                # conservative merge that would prevent CLOSED from overwriting
+                # OPEN in a normal set_state call).
+                log.info(
+                    "DistributedCircuitBreaker: HALF_OPEN probe succeeded — "
+                    "resetting to CLOSED (namespace=%s, solve_ms=%.1f)",
+                    self._config.namespace,
+                    _solve_ms,
+                )
+                try:
+                    await self._backend.force_reset_state(self._config.namespace)
+                    self._local_state = CircuitState.CLOSED
+                    self._local_failure_count = 0
+                    self._synced_open_at_epoch = 0.0
+                    self._update_prometheus()
+                except Exception as _reset_exc:
+                    log.error(
+                        "DistributedCircuitBreaker: probe-success force_reset_state "
+                        "failed for namespace=%r (OPEN state may persist): %s",
+                        self._config.namespace,
+                        _reset_exc,
+                    )
+                    _inc_sync_failure_counter()
+            else:
+                # Probe failed: release token and push OPEN with a new failure
+                # delta so the recovery timer resets and the system waits another
+                # recovery_seconds before the next probe attempt.
+                log.warning(
+                    "DistributedCircuitBreaker: HALF_OPEN probe failed — "
+                    "returning to OPEN (namespace=%s, solve_ms=%.1f)",
+                    self._config.namespace,
+                    _solve_ms,
+                )
+                try:
+                    await self._backend.release_probe(self._config.namespace)
+                    await self._push_state(CircuitState.OPEN, delta_failures=1)
+                except Exception as _push_exc:
+                    log.error(
+                        "DistributedCircuitBreaker: probe-failure state push "
+                        "failed for namespace=%r: %s",
+                        self._config.namespace,
+                        _push_exc,
+                    )
+                    _inc_sync_failure_counter()
+        else:
+            # ── Normal (non-probe) pressure accounting ────────────────────────
+            async with self._lock:
+                if _solve_ms > self._config.pressure_threshold_ms:
+                    self._local_failure_count += 1
+                    if self._local_failure_count >= self._config.consecutive_pressure_count:
+                        try:
+                            # delta_failures=1: push exactly one new failure to
+                            # the shared backend.  The backend accumulates all
+                            # replicas' individual +1 deltas correctly.
+                            await self._push_state(CircuitState.OPEN, delta_failures=1)
+                        except Exception as _push_exc:
+                            log.error(
+                                "DistributedCircuitBreaker: Redis state push FAILED "
+                                "for namespace=%r (OPEN transition not persisted — "
+                                "split-brain risk). Error: %s",
+                                self._config.namespace,
+                                _push_exc,
+                                exc_info=True,
+                            )
+                            _inc_sync_failure_counter()
+                        self._local_failure_count = 0
+                        log.error(
+                            "DistributedCircuitBreaker: OPEN (namespace=%s)",
+                            self._config.namespace,
+                        )
+                    else:
+                        try:
+                            await self._push_state(CircuitState.CLOSED, delta_failures=1)
+                        except Exception as _push_exc:
+                            log.error(
+                                "DistributedCircuitBreaker: Redis state push FAILED "
+                                "for namespace=%r (failure delta not replicated). "
+                                "Error: %s",
+                                self._config.namespace,
+                                _push_exc,
+                                exc_info=True,
+                            )
+                            _inc_sync_failure_counter()
+                else:
+                    self._local_failure_count = 0
 
         return cast("Decision", decision)
 
@@ -827,11 +1059,61 @@ class DistributedCircuitBreaker:
         self.__dict__.pop("_lock", None)
         return asyncio.run(self.verify_async(intent=intent, state=state))
 
-    def reset(self) -> None:
-        """Clear distributed state for this namespace."""
+    async def reset_async(self) -> None:
+        """Async reset — awaits backend clear before returning (#265 fix).
+
+        Prefer this in async contexts so the Redis key deletion is guaranteed
+        to complete before the caller proceeds.  ``reset()`` in an async
+        context schedules the clear as a fire-and-forget background task, which
+        may not execute before the process exits.
+        """
+        try:
+            await self._backend.force_reset_state(self._config.namespace)
+        except Exception as _exc:
+            log.error(
+                "DistributedCircuitBreaker.reset_async: backend clear failed "
+                "for namespace=%r: %s",
+                self._config.namespace,
+                _exc,
+            )
+            _inc_sync_failure_counter()
         self._local_state = CircuitState.CLOSED
         self._local_failure_count = 0
-        self._backend.clear(self._config.namespace)
+        self._synced_open_at_epoch = 0.0
+        self._update_prometheus()
+        log.warning(
+            "DistributedCircuitBreaker manually reset from ISOLATED "
+            "(namespace=%s)",
+            self._config.namespace,
+        )
+
+    def reset(self) -> None:
+        """Clear distributed state for this namespace.
+
+        In **async** contexts, call ``await reset_async()`` instead.
+        When called from within a running event loop, this method schedules the
+        backend clear as a fire-and-forget task — if the process exits before
+        the task executes, the ISOLATED state persists in Redis across restarts.
+        ``reset_async()`` awaits completion and eliminates this risk (#265 fix).
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # Sync context: run directly — safe to use asyncio.run().
+            self.__dict__.pop("_lock", None)
+            asyncio.run(self.reset_async())
+        else:
+            # Async context: schedule as fire-and-forget and warn.
+            log.warning(
+                "DistributedCircuitBreaker.reset() called from async context "
+                "(namespace=%r) — use 'await reset_async()' to guarantee Redis "
+                "is cleared before returning.  Scheduling as background task.",
+                self._config.namespace,
+            )
+            _task = asyncio.ensure_future(self.reset_async())
+            # Prevent GC from silently discarding the task before it executes.
+            self._reset_tasks.add(_task)
+            _task.add_done_callback(self._reset_tasks.discard)
 
     def _make_open_decision(self, current: CircuitState) -> Decision:
         from pramanix.decision import Decision
@@ -979,7 +1261,7 @@ class RedisDistributedBackend:
         key_prefix: str = "pramanix:cb:",
         ttl_seconds: int = 300,
         sync_interval_seconds: float = 1.0,
-    ) -> "RedisDistributedBackend":
+    ) -> RedisDistributedBackend:
         """Construct with a pre-built Redis client (e.g. fakeredis) for testing.
 
         Bypasses the redis.asyncio import check so tests can inject a
@@ -991,7 +1273,7 @@ class RedisDistributedBackend:
         inst._prefix = key_prefix
         inst._ttl = ttl_seconds
         inst._client = redis_client
-        inst._clear_tasks: set = set()
+        inst._clear_tasks = set()
         inst._client_cell = [redis_client]
         inst._finalizer = weakref.finalize(
             inst, RedisDistributedBackend._warn_unclosed, inst._client_cell
@@ -1037,6 +1319,66 @@ class RedisDistributedBackend:
     def _key(self, namespace: str) -> str:
         return f"{self._prefix}{namespace}"
 
+    def _probe_key(self, namespace: str) -> str:
+        """Redis key used as a HALF_OPEN probe token (SET NX semantics)."""
+        return f"{self._prefix}{namespace}:probe"
+
+    async def try_claim_probe(self, namespace: str) -> bool:
+        """Atomically claim the HALF_OPEN probe token via ``SET NX``.
+
+        Returns ``True`` if this replica claimed the token, ``False`` if another
+        replica already holds it.  On Redis error, returns ``False`` so the
+        caller continues to return OPEN decisions (fail-safe).
+        """
+        try:
+            client = await self._get_client()
+            result = await client.set(
+                self._probe_key(namespace), "1", nx=True, ex=self._ttl
+            )
+            return result is not None
+        except Exception as exc:
+            log.error(
+                "circuit_breaker: try_claim_probe failed for namespace=%r — "
+                "defaulting to no-probe (fail-safe): %s",
+                namespace,
+                exc,
+            )
+            return False
+
+    async def release_probe(self, namespace: str) -> None:
+        """Release the HALF_OPEN probe token so the next recovery cycle can probe."""
+        try:
+            client = await self._get_client()
+            await client.delete(self._probe_key(namespace))
+        except Exception as exc:
+            log.warning(
+                "circuit_breaker: release_probe failed for namespace=%r "
+                "(non-fatal — token TTL will expire automatically): %s",
+                namespace,
+                exc,
+            )
+
+    async def force_reset_state(self, namespace: str) -> None:
+        """Force-reset the circuit to CLOSED, bypassing the conservative merge.
+
+        Used only after a successful HALF_OPEN probe.  Deletes both the state
+        key and the probe token so the next ``get_state`` returns a default
+        CLOSED record.
+
+        On Redis error, logs at ERROR but does not raise — the probe token TTL
+        will eventually expire and allow a fresh probe attempt.
+        """
+        try:
+            client = await self._get_client()
+            await client.delete(self._key(namespace), self._probe_key(namespace))
+        except Exception as exc:
+            log.error(
+                "circuit_breaker: force_reset_state failed for namespace=%r — "
+                "OPEN state may persist until Redis key TTL expires: %s",
+                namespace,
+                exc,
+            )
+
     async def get_state(self, namespace: str) -> _DistributedState:
         """Fetch state from Redis for *namespace*.
 
@@ -1067,6 +1409,7 @@ class RedisDistributedBackend:
                 failure_count=int(data.get("failure_count", 0)),
                 last_failure_time=float(data.get("last_failure_time", 0.0)),
                 open_episode_count=int(data.get("open_episode_count", 0)),
+                open_at_epoch=float(data.get("open_at_epoch", 0.0)),
             )
         except (ValueError, KeyError):
             return _DistributedState()
@@ -1088,6 +1431,7 @@ class RedisDistributedBackend:
         - ``failure_count`` is summed (each write's delta is accumulated).
         - ``last_failure_time`` takes the maximum.
         - ``open_episode_count`` takes the maximum.
+        - ``open_at_epoch`` takes the maximum (most recent OPEN wall-clock time).
         """
         try:
             from redis.exceptions import WatchError
@@ -1120,6 +1464,7 @@ class RedisDistributedBackend:
                                 failure_count=int(raw.get("failure_count", 0)),
                                 last_failure_time=float(raw.get("last_failure_time", 0.0)),
                                 open_episode_count=int(raw.get("open_episode_count", 0)),
+                                open_at_epoch=float(raw.get("open_at_epoch", 0.0)),
                             )
                         except (ValueError, KeyError):
                             current = _DistributedState()
@@ -1138,6 +1483,8 @@ class RedisDistributedBackend:
                             open_episode_count=max(
                                 current.open_episode_count, state.open_episode_count
                             ),
+                            # Keep the most recent wall-clock epoch when OPEN was set.
+                            open_at_epoch=max(current.open_at_epoch, state.open_at_epoch),
                         )
 
                         # Enter MULTI mode — subsequent commands are buffered
@@ -1151,6 +1498,7 @@ class RedisDistributedBackend:
                                 "failure_count": str(merged.failure_count),
                                 "last_failure_time": str(merged.last_failure_time),
                                 "open_episode_count": str(merged.open_episode_count),
+                                "open_at_epoch": str(merged.open_at_epoch),
                             },
                         )
                         pipe.expire(key, self._ttl)

@@ -481,7 +481,7 @@ class ExpressionNode:
 
     * Arithmetic: ``+``, ``-``, ``*``, ``/`` (and reflected variants)
     * Comparison: ``>=``, ``<=``, ``>``, ``<``, ``==``, ``!=``
-    * Membership: :meth:`is_in`
+    * Membership: :meth:`is_in`, :meth:`is_not_in`
 
     Banned operators (raise :exc:`~pramanix.exceptions.PolicyCompilationError`
     at policy-definition time so the mistake is caught before any solver run):
@@ -842,6 +842,29 @@ class ExpressionNode:
                 "for all inputs and is most likely a policy-authoring error."
             )
         return ConstraintExpr(_InOp(left=self.node, values=tuple(_Literal(v) for v in items)))
+
+    def is_not_in(self, values: Iterable[Any]) -> ConstraintExpr:
+        """Return a :class:`ConstraintExpr` asserting this field equals **none** of *values*.
+
+        Transpiled as the negation of a Z3 disjunction::
+
+            NOT((field == v1) | (field == v2) | … | (field == vN))
+
+        Example::
+
+            state = Field("circuit_state", str, "String")
+            not_open = E(state).is_not_in(["OPEN", "open"]).named("circuit_not_open")
+
+        Args:
+            values: A non-empty iterable of concrete values to exclude.
+
+        Raises:
+            PolicyCompilationError: If *values* is empty.
+
+        Returns:
+            A :class:`ConstraintExpr` (unlabelled; call ``.named()`` on the result).
+        """
+        return ~self.is_in(values)
 
     # ── Comparisons (produce ConstraintExpr) ──────────────────────────────────
 

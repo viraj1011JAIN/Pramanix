@@ -2818,6 +2818,79 @@ no `verify=False`, no hardcoded secrets.
 
 ---
 
+## PART 17 — CIRCUIT_BREAKER FIX LOG (2026-06-05, Sixth Wave)
+
+> Fixed all HIGH-severity flaws in `circuit_breaker.py`.
+> All fixes are production-level: no mocks, no stubs, no monkey-patches.
+> Full test coverage added for every fix.
+
+### ✅ FIXED — #55 — `DistributedCircuitBreaker` Docstring Lie About Default Backend
+
+Updated class docstring to clearly state `backend` is **required** (raises
+`ConfigurationError` if omitted).  Corrected the `Usage::` example to always
+pass an explicit backend.  Previous text said "Defaults to InMemoryDistributedBackend"
+which was the opposite of the code behaviour.
+
+### ✅ FIXED — #263 — No HALF_OPEN State in `DistributedCircuitBreaker` (Thundering Herd)
+
+Implemented distributed HALF_OPEN probing:
+- Added `open_at_epoch: float` field to `_DistributedState` — wall-clock Unix
+  epoch stored in Redis so all replicas can independently compute recovery
+  elapsed time without sharing a monotonic clock baseline.
+- Added `try_claim_probe(namespace) -> bool` to both backends: atomic `SET NX`
+  in Redis, thread-safe `_probe_holders` dict in InMemory.
+- Added `release_probe(namespace)` and `force_reset_state(namespace)` to both
+  backends.  `force_reset_state` deletes the state Hash and the probe token
+  key atomically (`DEL key, probe_key`), bypassing the conservative merge
+  that prevents CLOSED from overwriting OPEN in a normal `set_state`.
+- Updated `verify_async` to check `open_at_epoch` vs `time.time()` and attempt
+  `try_claim_probe`.  Exactly one replica probes; all others return OPEN.
+- On probe success: `force_reset_state` → CLOSED across all replicas.
+- On probe abort (CancelledError): `release_probe` + push OPEN in finally.
+
+### ✅ FIXED — #265 — `DistributedCircuitBreaker.reset()` Fire-and-Forget in Async
+
+Added `reset_async()` method that **awaits** `force_reset_state` before returning.
+`reset()` in sync context now runs `asyncio.run(reset_async())` (blocking, safe).
+`reset()` in async context still schedules a task but emits a WARNING directing
+callers to `reset_async()` and stores a task reference to prevent GC discard.
+
+### ✅ FIXED — #269 — HALF_OPEN Double-Probe Race in `AdaptiveCircuitBreaker`
+
+Root cause: `_probing = False` was cleared in one `async with self._lock` block
+inside `finally`, then `_record_solve` ran in a separate `async with self._lock`
+acquisition.  Between the two acquisitions, another coroutine could see
+`HALF_OPEN + _probing=False` and claim a second probe slot.
+
+Fix: merged both operations into a **single lock acquisition** in the `finally`
+block.  For normal probe completion, `_record_solve` clears `_probing` atomically
+with the state transition — no window exists for a second probe to enter.
+
+### ✅ FIXED — #270 — Distributed Failure Count Inflation
+
+Root cause: `_sync_state` set `self._local_failure_count = agg.failure_count`
+(the cumulative total across all replicas).  One local pressure event then made
+`_local_failure_count = aggregate + 1 >= threshold`, tripping OPEN immediately
+once the global aggregate reached threshold — O(N²) inflation per sync cycle.
+
+Fix: `_sync_state` now resets `self._local_failure_count = 0`.  Each replica
+tracks only NEW failures since the last sync; `delta_failures=1` is pushed to
+the backend on threshold trip, preserving correct aggregate accumulation.
+
+### ✅ FIXED — #272 — HALF_OPEN Permanently Stuck After `CancelledError`
+
+Root cause: `_record_solve` was placed after the `try/finally` block and was
+unreachable on `CancelledError`.  The `finally` cleared `_probing=False` but
+left state as `HALF_OPEN`, allowing infinite sequential probes that never
+resolved the state machine.
+
+Fix: all probe state management (clearing `_probing`, state transition) is now
+inside the single `finally` lock acquisition.  On `CancelledError` with
+`_exc_raised=True` and state `HALF_OPEN`, the finally block explicitly increments
+`_open_episodes` and transitions to OPEN or ISOLATED.
+
+---
+
 ## CONFIRMED CLEAN (Explicitly Verified)
 
 - `os.system(` — none in `src/`

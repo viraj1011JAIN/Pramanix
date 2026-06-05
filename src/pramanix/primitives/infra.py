@@ -150,7 +150,7 @@ def BlastRadiusCheck(
     from decimal import Decimal as _D
     from pramanix.exceptions import PolicyCompilationError
 
-    if not (Decimal("0") < max_blast_pct <= Decimal("1")):
+    if not (_D("0") < max_blast_pct <= _D("1")):
         raise PolicyCompilationError(
             f"BlastRadiusCheck: max_blast_pct must be in (0, 1], got {max_blast_pct!r}. "
             "Use Decimal('0.05') for 5%, Decimal('1') for 100%."
