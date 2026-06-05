@@ -115,23 +115,14 @@ def _classify_severity(
         "cpu_memory_guard",
     }
 
-    amount_str = str(intent_dump.get("amount", "0"))
-    try:
-        amount = Decimal(amount_str)
-        if amount >= Decimal("100000"):
-            return "CRITICAL_PREVENTION"
-    except Exception as exc:
-        # Fail to CRITICAL_PREVENTION: a malformed amount is suspicious.
-        # Downgrading severity on parse failure would let an attacker
-        # inject malformed amounts to bypass high-value transaction rules.
-        _log.warning(
-            "pramanix.compliance: amount=%r could not be parsed as Decimal — "
-            "defaulting to CRITICAL_PREVENTION (fail-high): %s",
-            amount_str,
-            exc,
-        )
-        return "CRITICAL_PREVENTION"
-
+    # Severity is driven by VIOLATED INVARIANT LABELS, not by the caller-supplied
+    # `amount` field.  Using intent_dump["amount"] for severity allows an attacker
+    # to submit a $200,000 sanctions violation with intent={"amount": "0"} and
+    # receive a LOW or MEDIUM severity instead of CRITICAL_PREVENTION, reducing
+    # the urgency of SAR filing and audit review.
+    #
+    # Rule: if ANY high-value invariant was violated → CRITICAL_PREVENTION.
+    # This is not bypassable via intent field manipulation.
     violated_set = set(violated_invariants)
     if violated_set & high_value_rules:
         return "CRITICAL_PREVENTION"

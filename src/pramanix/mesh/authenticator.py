@@ -507,7 +507,12 @@ class MeshAuthenticator:
 
         try:
             fresh_keys = self._fetch_jwks()
-        except Exception:
+        except BaseException:
+            # Catch BaseException (not just Exception) to ensure the fetching
+            # flag is always cleared, even on KeyboardInterrupt or SystemExit.
+            # Without this, a SIGINT during the HTTP call leaves _jwks_fetching
+            # permanently True and all subsequent requests serve stale cached
+            # keys forever — rotated signing keys are never picked up.
             with self._jwks_lock:
                 self._jwks_fetching = False
             raise
@@ -973,9 +978,24 @@ def _select_jwk(
                 reason="unknown_kid",
             )
     else:
-        # No kid — prefer keys matching the algorithm, then use=sig, then all.
-        by_alg = [k for k in keys if k.get("alg") == alg]
-        candidates = by_alg or [k for k in keys if k.get("use") == "sig"] or list(keys)
+        # No kid — require at most ONE candidate key.  If multiple keys exist
+        # in the JWKS without a kid, an attacker who can inject a new key into
+        # the JWKS (via MITM or compromised endpoint) can make their forged
+        # token be tried as a candidate and pass verification.  When the JWKS
+        # has exactly one key it is unambiguous; more than one with no kid is
+        # a configuration error that MUST fail closed.
+        sig_keys = [k for k in keys if k.get("use") == "sig"] or list(keys)
+        by_alg = [k for k in sig_keys if k.get("alg") == alg] or sig_keys
+        if len(by_alg) > 1:
+            raise MeshAuthenticationError(
+                f"JWT has no 'kid' header but the JWKS contains {len(by_alg)} "
+                f"candidate keys for alg={alg!r}.  This is ambiguous and unsafe: "
+                "an attacker who can inject a new key into the JWKS could forge "
+                "valid tokens.  Add 'kid' headers to your JWTs and 'kid' fields "
+                "to all JWKS entries to enable unambiguous key selection.",
+                reason="ambiguous_no_kid",
+            )
+        candidates = by_alg
 
     last_exc: MeshAuthenticationError | None = None
     for jwk in candidates:

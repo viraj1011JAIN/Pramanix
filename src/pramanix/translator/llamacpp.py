@@ -15,6 +15,7 @@ If the package is not installed, instantiation raises
 """
 
 from __future__ import annotations
+import re
 
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,19 @@ if TYPE_CHECKING:
 __all__ = ["LlamaCppTranslator"]
 
 import threading
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 _TEMPERATURE = 0.0
 _DEFAULT_MAX_TOKENS = 512
@@ -205,3 +219,27 @@ class LlamaCppTranslator:
             temperature=_TEMPERATURE,
         )
         return response["choices"][0]["message"]["content"] or ""
+
+    @classmethod
+    def _for_testing(
+        cls,
+        *,
+        model_path: str = "/tmp/test.gguf",
+        n_ctx: int = 4096,
+        n_gpu_layers: int = 0,
+        max_tokens: int = 512,
+        llm: Any = None,
+    ) -> "LlamaCppTranslator":
+        """Construct without requiring llama_cpp to be installed.
+
+        Allows tests to exercise ``extract()`` and ``_get_llm()`` logic
+        by injecting a pre-built llm duck-type without a real model file.
+        """
+        inst = cls.__new__(cls)
+        inst.model = f"llama-cpp:{model_path}"
+        inst._model_path = model_path
+        inst._n_ctx = n_ctx
+        inst._n_gpu_layers = n_gpu_layers
+        inst._max_tokens = max_tokens
+        inst._llm = llm
+        return inst

@@ -37,12 +37,7 @@ def redis_backend(redis_url: str) -> Any:
     pytest.importorskip("redis")
     from pramanix.circuit_breaker import RedisDistributedBackend
 
-    backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = redis_url
-    backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:test:"
-    backend._ttl = 300
-    backend._client = None
+    backend = RedisDistributedBackend._for_testing(None)
     return backend
 
 
@@ -168,13 +163,7 @@ class TestRedisSetStatePipeline:
             _DistributedState,
         )
 
-        bad_backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        bad_backend._redis_url = "redis://localhost:1"  # nothing listening on port 1
-        bad_backend._sync_interval = 1.0
-        bad_backend._prefix = "pramanix:cb:"
-        bad_backend._ttl = 300
-        bad_backend._client = None
-
+        bad_backend = RedisDistributedBackend._for_testing(None)
         # Must NOT raise — connection failure is non-fatal; local state governs.
         await bad_backend.set_state(
             "fail_ns",
@@ -205,12 +194,7 @@ class TestRedisClear:
         def _run_in_thread() -> None:
             import redis.asyncio as aioredis
 
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-            backend._redis_url = redis_url
-            backend._sync_interval = 1.0
-            backend._prefix = "pramanix:cb:test:"
-            backend._ttl = 300
-            backend._client = aioredis.from_url(redis_url, decode_responses=True)
+            backend = RedisDistributedBackend._for_testing(aioredis.from_url(redis_url, decode_responses=True))
             backend.clear("thread_test_ns")
             results.append("ok")
 

@@ -135,32 +135,25 @@ class TestKafkaConsumerRealPaths:
     def _make_consumer(self, messages, **kwargs) -> Any:
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-        consumer = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-        consumer._guard = _GUARD
-        consumer._intent_extractor = kwargs.get(
-            "intent_extractor",
-            lambda msg: {"amount": Decimal("10")},
+        extractor = kwargs.get("intent_extractor", lambda msg: {"amount": Decimal("10")})
+        consumer = PramanixKafkaConsumer._for_testing(
+            _FakeConsumer(messages),
+            guard=_GUARD,
+            intent_extractor=extractor,
+            dlq_producer=kwargs.get("dlq_producer"),
+            dlq_topic="test.dlq",
         )
-        consumer._state_provider = lambda: {}
-        consumer._dlq_producer = kwargs.get("dlq_producer")
-        consumer._dlq_topic = "test.dlq"
-        consumer._dlq_pending = 0
-        consumer._dlq_flush_interval = 100
-        consumer._consumer = _FakeConsumer(messages)
         return consumer
 
     def test_safe_poll_no_consumer_returns_immediately(self):
         """Line 110: consumer is None → generator yields nothing."""
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-        consumer = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-        consumer._consumer = None
-        consumer._guard = _GUARD
-        consumer._intent_extractor = lambda m: {}
-        consumer._state_provider = lambda: {}
-        consumer._dlq_producer = None
-        consumer._dlq_topic = "test.dlq"
-
+        consumer = PramanixKafkaConsumer._for_testing(
+            None,
+            guard=_GUARD,
+            intent_extractor=lambda m: {},
+        )
         results = list(consumer.safe_poll())
         assert results == []
 
@@ -255,8 +248,11 @@ class TestKafkaConsumerRealPaths:
         """close() with consumer=None does nothing."""
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-        consumer = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-        consumer._consumer = None
+        consumer = PramanixKafkaConsumer._for_testing(
+            None,
+            guard=guard,
+            intent_extractor=lambda m: {},
+        )
         consumer.close()  # must not raise
 
     def test_kafka_unavailable_constructor_sets_consumer_none(self):
@@ -291,14 +287,11 @@ class TestKafkaConsumerRealPaths:
             kafka_mod._KAFKA_AVAILABLE = False
             from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-            consumer = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-            consumer._consumer = None
-            consumer._guard = _GUARD
-            consumer._intent_extractor = lambda m: {}
-            consumer._state_provider = lambda: {}
-            consumer._dlq_producer = None
-            consumer._dlq_topic = "test.dlq"
-            # safe_poll should early-return when consumer is None
+            consumer = PramanixKafkaConsumer._for_testing(
+                None,
+                guard=_GUARD,
+                intent_extractor=lambda m: {},
+            )            # safe_poll should early-return when consumer is None
             results = list(consumer.safe_poll())
             assert results == []
         finally:
@@ -346,11 +339,10 @@ class TestGrpcInterceptorRealPaths:
             grpc_mod._GRPC_AVAILABLE = False
             from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-            interceptor = PramanixGrpcInterceptor.__new__(PramanixGrpcInterceptor)
-            interceptor._guard = _GUARD
-            interceptor._intent_extractor = lambda hcd, req: {}
-            interceptor._state_provider = lambda: {}
-            interceptor._denied_code = None
+            interceptor = PramanixGrpcInterceptor._for_testing(
+                guard=_GUARD,
+                intent_extractor=lambda hcd, req: {},
+            )
 
             sentinel = object()
             result = interceptor._wrap_handler(sentinel, None)

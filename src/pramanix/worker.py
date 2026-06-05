@@ -992,11 +992,34 @@ class WorkerPool:
         raise WorkerError(f"Unknown worker mode: {self.mode!r}")
 
     def _run_warmup(self) -> None:
-        """Submit ``_warmup_worker`` to every slot.  Best-effort."""
+        """Submit ``_warmup_worker`` to every slot concurrently.  Best-effort.
+
+        All slots are submitted first, then awaited with a single TOTAL timeout
+        rather than a per-slot timeout.  This prevents the sequential
+        ``N × 30 s`` worst-case that would block ``Guard.__init__`` for up to
+        ``max_workers × 30 s`` in cloud environments with strict health-check
+        startup deadlines.
+        """
+        import time as _time
+
         futures = [self.executor.submit(_warmup_worker) for _ in range(self.max_workers)]
+        _warmup_deadline = _time.monotonic() + 60.0  # 60 s total budget for all slots
         for fut in futures:
+            remaining = max(0.0, _warmup_deadline - _time.monotonic())
+            if remaining <= 0.0:
+                _log.warning(
+                    "WorkerPool warmup: total timeout exhausted before all slots "
+                    "completed — remaining slots will warm up on first real request."
+                )
+                break
             try:
-                fut.result(timeout=30.0)
+                fut.result(timeout=remaining)
+            except TimeoutError:
+                _log.warning(
+                    "WorkerPool warmup: total timeout exceeded — remaining slots "
+                    "will complete warm-up on the first real request they handle."
+                )
+                break
             except Exception as exc:
                 _log.warning("WorkerPool warmup slot failed: %s", exc, exc_info=True)
 

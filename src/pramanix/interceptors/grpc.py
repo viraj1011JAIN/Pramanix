@@ -192,3 +192,25 @@ class PramanixGrpcInterceptor(_InterceptorBase):
         if getattr(handler, "stream_stream", None) is not None:
             replace_kwargs["stream_stream"] = _guarded_stream_stream
         return handler._replace(**replace_kwargs)
+
+    @classmethod
+    def _for_testing(
+        cls,
+        *,
+        guard: Any,
+        intent_extractor: Any,
+        state_provider: Any = None,
+        denied_status_code: Any = None,
+    ) -> "PramanixGrpcInterceptor":
+        """Construct an instance without requiring grpcio to be installed.
+
+        Allows unit tests to exercise ``_wrap_handler`` and ``_check_guard``
+        logic using duck-typed handler/context objects without a real gRPC
+        server or the grpcio package.
+        """
+        inst = cls.__new__(cls)
+        inst._guard = guard
+        inst._intent_extractor = intent_extractor
+        inst._state_provider = state_provider or (lambda: {})
+        inst._denied_code = denied_status_code or object()
+        return inst

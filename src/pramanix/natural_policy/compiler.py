@@ -203,6 +203,23 @@ class ASTBuilder:
             for decl in schema.fields
         }
 
+    @classmethod
+    def _for_testing(
+        cls,
+        fields: dict[str, Any] | None = None,
+        schema: Any = None,
+    ) -> "ASTBuilder":
+        """Construct with a pre-built field dict for unit testing.
+
+        Bypasses the NaturalPolicySchema parsing so tests can inject
+        specific Field objects and test ``_resolve_field`` / ``_build_lhs``
+        in isolation.
+        """
+        inst = cls.__new__(cls)
+        inst._schema = schema
+        inst._fields = fields or {}
+        return inst
+
     # ── Public API ─────────────────────────────────────────────────────────────
 
     @property

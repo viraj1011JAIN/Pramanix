@@ -291,6 +291,12 @@ class ShadowEvaluator:
         *,
         max_history: int = 10_000,
     ) -> None:
+        if max_history is None or max_history <= 0:
+            raise ValueError(
+                f"ShadowEvaluator: max_history must be a positive integer, "
+                f"got {max_history!r}.  Use max_history=10_000 (default) or "
+                "a suitable positive limit for your deployment."
+            )
         self._live = live_guard
         self._shadow = shadow_guard
         self._max_history = max_history
@@ -305,7 +311,13 @@ class ShadowEvaluator:
         state: dict[str, Any],
         live_decision: Decision,
     ) -> ShadowResult:
-        """Record a live decision and run the shadow evaluation.
+        """Record a live decision and run the shadow evaluation synchronously.
+
+        .. warning:: **This method blocks the calling thread for the duration
+            of the shadow guard's** ``verify()`` **call.**  A slow shadow
+            policy (e.g. a 500 ms Z3 solve) delays the caller by 500 ms
+            AFTER the live decision has already been produced.  Use
+            :meth:`arecord` for non-blocking async shadow evaluation.
 
         The live decision is already computed — this method only runs the
         *shadow* verify() to collect divergence data.

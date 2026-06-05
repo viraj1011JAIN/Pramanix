@@ -151,8 +151,37 @@ class PramanixCrewAITool(_CrewAIBase):
         return self._execute(tool_input)
 
     async def _arun(self, **tool_input: Any) -> str:
-        """Async execution — called by CrewAI's async agent loop."""
-        return self._execute(tool_input)
+        """Async execution — called by CrewAI's async agent loop.
+
+        Uses :meth:`~pramanix.guard.Guard.verify_async` to avoid blocking the
+        event loop during Z3 solving (previously called sync ``verify()`` which
+        would stall the entire async CrewAI agent loop for solver duration).
+        """
+        st: _PramanixState = object.__getattribute__(self, "_pramanix")
+        try:
+            intent = st.intent_builder(tool_input)
+            state = st.state_provider()
+            decision = await st.guard.verify_async(intent=intent, state=state)
+        except Exception as exc:
+            _log.error("pramanix.crewai.guard_error: %s", exc, exc_info=True)
+            return (
+                f"{_SAFE_FAILURE_PREFIX} Guard error during async verification. "
+                "Action blocked as a precaution."
+            )
+        if not decision.allowed:
+            if st.block_message:
+                return f"{_SAFE_FAILURE_PREFIX} {st.block_message}"
+            return f"{_SAFE_FAILURE_PREFIX} " + format_block_feedback(decision, {})
+        if st.underlying_fn is not None:
+            import asyncio as _asyncio
+            if _asyncio.iscoroutinefunction(st.underlying_fn):
+                return str(await st.underlying_fn(tool_input))
+            return str(st.underlying_fn(tool_input))
+        from pramanix.exceptions import ConfigurationError
+        raise ConfigurationError(
+            f"PramanixCrewAITool '{self.name}': decision is ALLOW but no "
+            "underlying_fn was supplied at construction time."
+        )
 
     # ── Plain-callable interface (non-CrewAI usage) ───────────────────────────
 

@@ -406,6 +406,15 @@ class PramanixQueryEngineTool:
         self._state_provider = state_provider
         self._name = name
         self._description = description
+        # H-13: one shared executor — created once at construction, never per-call.
+        # Creating a new ThreadPoolExecutor per call() invocation exhausts OS
+        # thread handles under agent-loop load.
+        import concurrent.futures as _cf
+        import weakref as _wr
+        self._executor = _cf.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="pramanix-llamaindex-qe"
+        )
+        _wr.finalize(self, _cf.ThreadPoolExecutor.shutdown, self._executor, wait=False)
 
     # ── metadata property ────────────────────────────────────────────────────
 
@@ -530,13 +539,9 @@ class PramanixQueryEngineTool:
         except RuntimeError:
             return asyncio.run(self.acall(input, **kwargs))
 
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            # Lambda defers coroutine creation to the worker thread so it is
-            # bound to that thread's new event loop, not the calling loop.
-            future = pool.submit(lambda: asyncio.run(self.acall(input, **kwargs)))
-            return future.result()
+        # Use the lifecycle-managed shared executor — never allocate one per call.
+        future = self._executor.submit(lambda: asyncio.run(self.acall(input, **kwargs)))
+        return future.result()
 
     # ── State retrieval ───────────────────────────────────────────────────────
 

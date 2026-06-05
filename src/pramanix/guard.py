@@ -321,6 +321,7 @@ def _ensure_guard_metrics() -> None:
             _GUARD_DECISION_COUNTER = False
             _GUARD_VIOLATION_COUNTER = False
             import logging as _gm_log
+
             _gm_log.getLogger(__name__).warning(
                 "pramanix.guard: failed to register decision/violation counters "
                 "— policy observability metrics unavailable (%s: %s)",
@@ -350,6 +351,7 @@ def _emit_decision_metrics(
     except Exception as _e:
         with contextlib.suppress(Exception):
             import logging as _gm_log
+
             _gm_log.getLogger(__name__).debug(
                 "pramanix.guard: decision/violation metric increment failed (%s: %s)",
                 type(_e).__name__,
@@ -390,6 +392,7 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
                 except Exception as _reg_exc:
                     _FIELD_SEEN_COUNTER = False
                     import logging as _gm_log
+
                     _gm_log.getLogger(__name__).warning(
                         "pramanix.guard: failed to register pramanix_policy_field_seen_total "
                         "— field-coverage metrics will be unavailable (%s: %s). "
@@ -403,6 +406,7 @@ def _emit_field_seen(policy_name: str, field_names: Any) -> None:
                 _FIELD_SEEN_COUNTER.labels(policy=policy_name, field=_f).inc()
     except Exception as _e:
         import logging as _gm_log
+
         _gm_log.getLogger(__name__).warning(
             "pramanix.guard: metrics increment failed — field-coverage counters may be "
             "inconsistent (%s: %s). Check prometheus_client and counter state.",
@@ -706,6 +710,13 @@ class Guard:
         """
         _t0 = time.perf_counter()
         decision = self._sign_decision(self._verify_core(intent, state, trusted_state))
+        # ── Audit BEFORE timing pad ────────────────────────────────────────────
+        # Emit to audit sinks FIRST — before the timing pad — so the decision is
+        # durably recorded even if the process crashes or is killed during the
+        # sleep window.  The sink time counts toward the min_response_ms budget,
+        # which is correct: attackers cannot use sink latency as a timing oracle
+        # since any remaining budget is consumed by the sleep below.
+        self._emit_to_sinks(decision)
         # ── Timing jitter buffer (side-channel mitigation) ─────────────────────
         # Loop until the minimum has truly elapsed.  time.sleep() can return
         # early when interrupted by a signal (e.g. SIGCHLD from a subprocess);
@@ -718,7 +729,6 @@ class Guard:
                     break
                 with contextlib.suppress(InterruptedError):
                     time.sleep(_left)
-        self._emit_to_sinks(decision)
         return decision
 
     # ── Shared governance pipeline ──────────────────────────────────────────────
@@ -997,14 +1007,14 @@ class Guard:
                 _raw_state: dict[str, Any] = (
                     state if isinstance(state, dict) else state.model_dump()
                 )
-                # default=str is intentional: after model_dump() the dict
-                # should contain only standard Python types (Decimal, int, etc).
-                # Decimal's str() repr is a faithful size estimate.  Custom
-                # objects with a tiny str() but large memory footprint would
-                # need to survive Pydantic model_dump() serialization (#259 partial).
-                _payload_size = len(
-                    _json_size.dumps({"i": _raw_intent, "s": _raw_state}, default=str).encode()
-                )
+                # Do NOT use default=str — it coerces non-JSON-native objects
+                # to their str() repr (e.g. "<MyObj at 0x7f…>"), making a 10 MB
+                # in-memory object appear as a tiny 20-byte string and bypass the
+                # size check entirely.  After model_dump() all values should be
+                # JSON-serializable Python primitives.  If json.dumps raises
+                # TypeError, a non-serializable value survived model_dump() —
+                # that is itself a validation error; block the request.
+                _payload_size = len(_json_size.dumps({"i": _raw_intent, "s": _raw_state}).encode())
                 if _payload_size > self._config.max_input_bytes:
                     return Decision.error(
                         reason=(
@@ -1406,28 +1416,48 @@ class Guard:
             Uses a deadline loop: asyncio.sleep() can return early if the event
             loop is under heavy load; the loop re-sleeps for any remaining time
             so the minimum floor is guaranteed regardless of scheduling noise.
+
+            Audit sink emission runs unconditionally — even if the sleep is
+            cancelled (CancelledError / BaseException), the decision is already
+            computed and MUST be logged.  The emit runs before re-raising so the
+            audit trail never has a gap for completed decisions.
             """
+            # Emit to sinks FIRST — before the timing pad — so the decision is
+            # durably recorded even if the task is cancelled during the sleep.
+            self._emit_to_sinks(d)
+            cancelled_exc: BaseException | None = None
             if self._config.min_response_ms > 0.0:
                 _deadline_async = _t0_async + self._config.min_response_ms / 1000.0
                 while True:
                     _left = _deadline_async - time.perf_counter()
                     if _left <= 0.0:
                         break
-                    await asyncio.sleep(_left)
-            # H-02: emit to audit sinks for ALL async modes — mirrors sync path.
-            self._emit_to_sinks(d)
+                    try:
+                        await asyncio.sleep(_left)
+                    except BaseException as _ce:
+                        # Task cancelled during the timing pad.  The decision is
+                        # already logged (emit ran above) — safe to re-raise.
+                        cancelled_exc = _ce
+                        break
+            if cancelled_exc is not None:
+                raise cancelled_exc
             return d
 
-        # Sync mode: delegate entirely to sync verify() in a thread.
-        # verify() handles its own sink emission and resolver-cache clearing.
-        # copy_context() propagates OTel SpanContext and structlog bound vars
-        # across the thread boundary (Python 3.11 does not copy automatically).
+        # Sync mode: delegate to sync verify() in a thread, then pass the result
+        # through _timed() to apply the async min_response_ms pad and emit to
+        # any async-specific metrics.  verify() also applies its own timing pad
+        # (from its own _t0), so _timed() will only sleep the *remaining* time
+        # after the thread completes — guaranteeing at least min_response_ms
+        # from the perspective of the async caller.
         if mode == "sync":
             _ctx = contextvars.copy_context()
-            return await asyncio.to_thread(
+            _sync_result = await asyncio.to_thread(
                 _ctx.run,
                 lambda: self.verify(intent, state, trusted_state=trusted_state),
             )
+            # Re-apply _timed so the async timing budget is honoured and any
+            # async-side metrics fire even on the sync path.
+            return await _timed(_sync_result)
 
         # ── H-01: max_input_bytes DoS pre-check (mirrors _verify_core) ────────
         if self._config.max_input_bytes > 0:
@@ -1441,9 +1471,7 @@ class Guard:
                     state if isinstance(state, dict) else state.model_dump()
                 )
                 _payload_size_async = len(
-                    _json_size_async.dumps(
-                        {"i": _raw_intent_async, "s": _raw_state_async}, default=str
-                    ).encode()
+                    _json_size_async.dumps({"i": _raw_intent_async, "s": _raw_state_async}).encode()
                 )
                 if _payload_size_async > self._config.max_input_bytes:
                     _d = self._sign_decision(
@@ -1558,8 +1586,7 @@ class Guard:
             conflicting = intent_values.keys() & state_values.keys()
             if conflicting:
                 log.warning(
-                    "pramanix.guard: intent and state share conflicting keys "
-                    "for policy=%s: %s",
+                    "pramanix.guard: intent and state share conflicting keys " "for policy=%s: %s",
                     self._policy.__name__,
                     sorted(conflicting),
                 )
@@ -1613,9 +1640,13 @@ class Guard:
                 )
             )
         finally:
-            # C-01: clear resolver cache after every verify_async call,
-            # mirroring the sync _verify_core finally block.  Prevents User A's
-            # resolved field values from bleeding into User B's next async call.
+            # C-01: clear resolver cache after Steps 1-4.  ResolverRegistry uses
+            # a ContextVar — each asyncio Task and OS thread has its own isolated
+            # context, so clear_cache() here only affects this Task's context.
+            # Cross-request contamination is structurally impossible.  The clear
+            # must run before the pool dispatch so that any re-entrant verify()
+            # call triggered by a governance gate callback starts with a clean
+            # resolver state rather than seeing stale resolved values.
             _resolver_registry.clear_cache()
 
         # Steps 5-6: dispatch to worker pool.

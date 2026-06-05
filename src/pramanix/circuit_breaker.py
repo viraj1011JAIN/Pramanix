@@ -971,6 +971,33 @@ class RedisDistributedBackend:
             self, RedisDistributedBackend._warn_unclosed, self._client_cell
         )
 
+    @classmethod
+    def _for_testing(
+        cls,
+        redis_client: Any,
+        *,
+        key_prefix: str = "pramanix:cb:",
+        ttl_seconds: int = 300,
+        sync_interval_seconds: float = 1.0,
+    ) -> "RedisDistributedBackend":
+        """Construct with a pre-built Redis client (e.g. fakeredis) for testing.
+
+        Bypasses the redis.asyncio import check so tests can inject a
+        synchronous fakeredis client without needing a real Redis server.
+        """
+        inst = cls.__new__(cls)
+        inst._redis_url = ""
+        inst._sync_interval = sync_interval_seconds
+        inst._prefix = key_prefix
+        inst._ttl = ttl_seconds
+        inst._client = redis_client
+        inst._clear_tasks: set = set()
+        inst._client_cell = [redis_client]
+        inst._finalizer = weakref.finalize(
+            inst, RedisDistributedBackend._warn_unclosed, inst._client_cell
+        )
+        return inst
+
     async def _get_client(self) -> Any:
         """Lazily create and cache the async Redis client."""
         if self._client is None:

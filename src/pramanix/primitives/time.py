@@ -9,6 +9,34 @@ Design note: Time fields must be declared as ``Int``-sorted in the Policy,
 representing UNIX timestamps (seconds since epoch).  This avoids floating-
 point imprecision and makes Z3 arithmetic exact.
 
+.. warning:: **TRUSTED STATE REQUIREMENT**
+
+    All bound fields in these primitives (``now_ts``, ``window_start``,
+    ``window_end``, ``cutoff``) are populated from the values dict passed to
+    ``Guard.verify()``.  If the caller controls the ``state`` dict, they can
+    bypass temporal enforcement entirely by setting:
+
+    * ``now_ts=0``                  → every token/cert appears permanently valid
+    * ``window_start=0, window_end=9999999999`` → any time passes the window
+
+    **Fix**: populate time fields exclusively via ``trusted_state`` (the
+    third parameter to ``Guard.verify()``), never from caller-supplied
+    ``intent`` or ``state``.  Example::
+
+        import time
+        decision = guard.verify(
+            intent=user_intent,
+            state=caller_state,
+            trusted_state={
+                "now_ts": int(time.time()),
+                "window_start": schedule.start_unix,
+                "window_end": schedule.end_unix,
+            },
+        )
+
+    Fields in ``trusted_state`` override matching keys in ``state``, so a
+    caller cannot inject their own ``now_ts`` even if they try.
+
 Example::
 
     import time

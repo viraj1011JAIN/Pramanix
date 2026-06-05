@@ -57,6 +57,9 @@ __all__ = [
     "EscalationQueue",
     "InMemoryApprovalWorkflow",
     "OversightRecord",
+    "PostgresApprovalWorkflow",
+    "RedisApprovalWorkflow",
+    "WebhookNotificationChannel",
 ]
 
 _log = logging.getLogger(__name__)
@@ -748,3 +751,929 @@ def _process_key() -> bytes:
             if _PROCESS_KEY is None:
                 _PROCESS_KEY = os.urandom(32)
     return _PROCESS_KEY
+
+
+# ── Redis-backed persistent workflow ──────────────────────────────────────────
+
+
+class RedisApprovalWorkflow:
+    """Redis-backed persistent approval workflow for multi-replica production deployments.
+
+    Satisfies SOC2 CC6.3 dual-control authorization: approvals are stored
+    durably in Redis and survive process restarts.  All replicas sharing the
+    same Redis instance and namespace share approval state.
+
+    Data layout (all keys use *key_prefix* as namespace):
+
+    * ``{prefix}:req:{id}``  — JSON-serialized :class:`ApprovalRequest` (TTL = *default_ttl_s*)
+    * ``{prefix}:dec:{id}``  — JSON-serialized :class:`ApprovalDecision` (persistent)
+    * ``{prefix}:rec:{id}``  — JSON-serialized :class:`OversightRecord` HMAC token (persistent)
+
+    Args:
+        redis_client:      A ``redis.Redis``-compatible synchronous client.
+                           Must support ``setex``, ``get``, ``delete``, ``keys``.
+                           Use ``fakeredis.FakeRedis()`` for testing.
+        signing_key:       HMAC key for :class:`OversightRecord` integrity.
+                           Defaults to a per-process ephemeral key.
+        default_ttl_s:     TTL in seconds for pending request keys.
+                           After this window the request is considered expired.
+                           Default: 300 s (5 minutes).
+        key_prefix:        Redis key namespace. Default: ``"pramanix:oversight"``.
+
+    Raises:
+        ConfigurationError: If the Redis client is missing required methods.
+
+    Example::
+
+        import redis
+        workflow = RedisApprovalWorkflow(
+            redis_client=redis.Redis.from_url("redis://localhost:6379/0"),
+            signing_key=secrets.token_bytes(32),
+        )
+        rid = workflow.request_approval(
+            principal_id="agent-001",
+            action="transfer $50,000",
+            decision_id="dec-abc",
+            policy_hash="sha256:...",
+            intent_dump={"amount": "50000"},
+            required_scopes=["FINANCIAL"],
+            blast_radius="$50,000",
+            reason="FINANCIAL scope requires dual-control approval",
+        )
+        workflow.approve(rid, reviewer_id="alice@company.com", comment="Verified OK")
+        assert workflow.check(rid)
+    """
+
+    def __init__(
+        self,
+        redis_client: Any,
+        signing_key: bytes | None = None,
+        *,
+        default_ttl_s: float = 300.0,
+        key_prefix: str = "pramanix:oversight",
+    ) -> None:
+        required = ("get", "setex", "delete", "keys", "set")
+        missing = [m for m in required if not hasattr(redis_client, m)]
+        if missing:
+            from pramanix.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                f"redis_client is missing required methods: {missing}. "
+                "Pass a redis.Redis-compatible synchronous client."
+            )
+        self._redis = redis_client
+        self._key: bytes = signing_key if signing_key is not None else os.urandom(32)
+        self._ttl = default_ttl_s
+        self._prefix = key_prefix
+
+    # ── Key helpers ────────────────────────────────────────────────────────────
+
+    def _req_key(self, request_id: str) -> str:
+        return f"{self._prefix}:req:{request_id}"
+
+    def _dec_key(self, request_id: str) -> str:
+        return f"{self._prefix}:dec:{request_id}"
+
+    def _rec_key(self, request_id: str) -> str:
+        return f"{self._prefix}:rec:{request_id}"
+
+    def _req_to_dict(self, req: ApprovalRequest) -> dict[str, Any]:
+        return {
+            "request_id": req.request_id,
+            "principal_id": req.principal_id,
+            "action": req.action,
+            "decision_id": req.decision_id,
+            "policy_hash": req.policy_hash,
+            "intent_dump": req.intent_dump,
+            "required_scopes": req.required_scopes,
+            "blast_radius": req.blast_radius,
+            "reason": req.reason,
+            "ttl_seconds": req.ttl_seconds,
+            "metadata": req.metadata,
+            "created_at": req.created_at,
+        }
+
+    def _req_from_dict(self, d: dict[str, Any]) -> ApprovalRequest:
+        return ApprovalRequest(
+            request_id=d["request_id"],
+            principal_id=d["principal_id"],
+            action=d["action"],
+            decision_id=d.get("decision_id", ""),
+            policy_hash=d.get("policy_hash", ""),
+            intent_dump=d.get("intent_dump", {}),
+            required_scopes=d.get("required_scopes", []),
+            blast_radius=d.get("blast_radius", "unknown"),
+            reason=d.get("reason", ""),
+            ttl_seconds=d.get("ttl_seconds", self._ttl),
+            metadata=d.get("metadata", {}),
+        )
+
+    # ── Public API ─────────────────────────────────────────────────────────────
+
+    def request_approval(
+        self,
+        *,
+        principal_id: str,
+        action: str,
+        decision_id: str = "",
+        policy_hash: str = "",
+        intent_dump: dict[str, Any] | None = None,
+        required_scopes: list[str] | None = None,
+        blast_radius: str = "unknown",
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Submit a new approval request to Redis and raise :exc:`OversightRequiredError`.
+
+        The request is stored under a TTL-keyed Redis entry so it automatically
+        expires if no reviewer acts within *default_ttl_s* seconds.
+
+        Raises:
+            OversightRequiredError: Always — callers catch this to retrieve
+                the ``request_id`` and present the request to a reviewer.
+        """
+        req = ApprovalRequest(
+            principal_id=principal_id,
+            action=action,
+            decision_id=decision_id,
+            policy_hash=policy_hash,
+            intent_dump=intent_dump or {},
+            required_scopes=required_scopes or [],
+            blast_radius=blast_radius,
+            reason=reason,
+            ttl_seconds=self._ttl,
+            metadata=metadata or {},
+        )
+        self._redis.setex(
+            self._req_key(req.request_id),
+            int(self._ttl),
+            json.dumps(self._req_to_dict(req)),
+        )
+        _log.info(
+            "oversight.redis.requested: request_id=%s principal=%s action=%r",
+            req.request_id,
+            principal_id,
+            action[:80],
+        )
+        raise OversightRequiredError(
+            f"Action '{action}' requires human approval (request_id={req.request_id}).",
+            request_id=req.request_id,
+            action=action,
+            reason=reason,
+        )
+
+    def approve(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str = "",
+    ) -> OversightRecord:
+        """Record an approval decision in Redis.
+
+        Raises:
+            KeyError: If *request_id* does not exist or has already been decided.
+        """
+        return self._decide(
+            request_id,
+            ApprovalStatus.APPROVED,
+            reviewer_id=reviewer_id,
+            comment=comment,
+        )
+
+    def reject(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str = "",
+    ) -> OversightRecord:
+        """Record a rejection decision in Redis."""
+        return self._decide(
+            request_id,
+            ApprovalStatus.REJECTED,
+            reviewer_id=reviewer_id,
+            comment=comment,
+        )
+
+    def check(self, request_id: str) -> bool:
+        """Return True if *request_id* was APPROVED; False otherwise.
+
+        Returns False for REJECTED, TIMEOUT (TTL expired), or unknown IDs.
+        """
+        raw = self._redis.get(self._dec_key(request_id))
+        if raw is None:
+            return False
+        d = json.loads(raw)
+        return d.get("status") == ApprovalStatus.APPROVED.value
+
+    def pending(self) -> list[ApprovalRequest]:
+        """Return all pending (not-yet-decided) requests still in Redis."""
+        pattern = self._req_key("*")
+        reqs: list[ApprovalRequest] = []
+        for key in self._redis.keys(pattern):
+            raw = self._redis.get(key)
+            if raw is not None:
+                try:
+                    reqs.append(self._req_from_dict(json.loads(raw)))
+                except Exception as exc:
+                    _log.warning("oversight.redis.pending: failed to decode request: %s", exc)
+        return reqs
+
+    def records(self) -> list[OversightRecord]:
+        """Return all oversight records stored in Redis."""
+        pattern = self._rec_key("*")
+        recs: list[OversightRecord] = []
+        for key in self._redis.keys(pattern):
+            raw = self._redis.get(key)
+            if raw is not None:
+                try:
+                    data = json.loads(raw)
+                    recs.append(OversightRecord.from_dict(data, signing_key=self._key))
+                except Exception as exc:
+                    _log.warning("oversight.redis.records: failed to decode record: %s", exc)
+        return recs
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _decide(
+        self,
+        request_id: str,
+        status: ApprovalStatus,
+        *,
+        reviewer_id: str,
+        comment: str,
+    ) -> OversightRecord:
+        raw_req = self._redis.get(self._req_key(request_id))
+        if raw_req is None:
+            raise KeyError(
+                f"ApprovalRequest '{request_id}' not found (expired or already decided)."
+            )
+        if self._redis.get(self._dec_key(request_id)) is not None:
+            raise KeyError(
+                f"ApprovalRequest '{request_id}' has already been decided."
+            )
+        req = self._req_from_dict(json.loads(raw_req))
+        if req.is_expired():
+            status = ApprovalStatus.TIMEOUT
+            _log.warning(
+                "oversight.redis.timeout: request_id=%s principal=%s",
+                request_id,
+                req.principal_id,
+            )
+        dec = ApprovalDecision(
+            request_id=request_id,
+            status=status,
+            reviewer_id=reviewer_id,
+            comment=comment,
+        )
+        record = OversightRecord(req, dec, signing_key=self._key)
+        dec_payload = json.dumps(
+            {
+                "request_id": request_id,
+                "status": status.value,
+                "reviewer_id": reviewer_id,
+                "comment": comment,
+            }
+        )
+        # Store decision persistently (no TTL — audit trail must be durable).
+        self._redis.set(self._dec_key(request_id), dec_payload)
+        self._redis.set(self._rec_key(request_id), json.dumps(record.to_dict()))
+        # Delete the pending request key so it no longer appears in pending().
+        self._redis.delete(self._req_key(request_id))
+        _log.info(
+            "oversight.redis.decided: request_id=%s status=%s reviewer=%s",
+            request_id,
+            status.value,
+            reviewer_id,
+        )
+        return record
+
+
+# ── Postgres persistent approval workflow ─────────────────────────────────────
+
+
+class PostgresApprovalWorkflow:
+    """PostgreSQL-backed persistent approval workflow for Fortune 500 deployments.
+
+    Satisfies SOC2 CC6.3 dual-control authorization with a durable, queryable
+    SQL audit trail.  All approval requests and decisions are stored in two
+    Postgres tables.  Requests that time out without a reviewer decision are
+    treated as REJECTED (fail-safe) and recorded as ``TIMEOUT``.
+
+    The schema is created automatically on first use via :meth:`initialize`.
+
+    Schema
+    ------
+    ::
+
+        pramanix_approval_requests(
+            request_id TEXT PRIMARY KEY,
+            principal_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            decision_id TEXT,
+            policy_hash TEXT,
+            intent_dump JSONB,
+            required_scopes JSONB,
+            blast_radius TEXT,
+            reason TEXT,
+            created_at DOUBLE PRECISION NOT NULL,
+            ttl_seconds DOUBLE PRECISION NOT NULL,
+            metadata JSONB,
+            decided BOOLEAN NOT NULL DEFAULT FALSE
+        )
+
+        pramanix_approval_decisions(
+            request_id TEXT PRIMARY KEY
+                REFERENCES pramanix_approval_requests ON DELETE CASCADE,
+            status TEXT NOT NULL,
+            reviewer_id TEXT NOT NULL,
+            comment TEXT,
+            decided_at DOUBLE PRECISION NOT NULL,
+            hmac_tag TEXT NOT NULL
+        )
+
+    Args:
+        dsn:          asyncpg connection DSN, e.g.
+                      ``"postgresql://user:pass@localhost/mydb"``.
+        signing_key:  HMAC key for :class:`OversightRecord` integrity.
+                      Defaults to a per-process ephemeral key.
+        default_ttl_s: Seconds before a pending request auto-times-out.
+                       Default: 300 s.
+        pool_min:     Minimum asyncpg pool size. Default: 1.
+        pool_max:     Maximum asyncpg pool size. Default: 5.
+        _pool:        Pre-built asyncpg pool for unit testing.
+
+    Requires:
+        ``pip install 'pramanix[postgres]'`` (``asyncpg >= 0.29``).
+
+    Usage::
+
+        import asyncpg
+        workflow = PostgresApprovalWorkflow(
+            dsn="postgresql://pramanix:secret@db:5432/pramanix",
+            signing_key=signing_key_bytes,
+        )
+        await workflow.initialize()  # create tables once at startup
+
+        try:
+            workflow.request_approval(
+                principal_id="agent-001",
+                action="transfer $50,000",
+                ...
+            )
+        except OversightRequiredError as exc:
+            request_id = exc.request_id
+
+        # Reviewer flow:
+        record = workflow.approve(request_id, reviewer_id="alice@corp.com")
+        assert workflow.check(request_id)
+    """
+
+    _DDL = """
+    CREATE TABLE IF NOT EXISTS pramanix_approval_requests (
+        request_id    TEXT             PRIMARY KEY,
+        principal_id  TEXT             NOT NULL,
+        action        TEXT             NOT NULL,
+        decision_id   TEXT             NOT NULL DEFAULT '',
+        policy_hash   TEXT             NOT NULL DEFAULT '',
+        intent_dump   JSONB            NOT NULL DEFAULT '{}',
+        required_scopes JSONB          NOT NULL DEFAULT '[]',
+        blast_radius  TEXT             NOT NULL DEFAULT 'unknown',
+        reason        TEXT             NOT NULL DEFAULT '',
+        created_at    DOUBLE PRECISION NOT NULL,
+        ttl_seconds   DOUBLE PRECISION NOT NULL,
+        metadata      JSONB            NOT NULL DEFAULT '{}',
+        decided       BOOLEAN          NOT NULL DEFAULT FALSE
+    );
+    CREATE TABLE IF NOT EXISTS pramanix_approval_decisions (
+        request_id    TEXT             PRIMARY KEY
+                          REFERENCES pramanix_approval_requests ON DELETE CASCADE,
+        status        TEXT             NOT NULL,
+        reviewer_id   TEXT             NOT NULL,
+        comment       TEXT             NOT NULL DEFAULT '',
+        decided_at    DOUBLE PRECISION NOT NULL,
+        hmac_tag      TEXT             NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_par_decided
+        ON pramanix_approval_requests (decided);
+    CREATE INDEX IF NOT EXISTS idx_par_created_at
+        ON pramanix_approval_requests (created_at);
+    """
+
+    def __init__(
+        self,
+        dsn: str = "",
+        *,
+        signing_key: bytes | None = None,
+        default_ttl_s: float = 300.0,
+        pool_min: int = 1,
+        pool_max: int = 5,
+        _pool: Any = None,
+    ) -> None:
+        # asyncpg is optional — only required for PostgresApprovalWorkflow.
+        if _pool is None:
+            try:
+                import importlib as _il
+                _il.import_module("asyncpg")
+                del _il
+            except ImportError as exc:
+                from pramanix.exceptions import ConfigurationError
+                raise ConfigurationError(
+                    "asyncpg is required for PostgresApprovalWorkflow. "
+                    "Install it with: pip install 'pramanix[postgres]'"
+                ) from exc
+        self._dsn = dsn
+        self._pool = _pool
+        self._pool_min = pool_min
+        self._pool_max = pool_max
+        self._key: bytes = signing_key if signing_key is not None else _process_key()
+        self._ttl = default_ttl_s
+        self._loop_thread: threading.Thread | None = None
+        self._loop: Any = None
+        self._loop_ready = threading.Event()
+        if _pool is None:
+            self._start_loop_thread()
+        else:
+            # Testing path: caller provides a pre-built pool; no loop thread needed.
+            import asyncio as _asyncio
+            try:
+                self._loop = _asyncio.get_event_loop()
+            except RuntimeError:
+                self._loop = _asyncio.new_event_loop()
+
+    # ── Lifecycle ──────────────────────────────────────────────────────────────
+
+    def _start_loop_thread(self) -> None:
+        """Start a dedicated event-loop thread that owns the asyncpg pool."""
+        import asyncio as _asyncio
+
+        def _run() -> None:
+            loop = _asyncio.new_event_loop()
+            _asyncio.set_event_loop(loop)
+            self._loop = loop
+            self._loop_ready.set()
+            loop.run_forever()
+
+        self._loop_thread = threading.Thread(
+            target=_run, daemon=True, name="pramanix-pg-oversight-loop"
+        )
+        self._loop_thread.start()
+        self._loop_ready.wait(timeout=10.0)
+
+    def _run_coro(self, coro: Any) -> Any:
+        """Submit *coro* to the dedicated event loop and block until done."""
+        import asyncio as _asyncio
+        if self._loop is None:
+            raise RuntimeError("PostgresApprovalWorkflow: event loop not started.")
+        future = _asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=30.0)
+
+    async def _get_pool(self) -> Any:
+        """Return the asyncpg pool, creating it lazily."""
+        if self._pool is not None:
+            return self._pool
+        import asyncpg as _asyncpg
+        self._pool = await _asyncpg.create_pool(
+            self._dsn, min_size=self._pool_min, max_size=self._pool_max
+        )
+        return self._pool
+
+    async def _initialize_async(self) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(self._DDL)
+
+    def initialize(self) -> None:
+        """Create the Postgres schema (tables + indexes) if not already present.
+
+        Call this once at application startup before any workflow operations.
+        Safe to call multiple times — uses ``CREATE TABLE IF NOT EXISTS``.
+        """
+        self._run_coro(self._initialize_async())
+
+    def close(self) -> None:
+        """Close the asyncpg pool and stop the background event-loop thread."""
+        async def _close_pool() -> None:
+            if self._pool is not None:
+                await self._pool.close()
+                self._pool = None
+
+        try:
+            self._run_coro(_close_pool())
+        except Exception as exc:
+            _log.warning("PostgresApprovalWorkflow.close: pool close error: %s", exc)
+        if self._loop is not None and self._loop_thread is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop_thread.join(timeout=5.0)
+
+    # ── Public API ─────────────────────────────────────────────────────────────
+
+    def request_approval(
+        self,
+        *,
+        principal_id: str,
+        action: str,
+        decision_id: str = "",
+        policy_hash: str = "",
+        intent_dump: dict[str, Any] | None = None,
+        required_scopes: list[str] | None = None,
+        blast_radius: str = "unknown",
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Persist a new approval request in Postgres and raise
+        :exc:`~pramanix.exceptions.OversightRequiredError`.
+
+        Raises:
+            OversightRequiredError: Always — callers catch this to retrieve
+                the ``request_id`` and route it to a reviewer.
+        """
+        req = ApprovalRequest(
+            principal_id=principal_id,
+            action=action,
+            decision_id=decision_id,
+            policy_hash=policy_hash,
+            intent_dump=intent_dump or {},
+            required_scopes=required_scopes or [],
+            blast_radius=blast_radius,
+            reason=reason,
+            ttl_seconds=self._ttl,
+            metadata=metadata or {},
+        )
+        self._run_coro(self._insert_request(req))
+        _log.info(
+            "oversight.pg.requested: request_id=%s principal=%s action=%r",
+            req.request_id,
+            principal_id,
+            action[:80],
+        )
+        raise OversightRequiredError(
+            f"Action '{action}' requires human approval (request_id={req.request_id}).",
+            request_id=req.request_id,
+            action=action,
+            reason=reason,
+        )
+
+    def approve(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str = "",
+    ) -> OversightRecord:
+        """Record an approval decision in Postgres.
+
+        Raises:
+            KeyError: If *request_id* does not exist or has already been decided.
+        """
+        return self._run_coro(
+            self._decide(request_id, ApprovalStatus.APPROVED,
+                         reviewer_id=reviewer_id, comment=comment)
+        )
+
+    def reject(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str = "",
+    ) -> OversightRecord:
+        """Record a rejection decision in Postgres."""
+        return self._run_coro(
+            self._decide(request_id, ApprovalStatus.REJECTED,
+                         reviewer_id=reviewer_id, comment=comment)
+        )
+
+    def check(self, request_id: str) -> bool:
+        """Return True if *request_id* was APPROVED."""
+        return self._run_coro(self._check_async(request_id))
+
+    def pending(self) -> list[ApprovalRequest]:
+        """Return all non-expired, undecided requests from Postgres."""
+        return self._run_coro(self._pending_async())
+
+    def records(self) -> list[OversightRecord]:
+        """Return all oversight records from Postgres."""
+        return self._run_coro(self._records_async())
+
+    # ── Async internals ────────────────────────────────────────────────────────
+
+    async def _insert_request(self, req: ApprovalRequest) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO pramanix_approval_requests (
+                    request_id, principal_id, action, decision_id, policy_hash,
+                    intent_dump, required_scopes, blast_radius, reason,
+                    created_at, ttl_seconds, metadata, decided
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,FALSE)
+                ON CONFLICT (request_id) DO NOTHING
+                """,
+                req.request_id,
+                req.principal_id,
+                req.action,
+                req.decision_id,
+                req.policy_hash,
+                json.dumps(req.intent_dump),
+                json.dumps(req.required_scopes),
+                req.blast_radius,
+                req.reason,
+                req.created_at,
+                req.ttl_seconds,
+                json.dumps(req.metadata),
+            )
+
+    async def _decide(
+        self,
+        request_id: str,
+        status: ApprovalStatus,
+        *,
+        reviewer_id: str,
+        comment: str,
+    ) -> OversightRecord:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "SELECT * FROM pramanix_approval_requests WHERE request_id=$1 FOR UPDATE",
+                    request_id,
+                )
+                if row is None:
+                    raise KeyError(
+                        f"ApprovalRequest '{request_id}' not found."
+                    )
+                if row["decided"]:
+                    raise KeyError(
+                        f"ApprovalRequest '{request_id}' has already been decided."
+                    )
+                req = ApprovalRequest(
+                    request_id=str(row["request_id"]),
+                    principal_id=str(row["principal_id"]),
+                    action=str(row["action"]),
+                    decision_id=str(row["decision_id"]),
+                    policy_hash=str(row["policy_hash"]),
+                    intent_dump=json.loads(row["intent_dump"]),
+                    required_scopes=json.loads(row["required_scopes"]),
+                    blast_radius=str(row["blast_radius"]),
+                    reason=str(row["reason"]),
+                    created_at=float(row["created_at"]),
+                    ttl_seconds=float(row["ttl_seconds"]),
+                    metadata=json.loads(row["metadata"]),
+                )
+                # Fail-safe: if TTL expired, record TIMEOUT regardless.
+                if req.is_expired() and status == ApprovalStatus.APPROVED:
+                    status = ApprovalStatus.TIMEOUT
+                    _log.warning(
+                        "oversight.pg.timeout: request_id=%s principal=%s",
+                        request_id, req.principal_id,
+                    )
+                dec = ApprovalDecision(
+                    request_id=request_id,
+                    status=status,
+                    reviewer_id=reviewer_id,
+                    comment=comment,
+                )
+                record = OversightRecord(req, dec, signing_key=self._key)
+                await conn.execute(
+                    """
+                    INSERT INTO pramanix_approval_decisions (
+                        request_id, status, reviewer_id, comment, decided_at, hmac_tag
+                    ) VALUES ($1,$2,$3,$4,$5,$6)
+                    ON CONFLICT (request_id) DO NOTHING
+                    """,
+                    request_id,
+                    status.value,
+                    reviewer_id,
+                    comment,
+                    dec.decided_at,
+                    record.to_dict()["hmac_tag"],
+                )
+                await conn.execute(
+                    "UPDATE pramanix_approval_requests SET decided=TRUE WHERE request_id=$1",
+                    request_id,
+                )
+        _log.info(
+            "oversight.pg.decided: request_id=%s status=%s reviewer=%s",
+            request_id, status.value, reviewer_id,
+        )
+        return record
+
+    async def _check_async(self, request_id: str) -> bool:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT status FROM pramanix_approval_decisions WHERE request_id=$1",
+                request_id,
+            )
+            if row is None:
+                return False
+            return str(row["status"]) == ApprovalStatus.APPROVED.value
+
+    async def _pending_async(self) -> list[ApprovalRequest]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM pramanix_approval_requests
+                WHERE decided=FALSE
+                ORDER BY created_at ASC
+                """
+            )
+        result: list[ApprovalRequest] = []
+        now = time.time()
+        for row in rows:
+            created = float(row["created_at"])
+            ttl = float(row["ttl_seconds"])
+            if now <= created + ttl:  # only include non-expired
+                result.append(ApprovalRequest(
+                    request_id=str(row["request_id"]),
+                    principal_id=str(row["principal_id"]),
+                    action=str(row["action"]),
+                    decision_id=str(row["decision_id"]),
+                    policy_hash=str(row["policy_hash"]),
+                    intent_dump=json.loads(row["intent_dump"]),
+                    required_scopes=json.loads(row["required_scopes"]),
+                    blast_radius=str(row["blast_radius"]),
+                    reason=str(row["reason"]),
+                    created_at=created,
+                    ttl_seconds=ttl,
+                    metadata=json.loads(row["metadata"]),
+                ))
+        return result
+
+    async def _records_async(self) -> list[OversightRecord]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT r.*, d.status, d.reviewer_id, d.comment,
+                       d.decided_at, d.hmac_tag
+                FROM pramanix_approval_requests r
+                JOIN pramanix_approval_decisions d USING (request_id)
+                ORDER BY d.decided_at ASC
+                """
+            )
+        recs: list[OversightRecord] = []
+        for row in rows:
+            data = {
+                "request_id": str(row["request_id"]),
+                "principal_id": str(row["principal_id"]),
+                "action": str(row["action"]),
+                "decision_id": str(row["decision_id"]),
+                "policy_hash": str(row["policy_hash"]),
+                "required_scopes": json.loads(row["required_scopes"]),
+                "blast_radius": str(row["blast_radius"]),
+                "reason": str(row["reason"]),
+                "created_at": float(row["created_at"]),
+                "ttl_seconds": float(row["ttl_seconds"]),
+                "status": str(row["status"]),
+                "reviewer_id": str(row["reviewer_id"]),
+                "comment": str(row["comment"]),
+                "decided_at": float(row["decided_at"]),
+                "hmac_tag": str(row["hmac_tag"]),
+            }
+            try:
+                recs.append(OversightRecord.from_dict(data, signing_key=self._key))
+            except Exception as exc:
+                _log.warning(
+                    "oversight.pg.records: failed to decode record %s: %s",
+                    data.get("request_id", "?"), exc,
+                )
+        return recs
+
+
+# ── Webhook notification channel ──────────────────────────────────────────────
+
+
+class WebhookNotificationChannel:
+    """HTTP webhook notification for pending approval requests.
+
+    When an :class:`ApprovalRequest` arrives, this channel POSTs a JSON
+    payload to a configured URL (Slack incoming webhook, PagerDuty Events
+    API v2, generic webhook, etc.).  Failures are retried with exponential
+    back-off up to *max_retries* times.
+
+    This class is framework-agnostic.  Wire it into any approval workflow::
+
+        notifier = WebhookNotificationChannel(
+            url="https://hooks.slack.com/services/T00/B00/xxx",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            workflow.request_approval(principal_id=..., action=..., ...)
+        except OversightRequiredError as exc:
+            req = workflow.pending()[0]  # fetch the freshly created request
+            notifier.notify(req)
+
+    The :meth:`notify` call is **synchronous** — it blocks until the
+    request is delivered or all retries are exhausted.  For non-blocking
+    use, submit it to a thread pool.
+
+    Args:
+        url:           Webhook endpoint URL.
+        headers:       Additional HTTP headers (e.g. ``Authorization``).
+        timeout:       Per-attempt HTTP timeout in seconds. Default: 10 s.
+        max_retries:   Number of retry attempts after the first failure.
+                       Default: 3 (total of 4 attempts).
+        payload_fn:    Optional callable ``(ApprovalRequest) → dict`` to
+                       customise the posted payload.  When ``None``, a
+                       default JSON payload is used.
+
+    Requires:
+        ``httpx`` — already a dependency of ``pramanix[splunk]``.  Install
+        with: ``pip install 'pramanix[splunk]'`` or ``pip install httpx``.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: float = 10.0,
+        max_retries: int = 3,
+        payload_fn: Any = None,
+    ) -> None:
+        try:
+            import httpx as _httpx
+        except ImportError as exc:
+            from pramanix.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "httpx is required for WebhookNotificationChannel. "
+                "Install it with: pip install httpx"
+            ) from exc
+        self._url = url
+        self._headers = headers or {}
+        self._timeout = timeout
+        self._max_retries = max_retries
+        self._payload_fn = payload_fn
+        self._client = _httpx.Client(timeout=timeout)
+
+    def notify(self, request: ApprovalRequest) -> None:
+        """POST the approval request to the configured webhook URL.
+
+        Retries up to *max_retries* times with exponential back-off
+        (1 s, 2 s, 4 s, …).  Non-2xx responses are logged as errors and
+        retried (HEC-style: e.g. 429 rate-limit, 503 back-pressure).
+        Does not raise — all failures are logged.
+        """
+        payload = self._build_payload(request)
+        attempt = 0
+        delay = 1.0
+        while attempt <= self._max_retries:
+            try:
+                resp = self._client.post(
+                    self._url,
+                    json=payload,
+                    headers=self._headers,
+                )
+                if resp.status_code < 400:
+                    _log.info(
+                        "oversight.webhook.sent: request_id=%s status=%d",
+                        request.request_id, resp.status_code,
+                    )
+                    return
+                _log.warning(
+                    "oversight.webhook.http_error: request_id=%s status=%d attempt=%d/%d",
+                    request.request_id, resp.status_code, attempt + 1,
+                    self._max_retries + 1,
+                )
+            except Exception as exc:
+                _log.warning(
+                    "oversight.webhook.send_error: request_id=%s attempt=%d/%d error=%s",
+                    request.request_id, attempt + 1, self._max_retries + 1, exc,
+                )
+            attempt += 1
+            if attempt <= self._max_retries:
+                time.sleep(delay)
+                delay = min(delay * 2, 30.0)
+        _log.error(
+            "oversight.webhook.exhausted: request_id=%s all %d attempts failed — "
+            "review portal must be checked manually",
+            request.request_id, self._max_retries + 1,
+        )
+
+    def _build_payload(self, request: ApprovalRequest) -> dict[str, Any]:
+        """Build the webhook JSON payload from the approval request."""
+        if self._payload_fn is not None:
+            return self._payload_fn(request)
+        return {
+            "pramanix_event": "approval_required",
+            "request_id": request.request_id,
+            "principal_id": request.principal_id,
+            "action": request.action,
+            "blast_radius": request.blast_radius,
+            "required_scopes": request.required_scopes,
+            "reason": request.reason,
+            "policy_hash": request.policy_hash,
+            "created_at": request.created_at,
+            "ttl_seconds": request.ttl_seconds,
+        }
+
+    def close(self) -> None:
+        """Close the underlying httpx client.  Call at application teardown."""
+        try:
+            self._client.close()
+        except Exception as exc:
+            _log.warning("WebhookNotificationChannel.close: %s", exc)

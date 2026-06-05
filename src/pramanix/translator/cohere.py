@@ -11,6 +11,7 @@ If the package is not installed, instantiation raises
 """
 
 from __future__ import annotations
+import re
 
 import asyncio
 import logging
@@ -24,6 +25,19 @@ from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
 from pramanix.translator.base import RedactedSecretsMixin
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -158,7 +172,7 @@ class CohereTranslator(RedactedSecretsMixin):
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"Cohere model '{self.model}' unreachable after " f"{attempts} attempt(s): {exc}",
+                f"Cohere model '{_safe_model_tag(self.model)}' unreachable after " f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
@@ -170,14 +184,14 @@ class CohereTranslator(RedactedSecretsMixin):
 
                 if isinstance(exc, _httpx.TransportError | _httpx.TimeoutException):
                     raise LLMTimeoutError(
-                        f"Cohere model '{self.model}' connection error: {exc}",
+                        f"Cohere model '{_safe_model_tag(self.model)}' connection error: {exc}",
                         model=self.model,
                         attempts=attempts,
                     ) from exc
             except ImportError:
                 pass
             raise
-        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
+        raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Retry loop exited without a result")
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
@@ -294,5 +308,5 @@ class CohereTranslator(RedactedSecretsMixin):
                 raw = str(response)
 
         if not raw or not raw.strip():
-            raise ExtractionFailureError(f"[{self.model}] Cohere returned an empty response.")
+            raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Cohere returned an empty response.")
         return raw

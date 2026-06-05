@@ -60,7 +60,14 @@ def _inc_parse_failure(rule_name: str) -> None:
                         "malformed numeric inputs were passed through to Z3",
                         ["rule"],
                     )
-                except Exception:
+                except Exception as _reg_exc:
+                    log.warning(
+                        "fast_path: failed to register pramanix_fast_path_parse_failure_total"
+                        " Prometheus counter — parse-failure metrics will be unavailable."
+                        " Error: %s: %s",
+                        type(_reg_exc).__name__,
+                        _reg_exc,
+                    )
                     _PARSE_FAILURE_COUNTER = False
     try:
         if _PARSE_FAILURE_COUNTER:
@@ -109,7 +116,12 @@ class SemanticFastPath:
         _rule_name = f"negative_amount({field_name})"
 
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
-            val = intent.get(field_name) or state.get(field_name)
+            # Use explicit None check so that zero (a valid and suspicious amount)
+            # is not short-circuited to the state dict. `x or y` treats 0, 0.0,
+            # and Decimal("0") as falsy and silently falls through to state.
+            _sentinel = object()
+            raw = intent.get(field_name, _sentinel)
+            val = raw if raw is not _sentinel else state.get(field_name)
             if val is None:
                 return None
             try:
@@ -187,7 +199,11 @@ class SemanticFastPath:
         _rule_name = f"exceeds_hard_cap({amount_field},{cap})"
 
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
-            val = intent.get(amount_field) or state.get(amount_field)
+            # Explicit None check — zero is a valid amount and must not be
+            # short-circuited to state via boolean `or`.
+            _sentinel = object()
+            raw = intent.get(amount_field, _sentinel)
+            val = raw if raw is not _sentinel else state.get(amount_field)
             if val is None:
                 return None
             try:

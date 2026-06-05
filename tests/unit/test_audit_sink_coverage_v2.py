@@ -19,9 +19,7 @@ Covers:
 
 from __future__ import annotations
 
-import concurrent.futures
 import importlib
-import queue
 import threading
 import time
 from typing import Any
@@ -37,6 +35,8 @@ from pramanix.audit_sink import (
 from pramanix.decision import Decision, SolverStatus
 from tests.helpers.real_protocols import (
     _CapturingLogsApi,
+    _FakeApiClient,
+    _FakeLogsApi,
     _KafkaDLQProducer,
     _S3Client,
 )
@@ -174,24 +174,7 @@ class TestS3WorkerStopEventPaths:
         Setting stop_event directly (no sentinel) exercises the stop_event
         branch rather than the sentinel branch.
         """
-        sink = S3AuditSink.__new__(S3AuditSink)
-        sink._bucket = "test-bucket"
-        sink._prefix = ""
-        sink._s3 = _S3Client()
-        sink._max_queue = 1_000
-        sink._queue = queue.Queue(maxsize=1_000)
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-        sink._stop_event = threading.Event()
-        sink._pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="pramanix-s3-test"
-        )
-        sink._worker_thread = threading.Thread(
-            target=sink._worker,
-            daemon=True,
-            name="pramanix-s3-stop-test",
-        )
-        sink._worker_thread.start()
+        sink = S3AuditSink._for_testing(_S3Client())
 
         # Let worker loop at least once with an empty queue → covers `continue` (390)
         time.sleep(0.2)
@@ -225,16 +208,8 @@ class TestS3WorkerPoolSubmitException:
         block at lines 396-397 executes.  A sentinel is then placed so the
         worker exits cleanly.
         """
-        sink = S3AuditSink.__new__(S3AuditSink)
-        sink._bucket = "test-bucket"
-        sink._prefix = ""
-        sink._s3 = _S3Client()
-        sink._max_queue = 1_000
-        q: queue.Queue = queue.Queue(maxsize=1_000)
-        sink._queue = q
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-        sink._stop_event = threading.Event()
+        sink = S3AuditSink._for_testing(_S3Client())
+        q = sink._queue
         sink._pool = _RaisingSubmitPool()
 
         # Put a real item first so the worker tries pool.submit → raises → 396-397 hit.
@@ -264,18 +239,13 @@ class TestSplunkWorkerStopEventPath:
         handler to take the `break` branch at line 520 rather than the
         sentinel (`if payload is None: break`) branch.
         """
-        sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
-        sink._url = "http://splunk.test:8088/services/collector"
-        sink._auth = "Splunk test-token"
-        sink._index = None
-        sink._sourcetype = "pramanix:decision"
-        sink._timeout = 5.0
-        sink._max_queue = 500
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-        sink._queue = queue.Queue(maxsize=500)
-        sink._stop_event = threading.Event()
-        # _client is not set — the send path is never reached (queue is empty).
+        # start_worker=False so we can instrument _send_loop ourselves below.
+        # The HTTP client is never invoked (queue is always empty in this test).
+        class _NullClient:
+            def close(self) -> None:
+                pass
+
+        sink = SplunkHecAuditSink._for_testing(_NullClient(), start_worker=False)
 
         # Signal from inside the worker the moment queue.get() is first entered.
         # This eliminates the time.sleep(0.65) race: we set stop_event only
@@ -311,18 +281,15 @@ class TestSplunkWorkerStopEventPath:
 class TestSplunkEmitOuterException:
     def test_emit_swallows_to_dict_exception(self) -> None:
         """Lines 555-556: outer except catches exception from decision.to_dict()."""
-        sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
-        sink._url = "http://splunk.test:8088/services/collector"
-        sink._auth = "Splunk test-token"
-        sink._index = None
-        sink._sourcetype = "pramanix:decision"
-        sink._max_queue = 500
-        sink._queue = queue.Queue(maxsize=500)
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
+        # The HTTP client is never invoked — emit() raises before enqueuing.
+        class _NullHttpxClient:
+            def close(self) -> None:
+                pass
 
+        sink = SplunkHecAuditSink._for_testing(_NullHttpxClient())
         # _BoomDecision.to_dict() raises → outer except covers lines 555-556.
         sink.emit(_BoomDecision())  # must not propagate the exception
+        sink.close()
 
 
 # ── DatadogAuditSink._send_loop — stop_event break (line 652) ────────────────
@@ -347,17 +314,7 @@ class TestDatadogWorkerStopEventPath:
         import datadog_api_client.v2.model.http_log
         import datadog_api_client.v2.model.http_log_item  # noqa: F401
 
-        sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._service = "pramanix"
-        sink._source = "pramanix"
-        sink._tags = ""
-        sink._max_queue = 500
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-        sink._logs_api = _CapturingLogsApi()
-        sink._queue = queue.Queue(maxsize=500)
-        sink._stop_event = threading.Event()
-
+        sink = DatadogAuditSink._for_testing(_CapturingLogsApi(), _FakeApiClient())
         # Signal from inside the worker the moment queue.get() is first entered.
         # Because the imports are pre-warmed the thread reaches queue.get()
         # almost immediately, making the synchronisation reliable.
@@ -391,14 +348,6 @@ class TestDatadogWorkerStopEventPath:
 class TestDatadogEmitOuterException:
     def test_emit_swallows_to_dict_exception(self) -> None:
         """Lines 687-688: outer except catches exception from decision.to_dict()."""
-        sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._service = "pramanix"
-        sink._source = "pramanix"
-        sink._tags = ""
-        sink._max_queue = 500
-        sink._queue = queue.Queue(maxsize=500)
-        sink._queue_lock = threading.Lock()
-        sink._overflow_count = 0
-
+        sink = DatadogAuditSink._for_testing(_FakeLogsApi(), _FakeApiClient())
         # _BoomDecision.to_dict() raises → outer except covers lines 687-688.
         sink.emit(_BoomDecision())  # must not propagate the exception

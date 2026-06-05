@@ -350,18 +350,8 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         """RedisDistributedBackend.close() closes the client."""
         from pramanix.circuit_breaker import RedisDistributedBackend
 
-        try:
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        except Exception:
-            pytest.skip("RedisDistributedBackend not constructable without redis")
-
         client = _AsyncCloseClient()
-        backend._client = client
-        backend._redis_url = "redis://localhost/0"
-        backend._prefix = "pramanix:cb:"
-        backend._ttl = 300
-        backend._sync_interval = 1.0
-        backend._last_sync = 0.0
+        backend = RedisDistributedBackend._for_testing(client)
 
         await backend.close()
 
@@ -373,17 +363,7 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         """RedisDistributedBackend.close() swallows aclose() exceptions."""
         from pramanix.circuit_breaker import RedisDistributedBackend
 
-        try:
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        except Exception:
-            pytest.skip("RedisDistributedBackend not constructable without redis")
-
-        backend._client = _AsyncErrorCloseClient()
-        backend._redis_url = "redis://localhost/0"
-        backend._prefix = "pramanix:cb:"
-        backend._ttl = 300
-        backend._sync_interval = 1.0
-        backend._last_sync = 0.0
+        backend = RedisDistributedBackend._for_testing(_AsyncErrorCloseClient())
 
         await backend.close()  # must not raise
         assert backend._client is None
@@ -454,18 +434,8 @@ class TestCircuitBreakerPrometheusRegistryPaths:
         """_async_clear swallows exceptions from the Redis client."""
         from pramanix.circuit_breaker import RedisDistributedBackend
 
-        try:
-            backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-        except Exception:
-            pytest.skip("RedisDistributedBackend not constructable without redis")
-
         # Inject a real client that raises on any call.
-        backend._client = _ErrorRedisClient()
-        backend._redis_url = "redis://localhost/0"
-        backend._prefix = "pramanix:cb:"
-        backend._ttl = 300
-        backend._sync_interval = 1.0
-        backend._last_sync = 0.0
+        backend = RedisDistributedBackend._for_testing(_ErrorRedisClient())
 
         await backend._async_clear(namespace="test")  # must not raise
 
@@ -810,22 +780,9 @@ class TestGrpcWrappedHandlerCalls:
 
 def _make_postgres_verifier(pool: Any) -> Any:
     """Build a PostgresExecutionTokenVerifier without a real DB connection."""
-    import time as _time
-
     from pramanix.execution_token import PostgresExecutionTokenVerifier
 
-    verifier = PostgresExecutionTokenVerifier.__new__(PostgresExecutionTokenVerifier)
-    verifier._key = b"secret-key-min16"
-    verifier._dsn = "postgresql://localhost/test"
-    verifier._prefix = "pramanix:token:"
-    verifier._clock = _time.time
-    verifier._pool = pool
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True, name="test-pg-loop")
-    thread.start()
-    verifier._loop = loop
-    verifier._loop_thread = thread
-    return verifier
+    return PostgresExecutionTokenVerifier._for_testing(pool, secret_key=b"secret-key-min16")
 
 
 def _make_exec_token(key: bytes, *, expired: bool = False, state_version: str | None = "v1") -> Any:
@@ -973,10 +930,6 @@ class TestRedisScanPagination:
         """consumed_count() iterates when scan returns non-zero cursor."""
         from pramanix.execution_token import RedisExecutionTokenVerifier
 
-        verifier = RedisExecutionTokenVerifier.__new__(RedisExecutionTokenVerifier)
-        verifier._key = b"secret-key-min16"
-        verifier._prefix = "pramanix:token:"
-
         # Two pages: first page cursor=42 (continue), second page cursor=0 (stop).
         scan_redis = _SyncScanRedis(
             [
@@ -984,7 +937,9 @@ class TestRedisScanPagination:
                 (0, ["key3"]),
             ]
         )
-        verifier._redis = scan_redis
+        verifier = RedisExecutionTokenVerifier._for_testing(
+            scan_redis, secret_key=b"secret-key-min16"
+        )
 
         count = verifier.consumed_count()
         assert count == 3  # 2 + 1 across two pages
@@ -1321,9 +1276,7 @@ class TestKeyProviderSupportsRotation:
     def test_env_provider_no_rotation(self) -> None:
         from pramanix.key_provider import EnvKeyProvider
 
-        p = EnvKeyProvider.__new__(EnvKeyProvider)
-        p._env_var = "PRAMANIX_SIGNING_KEY_PEM"
-        p._version = "env-1"
+        p = EnvKeyProvider._for_testing(env_var="PRAMANIX_SIGNING_KEY_PEM", version="env-1")
         assert p.supports_rotation is False
 
     def test_file_provider_supports_rotation(self, tmp_path) -> None:
@@ -1334,41 +1287,19 @@ class TestKeyProviderSupportsRotation:
     def test_azure_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        p._client = _AzureSecretClient()
-        p._secret_name = "key"
-        p._secret_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
+        p = AzureKeyVaultKeyProvider._for_testing(_AzureSecretClient(), secret_name="key")
         assert p.supports_rotation is True
 
     def test_gcp_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import GcpKmsKeyProvider
 
-        p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        p._client = _GcpSecretClient()
-        p._project_id = "proj"
-        p._secret_id = "secret"
-        p._version_id = "latest"
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cache_expires = 0.0
+        p = GcpKmsKeyProvider._for_testing(_GcpSecretClient())
         assert p.supports_rotation is True
 
     def test_vault_provider_supports_rotation(self) -> None:
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._client = types.SimpleNamespace()
-        p._secret_path = "pramanix/key"
-        p._field = "private_key_pem"
-        p._mount_point = "secret"
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
+        p = HashiCorpVaultKeyProvider._for_testing(types.SimpleNamespace())
         assert p.supports_rotation is True
 
     def test_aws_private_key_pem_cache_miss_triggers_refresh(self) -> None:
@@ -1376,15 +1307,7 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient(secret_string="FAKE_PEM")
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = mc
-        p._secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:k"
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0  # expired → cache miss on first call
+        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
         assert p.private_key_pem() == b"FAKE_PEM"
 
     def test_aws_key_version_cache_miss_triggers_refresh(self) -> None:
@@ -1392,15 +1315,7 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient(secret_string="FAKE_PEM", version_id="v-99")
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = mc
-        p._secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:k"
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0  # expired → cache miss
+        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
         assert p.key_version() == "v-99"
 
     def test_gcp_public_key_pem_calls_derive(self) -> None:
@@ -1413,14 +1328,7 @@ class TestKeyProviderSupportsRotation:
         private_pem = signer.private_key_pem()
         expected_public_pem = signer.public_key_pem()
 
-        p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        p._client = _GcpSecretClient()
-        p._project_id = "proj"
-        p._secret_id = "secret"
-        p._version_id = "latest"
-        p._cache_lock = threading.Lock()
-        p._cached_pem = private_pem  # real PEM
-        p._cache_expires = float("inf")  # cache valid — skips refresh
+        p = GcpKmsKeyProvider._for_testing(_GcpSecretClient())
         result = p.public_key_pem()
         assert result == expected_public_pem
 
@@ -1428,15 +1336,7 @@ class TestKeyProviderSupportsRotation:
         """Line 332: AwsKmsKeyProvider.supports_rotation returns True."""
         from pramanix.key_provider import AwsKmsKeyProvider
 
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = _AwsSecretsClient()
-        p._secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:k"
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
+        p = AwsKmsKeyProvider._for_testing(_AwsSecretsClient(), secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
         assert p.supports_rotation is True
 
     def test_aws_private_key_pem_cache_hit_skips_refresh(self) -> None:
@@ -1444,15 +1344,7 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient()
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = mc
-        p._secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:k"
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"CACHED_PEM"
-        p._cached_version = "v-cached"
-        p._cache_expires = float("inf")  # valid forever
+        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
         result = p.private_key_pem()
         assert result == b"CACHED_PEM"
         assert mc.calls == 0
@@ -1462,15 +1354,7 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient()
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = mc
-        p._secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:k"
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"CACHED_PEM"
-        p._cached_version = "v-cached"
-        p._cache_expires = float("inf")  # valid forever
+        p = AwsKmsKeyProvider._for_testing(mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k")
         result = p.key_version()
         assert result == "v-cached"
         assert mc.calls == 0
@@ -1479,14 +1363,14 @@ class TestKeyProviderSupportsRotation:
         """Branch 576->578: Vault cache valid → _refresh_cache() NOT called."""
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._client = types.SimpleNamespace(
+        fake_client = types.SimpleNamespace(
             secrets=types.SimpleNamespace(
                 kv=types.SimpleNamespace(
                     v2=types.SimpleNamespace(read_secret_version=lambda **kw: None)
                 )
             )
         )
+        p = HashiCorpVaultKeyProvider._for_testing(fake_client)
         p._secret_path = "pramanix/key"
         p._field = "private_key_pem"
         p._mount_point = "secret"

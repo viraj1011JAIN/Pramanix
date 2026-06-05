@@ -2348,3 +2348,73 @@ class _FailingSyncRedisClient:
 
     def ping(self) -> None:
         raise RuntimeError("redis unavailable")
+
+
+# ── Missing fake stubs for _for_testing() migrations ─────────────────────────
+
+
+class _FakeHttpxClient:
+    """httpx.Client duck-type for SplunkHecAuditSink._for_testing() tests."""
+
+    def close(self) -> None:
+        pass
+
+    def post(self, url: str, **kwargs: Any) -> Any:  # type: ignore[return]
+        pass
+
+
+class _FakeApiClient:
+    """Datadog ApiClient duck-type for DatadogAuditSink._for_testing() tests."""
+
+    def close(self) -> None:
+        pass
+
+
+class _FakeLogsApi:
+    """Datadog LogsApi duck-type — submit_log() is a no-op."""
+
+    def submit_log(self, body: Any) -> None:
+        pass
+
+
+class _FakeSecretsClient:
+    """AWS SecretsManager client duck-type for AwsKmsKeyProvider._for_testing()."""
+
+    def get_secret_value(self, **kwargs: Any) -> dict[str, str]:
+        return {"SecretString": "FAKE_PEM", "VersionId": "v1"}
+
+    def rotate_secret(self, **kwargs: Any) -> None:
+        pass
+
+
+class _FakeHvacClient:
+    """hvac.Client duck-type for HashiCorpVaultKeyProvider._for_testing()."""
+
+    def __init__(self) -> None:
+        self.secrets = _FakeHvacSecrets()
+
+
+class _FakeHvacSecrets:
+    def __init__(self) -> None:
+        self.kv = _FakeHvacKv()
+
+
+class _FakeHvacKv:
+    def __init__(self) -> None:
+        self.v2 = _FakeHvacKvV2()
+
+
+class _FakeHvacKvV2:
+    def read_secret_version(self, **kwargs: Any) -> dict[str, Any]:
+        return {"data": {"data": {"private_key_pem": "FAKE_PEM"}}}
+
+    def create_or_update_secret(self, **kwargs: Any) -> dict[str, Any]:
+        return {}
+
+
+class _FakeGcpClient:
+    """GCP SecretManagerServiceClient duck-type for GcpKmsKeyProvider._for_testing()."""
+
+    def access_secret_version(self, **kwargs: Any) -> Any:
+        import types
+        return types.SimpleNamespace(payload=types.SimpleNamespace(data=b"FAKE_PEM"))

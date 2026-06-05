@@ -33,6 +33,7 @@ Usage::
 """
 
 from __future__ import annotations
+import re
 
 import asyncio
 import os
@@ -43,6 +44,19 @@ from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
 from pramanix.translator.base import RedactedSecretsMixin
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -172,7 +186,7 @@ class VertexAITranslator(RedactedSecretsMixin):
             )
         except TimeoutError as exc:
             raise LLMTimeoutError(
-                f"Vertex AI model '{self.model}' timed out after {self._timeout}s.",
+                f"Vertex AI model '{_safe_model_tag(self.model)}' timed out after {self._timeout}s.",
                 model=self.model,
                 attempts=1,
             ) from exc
@@ -180,7 +194,7 @@ class VertexAITranslator(RedactedSecretsMixin):
             raise
         except Exception as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] Vertex AI API error: {exc}"
+                f"[{_safe_model_tag(self.model)}] Vertex AI API error: {exc}"
             ) from exc
 
         return parse_llm_response(raw, model_name=self.model)
@@ -205,7 +219,7 @@ class VertexAITranslator(RedactedSecretsMixin):
         raw = response.text
         if not raw:
             raise ExtractionFailureError(
-                f"[{self.model}] Vertex AI Gemini returned an empty response."
+                f"[{_safe_model_tag(self.model)}] Vertex AI Gemini returned an empty response."
             )
         return cast(str, raw)
 
@@ -223,7 +237,7 @@ class VertexAITranslator(RedactedSecretsMixin):
         raw = response.text
         if not raw:
             raise ExtractionFailureError(
-                f"[{self.model}] Vertex AI PaLM returned an empty response."
+                f"[{_safe_model_tag(self.model)}] Vertex AI PaLM returned an empty response."
             )
         return cast(str, raw)
 

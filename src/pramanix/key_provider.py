@@ -217,6 +217,23 @@ class EnvKeyProvider:
             "EnvKeyProvider does not support rotation — update the environment variable to rotate."
         )
 
+    @classmethod
+    def _for_testing(
+        cls,
+        *,
+        env_var: str = "PRAMANIX_SIGNING_KEY_PEM",
+        version: str = "env-1",
+    ) -> "EnvKeyProvider":
+        """Construct without requiring the env var to be set.
+
+        Useful when a test only needs to inspect supports_rotation or
+        key_version without actually calling private_key_pem().
+        """
+        inst = cls.__new__(cls)
+        inst._env_var = env_var
+        inst._version = version
+        return inst
+
 
 class FileKeyProvider:
     """Provide a key from a PEM file on disk.
@@ -420,6 +437,28 @@ class AwsKmsKeyProvider:
         self._client.rotate_secret(SecretId=self._secret_arn)
 
 
+    @classmethod
+    def _for_testing(
+        cls,
+        client: Any,
+        *,
+        secret_arn: str = "arn:aws:secretsmanager:us-east-1:000000000000:secret:test",
+        version_stage: str = "AWSCURRENT",
+        cached_pem: bytes | None = None,
+    ) -> "AwsKmsKeyProvider":
+        """Construct with a pre-built Secrets Manager client for unit testing."""
+        inst = cls.__new__(cls)
+        inst._secret_arn = secret_arn
+        inst._version_stage = version_stage
+        inst._explicit_version = None
+        inst._client = client
+        inst._cache_lock = threading.Lock()
+        inst._cached_pem = cached_pem
+        inst._cached_version = "test-version" if cached_pem else None
+        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if cached_pem else 0.0
+        return inst
+
+
 class AzureKeyVaultKeyProvider:
     """Fetch an Ed25519 private key PEM from Azure Key Vault Secrets.
 
@@ -544,6 +583,32 @@ class AzureKeyVaultKeyProvider:
                 self._secret_version = _pinned  # restore on failure
                 raise
 
+    @classmethod
+    def _for_testing(
+        cls,
+        client: Any,
+        *,
+        secret_name: str = "test-key",
+        secret_version: str | None = None,
+        cached_pem: bytes | None = None,
+    ) -> "AzureKeyVaultKeyProvider":
+        """Construct an instance with a pre-built client for unit testing.
+
+        Accepts an already-constructed SecretClient duck-type so tests can
+        inject fakes without requiring Azure SDK or real vault credentials.
+        If *cached_pem* is provided the cache is pre-warmed, skipping the
+        initial ``_refresh_cache()`` call.
+        """
+        inst = cls.__new__(cls)
+        inst._secret_name = secret_name
+        inst._secret_version = secret_version
+        inst._client = client
+        inst._cache_lock = threading.Lock()
+        inst._cached_pem = cached_pem
+        inst._cached_version = secret_version
+        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if cached_pem else 0.0
+        return inst
+
 
 class GcpKmsKeyProvider:
     """Fetch an Ed25519 private key PEM from GCP Secret Manager.
@@ -659,6 +724,29 @@ class GcpKmsKeyProvider:
             except Exception:
                 self._version_id = _pinned
                 raise
+
+
+    @classmethod
+    def _for_testing(
+        cls,
+        client: Any,
+        *,
+        project_id: str = "test-project",
+        secret_id: str = "test-secret",
+        version_id: str = "latest",
+        cached_pem: bytes | None = None,
+    ) -> "GcpKmsKeyProvider":
+        """Construct with a pre-built SecretManagerServiceClient for unit testing."""
+        inst = cls.__new__(cls)
+        inst._project_id = project_id
+        inst._secret_id = secret_id
+        inst._version_id = version_id
+        inst._client = client
+        inst._cache_lock = threading.Lock()
+        inst._cached_pem = cached_pem
+        inst._cached_version = version_id if cached_pem else None
+        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if cached_pem else 0.0
+        return inst
 
 
 class HashiCorpVaultKeyProvider:
@@ -793,6 +881,32 @@ class HashiCorpVaultKeyProvider:
             self._cached_pem = None
             self._cached_version = None
             self._refresh_cache()
+
+    @classmethod
+    def _for_testing(
+        cls,
+        client: Any,
+        *,
+        vault_url: str = "http://localhost:8200",
+        secret_path: str = "pramanix/signing-key",
+        mount_point: str = "secret",
+        cached_pem: bytes | None = None,
+    ) -> "HashiCorpVaultKeyProvider":
+        """Construct with a pre-built hvac client for unit testing.
+
+        Accepts an already-constructed hvac.Client duck-type so tests can
+        inject fakes without requiring a real Vault server.
+        """
+        inst = cls.__new__(cls)
+        inst._vault_url = vault_url
+        inst._secret_path = secret_path
+        inst._mount_point = mount_point
+        inst._client = client
+        inst._cache_lock = threading.Lock()
+        inst._cached_pem = cached_pem
+        inst._cached_version = "test-version" if cached_pem else None
+        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if cached_pem else 0.0
+        return inst
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -468,9 +468,7 @@ class TestASTBuilder:
         """Field referenced in constraint but not declared → PolicyCompilationError."""
         # NaturalPolicySchema validates cross-field refs, so bypass it by constructing
         # ASTBuilder directly and calling _resolve_field.
-        builder = ASTBuilder.__new__(ASTBuilder)
-        builder._schema = None
-        builder._fields = {"amount": Field("amount", Decimal, "Real")}
+        builder = ASTBuilder._for_testing(fields={"amount": Field("amount", Decimal, "Real")})
         node = _cmp("balance_check", "balance", ComparisonOp.GTE, 0, "Balance >= 0")
         with pytest.raises(PolicyCompilationError, match="balance"):
             builder._build_lhs(node)

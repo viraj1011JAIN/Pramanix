@@ -11,6 +11,7 @@ If the package is not installed, instantiation raises
 """
 
 from __future__ import annotations
+import re
 
 import asyncio
 import os
@@ -37,6 +38,19 @@ _TEMPERATURE = 0.0
 # threading.Lock (not asyncio.Lock) so it is safe across event-loop boundaries;
 # different pytest tests each run with a fresh event loop.
 import threading as _thr  # noqa: E402
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 _GEMINI_CONFIGURE_LOCK = _thr.Lock()
 del _thr
@@ -232,7 +246,7 @@ class GeminiTranslator(RedactedSecretsMixin):
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"Gemini model '{self.model}' unreachable after {attempts} attempt(s): {exc}",
+                f"Gemini model '{_safe_model_tag(self.model)}' unreachable after {attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
@@ -244,14 +258,14 @@ class GeminiTranslator(RedactedSecretsMixin):
 
                 if isinstance(exc, _httpx.TransportError | _httpx.TimeoutException):
                     raise LLMTimeoutError(
-                        f"Gemini model '{self.model}' connection error: {exc}",
+                        f"Gemini model '{_safe_model_tag(self.model)}' connection error: {exc}",
                         model=self.model,
                         attempts=attempts,
                     ) from exc
             except ImportError:
                 pass
             raise
-        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
+        raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Retry loop exited without a result")
 
     async def _single_call(
         self,
@@ -328,5 +342,5 @@ class GeminiTranslator(RedactedSecretsMixin):
             raw_text = response.text
 
         if not raw_text or not raw_text.strip():
-            raise ExtractionFailureError(f"[{self.model}] Gemini returned an empty response.")
+            raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Gemini returned an empty response.")
         return raw_text

@@ -60,8 +60,7 @@ def test_llamacpp_translator_model_property() -> None:
     """LlamaCppTranslator.model follows 'llama-cpp:<path>' convention."""
     from pramanix.translator.llamacpp import LlamaCppTranslator
 
-    t = LlamaCppTranslator.__new__(LlamaCppTranslator)
-    t.model = "llama-cpp:/models/my.gguf"
+    t = LlamaCppTranslator._for_testing(model_path="/models/my.gguf")
     assert t.model == "llama-cpp:/models/my.gguf"
 
 
@@ -79,13 +78,8 @@ async def test_llamacpp_extract_calls_inference() -> None:
     class _Schema(_BaseModel):
         amount: int
 
-    t = LlamaCppTranslator.__new__(LlamaCppTranslator)
-    t.model = "llama-cpp:/models/my.gguf"
-    t._model_path = "/models/my.gguf"
-    t._n_ctx = 4096
-    t._n_gpu_layers = 0
-    t._max_tokens = 512
-    t._llm = _LlamaCppModule('{"amount": 50}').Llama(model_path="/models/my.gguf")
+    llm_inst = _LlamaCppModule('{"amount": 50}').Llama(model_path="/models/my.gguf")
+    t = LlamaCppTranslator._for_testing(model_path="/models/my.gguf", llm=llm_inst)
 
     result = await t.extract("move 50 tokens", _Schema)
     assert isinstance(result, dict)

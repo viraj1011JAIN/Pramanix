@@ -951,6 +951,30 @@ class RedisExecutionTokenVerifier:
             return 0
         return count
 
+    @classmethod
+    def _for_testing(
+        cls,
+        redis_client: Any,
+        *,
+        secret_key: bytes = b"test-secret-key-16b",
+        key_prefix: str = "pramanix:token:",
+        clock: Any = None,
+    ) -> "RedisExecutionTokenVerifier":
+        """Construct with a pre-built Redis duck-type for unit testing.
+
+        Bypasses the constructor validation so tests can inject minimal
+        duck-typed clients (e.g. only implementing scan()) without needing
+        a full redis.Redis-compatible object.
+        """
+        import time as _time
+
+        inst = cls.__new__(cls)
+        inst._key = secret_key
+        inst._redis = redis_client
+        inst._prefix = key_prefix
+        inst._clock = clock if clock is not None else _time.time
+        return inst
+
 
 # ── E-1: Postgres-backed distributed verifier ─────────────────────────────────
 
@@ -1070,6 +1094,41 @@ class PostgresExecutionTokenVerifier:
         if self._loop is None:
             return asyncio.run(coro)
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+
+    @classmethod
+    def _for_testing(
+        cls,
+        pool: Any,
+        *,
+        secret_key: bytes = b"test-secret-key-16b",
+        dsn: str = "postgresql://localhost/test",
+        key_prefix: str = "pramanix:token:",
+    ) -> "PostgresExecutionTokenVerifier":
+        """Construct with a pre-built asyncpg pool for unit testing.
+
+        Bypasses the asyncpg import check and event loop thread creation.
+        The provided pool is used directly; no background thread is started.
+        Tests must call ``close()`` when done to clean up the pool.
+        """
+        import asyncio
+        import threading
+        import time as _time
+
+        inst = cls.__new__(cls)
+        inst._key = secret_key
+        inst._dsn = dsn
+        inst._prefix = key_prefix
+        inst._clock = _time.time
+        inst._pool = pool
+        # Start a dedicated event loop thread for _run() calls.
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(
+            target=loop.run_forever, daemon=True, name="pramanix-pg-test-loop"
+        )
+        thread.start()
+        inst._loop = loop
+        inst._loop_thread = thread
+        return inst
 
     def close(self) -> None:
         """Close the connection pool and stop the background event loop."""

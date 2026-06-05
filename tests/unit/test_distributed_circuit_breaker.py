@@ -145,12 +145,7 @@ async def test_redis_backend_conservative_merge(redis_url: str) -> None:
 async def test_redis_backend_unavailable_fails_safe() -> None:
     """Redis failures return OPEN (fail-safe) so unknown state blocks requests."""
 
-    backend = RedisDistributedBackend.__new__(RedisDistributedBackend)
-    backend._redis_url = "redis://localhost"
-    backend._sync_interval = 1.0
-    backend._prefix = "pramanix:cb:"
-    backend._ttl = 300
-
+    backend = RedisDistributedBackend._for_testing(redis_client)
     # Simulate Redis failure by giving a client that always raises
     class _FailClient:
         async def hgetall(self, *a: object, **kw: object) -> dict:

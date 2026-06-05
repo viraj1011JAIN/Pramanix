@@ -529,12 +529,10 @@ class TestOpenAICompatAcloseBranches:
         """143->exit: client has no close/aclose → _close is None → if block skipped."""
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = OpenAICompatTranslator.__new__(OpenAICompatTranslator)
-
         class _NoClose:
             pass
 
-        t._client = _NoClose()
+        t = OpenAICompatTranslator._for_testing(_NoClose())
         await t.aclose()  # must not raise; _close is None → if skipped
 
     @pytest.mark.asyncio
@@ -542,14 +540,13 @@ class TestOpenAICompatAcloseBranches:
         """145->exit: close() returns sync (non-awaitable) → await skipped."""
         from pramanix.translator.openai_compat import OpenAICompatTranslator
 
-        t = OpenAICompatTranslator.__new__(OpenAICompatTranslator)
         close_called = []
 
         class _SyncClose:
             def close(self) -> None:
                 close_called.append(True)
 
-        t._client = _SyncClose()
+        t = OpenAICompatTranslator._for_testing(_SyncClose())
         await t.aclose()
         assert close_called, "sync close() must have been called"
 

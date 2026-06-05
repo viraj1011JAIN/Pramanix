@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import atexit
 import hashlib
+import hmac
 import threading
 import weakref
 from dataclasses import dataclass
@@ -63,13 +64,47 @@ class MerkleProof:
     proof_path: list[tuple[str, str]]  # (sibling_hash, "left"|"right")
 
     def verify(self) -> bool:
-        """Return True if the proof path reconstructs the expected Merkle root."""
+        """Return True if the proof path reconstructs the expected Merkle root.
+
+        .. warning::
+            This method only verifies the structural integrity of the proof path
+            (i.e. that the leaf_hash is included in the tree with the given root).
+            It does NOT verify that ``leaf_hash`` was derived from any specific
+            ``decision_id``.  Use :meth:`verify_for_decision` when you have the
+            original decision_id and want end-to-end integrity.
+        """
         current = self.leaf_hash
         for sibling, direction in self.proof_path:
             combined = sibling + current if direction == "left" else current + sibling
             # H-07: internal nodes use \x01 prefix (matches _build_root)
             current = hashlib.sha256(b"\x01" + combined.encode()).hexdigest()
         return current == self.root_hash
+
+    def verify_for_decision(self, decision_id: str) -> bool:
+        """End-to-end verification: recompute the leaf hash from *decision_id*
+        and confirm it matches ``leaf_hash``, then verify the proof path.
+
+        This is the correct way to prove that a specific decision_id is included
+        in the Merkle tree anchored at ``root_hash``.  Calling :meth:`verify`
+        alone does not bind the proof to any particular decision — an attacker
+        who can control ``leaf_hash`` in a deserialized proof could pass
+        :meth:`verify` with an arbitrary proof path.
+
+        Args:
+            decision_id: The original decision UUID string as passed to
+                :meth:`MerkleAnchor.add`.
+
+        Returns:
+            ``True`` only when:
+            1. The leaf hash recomputed from *decision_id* matches
+               ``self.leaf_hash`` (the proof is bound to this decision).
+            2. The proof path correctly reconstructs ``self.root_hash``
+               (the decision is structurally included in the tree).
+        """
+        expected_leaf = hashlib.sha256(b"\x00" + decision_id.encode()).hexdigest()
+        if not hmac.compare_digest(expected_leaf, self.leaf_hash):
+            return False
+        return self.verify()
 
 
 class MerkleAnchor:

@@ -157,7 +157,18 @@ class PramanixPydanticAIValidator:
 
         @functools.wraps(fn)
         async def _wrapper(*args: Any, **kwargs: Any) -> Any:
-            intent: dict[str, Any] = kwargs.get("intent", {})
+            # PydanticAI tools receive domain-specific kwargs (e.g. amount=500),
+            # NOT a magic `intent=` key.  Build intent from all non-state kwargs
+            # so the guard receives a populated dict rather than {} (which would
+            # make conditional invariants vacuously true).
+            _intent_sentinel = object()
+            _explicit_intent = kwargs.get("intent", _intent_sentinel)
+            if _explicit_intent is not _intent_sentinel:
+                intent: dict[str, Any] = _explicit_intent  # caller provided intent
+            else:
+                # Collect all kwargs except framework-injected keys as intent.
+                _framework_keys = {"state", "ctx", "tool_call_id", "_run_id"}
+                intent = {k: v for k, v in kwargs.items() if k not in _framework_keys}
             state: dict[str, Any] | None = kwargs.get("state")
             await self.check_async(intent=intent, state=state)
             return await fn(*args, **kwargs)

@@ -599,6 +599,10 @@ def transpile(
 
         case _PowOp(base=b, exp=e):
             # Lower x**n to repeated Z3 multiplication (n ≤ 4 is enforced in expressions.py).
+            # e == 0 is guarded by expressions.py but defend anyway: x**0 == 1 for all x.
+            if e == 0:
+                z_base = cast("z3.ArithRef", transpile(b, ctx, promotions, clock))
+                return cast("z3.ExprRef", z3.IntVal(1, ctx=ctx) if z_base.sort() == z3.IntSort(ctx=ctx) else z3.RealVal(1, ctx=ctx))
             z_base = cast("z3.ArithRef", transpile(b, ctx, promotions, clock))
             result: z3.ArithRef = z_base
             for _ in range(e - 1):

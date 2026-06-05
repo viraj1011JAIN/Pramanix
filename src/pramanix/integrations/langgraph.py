@@ -57,7 +57,14 @@ try:
         ["policy", "node", "verdict"],
     )
 except Exception as _e:
-    _log.debug("pramanix.integrations.langgraph: metrics setup failed: %s", _e)
+    _log.warning(
+        "pramanix.integrations.langgraph: Prometheus metrics setup failed — "
+        "LangGraph node latency and verdict metrics will be unavailable. "
+        "Operators monitoring LangGraph guard decisions via Prometheus will see no data. "
+        "Error: %s: %s",
+        type(_e).__name__,
+        _e,
+    )
 
 __all__ = [
     "GuardNodeAdapterProtocol",

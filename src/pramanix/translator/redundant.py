@@ -40,6 +40,7 @@ Agreement modes
 """
 
 from __future__ import annotations
+import re
 
 import asyncio
 import enum
@@ -49,6 +50,19 @@ from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
 
 from pramanix.exceptions import ExtractionFailureError, ExtractionMismatchError, LLMTimeoutError
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel

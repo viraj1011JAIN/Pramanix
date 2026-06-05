@@ -232,9 +232,25 @@ def _build_pii_patterns() -> list[tuple[str, Any]]:
     return [
         # US Social Security Number  (xxx-xx-xxxx)
         ("ssn", _re_engine.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
-        # Credit / debit card — 13-19 digit groups separated by spaces or dashes.
-        # Covers Visa (13/16), MC (16), Amex (15), Discover (16), UnionPay (16-19).
-        ("credit_card", _re_engine.compile(r"\b(?:\d[ -]?){13,19}\b")),
+        # Credit / debit card — tighter pattern than raw digit runs to reduce
+        # false positives from phone numbers, SSNs, and timestamps.
+        # Anchored to known card prefixes and standard group formats:
+        #   Visa (13/16d starting 4), Mastercard (16d starting 51-55),
+        #   Amex (15d starting 34/37), Discover (16d starting 6011/65).
+        # The `\b` word boundary and required grouping (4-4-4-4 or 4-6-5)
+        # dramatically reduces false positives compared to raw 13-19 digit match.
+        (
+            "credit_card",
+            _re_engine.compile(
+                r"\b(?:"
+                r"4\d{3}[ \-]?\d{4}[ \-]?\d{4}[ \-]?\d{1,4}"  # Visa 13/16
+                r"|(?:5[1-5]\d{2}|2[2-7]\d{2})[ \-]?\d{4}[ \-]?\d{4}[ \-]?\d{4}"  # MC 16
+                r"|3[47]\d{2}[ \-]?\d{6}[ \-]?\d{5}"  # Amex 15
+                r"|6(?:011|5\d{2})[ \-]?\d{4}[ \-]?\d{4}[ \-]?\d{4}"  # Discover 16
+                r"|(?:2131|1800|35\d{3})[ \-]?\d{4}[ \-]?\d{4}[ \-]?\d{3,4}"  # JCB 15/16
+                r")\b"
+            ),
+        ),
         # Email addresses (RFC 5321 simplified)
         ("email", _re_ci(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
         # Phone numbers — US/international formats.
@@ -531,11 +547,26 @@ class ToxicityScorer:
             result = float(self._score_fn(text))
             return max(0.0, min(1.0, result))
 
-        tokens = _normalise(text).split()
+        # Strip punctuation from each token after NFKC + casefold normalization.
+        # Zero-width chars (U+200B etc.) are stripped by NFKC; Cyrillic/Greek
+        # lookalikes (e.g. і → i) are mapped by casefolding.  Multi-word toxic
+        # phrases in the word set are also matched as bigrams/trigrams below.
+        normalised = _normalise(text)
+        # Strip zero-width joiners and other invisible chars that survive NFKC
+        normalised = "".join(ch for ch in normalised if ch.isprintable())
+        tokens = normalised.split()
         if not tokens:
             return 0.0
 
-        toxic_count = sum(1 for t in tokens if t.strip(".,!?;:'\"") in self._words)
+        # Strip punctuation at word edges for unigram matching
+        stripped = [t.strip(".,!?;:'\"()[]{}") for t in tokens]
+        unigram_hits = sum(1 for t in stripped if t in self._words)
+
+        # Bigram matching for multi-word toxic phrases in self._words
+        bigrams = [f"{stripped[i]} {stripped[i+1]}" for i in range(len(stripped) - 1)]
+        bigram_hits = sum(1 for bg in bigrams if bg in self._words)
+
+        toxic_count = unigram_hits + bigram_hits
         return min(1.0, toxic_count / len(tokens))
 
     def is_toxic(self, text: str, threshold: float | None = None) -> bool:

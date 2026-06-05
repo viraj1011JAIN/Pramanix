@@ -26,6 +26,7 @@ Usage::
 """
 
 from __future__ import annotations
+import re
 
 import asyncio
 import json
@@ -38,6 +39,19 @@ from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
 from pramanix.translator.base import RedactedSecretsMixin
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -194,13 +208,13 @@ class BedrockTranslator(RedactedSecretsMixin):
             )
         except TimeoutError as exc:
             raise LLMTimeoutError(
-                f"Bedrock model '{self.model}' timed out after {self._timeout}s.",
+                f"Bedrock model '{_safe_model_tag(self.model)}' timed out after {self._timeout}s.",
                 model=self.model,
                 attempts=1,
             ) from exc
         except Exception as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] Bedrock invoke_model error: {exc}"
+                f"[{_safe_model_tag(self.model)}] Bedrock invoke_model error: {exc}"
             ) from exc
 
         return parse_llm_response(raw, model_name=self.model)
@@ -300,7 +314,7 @@ class BedrockTranslator(RedactedSecretsMixin):
 
         if not text:
             raise ExtractionFailureError(
-                f"[{self.model}] Bedrock returned an empty response body: {body}"
+                f"[{_safe_model_tag(self.model)}] Bedrock returned an empty response body: {body}"
             )
         return cast(str, text)
 
@@ -323,12 +337,12 @@ class BedrockTranslator(RedactedSecretsMixin):
             )
         except TimeoutError as exc:
             raise LLMTimeoutError(
-                f"Bedrock model '{self.model}' timed out after {self._timeout}s.",
+                f"Bedrock model '{_safe_model_tag(self.model)}' timed out after {self._timeout}s.",
                 model=self.model,
                 attempts=1,
             ) from exc
         except Exception as exc:
-            raise ExtractionFailureError(f"[{self.model}] Bedrock converse error: {exc}") from exc
+            raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Bedrock converse error: {exc}") from exc
 
         output = response.get("output", {})
         message = output.get("message", {})
@@ -336,7 +350,7 @@ class BedrockTranslator(RedactedSecretsMixin):
         raw = content[0].get("text", "") if content else ""
         if not raw:
             raise ExtractionFailureError(
-                f"[{self.model}] Bedrock Converse returned empty content: {response}"
+                f"[{_safe_model_tag(self.model)}] Bedrock Converse returned empty content: {response}"
             )
         return parse_llm_response(raw, model_name=self.model)
 

@@ -606,11 +606,40 @@ class Rule(BaseModel):
     conditions: list[Condition | Rule] = _PF(
         ...,
         min_length=1,
+        max_length=64,
         description=(
             "Ordered list of Condition leaves or nested Rule subtrees.  "
-            "Must contain at least one element."
+            "Must contain at least one element and at most 64 (DoS prevention)."
         ),
     )
+
+    @field_validator("conditions")
+    @classmethod
+    def _check_depth(cls, v: list) -> list:
+        """Recursively verify that nested Rule depth does not exceed 16 levels.
+
+        Deep nesting triggers Python's recursion limit in ``_compile_rule``
+        (which recurses into nested Rule subtrees) and causes
+        ``RecursionError`` DoS at Guard init time with carefully crafted JSON.
+
+        Raises:
+            ValueError: If any nested Rule subtree exceeds depth 16.
+        """
+        _MAX_DEPTH = 16
+
+        def _depth(items: list, d: int) -> None:
+            if d > _MAX_DEPTH:
+                raise ValueError(
+                    f"Rule.conditions nesting depth {d} exceeds maximum of "
+                    f"{_MAX_DEPTH}. Flatten deeply nested rule trees to avoid "
+                    "RecursionError DoS at Guard initialisation time."
+                )
+            for item in items:
+                if hasattr(item, "conditions"):
+                    _depth(item.conditions, d + 1)
+
+        _depth(v, 1)
+        return v
 
     @field_validator("name")
     @classmethod

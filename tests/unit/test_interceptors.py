@@ -136,13 +136,11 @@ class TestPramanixKafkaConsumer:
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
         consumer_instance = _KafkaConsumer(messages=messages)
-        c = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-        c._guard = _make_guard()
-        c._intent_extractor = intent_extractor
-        c._state_provider = lambda: {}
-        c._dlq_producer = None
-        c._dlq_topic = "pramanix.dlq"
-        c._consumer = consumer_instance
+        c = PramanixKafkaConsumer._for_testing(
+            consumer_instance,
+            guard=_make_guard(),
+            intent_extractor=intent_extractor,
+        )
         return c
 
     def test_blocked_message_not_yielded(self):

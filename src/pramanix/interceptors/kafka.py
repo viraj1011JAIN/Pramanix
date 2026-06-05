@@ -202,6 +202,37 @@ class PramanixKafkaConsumer:
         except Exception as exc:
             _log.warning("pramanix.kafka.commit_error: %s", exc, exc_info=True)
 
+    @classmethod
+    def _for_testing(
+        cls,
+        consumer: Any,
+        *,
+        guard: Any,
+        intent_extractor: Any,
+        state_provider: Any = None,
+        dlq_producer: Any = None,
+        dlq_topic: str = "pramanix.dlq",
+        dlq_flush_interval: int = 100,
+    ) -> "PramanixKafkaConsumer":
+        """Construct an instance with a pre-built consumer duck-type for testing.
+
+        Bypasses the ``confluent_kafka.Consumer`` import and subscription so
+        tests can exercise ``safe_poll`` and DLQ logic without a real broker.
+        """
+        inst = cls.__new__(cls)
+        inst._guard = guard
+        inst._intent_extractor = intent_extractor
+        inst._state_provider = state_provider or (lambda: {})
+        inst._dlq_producer = dlq_producer
+        inst._dlq_topic = dlq_topic
+        inst._dlq_flush_interval = dlq_flush_interval
+        inst._dlq_pending = 0
+        inst._consumer = consumer
+        inst._finalizer = weakref.finalize(
+            inst, PramanixKafkaConsumer._warn_unclosed, inst._consumer
+        )
+        return inst
+
     def close(self) -> None:
         """Close the underlying Kafka consumer and flush any pending DLQ messages."""
         # Cancel the leak-detection finalizer — we are closing explicitly.

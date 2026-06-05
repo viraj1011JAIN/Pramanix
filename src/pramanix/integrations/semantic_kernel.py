@@ -74,6 +74,18 @@ class PramanixSemanticKernelPlugin:
                 "Install it with: pip install 'pramanix[semantic-kernel]'"
             ) from exc
 
+    @classmethod
+    def _for_testing(
+        cls,
+        guard: Any,
+        plugin_name: str = "pramanix_guard",
+    ) -> "PramanixSemanticKernelPlugin":
+        """Construct without requiring semantic-kernel to be installed."""
+        inst = cls.__new__(cls)
+        inst._guard = guard
+        inst._plugin_name = plugin_name
+        return inst
+
     def verify(
         self,
         intent_json: str,
@@ -102,8 +114,12 @@ class PramanixSemanticKernelPlugin:
         try:
             decision = self._guard.verify(intent=intent, state=state)
         except Exception as exc:
-            _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
-            return json.dumps({"error": "Guard error — action blocked", "allowed": False})
+            _log.error("pramanix.sk.guard_infrastructure_error: %s", exc, exc_info=True)
+            return json.dumps({
+                "error": "Guard infrastructure error — action blocked",
+                "error_type": "infrastructure_failure",
+                "allowed": False,
+            })
 
         return json.dumps(
             {
@@ -133,8 +149,12 @@ class PramanixSemanticKernelPlugin:
         try:
             decision = await self._guard.verify_async(intent=intent, state=state)
         except Exception as exc:
-            _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
-            return json.dumps({"error": "Guard error — action blocked", "allowed": False})
+            _log.error("pramanix.sk.guard_infrastructure_error: %s", exc, exc_info=True)
+            return json.dumps({
+                "error": "Guard infrastructure error — action blocked",
+                "error_type": "infrastructure_failure",
+                "allowed": False,
+            })
 
         return json.dumps(
             {

@@ -322,14 +322,7 @@ class TestLlamaCppTranslatorReal:
     def _make_translator(self, llm_obj: Any) -> Any:
         from pramanix.translator.llamacpp import LlamaCppTranslator
 
-        t = LlamaCppTranslator.__new__(LlamaCppTranslator)
-        t.model = "llama-cpp:/tmp/model.gguf"
-        t._model_path = "/tmp/model.gguf"
-        t._n_ctx = 4096
-        t._n_gpu_layers = 0
-        t._max_tokens = 512
-        t._llm = llm_obj
-        return t
+        return LlamaCppTranslator._for_testing(model_path="/tmp/model.gguf", llm=llm_obj)
 
     @pytest.mark.asyncio
     async def test_extract_happy_path(self):

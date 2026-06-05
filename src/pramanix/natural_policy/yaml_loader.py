@@ -402,9 +402,27 @@ def _build_policy_class(spec: dict[str, Any]) -> type[Policy]:
     policy_name = meta.get("name") or "DynamicPolicy"
     policy_version = str(meta.get("version", "")) or None
 
-    # Validate the class name (must be a valid Python identifier)
+    # Validate the class name (must be a valid Python identifier and must not
+    # be a dunder name, Python builtin, or Pramanix class name).
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", policy_name):
         raise PolicySyntaxError(f"meta.name {policy_name!r} is not a valid Python identifier.")
+    if policy_name.startswith("__") and policy_name.endswith("__"):
+        raise PolicySyntaxError(
+            f"meta.name {policy_name!r} is a dunder name and cannot be used as a "
+            "policy class name — it would collide with Python special methods "
+            "(__reduce__, __init__, etc.) and may be exploited in pickle gadgets."
+        )
+    _RESERVED_NAMES = frozenset({
+        "Guard", "Policy", "Decision", "Field", "E", "GuardConfig",
+        "type", "object", "list", "dict", "str", "int", "float", "bool",
+        "None", "True", "False", "print", "input", "eval", "exec", "compile",
+        "open", "import",
+    })
+    if policy_name in _RESERVED_NAMES:
+        raise PolicySyntaxError(
+            f"meta.name {policy_name!r} collides with a Python builtin or Pramanix "
+            "class name.  Choose a unique, descriptive policy name."
+        )
 
     # ── Build Field objects ───────────────────────────────────────────────────
     raw_fields: dict[str, Any] = spec.get("fields") or {}

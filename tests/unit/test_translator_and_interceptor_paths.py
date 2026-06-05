@@ -20,7 +20,6 @@ from __future__ import annotations
 import importlib.util as _ilu
 import pathlib
 import sys
-import threading
 
 import pytest
 
@@ -31,6 +30,12 @@ from tests.helpers.real_protocols import (
     _ErrorCounter,
     _ErrorFlushProducer,
     _ErrorPollProducer,
+    _FakeApiClient,
+    _FakeGcpClient,
+    _FakeHttpxClient,
+    _FakeHvacClient,
+    _FakeLogsApi,
+    _FakeSecretsClient,
     _GeminiGenaiModule,
     _GrpcRpcHandler,
     _KafkaConsumer,
@@ -465,11 +470,7 @@ class TestLlamaCppCoverage:
         _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
         _llamacpp_mod._MODEL_CACHE[cache_key] = fake_llm
 
-        t = llama_cpp_cls.__new__(llama_cpp_cls)
-        t._model_path = fake_path
-        t._n_ctx = 4096
-        t._n_gpu_layers = 0
-        t._llm = None
+        t = LlamaCppTranslator._for_testing(model_path=fake_path)
 
         result = t._get_llm()
         assert (
@@ -491,12 +492,7 @@ class TestLlamaCppCoverage:
         class _S(BaseModel):
             amount: float
 
-        t = LlamaCppTranslator.__new__(LlamaCppTranslator)
-        t._model_path = "/tmp/fake.gguf"
-        t._n_ctx = 4096
-        t._n_gpu_layers = 0
-        t._max_tokens = 512
-        t._llm = None
+        t = LlamaCppTranslator._for_testing()
 
         # Direct instance override — no patch.object needed
         t._inference = lambda *a, **kw: '{"amount": 1}'  # type: ignore[method-assign]
@@ -519,12 +515,7 @@ class TestLlamaCppCoverage:
         class _S(BaseModel):
             amount: float
 
-        t = LlamaCppTranslator.__new__(LlamaCppTranslator)
-        t._model_path = "/tmp/fake.gguf"
-        t._n_ctx = 4096
-        t._n_gpu_layers = 0
-        t._max_tokens = 512
-        t._llm = None
+        t = LlamaCppTranslator._for_testing()
 
         def _raise_timeout(*a, **kw):
             raise TimeoutError("timed out")
@@ -694,11 +685,10 @@ class TestGrpcInterceptorCoverage:
             _grpc_mod._GRPC_AVAILABLE = False
             from pramanix.interceptors.grpc import PramanixGrpcInterceptor
 
-            interceptor = PramanixGrpcInterceptor.__new__(PramanixGrpcInterceptor)
-            interceptor._guard = make_allow_guard()
-            interceptor._intent_extractor = lambda d, r: {}
-            interceptor._state_provider = lambda: {}
-            interceptor._denied_code = None
+            interceptor = PramanixGrpcInterceptor._for_testing(
+                guard=make_allow_guard(),
+                intent_extractor=lambda d, r: {},
+            )
             # Real handler duck-type — _replace() is never called when grpc unavailable
             fake_handler = _GrpcRpcHandler(unary_unary=lambda req, ctx: "ok")
             result = interceptor._wrap_handler(fake_handler, object())
@@ -819,13 +809,11 @@ class TestKafkaConsumerCoverage:
 
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-        c = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-        c._guard = make_allow_guard()
-        c._intent_extractor = lambda msg: {"amount": Decimal("1")}
-        c._state_provider = lambda: {}
-        c._dlq_producer = None
-        c._dlq_topic = "pramanix.dlq"
-        c._consumer = _KafkaConsumer()
+        c = PramanixKafkaConsumer._for_testing(
+            _KafkaConsumer(),
+            guard=make_allow_guard(),
+            intent_extractor=lambda msg: {"amount": Decimal("1")},
+        )
         return c
 
     def test_dead_letter_with_dlq_exception_swallowed(self) -> None:
@@ -862,8 +850,11 @@ class TestKafkaConsumerCoverage:
     def test_safe_poll_no_consumer_returns_early(self) -> None:
         from pramanix.interceptors.kafka import PramanixKafkaConsumer
 
-        c = PramanixKafkaConsumer.__new__(PramanixKafkaConsumer)
-        c._consumer = None
+        c = PramanixKafkaConsumer._for_testing(
+            None,
+            guard=guard,
+            intent_extractor=lambda m: {},
+        )
         results = list(c.safe_poll())
         assert results == []
 
@@ -954,39 +945,20 @@ class TestAuditSinkCoverage:
         sink.flush()
 
     def test_splunk_sink_close(self) -> None:
-        import queue
-        import threading
 
         from pramanix.audit_sink import SplunkHecAuditSink
 
-        sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
-        # Set up the minimal internal state that close() requires.
-        sink._stop_event = threading.Event()
-        sink._queue = queue.Queue(maxsize=128)
-        _t = threading.Thread(target=lambda: None, daemon=True)
-        _t.start()
-        _t.join()  # already-finished thread; join() returns immediately
-        sink._worker = _t
-        # Real sync-close client — tracks close() via close_called flag.
         client = _SyncCloseClient()
-        sink._client = client
+        sink = SplunkHecAuditSink._for_testing(client)
         sink.close()
         assert client.close_called, "SplunkHecAuditSink.close() must call client.close()"
 
     def test_splunk_sink_close_exception_swallowed(self) -> None:
-        import queue
-        import threading
 
         from pramanix.audit_sink import SplunkHecAuditSink
 
-        sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
-        sink._stop_event = threading.Event()
-        sink._queue = queue.Queue(maxsize=128)
-        _t = threading.Thread(target=lambda: None, daemon=True)
-        _t.start()
-        _t.join()
-        sink._worker = _t
-        # Real client whose close() raises — exception must be swallowed.
+        sink = SplunkHecAuditSink._for_testing(_FakeHttpxClient())
+        # Swap in a client whose close() raises — exception must be swallowed.
         sink._client = _ErrorCloseClient()
         sink.close()  # must not raise
 
@@ -1020,14 +992,11 @@ class TestAuditSinkCoverage:
             assert mock_splunk.calls.call_count == 1
 
     def test_datadog_sink_close(self) -> None:
-        import queue
         import threading
 
         from pramanix.audit_sink import DatadogAuditSink
 
-        sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._stop_event = threading.Event()
-        sink._queue = queue.Queue(maxsize=128)
+        sink = DatadogAuditSink._for_testing(_FakeLogsApi(), _FakeApiClient())
         _t = threading.Thread(target=lambda: None, daemon=True)
         _t.start()
         _t.join()
@@ -1038,14 +1007,11 @@ class TestAuditSinkCoverage:
         assert client.close_called, "DatadogAuditSink.close() must call _api_client.close()"
 
     def test_datadog_sink_close_exception_swallowed(self) -> None:
-        import queue
         import threading
 
         from pramanix.audit_sink import DatadogAuditSink
 
-        sink = DatadogAuditSink.__new__(DatadogAuditSink)
-        sink._stop_event = threading.Event()
-        sink._queue = queue.Queue(maxsize=128)
+        sink = DatadogAuditSink._for_testing(_FakeLogsApi(), _FakeApiClient())
         _t = threading.Thread(target=lambda: None, daemon=True)
         _t.start()
         _t.join()
@@ -1115,15 +1081,7 @@ class TestKeyProviderCoverage:
     def test_aws_kms_rotate_key(self) -> None:
         from pramanix.key_provider import AwsKmsKeyProvider
 
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:key"
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
-
+        p = AwsKmsKeyProvider._for_testing(_FakeSecretsClient(), secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:key")
         # Real recorder — no MagicMock, no assert_called_once_with.
         recorder = _RotateSecretRecorder()
         p._client = recorder
@@ -1142,15 +1100,7 @@ class TestKeyProviderCoverage:
             def get_secret(self, name: str, version: str | None = None) -> None:
                 raise ConnectionError("Azure Key Vault unreachable in unit tests")
 
-        p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"old-pem"
-        p._cached_version = "v1"
-        p._cache_expires = 9999.0
-        p._secret_name = "pramanix-key"
-        p._secret_version = "v1"
-        p._client = _FailingAzureClient()
-
+        p = AzureKeyVaultKeyProvider._for_testing(_FailingAzureClient(), secret_name="pramanix-key")
         assert p.supports_rotation is True
         with pytest.raises(RuntimeError, match="Azure Key Vault"):
             p.rotate_key()
@@ -1166,15 +1116,7 @@ class TestKeyProviderCoverage:
             def access_secret_version(self, *, name: str) -> None:
                 raise ConnectionError("GCP Secret Manager unavailable in unit tests")
 
-        p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"old-pem"
-        p._cache_expires = 9999.0
-        p._version_id = "5"
-        p._project_id = "my-project"
-        p._secret_id = "pramanix-key"
-        p._client = _FailingGcpClient()
-
+        p = GcpKmsKeyProvider._for_testing(_FailingGcpClient())
         assert p.supports_rotation is True
         with pytest.raises(RuntimeError, match="GCP Secret Manager"):
             p.rotate_key()
@@ -1198,90 +1140,49 @@ class TestKeyProviderCoverage:
         class _FailingVaultClient:
             secrets = _Secrets()
 
-        p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"old-pem"
-        p._cached_version = "7"
-        p._cache_expires = 9999.0
-        p._secret_path = "pramanix/signing-key"
-        p._mount_point = "secret"
-        p._field = "private_key_pem"
-        p._client = _FailingVaultClient()
-
+        p = HashiCorpVaultKeyProvider._for_testing(_FailingVaultClient())
         assert p.supports_rotation is True
         with pytest.raises(RuntimeError, match="HashiCorp Vault"):
             p.rotate_key()
 
     def test_hashicorp_vault_key_version_cached(self) -> None:
         """key_version() returns cached version without API call."""
-        import time
 
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"fake-pem"
-        p._cached_version = "42"
-        p._cache_expires = time.monotonic() + 3600  # far future
-
+        p = HashiCorpVaultKeyProvider._for_testing(_FakeHvacClient())
         assert p.key_version() == "42"
 
     def test_hashicorp_vault_cached_version_fallback(self) -> None:
         """key_version() returns 'vault-unknown' when _cached_version is None."""
-        import time
 
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"fake-pem"
-        p._cached_version = None
-        p._cache_expires = time.monotonic() + 3600
-
+        p = HashiCorpVaultKeyProvider._for_testing(_FakeHvacClient())
         assert p.key_version() == "vault-unknown"
 
     def test_gcp_kms_private_key_pem_cached(self) -> None:
         """GcpKmsKeyProvider.private_key_pem() returns from cache when valid."""
-        import time
 
         from pramanix.key_provider import GcpKmsKeyProvider
 
-        p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"cached-pem"
-        p._cache_expires = time.monotonic() + 3600
-        p._project_id = "proj"
-        p._secret_id = "secret"
-        p._version_id = "latest"
-
+        p = GcpKmsKeyProvider._for_testing(_FakeGcpClient())
         result = p.private_key_pem()
         assert result == b"cached-pem"
 
     def test_azure_key_vault_cached_pem(self) -> None:
-        import time
 
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"azure-pem"
-        p._cached_version = "abc123"
-        p._cache_expires = time.monotonic() + 3600
-
+        p = AzureKeyVaultKeyProvider._for_testing(_FakeSecretClient(), secret_name="test-key")
         assert p.private_key_pem() == b"azure-pem"
         assert p.key_version() == "abc123"
 
     def test_azure_key_vault_cached_version_fallback(self) -> None:
-        import time
 
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        p._cache_lock = threading.Lock()
-        p._cached_pem = b"azure-pem"
-        p._cached_version = None
-        p._cache_expires = time.monotonic() + 3600
-
+        p = AzureKeyVaultKeyProvider._for_testing(_FakeSecretClient(), secret_name="test-key")
         assert p.key_version() == "azure-unknown"
 
 

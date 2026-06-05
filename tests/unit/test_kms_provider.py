@@ -304,15 +304,7 @@ class TestAwsKmsKeyProviderBehavior:
     ) -> AwsKmsKeyProvider:
         import threading
 
-        p = AwsKmsKeyProvider.__new__(AwsKmsKeyProvider)
-        p._client = client
-        p._secret_arn = self._ARN
-        p._version_stage = "AWSCURRENT"
-        p._explicit_version = explicit_version
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
+        p = AwsKmsKeyProvider._for_testing(client, secret_arn=self._ARN)
         return p
 
     def test_private_key_pem_from_secret_string(self, test_pem: bytes) -> None:
@@ -361,14 +353,7 @@ class TestAzureKeyVaultKeyProviderBehavior:
     def _provider(self, client: _AzureSecretClient) -> AzureKeyVaultKeyProvider:
         import threading
 
-        p = AzureKeyVaultKeyProvider.__new__(AzureKeyVaultKeyProvider)
-        p._client = client
-        p._secret_name = "pramanix-signing-key"
-        p._secret_version = None
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
+        p = AzureKeyVaultKeyProvider._for_testing(client, secret_name="pramanix-signing-key")
         return p
 
     def test_private_key_pem_returns_value(self, test_pem: bytes) -> None:
@@ -408,14 +393,7 @@ class TestGcpKmsKeyProviderBehavior:
     ) -> GcpKmsKeyProvider:
         import threading
 
-        p = GcpKmsKeyProvider.__new__(GcpKmsKeyProvider)
-        p._client = client
-        p._project_id = "my-project"
-        p._secret_id = "pramanix-signing-key"
-        p._version_id = version_id
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cache_expires = 0.0
+        p = GcpKmsKeyProvider._for_testing(client)
         return p
 
     def test_private_key_pem_from_payload(self, test_pem: bytes) -> None:
@@ -452,15 +430,7 @@ class TestHashiCorpVaultKeyProviderBehavior:
     def _provider(self, client: _HvacClient) -> HashiCorpVaultKeyProvider:
         import threading
 
-        p = HashiCorpVaultKeyProvider.__new__(HashiCorpVaultKeyProvider)
-        p._client = client
-        p._secret_path = "pramanix/signing-key"
-        p._field = "private_key_pem"
-        p._mount_point = "secret"
-        p._cache_lock = threading.Lock()
-        p._cached_pem = None
-        p._cached_version = None
-        p._cache_expires = 0.0
+        p = HashiCorpVaultKeyProvider._for_testing(client)
         return p
 
     def test_private_key_pem_from_kv(self, test_pem: bytes) -> None:

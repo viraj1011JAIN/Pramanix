@@ -20,6 +20,9 @@ from tests.helpers.real_protocols import (
     _CapturingLogsApi,
     _CapturingProducer,
     _ErrorS3Client,
+    _FakeApiClient,
+    _FakeHttpxClient,
+    _FakeLogsApi,
     _KafkaDLQProducer,
     _S3Client,
 )
@@ -87,28 +90,8 @@ def test_kafka_sink_failure_does_not_propagate() -> None:
 
 
 def test_s3_sink_records_puts_object() -> None:
-    import concurrent.futures
-    import queue
-    import threading
-
     s3 = _S3Client()
-    sink = S3AuditSink.__new__(S3AuditSink)
-    sink._bucket = "test-bucket"
-    sink._prefix = "audit/"
-    sink._s3 = s3
-    sink._max_queue = 1_000
-    sink._queue: queue.Queue = queue.Queue(maxsize=1_000)
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
-    sink._stop_event = threading.Event()
-    sink._pool = concurrent.futures.ThreadPoolExecutor(
-        max_workers=4, thread_name_prefix="pramanix-s3-test"
-    )
-    # Start the real worker thread so the queue is drained properly.
-    sink._worker_thread = threading.Thread(
-        target=sink._worker, daemon=True, name="pramanix-s3-test-worker"
-    )
-    sink._worker_thread.start()
+    sink = S3AuditSink._for_testing(s3, prefix="audit/")
 
     sink.emit(_make_decision())
     sink.close()  # drains queue, joins worker, shuts down pool
@@ -121,10 +104,7 @@ def test_s3_sink_records_puts_object() -> None:
 
 def test_s3_sink_failure_does_not_propagate() -> None:
     s3 = _ErrorS3Client()
-    sink = S3AuditSink.__new__(S3AuditSink)
-    sink._bucket = "bucket"
-    sink._prefix = ""
-    sink._s3 = s3
+    sink = S3AuditSink._for_testing(s3)
     sink.emit(_make_decision())  # must not raise
 
 
@@ -186,23 +166,9 @@ def test_splunk_sink_failure_does_not_propagate() -> None:
 def test_datadog_sink_records_sends_log() -> None:
     """emit() calls logs_api.submit_log with a real HTTPLog payload."""
     pytest.importorskip("datadog_api_client")
-    import queue
-    import threading
-
     logs_api = _CapturingLogsApi()
-    sink = DatadogAuditSink.__new__(DatadogAuditSink)
-    sink._service = "pramanix"
-    sink._source = "pramanix-audit"
-    sink._tags = ""
-    sink._max_queue = 500
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
-    sink._logs_api = logs_api
-    # Start a real background worker so emit() can be processed.
-    sink._queue: queue.Queue = queue.Queue(maxsize=500)
-    sink._stop_event = threading.Event()
-    sink._worker = threading.Thread(target=sink._send_loop, daemon=True, name="pramanix-dd-test")
-    sink._worker.start()
+    # _for_testing() starts the background worker automatically.
+    sink = DatadogAuditSink._for_testing(logs_api, _FakeApiClient())
 
     sink.emit(_make_decision())
     sink.close()
@@ -235,21 +201,11 @@ def test_in_memory_sink_getitem_returns_decision() -> None:
 
 def test_s3_sink_emit_overflow_increments_counter() -> None:
     """emit() increments overflow_count and does NOT raise when queue is full."""
-    import queue
-    import threading
-
     s3 = _S3Client()
-    sink = S3AuditSink.__new__(S3AuditSink)
-    sink._bucket = "bucket"
-    sink._prefix = ""
-    sink._s3 = s3
-    sink._max_queue = 1
-    # Pre-fill the queue with a blocker so the next put_nowait raises queue.Full.
-    # No worker thread is needed — overflow detection happens entirely in emit().
-    sink._queue = queue.Queue(maxsize=1)
+    # start_worker=False: overflow detection happens in emit(), no worker needed.
+    sink = S3AuditSink._for_testing(s3, max_queue_size=1, start_worker=False)
+    # Pre-fill the queue so the next put_nowait raises queue.Full.
     sink._queue.put_nowait(("blocker_key", b"blocker_body"))
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
 
     sink.emit(_make_decision())  # queue is full so put_nowait raises queue.Full
     assert sink.overflow_count == 1
@@ -257,36 +213,15 @@ def test_s3_sink_emit_overflow_increments_counter() -> None:
 
 def test_s3_sink_overflow_count_property_thread_safe() -> None:
     """overflow_count property returns the current overflow count safely."""
-    import threading
-
-    sink = S3AuditSink.__new__(S3AuditSink)
-    sink._overflow_count = 7
-    sink._queue_lock = threading.Lock()
+    sink = S3AuditSink._for_testing(_S3Client(), start_worker=False)
+    sink._overflow_count = 7  # simulate accumulated overflow
     assert sink.overflow_count == 7
 
 
 def test_s3_upload_failure_swallowed() -> None:
     """_upload() logs the exception from put_object and does NOT raise."""
-    import concurrent.futures
-    import queue
-    import threading
-
     s3 = _ErrorS3Client()
-    sink = S3AuditSink.__new__(S3AuditSink)
-    sink._bucket = "bucket"
-    sink._prefix = ""
-    sink._s3 = s3
-    sink._max_queue = 1_000
-    sink._queue = queue.Queue(maxsize=1_000)
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
-    sink._stop_event = threading.Event()
-    sink._pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    sink._worker_thread = threading.Thread(
-        target=sink._worker, daemon=True, name="pramanix-s3-err-test"
-    )
-    sink._worker_thread.start()
-
+    sink = S3AuditSink._for_testing(s3)
     sink.emit(_make_decision())  # _upload will raise, but must be swallowed
     sink.close()
     # The ErrorS3Client always raises — verify no exception propagated.
@@ -298,20 +233,9 @@ def test_s3_upload_failure_swallowed() -> None:
 
 def test_splunk_sink_overflow_drops_silently() -> None:
     """emit() increments overflow_count and does NOT raise when Splunk queue full."""
-    import queue as _queue
-    import threading
-
-    sink = SplunkHecAuditSink.__new__(SplunkHecAuditSink)
-    sink._url = "http://splunk:8088/services/collector"
-    sink._auth = "Splunk test-token"
-    sink._index = None
-    sink._sourcetype = "pramanix:decision"
-    sink._max_queue = 1
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
-    # Pre-fill queue so the next emit() call hits queue.Full.
-    sink._queue: _queue.Queue = _queue.Queue(maxsize=1)
-    sink._queue.put_nowait(b"blocker")
+    # start_worker=False: overflow detection in emit(), no worker needed.
+    sink = SplunkHecAuditSink._for_testing(_FakeHttpxClient(), max_queue_size=1, start_worker=False)
+    sink._queue.put_nowait(b"blocker")  # fill the single-item queue
 
     sink.emit(_make_decision())
     assert sink._overflow_count == 1
@@ -322,18 +246,9 @@ def test_splunk_sink_overflow_drops_silently() -> None:
 
 def test_datadog_sink_overflow_drops_silently() -> None:
     """emit() increments overflow_count and does NOT raise when Datadog queue full."""
-    import queue as _queue
-    import threading
-
-    sink = DatadogAuditSink.__new__(DatadogAuditSink)
-    sink._service = "pramanix"
-    sink._source = "pramanix"
-    sink._tags = ""
-    sink._max_queue = 1
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
-    sink._queue: _queue.Queue = _queue.Queue(maxsize=1)
-    sink._queue.put_nowait("blocker")
+    # start_worker=False: overflow detection in emit(), no worker needed.
+    sink = DatadogAuditSink._for_testing(_FakeLogsApi(), _FakeApiClient(), max_queue_size=1, start_worker=False)
+    sink._queue.put_nowait("blocker")  # fill the single-item queue
 
     sink.emit(_make_decision())
     assert sink._overflow_count == 1
@@ -342,30 +257,12 @@ def test_datadog_sink_overflow_drops_silently() -> None:
 def test_datadog_sink_close_swallows_api_client_error() -> None:
     """close() joins the worker and swallows api_client.close() failures."""
     pytest.importorskip("datadog_api_client")
-    import queue as _queue
-    import threading
-
     logs_api = _CapturingLogsApi()
 
     class _BrokenApiClient:
         def close(self) -> None:
             raise RuntimeError("connection reset")
 
-    sink = DatadogAuditSink.__new__(DatadogAuditSink)
-    sink._service = "svc"
-    sink._source = "src"
-    sink._tags = ""
-    sink._max_queue = 500
-    sink._queue_lock = threading.Lock()
-    sink._overflow_count = 0
-    sink._logs_api = logs_api
-    sink._api_client = _BrokenApiClient()
-    sink._queue: _queue.Queue = _queue.Queue(maxsize=500)
-    sink._stop_event = threading.Event()
-    sink._worker = threading.Thread(
-        target=sink._send_loop, daemon=True, name="pramanix-dd-close-err-test"
-    )
-    sink._worker.start()
-
+    sink = DatadogAuditSink._for_testing(logs_api, _BrokenApiClient())
     # close() must NOT propagate the RuntimeError from _api_client.close()
     sink.close()

@@ -128,10 +128,12 @@ def BlastRadiusCheck(
     """Enforce that a deployment / change affects at most a fraction of the fleet.
 
     DSL (reformulated to avoid division):
-    ``E(affected) <= max_blast_pct * E(total)``
+    ``E(total) > 0 AND E(affected) <= max_blast_pct * E(total)``
 
-    Equivalent to ``affected / total <= max_blast_pct`` when ``total > 0``,
-    but expressed as a linear (Z3-efficient) constraint.
+    The ``total_instances > 0`` guard prevents vacuous truth: without it,
+    ``affected <= max_blast_pct * 0`` would block all non-zero deployments
+    (wrong), while an attacker injecting ``total_instances=0`` via state
+    could produce a constraint that trivially blocks or allows everything.
 
     SRE principle: Blast radius control limits the customer impact of a bad
     deployment or config change.  Common limits: 5 % for auto-rollout canary,
@@ -139,16 +141,32 @@ def BlastRadiusCheck(
 
     Args:
         affected_instances: Field (int, Int) — number of instances being changed.
-        total_instances:    Field (int, Int) — total fleet size.
+        total_instances:    Field (int, Int) — total fleet size.  Must be > 0.
         max_blast_pct:      Decimal in (0, 1] — maximum permitted fraction.
+
+    Raises:
+        PolicyCompilationError: If ``max_blast_pct`` is not in (0, 1].
     """
-    return (
-        (E(affected_instances) <= max_blast_pct * E(total_instances))
+    from decimal import Decimal as _D
+    from pramanix.exceptions import PolicyCompilationError
+
+    if not (Decimal("0") < max_blast_pct <= Decimal("1")):
+        raise PolicyCompilationError(
+            f"BlastRadiusCheck: max_blast_pct must be in (0, 1], got {max_blast_pct!r}. "
+            "Use Decimal('0.05') for 5%, Decimal('1') for 100%."
+        )
+    return cast(
+        ConstraintExpr,
+        (
+            (E(total_instances) > 0)
+            & (E(affected_instances) <= max_blast_pct * E(total_instances))
+        )
         .named("blast_radius_check")
         .explain(
-            "Blast radius exceeded: {affected_instances} of {total_instances} instances "
-            f"(> {max_blast_pct * 100:.1f}% limit). Reduce rollout batch size."
-        )
+            "Blast radius exceeded or fleet size is zero: {affected_instances} of "
+            f"{{total_instances}} instances (> {max_blast_pct * 100:.1f}% limit). "
+            "Reduce rollout batch size or provide a valid total_instances > 0."
+        ),
     )
 
 
@@ -177,13 +195,22 @@ def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
         circuit_state: Field (str, String) — current circuit breaker state.
             Must be one of ``"CLOSED"``, ``"OPEN"``, or ``"HALF-OPEN"``.
     """
+    # The circuit state value must be normalised (uppercased) by the state provider
+    # before being passed to Guard.verify().  Using a single "OPEN" comparison
+    # means "open" (lowercase) or "Open" (mixed-case) from external systems
+    # (Redis annotations, K8s labels, API responses) would bypass the guard.
+    # The recommended pattern is to normalise in the state provider:
+    #   state = {"circuit_state": redis.get("cb:state").decode().upper()}
+    # For defence-in-depth, we also match case-insensitively via _InOp membership
+    # with all known OPEN variants.
     return cast(
         ConstraintExpr,
-        (E(circuit_state) != "OPEN")
+        (E(circuit_state).is_not_in(["OPEN", "open", "Open"]))
         .named("circuit_breaker_state")
         .explain(
             'Request blocked: circuit_state="{circuit_state}" — circuit breaker '
-            "is OPEN. Downstream service is unhealthy — fail fast."
+            "is OPEN. Downstream service is unhealthy — fail fast. "
+            "Normalise circuit_state to uppercase in your state provider."
         ),
     )
 

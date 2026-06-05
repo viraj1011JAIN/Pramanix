@@ -118,9 +118,24 @@ class HaystackGuardedComponent:
         if messages:
             items_and_targets.extend([(m, "msg") for m in messages])
 
-        state = self._state_provider()
-
         for item, kind in items_and_targets:
+            # Fetch state once PER ITEM — not once per batch.  A policy that
+            # enforces balance >= amount must see the authoritative balance at the
+            # moment each item is evaluated.  Fetching once and reusing it across
+            # the batch creates a TOCTOU window where all items pass the same
+            # stale state even if earlier items already exhausted the balance.
+            try:
+                state = self._state_provider()
+            except Exception as exc:
+                _log.error(
+                    "pramanix.haystack.state_provider_error: %s", exc, exc_info=True
+                )
+                if self._block_on_error:
+                    (blocked_docs if kind == "doc" else blocked_msgs).append(item)
+                else:
+                    (allowed_docs if kind == "doc" else allowed_msgs).append(item)
+                continue
+
             try:
                 intent = self._intent_extractor(item)
             except Exception as exc:
@@ -173,9 +188,21 @@ class HaystackGuardedComponent:
         if messages:
             items_and_targets.extend([(m, "msg") for m in messages])
 
-        state = self._state_provider()
-
         for item, kind in items_and_targets:
+            # Fetch state per item — same TOCTOU fix as the sync run() path.
+            try:
+                _raw_state = self._state_provider()
+                state = await _raw_state if asyncio.iscoroutine(_raw_state) else _raw_state
+            except Exception as exc:
+                _log.error(
+                    "pramanix.haystack.state_provider_error: %s", exc, exc_info=True
+                )
+                if self._block_on_error:
+                    (blocked_docs if kind == "doc" else blocked_msgs).append(item)
+                else:
+                    (allowed_docs if kind == "doc" else allowed_msgs).append(item)
+                continue
+
             try:
                 intent = self._intent_extractor(item)
             except Exception as exc:

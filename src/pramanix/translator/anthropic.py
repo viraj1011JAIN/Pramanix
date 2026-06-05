@@ -9,6 +9,7 @@ Requires the ``pramanix[translator]`` extra (``anthropic``, ``tenacity``).
 """
 
 from __future__ import annotations
+import re
 
 import os
 from typing import TYPE_CHECKING, Any, cast
@@ -18,6 +19,19 @@ from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
 from pramanix.translator.base import RedactedSecretsMixin
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -127,17 +141,26 @@ class AnthropicTranslator(RedactedSecretsMixin):
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"Anthropic model '{self.model}' unreachable after "
+                f"Anthropic model '{_safe_model_tag(self.model)}' unreachable after "
                 f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
 
         except self._api_status_error as exc:
+            # Redact exc.message — on auth/quota errors it may contain account
+            # tier, partial key info, or quota details that should not flow to
+            # Sentry/Datadog.  Log the status code only; full message at DEBUG.
+            import logging as _alog
+            _alog.getLogger(__name__).debug(
+                "Anthropic API status error for model %s: %s %s",
+                _safe_model_tag(self.model), exc.status_code, exc.message,
+            )
             raise ExtractionFailureError(
-                f"[{self.model}] Anthropic API error {exc.status_code}: {exc.message}"
+                f"[{_safe_model_tag(self.model)}] Anthropic API error {exc.status_code}"
+                " (details redacted — check DEBUG log)."
             ) from exc
-        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
+        raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Retry loop exited without a result")
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""

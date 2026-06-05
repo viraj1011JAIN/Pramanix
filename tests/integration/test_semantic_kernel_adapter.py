@@ -251,10 +251,7 @@ class TestGuardErrorHandling:
             def verify(self, *, intent, state):
                 raise RuntimeError("Z3 solver internal error")
 
-        # Bypass the __init__ framework check by constructing manually
-        plugin = object.__new__(PramanixSemanticKernelPlugin)
-        plugin._guard = _BrokenGuard()
-        plugin._plugin_name = "test"
+        plugin = PramanixSemanticKernelPlugin._for_testing(_BrokenGuard(), "test")
 
         result_str = plugin.verify(_ALLOW_INTENT, _STATE_JSON)
         result = json.loads(result_str)
@@ -269,9 +266,7 @@ class TestGuardErrorHandling:
             async def verify_async(self, *, intent, state):
                 raise RuntimeError("async solver crash")
 
-        plugin = object.__new__(PramanixSemanticKernelPlugin)
-        plugin._guard = _BrokenGuard()
-        plugin._plugin_name = "test"
+        plugin = PramanixSemanticKernelPlugin._for_testing(_BrokenGuard(), "test")
 
         result_str = await plugin.verify_async(_ALLOW_INTENT, _STATE_JSON)
         result = json.loads(result_str)

@@ -30,7 +30,7 @@
 | C4 | ruff lint — 0 violations | ✅ | `ruff check src/pramanix` → "All checks passed!" (2026-06-02 session 4) |
 | C5 | `# type: ignore` — 0 in production source | ✅ | All removed; replaced with proper structural fixes (session 4) |
 | C6 | 0 `# pragma: no cover` in production source | ✅ | Verified in deep audit |
-| C7 | 0 `unittest.mock.patch`/`MagicMock` in tests | ✅ | Zero-Mock Sprint `a0ee71c` |
+| C7 | 0 `MagicMock`/`AsyncMock`/`patch.object` in tests; 1 legitimate `patch.dict(sys.modules)` for import-error path testing | ✅ | Zero-Mock Sprint `a0ee71c`; `patch.dict` only in `test_pragma_free_paths.py:447` |
 | C8 | `assert_and_track` used (not bare `add`) | ✅ | `solver.py:395` |
 
 ### Packaging

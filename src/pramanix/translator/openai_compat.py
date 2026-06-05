@@ -12,6 +12,7 @@ Requires the ``pramanix[translator]`` extra (``openai``, ``tenacity``).
 """
 
 from __future__ import annotations
+import re
 
 import ipaddress
 import os
@@ -22,6 +23,19 @@ from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMT
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 from pramanix.translator.base import RedactedSecretsMixin
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -168,16 +182,47 @@ class OpenAICompatTranslator(RedactedSecretsMixin):
 
         except self._retryable as exc:
             raise LLMTimeoutError(
-                f"OpenAI model '{self.model}' unreachable after " f"{attempts} attempt(s): {exc}",
+                f"OpenAI model '{_safe_model_tag(self.model)}' unreachable after " f"{attempts} attempt(s): {exc}",
                 model=self.model,
                 attempts=attempts,
             ) from exc
 
         except self._api_status_error as exc:
+            import logging as _olog
+            _olog.getLogger(__name__).debug(
+                "OpenAI API status error for model %s: %s %s",
+                _safe_model_tag(self.model), exc.status_code, exc.message,
+            )
             raise ExtractionFailureError(
-                f"[{self.model}] OpenAI API error " f"{exc.status_code}: {exc.message}"
+                f"[{_safe_model_tag(self.model)}] OpenAI API error {exc.status_code}"
+                " (details redacted — check DEBUG log)."
             ) from exc
-        raise ExtractionFailureError(f"[{self.model}] Retry loop exited without a result")
+        raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Retry loop exited without a result")
+
+    @classmethod
+    def _for_testing(
+        cls,
+        client: Any,
+        *,
+        model: str = "gpt-test",
+        api_key: str = "test-key",
+        base_url: str | None = None,
+        timeout: float = 30.0,
+    ) -> "OpenAICompatTranslator":
+        """Construct with a pre-built async OpenAI client duck-type for testing.
+
+        Bypasses the openai import and URL validation so tests can exercise
+        ``aclose()``, ``extract()``, and other methods with custom mock clients.
+        """
+        inst = cls.__new__(cls)
+        inst.model = model
+        inst._timeout = timeout
+        inst._api_key = api_key
+        inst._base_url = base_url
+        inst._client = client
+        inst._retryable = (Exception,)
+        inst._max_attempts = 3
+        return inst
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client and release connection pool resources."""
@@ -217,6 +262,6 @@ class OpenAICompatTranslator(RedactedSecretsMixin):
         raw_content: str | None = response.choices[0].message.content
         if not raw_content:
             raise ExtractionFailureError(
-                f"[{self.model}] OpenAI returned an empty response content."
+                f"[{_safe_model_tag(self.model)}] OpenAI returned an empty response content."
             )
         return raw_content

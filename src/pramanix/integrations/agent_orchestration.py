@@ -222,11 +222,22 @@ class LangGraphGuardAdapter:
         self._intent_key = intent_key
         self._state_key = state_key
         self._sidecar_key = sidecar_key
-        self._enter_times: dict[str, float] = {}
+        # Use a deque per node_id (FIFO) so concurrent parallel branches of the
+        # same node each push their own entry time and pop the oldest entry on exit.
+        # This prevents concurrent same-node calls from overwriting each other's
+        # timestamps (the previous dict approach would set/get by key, so Thread A
+        # could overwrite Thread B's entry and both would see wrong latencies).
+        # A deque also bounds memory: entries that never get an on_node_exit call
+        # (leaked entries) are bounded by the depth of the parallel fan-out.
+        import collections as _coll
+        import threading as _thr
+        self._enter_times: dict[str, _coll.deque] = _coll.defaultdict(_coll.deque)
+        self._enter_times_lock = _thr.Lock()
 
     def on_node_enter(self, node_id: str, state: dict[str, Any]) -> None:
         """Record the node entry timestamp for latency tracking."""
-        self._enter_times[node_id] = time.perf_counter()
+        with self._enter_times_lock:
+            self._enter_times[node_id].append(time.perf_counter())
         _log.debug("pramanix.langgraph.enter node=%s", node_id)
 
     def on_node_exit(
@@ -236,7 +247,9 @@ class LangGraphGuardAdapter:
         decision: Decision,
     ) -> None:
         """Write the policy verdict sidecar into *state* under ``sidecar_key``."""
-        enter_t = self._enter_times.pop(node_id, time.perf_counter())
+        with self._enter_times_lock:
+            times_q = self._enter_times.get(node_id)
+            enter_t = times_q.popleft() if times_q else time.perf_counter()
         latency_ms = (time.perf_counter() - enter_t) * 1000.0
 
         state[self._sidecar_key] = {

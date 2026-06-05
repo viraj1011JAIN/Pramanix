@@ -151,15 +151,28 @@ class PramanixGuardedModule(_ModuleBase):
         try:
             intent = st.intent_builder(**kwargs)
         except Exception as exc:
+            # Redact the exception message — it may contain policy field names
+            # (e.g. KeyError from a missing key) which would reveal the policy
+            # schema to the caller.  Log at DEBUG for operator diagnostics.
+            import logging as _dspy_log
+            _dspy_log.getLogger(__name__).debug(
+                "pramanix.dspy: intent_builder raised %s: %s",
+                type(exc).__name__, exc,
+            )
             raise GuardViolationError(
-                Decision.error(reason=f"Intent builder error: {exc}")
+                Decision.error(reason="Intent extraction failed — action blocked.")
             ) from exc
 
         try:
             state = st.state_provider()
         except Exception as exc:
+            import logging as _dspy_log2
+            _dspy_log2.getLogger(__name__).debug(
+                "pramanix.dspy: state_provider raised %s: %s",
+                type(exc).__name__, exc,
+            )
             raise GuardViolationError(
-                Decision.error(reason=f"State provider error: {exc}")
+                Decision.error(reason="State retrieval failed — action blocked.")
             ) from exc
 
         try:

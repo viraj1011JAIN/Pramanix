@@ -483,6 +483,44 @@ class S3AuditSink:
             _increment_send_error_metric("s3")
             log.error("S3AuditSink: failed to upload decision: %s", exc, exc_info=True)
 
+    @classmethod
+    def _for_testing(
+        cls,
+        s3_client: Any,
+        *,
+        bucket: str = "test-bucket",
+        prefix: str = "",
+        max_queue_size: int = 1_000,
+        start_worker: bool = True,
+    ) -> "S3AuditSink":
+        """Construct a fully-wired instance without real AWS credentials.
+
+        Accepts an already-constructed S3 client duck-type so tests can
+        inject fake/stub clients without requiring boto3 or real credentials.
+        Pass ``start_worker=False`` when the test manages the worker itself.
+        """
+        inst = cls.__new__(cls)
+        inst._bucket = bucket
+        inst._prefix = prefix
+        inst._timeout = 30.0
+        inst._max_queue = max_queue_size
+        inst._s3 = s3_client
+        inst._queue = queue.Queue(maxsize=max_queue_size)
+        inst._queue_lock = threading.Lock()
+        inst._overflow_count = 0
+        inst._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="pramanix-s3-test"
+        )
+        inst._stop_event = threading.Event()
+        inst._worker_thread = threading.Thread(
+            target=inst._worker,
+            daemon=True,
+            name="pramanix-s3-test-worker",
+        )
+        if start_worker:
+            inst._worker_thread.start()
+        return inst
+
     @property
     def overflow_count(self) -> int:
         """Number of decisions dropped due to queue overflow since init."""
@@ -622,6 +660,46 @@ class SplunkHecAuditSink:
                 )
         except Exception as exc:
             log.error("SplunkHecAuditSink: failed to enqueue decision: %s", exc, exc_info=True)
+
+    @classmethod
+    def _for_testing(
+        cls,
+        http_client: Any,
+        *,
+        url: str = "http://localhost:8088/services/collector",
+        token: str = "Splunk test-token",
+        index: str | None = None,
+        sourcetype: str = "pramanix:decision",
+        max_queue_size: int = 500,
+        start_worker: bool = True,
+    ) -> "SplunkHecAuditSink":
+        """Construct a fully-wired instance without real Splunk credentials.
+
+        Accepts an already-constructed HTTP client duck-type so tests can
+        inject fakes without requiring httpx or a running Splunk HEC endpoint.
+        Pass ``start_worker=False`` when the test needs to manage the
+        background thread itself (e.g. to instrument ``_send_loop`` directly).
+        """
+        inst = cls.__new__(cls)
+        inst._url = url
+        inst._auth = token if token.startswith("Splunk ") else f"Splunk {token}"
+        inst._index = index
+        inst._sourcetype = sourcetype
+        inst._timeout = 5.0
+        inst._max_queue = max_queue_size
+        inst._queue_lock = threading.Lock()
+        inst._overflow_count = 0
+        inst._client = http_client
+        inst._queue = queue.Queue(maxsize=max_queue_size)
+        inst._stop_event = threading.Event()
+        inst._worker = threading.Thread(
+            target=inst._send_loop,
+            daemon=True,
+            name="pramanix-splunk-test-worker",
+        )
+        if start_worker:
+            inst._worker.start()
+        return inst
 
     def close(self) -> None:
         """Flush pending events and close the HTTP client.  Call at shutdown."""
@@ -771,6 +849,44 @@ class DatadogAuditSink:
                 )
         except Exception as exc:
             log.error("DatadogAuditSink: failed to enqueue decision: %s", exc, exc_info=True)
+
+    @classmethod
+    def _for_testing(
+        cls,
+        logs_api: Any,
+        api_client: Any,
+        *,
+        service: str = "pramanix-test",
+        source: str = "pramanix",
+        tags: str = "",
+        max_queue_size: int = 500,
+        start_worker: bool = True,
+    ) -> "DatadogAuditSink":
+        """Construct a fully-wired instance without real Datadog credentials.
+
+        Accepts already-constructed logs_api and api_client duck-types so
+        tests can inject fakes without requiring datadog-api-client or
+        a real Datadog account.
+        """
+        inst = cls.__new__(cls)
+        inst._service = service
+        inst._source = source
+        inst._tags = tags
+        inst._max_queue = max_queue_size
+        inst._queue_lock = threading.Lock()
+        inst._overflow_count = 0
+        inst._api_client = api_client
+        inst._logs_api = logs_api
+        inst._queue = queue.Queue(maxsize=max_queue_size)
+        inst._stop_event = threading.Event()
+        inst._worker = threading.Thread(
+            target=inst._send_loop,
+            daemon=True,
+            name="pramanix-datadog-test-worker",
+        )
+        if start_worker:
+            inst._worker.start()
+        return inst
 
     def close(self) -> None:
         """Flush pending events and close the Datadog client.  Call at shutdown."""

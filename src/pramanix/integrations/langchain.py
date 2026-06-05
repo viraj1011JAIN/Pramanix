@@ -148,11 +148,18 @@ class PramanixGuardedTool(BaseTool):
 
     def _run(self, tool_input: str, **kwargs: Any) -> str:
         """Sync path — wraps async logic in a dedicated thread pool."""
+        # Derive wall-clock timeout from GuardConfig.solver_timeout_ms so a
+        # guard configured with a 1 s budget is not blocked for 30 s here.
+        # Add a generous 10 s overhead for async event-loop spin-up plus
+        # any resolver or governance overhead that runs outside the solver.
+        _guard = object.__getattribute__(self, "_pramanix_guard")
+        _solver_ms = getattr(getattr(_guard, "_config", None), "solver_timeout_ms", 30_000)
+        _wall_timeout_s = max(5.0, (_solver_ms / 1000.0) + 10.0)
         try:
             asyncio.get_running_loop()
             executor = object.__getattribute__(self, "_pramanix_executor")
             future = executor.submit(asyncio.run, self._arun(tool_input, **kwargs))
-            return str(future.result(timeout=30))
+            return str(future.result(timeout=_wall_timeout_s))
         except RuntimeError:
             return asyncio.run(self._arun(tool_input, **kwargs))
 

@@ -468,10 +468,31 @@ def solve(
     promotions = analyze_string_promotions(invariants)
 
     # Collect all fields referenced across all invariants, then build bindings.
+    # Note: after _preprocess_invariants, `invariants` contains realized trees
+    # where quantifier nodes are replaced by concrete element comparisons.
+    # `all_fields` therefore includes expanded element fields (amounts_0, …)
+    # which are guaranteed to be in `values` by the expansion above.
     all_fields: dict[str, Field] = {}
     for inv in invariants:
         all_fields.update(collect_fields(inv.node))
     bindings = _build_bindings(all_fields, values, ctx, promotions)
+
+    # Detect free Z3 variables from array expansion: if _preprocess_invariants
+    # realized quantifiers over N elements, all N element fields must have
+    # bindings.  A missing element binding is a logic error — block fail-safe.
+    _bound_names = {z3v.decl().name() for z3v, _ in bindings}
+    _array_element_missing = [
+        name for name in all_fields
+        if name not in _bound_names and "_" in name and name.rsplit("_", 1)[-1].isdigit()
+    ]
+    if _array_element_missing:
+        from pramanix.exceptions import ValidationError as _VE
+
+        raise _VE(
+            f"Array element field(s) {sorted(_array_element_missing)} are referenced in "
+            "realized policy invariants but have no binding value — this is a solver "
+            "expansion inconsistency. Guard blocks to prevent spurious sat results."
+        )
 
     # ── Phase 1: fast path ────────────────────────────────────────────────────
     fast_result = _fast_check(

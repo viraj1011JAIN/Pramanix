@@ -22,6 +22,7 @@ Example::
 """
 
 from __future__ import annotations
+import re
 
 import ipaddress
 import os
@@ -32,6 +33,19 @@ from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMT
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 from pramanix.translator.base import RedactedSecretsMixin
+
+def _safe_model_tag(model: str) -> str:
+    """Return a log-safe version of *model* that cannot inject log lines.
+
+    Strips ASCII control characters (newlines, nulls, ANSI escape sequences)
+    so an attacker-controlled model name cannot forge log entries in Splunk,
+    Datadog, or CloudWatch by embedding CRLF or ESC[ sequences.
+    """
+    # x00-x1f are all ASCII control chars (NUL through US, incl newline).
+    _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
+    # Strip ANSI CSI escape sequences.
+    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    return _s[:100]
 
 
 def _validate_translator_url(url: str) -> str:
@@ -165,20 +179,20 @@ class OllamaTranslator(RedactedSecretsMixin):
             response = await self._client.post(url, json=payload)
         except self._httpx.TimeoutException as exc:
             raise LLMTimeoutError(
-                f"Ollama model '{self.model}' timed out after " f"{self._timeout}s: {exc}",
+                f"Ollama model '{_safe_model_tag(self.model)}' timed out after " f"{self._timeout}s: {exc}",
                 model=self.model,
                 attempts=1,
             ) from exc
         except self._httpx.RequestError as exc:
             raise LLMTimeoutError(
-                f"Ollama model '{self.model}' connection failed: {exc}",
+                f"Ollama model '{_safe_model_tag(self.model)}' connection failed: {exc}",
                 model=self.model,
                 attempts=1,
             ) from exc
 
         if response.status_code != 200:
             raise ExtractionFailureError(
-                f"[{self.model}] Ollama server returned HTTP "
+                f"[{_safe_model_tag(self.model)}] Ollama server returned HTTP "
                 f"{response.status_code}: {response.text[:200]}"
             )
 
@@ -186,7 +200,7 @@ class OllamaTranslator(RedactedSecretsMixin):
             data = response.json()
         except Exception as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] Ollama response was not valid JSON: " f"{exc}"
+                f"[{_safe_model_tag(self.model)}] Ollama response was not valid JSON: " f"{exc}"
             ) from exc
 
         # Ollama /api/chat: {"message": {"role": "assistant", "content": "..."}}
@@ -194,7 +208,7 @@ class OllamaTranslator(RedactedSecretsMixin):
             raw_content: str = data["message"]["content"]
         except (KeyError, TypeError) as exc:
             raise ExtractionFailureError(
-                f"[{self.model}] Unexpected Ollama response shape: {exc}. "
+                f"[{_safe_model_tag(self.model)}] Unexpected Ollama response shape: {exc}. "
                 f"Got: {str(data)[:200]}"
             ) from exc
 
