@@ -1349,24 +1349,30 @@ class TestKeyProviderSupportsRotation:
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient()
+        # Pre-populate the cache so the validity check passes without a network call.
         p = AwsKmsKeyProvider._for_testing(
-            mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+            mc,
+            secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k",
+            cached_pem=b"CACHED_PEM",
         )
         result = p.private_key_pem()
         assert result == b"CACHED_PEM"
-        assert mc.calls == 0
+        assert mc.calls == 0  # cache hit — AWS client must not be called
 
     def test_aws_key_version_cache_hit_skips_refresh(self) -> None:
         """Branch 326->328: cache valid in key_version() → _refresh_cache() NOT called."""
         from pramanix.key_provider import AwsKmsKeyProvider
 
         mc = _AwsSecretsClient()
+        # _for_testing sets _cached_version = "test-version" when cached_pem is provided.
         p = AwsKmsKeyProvider._for_testing(
-            mc, secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k"
+            mc,
+            secret_arn="arn:aws:secretsmanager:us-east-1:123:secret:k",
+            cached_pem=b"CACHED_PEM",
         )
         result = p.key_version()
-        assert result == "v-cached"
-        assert mc.calls == 0
+        assert result == "test-version"  # set by _for_testing when cached_pem provided
+        assert mc.calls == 0  # cache hit — AWS client must not be called
 
     def test_vault_private_key_pem_cache_hit_skips_refresh(self) -> None:
         """Branch 576->578: Vault cache valid → _refresh_cache() NOT called."""
