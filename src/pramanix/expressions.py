@@ -638,9 +638,14 @@ class ExpressionNode:
 
             E(trade_time).within_seconds(3600).named('trade_within_last_hour')
         """
-        if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
+        if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
+            # #154 fix: duration=0 previously passed validation and created
+            # the constraint `0 <= delta <= 0`, which requires the field to
+            # equal the exact current epoch second — practically never true,
+            # silently blocking all requests.  Require duration > 0.
             raise PolicyCompilationError(
-                f"within_seconds() duration must be a non-negative integer; " f"got {duration!r}."
+                f"within_seconds() duration must be a positive integer (> 0); "
+                f"got {duration!r}.  Use duration >= 1."
             )
         now = ExpressionNode(_NowOp())
         delta = now - self

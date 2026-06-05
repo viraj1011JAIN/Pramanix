@@ -79,6 +79,19 @@ def _semantic_post_consensus_check(
             try:
                 balance = Decimal(str(raw_balance))
                 minimum_reserve = Decimal(str(state_values.get("minimum_reserve", "0")))
+                # #155 fix: negative minimum_reserve bypasses the full-balance drain
+                # guard and the reserve check entirely.  `balance - amount < -0.01`
+                # is satisfied by any amount up to balance + 0.01, effectively
+                # allowing overdraft.  Clamp to 0 if negative — a reserve floor
+                # below zero is not a valid financial concept; treat it as no reserve.
+                if minimum_reserve < Decimal("0"):
+                    _log.warning(
+                        "guard_pipeline: minimum_reserve=%r is negative — "
+                        "clamped to 0 to prevent reserve bypass. "
+                        "Investigate state integrity for this request.",
+                        minimum_reserve,
+                    )
+                    minimum_reserve = Decimal("0")
                 if balance - amount < minimum_reserve:
                     raise SemanticPolicyViolation(
                         f"Transfer would leave balance below minimum reserve "

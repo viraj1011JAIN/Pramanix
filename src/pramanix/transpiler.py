@@ -466,6 +466,25 @@ def transpile(
                         UserWarning,
                         stacklevel=6,
                     )
+                # #153 fix: `_z3_lit` converts Python int literals to RealVal
+                # so that they are compatible with Real-sorted fields.  But when
+                # the dividend (lz) is Int-sorted (e.g. DatetimeField epoch) and
+                # the divisor is a plain integer literal, the division produces a
+                # Real expression — subsequent Int operations like % 24 then fail.
+                #
+                # When lz is Int-sorted, coerce a literal integer divisor to
+                # IntVal so the division stays in the Int domain (Z3 Int/Int →
+                # integer quotient, same as Python's //). This is the correct
+                # semantic for epoch-based calculations like is_business_hours().
+                lz_sort = lz.sort()
+                if (
+                    lz_sort == z3.IntSort(ctx)
+                    and isinstance(r, _Literal)
+                    and isinstance(r.value, int)
+                    and not isinstance(r.value, bool)
+                ):
+                    rz_int = cast("z3.ArithRef", z3.IntVal(r.value, ctx))
+                    return cast("z3.ExprRef", lz / rz_int)
                 return cast("z3.ExprRef", lz / rz)
             raise TranspileError(f"Unknown BinOp operator: {op!r}")
 
