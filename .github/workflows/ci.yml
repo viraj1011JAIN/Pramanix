@@ -428,7 +428,9 @@ jobs:
         uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357  # v3.28.0
         with:
           sarif_file: trivy-results.sarif
-        continue-on-error: true
+        # #48 fix: removed continue-on-error: true — if SARIF upload fails,
+        # security findings would silently disappear from the GitHub Security tab.
+        # CI must fail so operators are alerted that vulnerability visibility is broken.
 
   # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   # JOB 7 â€” Dependency License Scan

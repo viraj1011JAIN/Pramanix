@@ -348,7 +348,7 @@ class TestSemanticFieldEqualProperties:
     """Hypothesis-driven properties that must hold for all string inputs."""
 
     @given(st.text(), st.text())
-    @settings(max_examples=500, deadline=None)
+    @settings(max_examples=500, deadline=10_000)
     def test_never_raises_for_arbitrary_strings(self, a: str, b: str) -> None:
         """_semantic_field_equal must never raise for any pair of string inputs."""
         result = _semantic_field_equal(a, b)

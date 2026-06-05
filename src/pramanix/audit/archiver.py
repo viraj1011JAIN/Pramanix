@@ -630,7 +630,10 @@ class MerkleArchiver:
                     == "true"
                 )
                 if not _plaintext_ok:
-                    _log.warning(
+                    _is_production = (
+                        os.environ.get("PRAMANIX_ENV", "").strip().lower() == "production"
+                    )
+                    _msg = (
                         "MerkleArchiver: no archive_writer supplied and "
                         "PRAMANIX_MERKLE_ARCHIVE_KEY is not set — segments written as "
                         "PLAINTEXT UTF-8.  For SOC 2, PCI DSS, or HIPAA deployments:\n"
@@ -638,9 +641,25 @@ class MerkleArchiver:
                         "environment (auto-enables AES-256-GCM).\n"
                         "  Option B: pass archive_writer=EncryptedArchiveWriter(key) to "
                         "MerkleArchiver.  See MerkleArchiver docstring for examples.\n"
-                        "  (Silence this warning in tests: "
+                        "  (Silence in non-production environments: "
                         "PRAMANIX_MERKLE_ARCHIVE_PLAINTEXT_OK=true)"
                     )
+                    if _is_production:
+                        # #33 fix: in PRAMANIX_ENV=production, plaintext archive is a
+                        # compliance violation for HIPAA/PCI-regulated deployments.
+                        # Raise ConfigurationError so the service fails fast at startup
+                        # rather than silently writing unencrypted audit data to disk.
+                        # Set PRAMANIX_MERKLE_ARCHIVE_KEY to enable AES-256-GCM.
+                        from pramanix.exceptions import ConfigurationError as _CE
+
+                        raise _CE(
+                            _msg
+                            + "\n\n[PRODUCTION] ConfigurationError: "
+                            "PRAMANIX_MERKLE_ARCHIVE_KEY must be set when "
+                            "PRAMANIX_ENV=production.  Plaintext audit archives violate "
+                            "SOC 2, PCI DSS, and HIPAA requirements."
+                        )
+                    _log.warning(_msg)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

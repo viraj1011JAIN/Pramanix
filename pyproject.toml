@@ -334,6 +334,8 @@ ignore = [
 # S311: seeded random used for deterministic test data generation.
 # B017: broad pytest.raises used intentionally where exception type is legitimately variable.
 "tests/unit/*.py" = ["TCH", "E402", "N802", "S101", "S106", "S105", "S108", "S301", "S311", "B017"]
+# S101: property tests use pytest assert — required by hypothesis, cannot be replaced.
+"tests/property/*.py" = ["TCH", "E402", "S101"]
 # Adversarial test vectors use OWASP-style uppercase labels (A-X) to match the
 # checklist specification. N802 suppressed — renaming would break traceability.
 "tests/adversarial/test_field_overflow.py" = ["N802"]
@@ -405,9 +407,20 @@ markers = [
     "adversarial: adversarial security tests",
 ]
 filterwarnings = [
-    # GuardConfig emits a production-mode advisory when PRAMANIX_ENV=production;
-    # tests that set this env var are explicitly testing that path.
-    "ignore:GuardConfig:UserWarning",
+    # #313 fix: replaced global "ignore:GuardConfig:UserWarning" with a narrower
+    # filter targeting ONLY the InMemory sink advisories.  The previous global
+    # filter silenced ALL GuardConfig production-mode security warnings across all
+    # 4701 tests, meaning tests that verify warning emission could pass vacuously.
+    #
+    # InMemoryAuditSink / InMemoryDistributedBackend / InMemoryExecutionTokenVerifier
+    # legitimately emit UserWarning when PRAMANIX_ENV=production — those warnings
+    # are expected in tests that exercise these sinks and should not fail CI.
+    # GuardConfig production-mode signer/sink warnings ARE security-relevant and
+    # must NOT be globally suppressed so tests can verify they fire correctly.
+    "ignore:InMemoryDistributedBackend is for testing only:UserWarning",
+    "ignore:InMemoryAuditSink is for testing only:UserWarning",
+    "ignore:InMemoryExecutionTokenVerifier is for testing only:UserWarning",
+    "ignore:InMemoryApprovalWorkflow is for testing only:UserWarning",
     # requests detects a urllib3/chardet version mismatch — upstream packaging
     # issue between requests and urllib3; does not affect test correctness.
     "ignore:urllib3.*doesn't match a supported version",

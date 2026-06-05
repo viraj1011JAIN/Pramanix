@@ -1,10 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
-# Pramanix — slim Debian-based production image
+# Pramanix — slim Debian-based image
+#
+# ⚠  DEVELOPMENT / EVALUATION USE ONLY — NOT FOR PRODUCTION ⚠
+#
+# This image uses an editable install and runs a broad package set.
+# For production deployments, use Dockerfile.production which:
+#   - Pins the base image to a SHA digest
+#   - Installs via pip --require-hashes from a locked requirements file
+#   - Runs as UID 10001 (non-root)
+#   - Includes a HEALTHCHECK
+#   - Contains no build tools
 #
 # WHY NOT ALPINE?
 # ---------------
-# z3-solver ships glibc-compiled wheels. Alpine Linux uses musl libc, which
-# causes segfaults and 3-10x latency regressions with z3. Pramanix enforces
+# z3-solver ships glibc-compiled wheels.  Alpine Linux uses musl libc, which
+# causes segfaults and 3-10× latency regressions with z3.  Pramanix enforces
 # this at runtime via a startup check that raises ConfigurationError on musl.
 # Use this image (python:3.13-slim-bookworm) instead.
 #
@@ -15,6 +25,10 @@
 #   docker run --rm pramanix:slim python -c "import pramanix; print('OK')"
 
 FROM python:3.13-slim-bookworm
+
+LABEL org.opencontainers.image.title="Pramanix (slim dev image)" \
+      org.opencontainers.image.description="Development/evaluation image — NOT for production" \
+      pramanix.image.type="development"
 
 WORKDIR /app
 
@@ -30,5 +44,17 @@ RUN pip install --no-cache-dir -e ".[all]"
 
 # Verify z3 works and musl check passes cleanly
 RUN python -c "from pramanix import Guard; print('Pramanix OK')"
+
+# #314 fix: run as non-root user to reduce container escape blast radius.
+# UID 10001 matches Dockerfile.production for operational consistency.
+RUN groupadd --gid 10001 pramanix \
+    && useradd --uid 10001 --gid pramanix --no-create-home pramanix \
+    && chown -R pramanix:pramanix /app
+USER 10001
+
+# #314 fix: HEALTHCHECK so orchestrators (Docker, K8s liveness probe fallback)
+# can detect a hanging or crashed container.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import pramanix; print('healthy')" || exit 1
 
 CMD ["python", "-m", "pramanix"]

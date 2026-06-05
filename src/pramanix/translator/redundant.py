@@ -40,16 +40,17 @@ Agreement modes
 """
 
 from __future__ import annotations
-import re
 
 import asyncio
 import enum
 import json
 import logging
+import re
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
 
 from pramanix.exceptions import ExtractionFailureError, ExtractionMismatchError, LLMTimeoutError
+
 
 def _safe_model_tag(model: str) -> str:
     """Return a log-safe version of *model* that cannot inject log lines.
@@ -61,7 +62,7 @@ def _safe_model_tag(model: str) -> str:
     # x00-x1f are all ASCII control chars (NUL through US, incl newline).
     _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
     # Strip ANSI CSI escape sequences.
-    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    _s = re.sub("\x1b\\[[0-9;]*[A-Za-z]", "", _s)
     return _s[:100]
 
 if TYPE_CHECKING:
@@ -482,6 +483,41 @@ async def extract_with_consensus(
             f"(confidence={score:.2f} ≥ {injection_threshold:.2f}). "
             f"Sanitisation signals: {sanitise_warnings or 'none'}."
         )
+
+    # ── #85 fix: strip unverified fields from the intent before returning ─────
+    # In lenient mode with explicit critical_fields, non-critical fields where
+    # the two models DISAGREE are excluded from the result.  Including them
+    # would let attacker-influenced values from model A flow into the Decision's
+    # intent_dump without cross-verification — enabling injection through low-stakes
+    # fields even when all security-critical fields agree.
+    #
+    # Policy: only return a field if:
+    #  (a) it is declared in the intent_schema (not an extra field from extra="allow"), AND
+    #  (b) it is in critical_fields (already verified), OR both models agree on its value.
+    if agreement_mode == "lenient" and critical_fields is not None:
+        _schema_fields = set(intent_schema.model_fields.keys())
+        _verified: dict[str, Any] = {}
+        _excluded: list[str] = []
+        for _k, _v in dump_a.items():
+            if _k not in _schema_fields:
+                _excluded.append(_k)
+                continue
+            if _k in critical_fields:
+                _verified[_k] = _v  # critical: consensus-checked by _enforce_consensus
+            elif dump_a.get(_k) == dump_b.get(_k):
+                _verified[_k] = _v  # non-critical: both models agree — safe to include
+            else:
+                _excluded.append(_k)  # non-critical disagreement — exclude to prevent injection
+        if _excluded:
+            _log.warning(
+                "pramanix.consensus.lenient_fields_excluded: %d field(s) excluded "
+                "from the returned intent because models disagreed on non-critical "
+                "values — these fields cannot be consensus-verified and may carry "
+                "attacker-influenced values.  Add to critical_fields if security-sensitive: %s",
+                len(_excluded),
+                sorted(_excluded),
+            )
+        return _verified
 
     return dump_a
 

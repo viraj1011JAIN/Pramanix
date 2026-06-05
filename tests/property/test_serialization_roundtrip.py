@@ -59,7 +59,7 @@ def _fresh_ctx() -> z3.Context:
         # future-proof and suitable for Big Finance.
     )
 )
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=10_000)
 def test_decimal_z3_roundtrip(value: Decimal) -> None:
     """Decimal survives the Z3 RealVal encoding at arbitrary precision.
 

@@ -19,7 +19,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pramanix.decision import Decision, SolverStatus
@@ -119,7 +119,7 @@ class TestDecisionHashDeterminism:
             allow_infinity=False,
         )
     )
-    @settings(max_examples=500, suppress_health_check=[HealthCheck.too_slow], deadline=None)
+    @settings(max_examples=500, deadline=10_000)
     def test_hypothesis_hash_determinism(self, amount):
         """Property: same Decision always hashes to same value."""
         d1 = Decision.safe(

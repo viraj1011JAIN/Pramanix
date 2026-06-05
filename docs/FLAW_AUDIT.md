@@ -2950,6 +2950,89 @@ details must read the Pramanix structured logs or audit sink.
 
 ---
 
+## PART 19 — EIGHTH WAVE FIX LOG (2026-06-05)
+
+> Eighth fix wave — production-level fixes for 8 remaining open HIGH flaws.
+> All fixes use real implementations — no mocks, stubs, or monkeypatching.
+
+### ✅ FIXED — #33 — Merkle Archive Plaintext by Default — No Warning in Production Mode
+
+`MerkleArchiver.__init__` now raises `ConfigurationError` when:
+- `PRAMANIX_ENV=production`, AND
+- no `archive_writer` is supplied, AND
+- `PRAMANIX_MERKLE_ARCHIVE_KEY` is not set, AND
+- `PRAMANIX_MERKLE_ARCHIVE_PLAINTEXT_OK=true` is not set.
+
+Previous behaviour: only emitted a `log.warning()` regardless of environment.
+New behaviour: raises `ConfigurationError` at startup in production — fail fast
+rather than silently writing unencrypted audit data to disk.
+
+### ✅ FIXED — #35 — `SemanticSimilarityGuard` Name Misleads (TF-IDF → Jaccard → now accurately documented)
+
+Added `LexicalOverlapGuard` as the canonical correctly-named alias (accurate:
+the default backend uses Jaccard word-overlap, not semantic embeddings).
+Added `KeywordDensityScorer` as the canonical alias for `ToxicityScorer`
+(accurate: keyword density ratio, not an ML model).
+Both original names (`SemanticSimilarityGuard`, `ToxicityScorer`) are preserved
+for backward compatibility. New code should use the accurate names.
+Both are exported from `pramanix.nlp.validators`.
+
+### ✅ FIXED — #48 — CI `continue-on-error: true` on Trivy SARIF Upload
+
+Removed `continue-on-error: true` from the `Upload Trivy SARIF report` step in
+`.github/workflows/ci.yml`.  When SARIF upload fails, CI now fails so operators
+know that vulnerability findings are not visible in the GitHub Security tab.
+
+### ✅ FIXED — #85 — Redundant Translator Lenient Mode — Non-Critical Fields Flow into Audit Unchecked
+
+In `lenient` mode with explicit `critical_fields`, `extract_with_consensus` now
+filters the returned intent dict:
+- Only includes fields declared in `intent_schema.model_fields` (strips extras)
+- For non-critical fields: only includes them if BOTH models agree on the value
+- Excludes fields where only model A has a value (attacker-controlled via model A)
+  and logs a WARNING with the list of excluded fields
+This prevents injection through non-critical fields even when the attacker
+controls model A's output for those fields.
+
+### ✅ FIXED — #87 — `authenticate_and_bind()` No Guard Against Async Context
+
+Added `asyncio.get_running_loop()` check at the start of
+`MeshAuthenticator.authenticate_and_bind()`.  When called from within a running
+event loop, emits `RuntimeWarning` directing the caller to use
+`authenticate_and_bind_async()` instead.  Previously there was no detection or
+warning — developers would silently block the event loop during JWKS HTTP fetches.
+
+### ✅ FIXED — #313 — Global `filterwarnings` Silences Production-Mode Warnings in ALL Tests
+
+Replaced `"ignore:GuardConfig:UserWarning"` (which silenced ALL GuardConfig
+`UserWarning` globally across all 4701 tests) with precise filters targeting
+only the InMemory component advisories that are expected/harmless in tests:
+- `"ignore:InMemoryDistributedBackend is for testing only:UserWarning"`
+- `"ignore:InMemoryAuditSink is for testing only:UserWarning"`
+- `"ignore:InMemoryExecutionTokenVerifier is for testing only:UserWarning"`
+- `"ignore:InMemoryApprovalWorkflow is for testing only:UserWarning"`
+GuardConfig production-mode signer/sink warnings are now visible in tests,
+allowing tests to verify that these warnings fire correctly.
+
+### ✅ FIXED — #314 — `Dockerfile.slim` Runs as Root, No HEALTHCHECK
+
+- Added `groupadd`/`useradd pramanix` (UID 10001, matching Dockerfile.production)
+- Added `USER 10001` directive
+- Added `HEALTHCHECK` with 30s interval and 10s timeout
+- Added `LABEL` marking image as development-only
+- Added prominent `⚠ DEVELOPMENT / EVALUATION USE ONLY` header
+
+### ✅ FIXED — #316 — No `SECURITY.md` — No Responsible Disclosure Policy
+
+Created `SECURITY.md` at repository root with:
+- Supported versions table
+- Coordinated disclosure process (email + 90-day window)
+- In-scope and out-of-scope vulnerability types specific to Pramanix
+- Response SLA (48h ack, 5-day triage, 10-day patch timeline)
+- Bug bounty statement (no paid program, named credit in release notes)
+
+---
+
 ## CONFIRMED CLEAN (Explicitly Verified)
 
 - `os.system(` — none in `src/`

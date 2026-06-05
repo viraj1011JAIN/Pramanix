@@ -77,7 +77,7 @@ _pos_int = st.integers(min_value=1, max_value=100_000)
 
 
 @given(xv=_decimal, yv=_decimal, threshold=_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_addition_is_commutative(xv: Decimal, yv: Decimal, threshold: Decimal) -> None:
     """E(x) + E(y) >= t  iff  E(y) + E(x) >= t — Z3 Real addition is commutative."""
     inv_ab = [(E(_x) + E(_y) >= threshold).named("commute_ab")]
@@ -92,7 +92,7 @@ def test_addition_is_commutative(xv: Decimal, yv: Decimal, threshold: Decimal) -
 
 
 @given(xv=_decimal, yv=_decimal, threshold=_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 @pytest.mark.filterwarnings("ignore:Non-linear arithmetic detected:UserWarning")
 def test_multiplication_is_commutative(xv: Decimal, yv: Decimal, threshold: Decimal) -> None:
     """E(x) * E(y) >= t  iff  E(y) * E(x) >= t — Z3 Real multiplication is commutative.
@@ -117,7 +117,7 @@ def test_multiplication_is_commutative(xv: Decimal, yv: Decimal, threshold: Deci
 
 
 @given(xv=_decimal, tight=_decimal, delta=_positive_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_ge_monotone_bound_tightening(xv: Decimal, tight: Decimal, delta: Decimal) -> None:
     """If x >= tight is SAT, then x >= (tight - delta) is also SAT.
 
@@ -137,7 +137,7 @@ def test_ge_monotone_bound_tightening(xv: Decimal, tight: Decimal, delta: Decima
 
 
 @given(xv=_int_val, tight=_int_val, delta=_pos_int)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_int_ge_monotone(xv: int, tight: int, delta: int) -> None:
     """Integer version: n >= tight SAT → n >= (tight - delta) SAT."""
     inv_tight = [(E(_n) >= tight).named("tight")]
@@ -156,7 +156,7 @@ def test_int_ge_monotone(xv: int, tight: int, delta: int) -> None:
 
 
 @given(xv=_decimal, yv=_decimal, tx=_decimal, ty=_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_conjunction_requires_both(xv: Decimal, yv: Decimal, tx: Decimal, ty: Decimal) -> None:
     """(x >= tx) & (y >= ty) is SAT iff both individual constraints are SAT."""
     a = (E(_x) >= tx).named("a")
@@ -181,7 +181,7 @@ def test_conjunction_requires_both(xv: Decimal, yv: Decimal, tx: Decimal, ty: De
 
 
 @given(xv=_decimal, yv=_decimal, tx=_decimal, ty=_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_disjunction_requires_at_least_one(
     xv: Decimal, yv: Decimal, tx: Decimal, ty: Decimal
 ) -> None:
@@ -208,7 +208,7 @@ def test_disjunction_requires_at_least_one(
 
 
 @given(xv=_decimal, threshold=_decimal)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_negation_is_complement(xv: Decimal, threshold: Decimal) -> None:
     """~(x >= t) is SAT iff (x >= t) is UNSAT — negation is exact complement."""
     inv = (E(_x) >= threshold).named("pos")
@@ -229,7 +229,7 @@ def test_negation_is_complement(xv: Decimal, threshold: Decimal) -> None:
 
 
 @given(nv=_int_val, threshold=_int_val)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_int_negation_is_complement(nv: int, threshold: int) -> None:
     """Integer version: ~(n >= t) is SAT iff (n >= t) is UNSAT."""
     inv = (E(_n) >= threshold).named("pos")
@@ -248,7 +248,7 @@ def test_int_negation_is_complement(nv: int, threshold: int) -> None:
 
 
 @given(xv=_decimal, yv=_decimal)
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=10_000)
 def test_real_comparison_agrees_with_python_decimal(xv: Decimal, yv: Decimal) -> None:
     """Z3 Real >= agrees with Python Decimal >= for all arbitrary-precision inputs."""
     inv = [(E(_x) >= E(_y)).named("cmp")]
@@ -262,7 +262,7 @@ def test_real_comparison_agrees_with_python_decimal(xv: Decimal, yv: Decimal) ->
 
 
 @given(xv=_decimal, yv=_decimal)
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=10_000)
 def test_real_equality_agrees_with_python_decimal(xv: Decimal, yv: Decimal) -> None:
     """Z3 Real == agrees with Python Decimal == (exact equality, no rounding)."""
     inv = [(E(_x) == E(_y)).named("eq")]
@@ -275,7 +275,7 @@ def test_real_equality_agrees_with_python_decimal(xv: Decimal, yv: Decimal) -> N
 
 
 @given(xv=_int_val, yv=_int_val)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_int_comparison_agrees_with_python(xv: int, yv: int) -> None:
     """Z3 Int > agrees with Python int > for all integer inputs."""
     inv = [(E(_n) > E(_m)).named("gt")]
@@ -296,7 +296,7 @@ def test_int_comparison_agrees_with_python(xv: int, yv: int) -> None:
     value=st.integers(min_value=0, max_value=100),
     allowed=st.frozensets(st.integers(min_value=0, max_value=100), min_size=1, max_size=10),
 )
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_is_in_exactly_matches_python_membership(value: int, allowed: frozenset[int]) -> None:
     """E(n).is_in(list) is SAT iff value is in the allowed set."""
     allowed_list = list(allowed)
@@ -315,7 +315,7 @@ def test_is_in_exactly_matches_python_membership(value: int, allowed: frozenset[
 
 
 @given(flag_val=st.booleans())
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=100, deadline=10_000)
 def test_bool_field_isolation(flag_val: bool) -> None:
     """Bool field == True/False is correctly encoded; no sort confusion with Real."""
     inv_true = [(E(_flag) == True).named("is_true")]
@@ -333,7 +333,7 @@ def test_bool_field_isolation(flag_val: bool) -> None:
 
 
 @given(xv=_decimal, flag_val=st.booleans())
-@settings(max_examples=200, deadline=None)
+@settings(max_examples=200, deadline=10_000)
 def test_mixed_real_bool_invariants_no_contamination(xv: Decimal, flag_val: bool) -> None:
     """Real and Bool fields coexist in one solve without cross-sort contamination."""
     threshold = Decimal("0")
@@ -379,7 +379,7 @@ def test_named_label_preserved_through_boolean_composition() -> None:
 
 
 @given(xv=_decimal)
-@settings(max_examples=100, deadline=None)
+@settings(max_examples=100, deadline=10_000)
 def test_empty_invariant_list_is_always_sat(xv: Decimal) -> None:
     """solve([], ...) with no invariants is always SAT — vacuous truth."""
     result = solve([], {"x": xv}, timeout_ms=5_000)
@@ -394,7 +394,7 @@ def test_empty_invariant_list_is_always_sat(xv: Decimal) -> None:
 
 
 @given(xv=_decimal, yv=_decimal)
-@settings(max_examples=1_000, deadline=None)
+@settings(max_examples=1_000, deadline=10_000)
 def test_subtraction_non_negative_iff_ge(xv: Decimal, yv: Decimal) -> None:
     """E(x) - E(y) >= 0  iff  x >= y — core financial invariant."""
     inv = [(E(_x) - E(_y) >= Decimal("0")).named("non_negative_diff")]
@@ -412,7 +412,7 @@ def test_subtraction_non_negative_iff_ge(xv: Decimal, yv: Decimal) -> None:
 
 
 @given(nv=_int_val, threshold=_int_val)
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=10_000)
 def test_strict_gt_is_ge_plus_one_for_integers(nv: int, threshold: int) -> None:
     """For integers, n > t iff n >= t + 1 — strict and non-strict are duals."""
     inv_strict = [(E(_n) > threshold).named("strict")]

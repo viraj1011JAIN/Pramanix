@@ -330,6 +330,30 @@ class MeshAuthenticator:
             URI in ``sub``, or ``_mesh_principal`` already present in
             ``raw_intent``.
         """
+        # ── #87 fix: async context guard ─────────────────────────────────────
+        # authenticate_and_bind() is synchronous.  When called from an async
+        # coroutine it blocks the event loop for the full JWKS HTTP fetch duration
+        # (possibly 100ms-2s under load).  The async variant
+        # authenticate_and_bind_async() offloads the fetch to asyncio.to_thread().
+        # Detect the misuse pattern and emit a RuntimeWarning so operators can find
+        # and fix callers before they cause event-loop starvation in production.
+        import asyncio as _asyncio
+
+        try:
+            _asyncio.get_running_loop()
+            import warnings as _warn
+
+            _warn.warn(
+                "MeshAuthenticator.authenticate_and_bind() is synchronous and will block "
+                "the async event loop during JWKS HTTP fetches.  Use "
+                "await authenticate_and_bind_async() in async contexts to avoid "
+                "event-loop starvation under concurrent admission traffic.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        except RuntimeError:
+            pass  # no running loop — sync call is safe
+
         # ── Intent-poisoning guard ────────────────────────────────────────────
         if _MESH_PRINCIPAL_KEY in raw_intent:
             raise MeshAuthenticationError(

@@ -549,7 +549,7 @@ class ToxicityScorer:
 
         # Strip punctuation from each token after NFKC + casefold normalization.
         # Zero-width chars (U+200B etc.) are stripped by NFKC; Cyrillic/Greek
-        # lookalikes (e.g. і → i) are mapped by casefolding.  Multi-word toxic
+        # lookalikes (e.g. Cyrillic i -> i) are mapped by casefolding.  Multi-word toxic
         # phrases in the word set are also matched as bigrams/trigrams below.
         normalised = _normalise(text)
         # Strip zero-width joiners and other invisible chars that survive NFKC
@@ -1270,3 +1270,33 @@ class ProfanityDetector:
         for _word, pattern in self._patterns:
             result = pattern.sub(replacement, result)
         return result
+
+
+# ── #35 fix: canonical names for clarity ──────────────────────────────────────
+
+# ``SemanticSimilarityGuard`` is a misleading name — the default backend uses
+# Jaccard word-overlap (a lexical metric), NOT sentence-transformer embeddings.
+# ``LexicalOverlapGuard`` is the accurate name.  Both names are exported for
+# backward compatibility, but new code should use ``LexicalOverlapGuard``.
+#
+# To use real semantic (embedding-based) similarity, pass a ``similarity_fn``
+# backed by sentence-transformers:
+#
+#   from sentence_transformers import SentenceTransformer
+#   from pramanix.nlp.validators import LexicalOverlapGuard
+#   model = SentenceTransformer("all-MiniLM-L6-v2")
+#
+#   def embed_sim(text: str, anchor: str) -> float:
+#       embs = model.encode([text, anchor])
+#       return float(embs[0] @ embs[1] / (norm(embs[0]) * norm(embs[1])))
+#
+#   guard = LexicalOverlapGuard(anchors=["wire transfer"], similarity_fn=embed_sim)
+
+#: Canonical alias — use this in new code.
+LexicalOverlapGuard = SemanticSimilarityGuard
+
+# ``KeywordDensityScorer`` is the accurate name for ``ToxicityScorer`` — it
+# matches against a fixed vocabulary of stems and returns a density ratio.
+# It is NOT an ML toxicity model (no neural network, no training data).
+# Export both names; new code should use ``KeywordDensityScorer``.
+KeywordDensityScorer = ToxicityScorer

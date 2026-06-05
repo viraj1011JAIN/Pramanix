@@ -63,7 +63,7 @@ class TestInjectionConfidenceScoreBounds:
     """``injection_confidence_score`` must always return a value in [0.0, 1.0]."""
 
     @given(text=_any_text)
-    @settings(max_examples=500, deadline=None)
+    @settings(max_examples=500, deadline=10_000)
     def test_in_range(self, text: str) -> None:
         score = injection_confidence_score(text)
         assert isinstance(score, float), f"Expected float, got {type(score)}"
@@ -82,7 +82,7 @@ class TestBuiltinScorerBounds:
     """``BuiltinScorer().score(text)`` must always return a value in [0.0, 1.0]."""
 
     @given(text=_any_text)
-    @settings(max_examples=500, deadline=None)
+    @settings(max_examples=500, deadline=10_000)
     def test_in_range(self, text: str) -> None:
         scorer = BuiltinScorer()
         score = scorer.score(text)
@@ -138,7 +138,7 @@ class TestCalibratedScorerBounds:
         return scorer
 
     @given(text=_any_text)
-    @settings(max_examples=300, deadline=None)
+    @settings(max_examples=300, deadline=10_000)
     def test_in_range(self, fitted_scorer: CalibratedScorer, text: str) -> None:
         score = fitted_scorer.score(text)
         assert isinstance(score, float), f"Expected float, got {type(score)}"
