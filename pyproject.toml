@@ -294,7 +294,9 @@ select = [
 ignore = [
     "E501",    # line length — handled by formatter
     "E712",    # comparison to True/False — Z3 DSL overloads == as a constraint builder; `E(f) == False` is not a Python bool comparison
-    "S101",    # assert used — acceptable in tests and warmup
+    # S101 (assert-used) is scoped to tests/ only via per-file-ignores below.
+    # Production source code (src/) must use explicit runtime checks instead of
+    # assert, which is silently stripped by python -O / PYTHONOPTIMIZE=1.
     "S110",    # try-except-pass — used deliberately in fail-safe paths
     "S603",    # subprocess without shell — intentional in drain/kill paths
     "S607",    # partial path subprocess — intentional in drain/kill paths
@@ -316,21 +318,22 @@ ignore = [
 # Public API functions E, ForAll, Exists, DatetimeField are PascalCase by design.
 "src/pramanix/expressions.py" = ["N802"]
 # Adversarial test vectors use single uppercase letters (A, B, C…) as taxonomy labels.
-"tests/adversarial/test_adversarial_numeric_boundary.py" = ["N802"]
+# S101: assert used in adversarial test assertions — permitted in all test files.
+"tests/adversarial/test_adversarial_numeric_boundary.py" = ["N802", "S101"]
 # Adversarial circuit breaker tests use uppercase CB labels (CB1, CB2…) as scenario IDs.
-"tests/adversarial/test_adversarial_circuit_breaker_failures.py" = ["N802"]
+"tests/adversarial/test_adversarial_circuit_breaker_failures.py" = ["N802", "S101"]
 # Adversarial token replay tests use uppercase R labels (R1, R2…) as scenario IDs.
-"tests/adversarial/test_adversarial_token_replay.py" = ["N802"]
+"tests/adversarial/test_adversarial_token_replay.py" = ["N802", "S101"]
 # Integration tests use print() for latency measurement output; T20 not applicable here.
 # Tests also use ConstraintExpr at runtime (not just type-checking) via invariants() return type.
 # S105/S108 in integration tests are false positives on test fixture values and path strings.
-"tests/integration/*.py" = ["T20", "TCH", "E402", "S106", "S105", "S108", "S301"]
+"tests/integration/*.py" = ["T20", "TCH", "E402", "S101", "S106", "S105", "S108", "S301"]
 # S105: false positives on attribute names like _secret_name/_secret_id/_secret_path in fixtures.
 # S108: test path strings like "/tmp/..." are test inputs/fixture values, not real temp files.
 # S301: serialization tests deliberately test pickle roundtrips.
 # S311: seeded random used for deterministic test data generation.
 # B017: broad pytest.raises used intentionally where exception type is legitimately variable.
-"tests/unit/*.py" = ["TCH", "E402", "N802", "S106", "S105", "S108", "S301", "S311", "B017"]
+"tests/unit/*.py" = ["TCH", "E402", "N802", "S101", "S106", "S105", "S108", "S301", "S311", "B017"]
 # Adversarial test vectors use OWASP-style uppercase labels (A-X) to match the
 # checklist specification. N802 suppressed — renaming would break traceability.
 "tests/adversarial/test_field_overflow.py" = ["N802"]

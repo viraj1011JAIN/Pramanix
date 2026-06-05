@@ -186,7 +186,13 @@ class PramanixGuardNode:
             raise ValueError("on_fail must be 'halt' or 'warn'.")
 
         if guard is None:
-            assert policy is not None
+            # policy is not None: guaranteed by the ValueError guard above.
+            # Use explicit check instead of assert — assert is stripped by python -O.
+            if policy is None:
+                raise ValueError(
+                    "Internal error: policy is None after guard/policy validation. "
+                    "This should never happen — please report this as a bug."
+                )
             cfg = GuardConfig(
                 execution_mode="sync",
                 solver_timeout_ms=timeout_ms,

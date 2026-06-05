@@ -1621,3 +1621,152 @@ class TestAdaptiveCircuitBreakerProbeGuarantees:
 
         assert cb.state == CircuitState.CLOSED
         assert cb._probing is False
+
+
+# ── fast_path.py: #161 account_frozen integer coverage ──────────────────────
+
+
+class TestAccountFrozenIntegerValues:
+    """#161 fix: account_frozen must catch any truthy numeric frozen flag, not just True/1/yes."""
+
+    def _make_rule(self) -> Any:
+        from pramanix.fast_path import SemanticFastPath
+
+        return SemanticFastPath.account_frozen("is_frozen")
+
+    def test_true_is_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": True}) is not None
+
+    def test_1_is_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": 1}) is not None
+
+    def test_2_is_frozen(self) -> None:
+        """#161: integer 2 must be treated as frozen (multi-level freeze code)."""
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": 2}) is not None
+
+    def test_99_is_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": 99}) is not None
+
+    def test_string_frozen_is_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": "frozen"}) is not None
+
+    def test_string_yes_is_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": "yes"}) is not None
+
+    def test_string_true_is_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": "true"}) is not None
+
+    def test_false_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": False}) is None
+
+    def test_0_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": 0}) is None
+
+    def test_string_false_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": "false"}) is None
+
+    def test_string_no_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": "no"}) is None
+
+    def test_string_0_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": "0"}) is None
+
+    def test_none_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {"is_frozen": None}) is None
+
+    def test_field_absent_not_frozen(self) -> None:
+        rule = self._make_rule()
+        assert rule({}, {}) is None
+
+
+# ── compiler.py: #311 assert → runtime check ─────────────────────────────────
+
+
+class TestCompilerRuntimeCheckOnListRhs:
+    """#311 fix: compiler must NOT use assert for list-RHS check (assert stripped by -O)."""
+
+    def test_no_assert_for_list_rhs_in_source(self) -> None:
+        """#311: assert not isinstance(rhs_val, list) must not exist in compiler source.
+
+        assert is silently eliminated by python -O.  The fix uses an explicit
+        if isinstance(...): raise PolicyCompilationError(...) which cannot be stripped.
+        """
+        import inspect
+
+        from pramanix import compiler as _compiler_mod
+
+        src = inspect.getsource(_compiler_mod)
+        assert "assert not isinstance(rhs_val, list)" not in src, (
+            "assert stripped by python -O — must use explicit PolicyCompilationError raise"
+        )
+        assert "if isinstance(rhs_val, list):" in src, (
+            "Missing runtime list-RHS check in compiler — #311 regression"
+        )
+        assert "Compiler invariant violated" in src, (
+            "PolicyCompilationError message missing — check _compile_condition"
+        )
+
+
+# ── k8s/webhook.py: #334 verify_async + #335 no policy internals ─────────────
+
+
+def test_k8s_webhook_uses_verify_async() -> None:
+    """#334 fix: k8s admission webhook must call verify_async, not sync verify.
+
+    Checks the actual function call in the validate() body — uses 'await guard.verify_async('
+    which is distinct from comments or docstrings referencing the old guard.verify() API.
+    """
+    import inspect
+
+    from pramanix.k8s import webhook
+
+    source = inspect.getsource(webhook)
+    # The awaited async call must be present.
+    assert "await guard.verify_async(" in source, (
+        "k8s webhook must await guard.verify_async() — "
+        "sync guard.verify() blocks the event loop (#334)"
+    )
+
+
+def test_k8s_webhook_rejection_message_omits_policy_internals() -> None:
+    """#335 fix: K8s rejection AdmissionReview must not embed policy internals.
+
+    The response JSON message field must only contain decision_id for correlation.
+    Violated invariants and explanation are logged at WARNING for operator use but
+    MUST NOT appear in the AdmissionReview rejection response — those strings are
+    stored permanently in kubectl describe, cluster Events, and the immutable K8s
+    audit log, visible to any cluster user regardless of RBAC.
+    """
+    import inspect
+
+    from pramanix.k8s import webhook
+
+    source = inspect.getsource(webhook)
+    # The response must reference decision_id (the safe correlation token).
+    assert "decision.decision_id" in source, (
+        "k8s rejection message must include decision_id for audit correlation (#335)"
+    )
+    # The Pramanix audit sink message (not K8s response) must direct operators.
+    assert "Check the Pramanix audit log" in source, (
+        "k8s rejection message must direct operators to Pramanix audit sink (#335)"
+    )
+    # The message string in the JSON response must not contain invariant details.
+    # We verify by checking that the literal f-string for the response message
+    # does NOT mention violated_invariants or explanation — only decision_id.
+    response_section = source[source.find("Check the Pramanix audit log"):]
+    assert "violated_invariants" not in response_section[:200], (
+        "k8s rejection JSON message must not include violated_invariants (#335)"
+    )

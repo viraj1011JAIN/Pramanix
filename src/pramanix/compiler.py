@@ -615,7 +615,7 @@ class Rule(BaseModel):
 
     @field_validator("conditions")
     @classmethod
-    def _check_depth(cls, v: list) -> list:
+    def _check_depth(cls, v: list[Any]) -> list[Any]:
         """Recursively verify that nested Rule depth does not exceed 16 levels.
 
         Deep nesting triggers Python's recursion limit in ``_compile_rule``
@@ -627,7 +627,7 @@ class Rule(BaseModel):
         """
         _MAX_DEPTH = 16
 
-        def _depth(items: list, d: int) -> None:
+        def _depth(items: list[Any], d: int) -> None:
             if d > _MAX_DEPTH:
                 raise ValueError(
                     f"Rule.conditions nesting depth {d} exceeds maximum of "
@@ -1023,7 +1023,16 @@ class PolicyCompiler:
                 )
             return self._compile_membership(cond, lhs_field, lhs_node, label, rhs_val)
 
-        assert not isinstance(rhs_val, list)
+        # Runtime check (not assert — assert is stripped by python -O and
+        # would silently pass a list to _compile_scalar_comparison, producing
+        # an incorrect Z3 constraint that could make the guard spuriously ALLOW).
+        if isinstance(rhs_val, list):
+            raise PolicyCompilationError(
+                f"Compiler invariant violated: scalar comparison received a list "
+                f"RHS for operator {cond.op.value!r} on field {lhs_field.name!r}. "
+                "This indicates a model_validator contract violation in the policy "
+                "definition — please report this as a bug."
+            )
         return self._compile_scalar_comparison(cond, lhs_field, lhs_node, label, rhs_val)
 
     def _compile_scalar_comparison(

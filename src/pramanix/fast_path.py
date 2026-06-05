@@ -178,13 +178,41 @@ class SemanticFastPath:
 
     @staticmethod
     def account_frozen(field_name: str = "is_frozen") -> FastPathRule:
-        """Block if account is frozen."""
+        """Block if account is frozen.
+
+        Accepts any truthy frozen-flag value, including non-zero integers (e.g.
+        ``2``, ``3``) that some systems use as multi-level freeze codes.  The
+        following values are considered **not frozen**:
+        - Python ``None``, ``False``, ``0``, ``0.0``, ``Decimal("0")``
+        - Strings ``"false"``, ``"0"``, ``"no"``, ``"f"``, ``"n"``, ``""``
+
+        Everything else (``True``, ``1``, ``2``, ``"true"``, ``"yes"``,
+        ``"frozen"``, etc.) is treated as frozen.
+        """
+        _NOT_FROZEN_STRINGS = frozenset(("false", "0", "no", "f", "n", ""))
 
         def _rule(intent: dict[str, Any], state: dict[str, Any]) -> str | None:
             val = state.get(field_name)
-            if val is True or str(val).lower() in ("true", "1", "yes"):
-                return "Account is frozen"
-            return None
+            if val is None or val is False:
+                return None
+            # Numeric: treat any non-zero number (int, float, Decimal) as frozen.
+            if isinstance(val, bool):
+                # bool is a subclass of int — handle before the int branch.
+                return "Account is frozen" if val else None
+            if isinstance(val, int | float):
+                return "Account is frozen" if val != 0 else None
+            try:
+                from decimal import Decimal as _Decimal
+
+                if isinstance(val, _Decimal):
+                    return "Account is frozen" if val != _Decimal(0) else None
+            except ImportError:
+                pass
+            # String: any value NOT in the explicit "not frozen" set is frozen.
+            s = str(val).lower().strip()
+            if s in _NOT_FROZEN_STRINGS:
+                return None
+            return "Account is frozen"
 
         _rule.__name__ = f"account_frozen({field_name})"
         return _rule

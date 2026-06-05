@@ -2891,6 +2891,65 @@ inside the single `finally` lock acquisition.  On `CancelledError` with
 
 ---
 
+## PART 18 — SEVENTH WAVE FIX LOG (2026-06-05)
+
+> Seventh fix wave — production-level fixes for 7 confirmed open HIGH/MEDIUM flaws.
+> All fixes use real implementations — no mocks, stubs, or monkeypatching.
+> ruff clean + mypy strict 0 errors across all modified files.
+
+### ✅ FIXED — #161 — `fast_path.py:account_frozen` — Integer > 1 Frozen Flags Not Caught
+
+`account_frozen(field_name)` previously used `str(val).lower() in ("true", "1", "yes")`.
+Integer values like `2`, `3` (multi-level freeze codes) returned `None` (not frozen).
+Fixed: explicit type dispatch — `bool`, `int`, `float`, `Decimal` all checked against `!= 0`;
+strings checked against an explicit "not frozen" frozenset. Any truthy value not in the
+"not frozen" set is treated as frozen.
+
+### ✅ FIXED — #311 — `compiler.py:1026` — `assert` Stripped by `-O` — Wrong Z3 Constraint Silently Generated
+
+`assert not isinstance(rhs_val, list)` before `_compile_scalar_comparison` was eliminated
+by `python -O`, silently passing a list to a scalar comparison and producing an incorrect
+Z3 constraint that could make the guard spuriously ALLOW. Replaced with a proper
+`if isinstance(...): raise PolicyCompilationError(...)` that cannot be stripped.
+
+Also fixed two related pre-existing `list` → `list[Any]` type annotation gaps in the same
+file (mypy `[type-arg]` errors at lines 618, 630).
+
+### ✅ FIXED — #312 — `execution_token.py:1148` — `assert self._loop_thread is not None` Stripped by `-O`
+
+`assert self._loop_thread is not None` before `self._loop_thread.join()` was eliminated
+by `python -O`, causing `AttributeError: 'NoneType' has no attribute 'join'` on every
+pod restart, silently leaking the background event loop thread and asyncpg connection pool.
+Replaced with an explicit `if self._loop_thread is None: log.error(...); return`.
+
+### ✅ FIXED — #317 — `pyproject.toml` — `S101` (assert-used) Globally Silenced in `src/`
+
+`"S101"` was in the global ruff `ignore` list, preventing detection of `assert` statements
+in all production source. Moved to per-file-ignores for `tests/unit/`, `tests/integration/`,
+and `tests/adversarial/` only. Running `ruff check src/pramanix/ --select S101` now surfaces
+all production assertions for inspection and replacement.
+
+Found and fixed 2 additional `assert` statements in production source that the now-enabled
+rule revealed (`audit/archiver.py:749`, `integrations/langgraph.py:189`).
+
+### ✅ FIXED — #334 — `k8s/webhook.py:119` — Sync `guard.verify()` in Async FastAPI Handler
+
+The Kubernetes admission webhook `validate()` was an `async def` FastAPI handler that called
+synchronous `guard.verify()`, blocking the entire event loop for the full Z3 solve duration.
+Under admission traffic, all concurrent webhook requests queued behind each other, triggering
+Kubernetes webhook timeout retries. Fixed by replacing with `await guard.verify_async(...)`.
+
+### ✅ FIXED — #335 — `k8s/webhook.py:150-155` — Policy Internals Disclosed Permanently in K8s Audit Log
+
+The rejection `AdmissionReview.status.message` previously embedded `violated_invariants`
+and `decision.explanation`, both of which are stored permanently in `kubectl describe pod`,
+cluster Events, and the immutable Kubernetes audit log — visible to any kubectl user
+regardless of RBAC and unredactable after the fact. The rejection message now contains only
+`decision_id` (for correlation with the Pramanix audit sink). Operators who need violation
+details must read the Pramanix structured logs or audit sink.
+
+---
+
 ## CONFIRMED CLEAN (Explicitly Verified)
 
 - `os.system(` — none in `src/`

@@ -746,8 +746,13 @@ class MerkleArchiver:
         if key is not None:
             plaintext = EncryptedArchiveWriter.decrypt(key, enc_path)
         else:
-            assert key_set is not None
-            plaintext = RotatingKeyArchiveWriter.decrypt(key_set, enc_path)
+            # key_set is not None: guaranteed by the ValueError guard above.
+            # Use cast() instead of assert — assert is stripped by python -O.
+            from typing import cast as _cast
+
+            plaintext = RotatingKeyArchiveWriter.decrypt(
+                _cast("ArchiveKeySet", key_set), enc_path
+            )
 
         tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".merkle.verify", prefix=".pramanix.verify.")
         tmp_path = Path(tmp_path_str)

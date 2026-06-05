@@ -959,7 +959,7 @@ class RedisExecutionTokenVerifier:
         secret_key: bytes = b"test-secret-key-16b",
         key_prefix: str = "pramanix:token:",
         clock: Any = None,
-    ) -> "RedisExecutionTokenVerifier":
+    ) -> RedisExecutionTokenVerifier:
         """Construct with a pre-built Redis duck-type for unit testing.
 
         Bypasses the constructor validation so tests can inject minimal
@@ -1103,7 +1103,7 @@ class PostgresExecutionTokenVerifier:
         secret_key: bytes = b"test-secret-key-16b",
         dsn: str = "postgresql://localhost/test",
         key_prefix: str = "pramanix:token:",
-    ) -> "PostgresExecutionTokenVerifier":
+    ) -> PostgresExecutionTokenVerifier:
         """Construct with a pre-built asyncpg pool for unit testing.
 
         Bypasses the asyncpg import check and event loop thread creation.
@@ -1145,7 +1145,17 @@ class PostgresExecutionTokenVerifier:
                 exc,
             )
         self._loop.call_soon_threadsafe(self._loop.stop)
-        assert self._loop_thread is not None
+        # Runtime check — assert is stripped by python -O and would cause
+        # AttributeError on None.join(), silently leaking the background thread
+        # and asyncpg connection pool on every pod restart under optimization.
+        if self._loop_thread is None:
+            _log.error(
+                "AsyncpgReplayStore.close(): _loop_thread is None — "
+                "background event loop thread was never started. "
+                "This is an internal invariant violation; the asyncpg pool "
+                "may not have been released cleanly."
+            )
+            return
         self._loop_thread.join(timeout=10.0)
 
     async def _ensure_table(self, conn: Any) -> None:

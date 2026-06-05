@@ -116,7 +116,11 @@ def create_admission_webhook(
 
             intent = intent_extractor(body)
             state = state_provider()
-            decision = guard.verify(intent=intent, state=state)
+            # #334 fix: call verify_async — guard.verify() is synchronous and
+            # blocks the entire FastAPI event loop for the Z3 solve duration
+            # (potentially hundreds of ms), starving all concurrent admission
+            # requests and triggering Kubernetes webhook timeout retries.
+            decision = await guard.verify_async(intent=intent, state=state)
         except Exception as exc:
             _log.exception("pramanix.k8s.webhook_error uid=%s: %s", uid, exc)
             return _fastapi_responses.JSONResponse(
@@ -147,13 +151,23 @@ def create_admission_webhook(
                 }
             )
 
-        violated = ", ".join(decision.violated_invariants or [])
-        message = (
-            f"Pramanix guard blocked admission. "
-            f"Violated: [{violated}]. "
-            f"Reason: {decision.explanation or 'policy violation'}"
+        # #335 fix: NEVER include violated_invariants or explanation in the
+        # Kubernetes rejection message.  AdmissionReview rejection messages are
+        # stored permanently in `kubectl describe pod`, cluster Events, and the
+        # immutable Kubernetes audit log — they are visible to any kubectl user
+        # regardless of RBAC and cannot be redacted after the fact.  Exposing
+        # policy invariant names enables binary-search policy probing from the
+        # cluster audit log alone.
+        #
+        # Operators who need violation details for debugging should read the
+        # Pramanix audit sink (Kafka/S3/Splunk/Datadog) or structured logs,
+        # which are controlled by access policies and can be filtered/redacted.
+        _log.warning(
+            "pramanix.k8s.blocked uid=%s decision_id=%s violated=%s",
+            uid,
+            decision.decision_id,
+            list(decision.violated_invariants or []),
         )
-        _log.warning("pramanix.k8s.blocked uid=%s violated=[%s]", uid, violated)
         return _fastapi_responses.JSONResponse(
             content={
                 "apiVersion": "admission.k8s.io/v1",
@@ -163,7 +177,11 @@ def create_admission_webhook(
                     "allowed": False,
                     "status": {
                         "code": 403,
-                        "message": message,
+                        "message": (
+                            f"Pramanix admission guard blocked this request "
+                            f"(decision_id={decision.decision_id}). "
+                            "Check the Pramanix audit log for details."
+                        ),
                     },
                 },
             }
