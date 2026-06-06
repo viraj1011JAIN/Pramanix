@@ -32,8 +32,7 @@ _balance = Field("balance", Decimal, "Real")
 
 
 class _TransferPolicy(Policy):
-    class Meta:
-        version = "1.0"
+    """Simple transfer policy — amount must not exceed balance."""
 
     amount = _amount
     balance = _balance
@@ -49,7 +48,6 @@ class _TransferPolicy(Policy):
 
 class _TransferIntent(BaseModel):
     amount: float
-    balance: float
 
 
 async def _good_state_loader(request: Request) -> dict[str, Any]:
@@ -93,23 +91,24 @@ class TestPramanixMiddleware:
         client = TestClient(_make_app())
         resp = client.post(
             "/",
-            content=json.dumps({"amount": 100.0, "balance": 500.0}),
+            content=json.dumps({"amount": 100.0}),
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
 
     def test_block_returns_403(self) -> None:
-        """amount > balance → policy violation → 403."""
+        """amount > balance (500) → policy violation → 403."""
         client = TestClient(_make_app())
         resp = client.post(
             "/",
-            content=json.dumps({"amount": 1000.0, "balance": 500.0}),
+            content=json.dumps({"amount": 1000.0}),
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 403
         body = resp.json()
-        assert body["status"] in ("BLOCK", "block")
+        # SolverStatus.UNSAFE.value == "unsafe" for a policy violation block.
+        assert body["status"] == "unsafe"
 
     def test_missing_content_type_returns_415(self) -> None:
         client = TestClient(_make_app())
@@ -167,7 +166,7 @@ class TestPramanixMiddleware:
         client = TestClient(_make_app(timing_budget_ms=1.0))
         resp = client.post(
             "/",
-            content=json.dumps({"amount": 10.0, "balance": 500.0}),
+            content=json.dumps({"amount": 10.0}),
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 200
@@ -197,7 +196,7 @@ class TestPramanixMiddleware:
         client = TestClient(app)
         resp = client.post(
             "/",
-            content=json.dumps({"amount": 1000.0, "balance": 500.0}),
+            content=json.dumps({"amount": 1000.0}),
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 403
@@ -209,7 +208,7 @@ class TestPramanixMiddleware:
         client = TestClient(_make_app())
         resp = client.post(
             "/",
-            content=json.dumps({"amount": 1000.0, "balance": 500.0}),
+            content=json.dumps({"amount": 1000.0}),
             headers={"Content-Type": "application/json"},
         )
         assert resp.status_code == 403
@@ -227,7 +226,7 @@ class TestPramanixRoute:
             return {"processed": True}
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handler(intent={"amount": 10.0, "balance": 500.0}, state={"balance": 500.0})
+            _handler(intent={"amount": 10.0}, state={"balance": 500.0})
         )
         assert result["processed"] is True
 
@@ -238,7 +237,7 @@ class TestPramanixRoute:
 
         with pytest.raises(GuardViolationError):
             asyncio.get_event_loop().run_until_complete(
-                _handler(intent={"amount": 10000.0, "balance": 500.0}, state={"balance": 500.0})
+                _handler(intent={"amount": 10000.0}, state={"balance": 500.0})
             )
 
     def test_block_returns_403_json_response(self) -> None:
@@ -247,7 +246,7 @@ class TestPramanixRoute:
             return {"processed": True}
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handler(intent={"amount": 10000.0, "balance": 500.0}, state={"balance": 500.0})
+            _handler(intent={"amount": 10000.0}, state={"balance": 500.0})
         )
         # Returns a JSONResponse with status_code 403
         assert hasattr(result, "status_code")
@@ -286,13 +285,15 @@ class TestPramanixRoute:
         async def _handler(intent: dict, state: dict) -> dict:
             return {"amount": intent.get("amount", 0)}
 
-        intent_obj = _TransferIntent(amount=10.0, balance=500.0)
+        intent_obj = _TransferIntent(amount=10.0)
         result = asyncio.get_event_loop().run_until_complete(
             _handler(intent=intent_obj, state={"balance": 500.0})
         )
         assert result["amount"] == 10.0
 
     def test_pydantic_state_converted_to_dict(self) -> None:
+        """pramanix_route converts Pydantic state to dict before calling the handler."""
+
         class _State(BaseModel):
             balance: float
 
@@ -301,7 +302,7 @@ class TestPramanixRoute:
             return {"state_balance": state.get("balance", 0)}
 
         result = asyncio.get_event_loop().run_until_complete(
-            _handler(intent={"amount": 5.0, "balance": 500.0}, state=_State(balance=500.0))
+            _handler(intent={"amount": 5.0}, state=_State(balance=500.0))
         )
         assert result["state_balance"] == 500.0
 
@@ -310,9 +311,9 @@ class TestPramanixRoute:
         async def _handler(intent: dict, state: dict) -> dict:
             return {"ok": True}
 
-        # Call with positional args
+        # Call with positional args (intent, state)
         result = asyncio.get_event_loop().run_until_complete(
-            _handler({"amount": 5.0, "balance": 500.0}, {"balance": 500.0})
+            _handler({"amount": 5.0}, {"balance": 500.0})
         )
         assert result["ok"] is True
 

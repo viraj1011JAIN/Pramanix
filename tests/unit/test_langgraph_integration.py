@@ -253,9 +253,10 @@ class TestSuggestRemediation:
             intent_payload={"amount": 20},
             state_payload={"limit": 10},
         )
-        assert "Consider updating" in result
-        assert "10" in result
-        assert "20" in result
+        # _suggest_remediation no longer embeds raw field values to prevent
+        # binary-search policy probing (#136); returns the invariant label instead.
+        assert "under_limit" in result
+        assert "Review invariant" in result
 
     def test_numeric_path_skipped_when_intent_not_greater(self) -> None:
         from pramanix.decision import Decision

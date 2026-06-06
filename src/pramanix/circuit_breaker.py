@@ -848,13 +848,23 @@ class DistributedCircuitBreaker:
             )
             synced = CircuitState.OPEN
         self._local_state = synced
-        # Reset to 0 on every sync (#270 fix): _local_failure_count tracks only
-        # NEW failures accumulated since the last sync, not the global aggregate.
-        # Setting it to agg.failure_count caused a replica to compare its own
-        # increments against a cumulative across all replicas, triggering OPEN
-        # after a single local pressure event once the aggregate exceeded the
-        # threshold — an O(N²) inflation per sync cycle under N replicas.
-        self._local_failure_count = 0
+        # Do NOT reset _local_failure_count here.  Each replica tracks its OWN
+        # consecutive pressure events independently; resetting on every sync
+        # prevented a single replica from ever reaching consecutive_pressure_count
+        # (the counter would reset to 0 on each sync before accumulating to
+        # threshold).  The O(N²) bug from #270 was caused by COPYING
+        # agg.failure_count into _local_failure_count (not by leaving it unchanged).
+        # Leaving it unchanged is correct: each replica counts its own events and
+        # the backend accumulates all replicas' deltas independently.
+        # _local_failure_count IS reset to 0 explicitly when:
+        #   (a) a replica pushes OPEN (pressure threshold reached, start fresh)
+        #   (b) probe success (circuit reset to CLOSED)
+        #   (c) explicit reset() call
+        if synced == CircuitState.OPEN:
+            # When we learn from the backend that the circuit is OPEN
+            # (possibly set by a different replica), reset our local counter
+            # so this replica doesn't immediately re-push OPEN on the next call.
+            self._local_failure_count = 0
         # Read wall-clock open_at_epoch for cross-process recovery timing (#263).
         self._synced_open_at_epoch = getattr(agg, "open_at_epoch", 0.0)
         return synced

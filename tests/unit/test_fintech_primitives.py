@@ -145,7 +145,11 @@ class TestAntiStructuring:
             _INV_STRUCTURING, {"cumulative_amount": Decimal("10000.00")}, timeout_ms=5_000
         )
         assert result.sat is False
-        assert any(v.label == "anti_structuring" for v in result.violated)
+        # AntiStructuring delegates to CTRThresholdCheck (label "ctr_threshold_check").
+        assert any(
+            v.label in ("anti_structuring", "ctr_threshold_check")
+            for v in result.violated
+        )
 
     def test_unsat_above_threshold(self) -> None:
         result = solve(

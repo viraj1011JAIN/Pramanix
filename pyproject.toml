@@ -405,6 +405,7 @@ markers = [
     "perf: performance benchmarks",
     "benchmark: timing-sensitive solver latency and throughput benchmarks",
     "adversarial: adversarial security tests",
+    "integration: tests requiring real external services (Redis, Postgres, Vault, AWS, Azure, GCP)",
 ]
 filterwarnings = [
     # #313 fix: replaced global "ignore:GuardConfig:UserWarning" with a narrower
@@ -425,6 +426,21 @@ filterwarnings = [
     # issue between requests and urllib3; does not affect test correctness.
     "ignore:urllib3.*doesn't match a supported version",
     "ignore:chardet.*doesn't match a supported version",
+    # AntiStructuring is deprecated in favour of CTRThresholdCheck.
+    # Tests that exercise the deprecated primitive emit this warning intentionally.
+    "ignore:AntiStructuring is deprecated:DeprecationWarning",
+    # CohereTranslator old-SDK fallback is expected when testing v1 compatibility.
+    "ignore:CohereTranslator.*falling back:UserWarning",
+    # Non-linear arithmetic is an expected constraint in healthcare primitives
+    # (e.g. dose_per_kg * weight_kg). Z3 handles it at runtime; the warning
+    # is advisory only.
+    "ignore:Non-linear arithmetic detected:UserWarning",
+    # FailsafeMode.ALLOW_WITH_AUDIT is tested in its deprecated state.
+    "ignore:CircuitBreakerConfig.failsafe_mode=ALLOW_WITH_AUDIT:DeprecationWarning",
+    # asyncio.get_event_loop() deprecation in Python 3.12+ — tests that call
+    # asyncio.get_event_loop().run_until_complete() emit this; will be migrated
+    # to asyncio.run() in a follow-up refactor.
+    "ignore:There is no current event loop:DeprecationWarning",
 ]
 
 [tool.coverage.run]

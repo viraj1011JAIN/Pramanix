@@ -81,13 +81,18 @@ class TestVerifyStream:
         """Once a BLOCK is yielded the iterator must stop immediately."""
         tokens = ['{"amount": 999', ', "limit": 1', "}"]
         token_count = 0
-        async for token, decision in guard.verify_stream(
+        stream = guard.verify_stream(
             _token_stream(tokens), verify_every_n_tokens=100
-        ):
-            token_count += 1
-            if decision is not None and not decision.allowed:
-                break
-        # We should have received the final checkpoint token (empty string)
+        )
+        try:
+            async for _token, decision in stream:
+                token_count += 1
+                if decision is not None and not decision.allowed:
+                    break
+        finally:
+            # Explicitly close the async generator to prevent
+            # RuntimeWarning: coroutine 'aclose' was never awaited
+            await stream.aclose()
         assert token_count >= 1
 
     @pytest.mark.asyncio
@@ -114,13 +119,15 @@ class TestVerifyStream:
 
         block_decision = None
         count = 0
-        async for _token, decision in guard.verify_stream(
-            _infinite(), max_tokens=5, verify_every_n_tokens=100
-        ):
-            count += 1
-            if decision is not None:
-                block_decision = decision
-                break
+        stream = guard.verify_stream(_infinite(), max_tokens=5, verify_every_n_tokens=100)
+        try:
+            async for _token, decision in stream:
+                count += 1
+                if decision is not None:
+                    block_decision = decision
+                    break
+        finally:
+            await stream.aclose()
 
         assert block_decision is not None
         assert not block_decision.allowed

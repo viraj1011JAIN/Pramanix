@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 from pydantic import Field as PydanticField
@@ -368,7 +368,7 @@ class FieldDeclaration(BaseModel):
         ..., min_length=1, description="Human-readable description for documentation."
     )
 
-    _MAX_FIELD_PATH_DEPTH = 6
+    _MAX_FIELD_PATH_DEPTH: ClassVar[int] = 6
 
     @field_validator("name")
     @classmethod

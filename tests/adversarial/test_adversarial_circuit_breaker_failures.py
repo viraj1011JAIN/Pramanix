@@ -27,6 +27,7 @@ Failure scenarios:
 from __future__ import annotations
 
 import socket
+import time
 from decimal import Decimal
 
 import pytest
@@ -142,9 +143,14 @@ class TestCorruptedBackendState:
         ns = "cb2_corrupt_ns"
         InMemoryDistributedBackend.clear(ns)
         # Directly inject a state that is not a valid CircuitState value.
+        # Include open_at_epoch=now so recovery window has not yet elapsed —
+        # without it, open_at_epoch=0 causes the breaker to immediately attempt
+        # a HALF_OPEN probe (elapsed = recovery_seconds when epoch is 0), which
+        # would allow traffic rather than maintaining the fail-safe OPEN decision.
         InMemoryDistributedBackend._store[ns] = _DistributedState(
             circuit_state="CORRUPTED_STATE_INJECTION",
             failure_count=0,
+            open_at_epoch=time.time(),
         )
         breaker = _make_breaker(InMemoryDistributedBackend, namespace=ns)
         decision = await breaker.verify_async(intent=_ALLOW_INTENT, state=_STATE)
@@ -197,9 +203,16 @@ class TestOpenStateBlocks:
         """OPEN state in backend blocks immediately — guard is never invoked."""
         ns = "cb4_open_ns"
         InMemoryDistributedBackend.clear(ns)
+        # open_at_epoch=now prevents the HALF_OPEN probe from triggering immediately.
+        # Without it, open_at_epoch=0 causes elapsed=recovery_seconds so the breaker
+        # probes on the very first call and may allow traffic through.
         await InMemoryDistributedBackend.set_state(
             ns,
-            _DistributedState(circuit_state=CircuitState.OPEN.value, failure_count=5),
+            _DistributedState(
+                circuit_state=CircuitState.OPEN.value,
+                failure_count=5,
+                open_at_epoch=time.time(),
+            ),
         )
         breaker = _make_breaker(InMemoryDistributedBackend, namespace=ns)
 
@@ -219,7 +232,11 @@ class TestOpenStateBlocks:
         ns = "cb4_msg_ns"
         InMemoryDistributedBackend.clear(ns)
         await InMemoryDistributedBackend.set_state(
-            ns, _DistributedState(circuit_state=CircuitState.OPEN.value)
+            ns,
+            _DistributedState(
+                circuit_state=CircuitState.OPEN.value,
+                open_at_epoch=time.time(),
+            ),
         )
         breaker = _make_breaker(InMemoryDistributedBackend, namespace=ns)
         decision = await breaker.verify_async(intent=_ALLOW_INTENT, state=_STATE)
@@ -327,7 +344,11 @@ class TestNamespaceIsolation:
         InMemoryDistributedBackend.clear(ns_b)
 
         await InMemoryDistributedBackend.set_state(
-            ns_a, _DistributedState(circuit_state=CircuitState.OPEN.value)
+            ns_a,
+            _DistributedState(
+                circuit_state=CircuitState.OPEN.value,
+                open_at_epoch=time.time(),
+            ),
         )
 
         breaker_a = _make_breaker(InMemoryDistributedBackend, namespace=ns_a)

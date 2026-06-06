@@ -334,7 +334,20 @@ def pramanix_route(
                     # Starlette not available — raise as fallback.
                     raise GuardViolationError(decision)
 
-            return await fn(*args, **kwargs)
+            # Pass converted (dict) intent/state to the handler so it always
+            # receives plain dicts regardless of whether Pydantic models were
+            # supplied by the caller.
+            converted_kwargs = dict(kwargs)
+            converted_args = list(args)
+            if "intent" in converted_kwargs:
+                converted_kwargs["intent"] = intent
+            elif len(converted_args) >= 1:
+                converted_args[0] = intent
+            if "state" in converted_kwargs:
+                converted_kwargs["state"] = state
+            elif len(converted_args) >= 2:
+                converted_args[1] = state
+            return await fn(*converted_args, **converted_kwargs)
 
         # Attach the guard for introspection / testing.
         cast(Any, wrapper).__guard__ = _guard

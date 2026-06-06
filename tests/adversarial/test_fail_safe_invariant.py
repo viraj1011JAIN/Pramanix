@@ -337,8 +337,10 @@ class TestStage4VersionAndKeyConflict:
             intent={"amount": Decimal("100"), "balance": Decimal("50")},
             state={"balance": Decimal("1000")},
         )
-        _assert_fail_safe(decision, "conflicting keys ValueError")
-        assert decision.status is SolverStatus.ERROR
+        _assert_fail_safe(decision, "conflicting keys → VALIDATION_FAILURE")
+        # Overlapping intent/state keys are a validation failure (structured
+        # rejection), not an unexpected internal error — hence VALIDATION_FAILURE.
+        assert decision.status is SolverStatus.VALIDATION_FAILURE
 
 
 # ── Stage 5: Solver Failures ──────────────────────────────────────────────
