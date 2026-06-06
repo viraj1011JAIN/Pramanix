@@ -444,18 +444,23 @@ class AwsKmsKeyProvider:
         *,
         secret_arn: str = "arn:aws:secretsmanager:us-east-1:000000000000:secret:test",
         version_stage: str = "AWSCURRENT",
+        explicit_version: str | None = None,
         cached_pem: bytes | None = None,
     ) -> "AwsKmsKeyProvider":
         """Construct with a pre-built Secrets Manager client for unit testing."""
         inst = cls.__new__(cls)
         inst._secret_arn = secret_arn
         inst._version_stage = version_stage
-        inst._explicit_version = None
+        inst._explicit_version = explicit_version
         inst._client = client
         inst._cache_lock = threading.Lock()
         inst._cached_pem = cached_pem
-        inst._cached_version = "test-version" if cached_pem else None
-        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if cached_pem else 0.0
+        inst._cached_version = explicit_version or ("test-version" if cached_pem else None)
+        inst._cache_expires = (
+            time.monotonic() + _DEFAULT_KEY_CACHE_TTL
+            if (cached_pem or explicit_version)
+            else 0.0
+        )
         return inst
 
 
@@ -890,22 +895,31 @@ class HashiCorpVaultKeyProvider:
         vault_url: str = "http://localhost:8200",
         secret_path: str = "pramanix/signing-key",
         mount_point: str = "secret",
+        field: str = "private_key_pem",
         cached_pem: bytes | None = None,
+        cached_version: str | None = None,
     ) -> "HashiCorpVaultKeyProvider":
         """Construct with a pre-built hvac client for unit testing.
 
-        Accepts an already-constructed hvac.Client duck-type so tests can
-        inject fakes without requiring a real Vault server.
+        Pass *cached_pem* and/or *cached_version* to pre-warm the cache so
+        that ``private_key_pem()`` / ``key_version()`` return without making
+        an API call.  When only *cached_version* is set the cache is valid
+        (key_version returns immediately) but private_key_pem() will call
+        _refresh_cache().
         """
         inst = cls.__new__(cls)
         inst._vault_url = vault_url
         inst._secret_path = secret_path
         inst._mount_point = mount_point
+        inst._field = field
         inst._client = client
         inst._cache_lock = threading.Lock()
         inst._cached_pem = cached_pem
-        inst._cached_version = "test-version" if cached_pem else None
-        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if cached_pem else 0.0
+        inst._cached_version = cached_version
+        warm = cached_pem is not None or cached_version is not None
+        inst._cache_expires = (
+            time.monotonic() + _DEFAULT_KEY_CACHE_TTL if warm else 0.0
+        )
         return inst
 
 

@@ -2169,8 +2169,20 @@ class Guard:
         buffer: str,
         state_dict: dict[str, Any],
     ) -> Decision | None:
-        """Attempt to parse *buffer* as JSON and verify it.  Returns ``None`` if
-        the buffer is not yet valid JSON (incomplete stream — try again later)."""
+        """Attempt to parse *buffer* as JSON and verify it via the full pipeline.
+
+        Returns ``None`` if the buffer is not yet valid JSON (incomplete stream).
+
+        Uses the full ``verify()`` pipeline so that every checkpoint is:
+        - Input-size checked (max_input_bytes)
+        - Governance-gated (IFC, privilege, oversight)
+        - Signed (``_sign_decision``)
+        - Emitted to audit sinks (``_emit_to_sinks``)
+        - Timing-padded (``min_response_ms``)
+
+        Previously this called ``_verify_core`` directly, bypassing all of the
+        above controls (audit flaw #261).
+        """
         stripped = buffer.strip()
         if not stripped or stripped[0] not in ("{", "["):
             return None
@@ -2180,4 +2192,8 @@ class Guard:
             return None
         if not isinstance(intent_data, dict):
             return None
-        return self._verify_core(intent_data, state_dict)
+        # Route through the full sync verify() pipeline: size check, governance
+        # gates, signing, audit sink emission, and timing pad all apply.
+        # Callers who need streaming without the timing floor should configure
+        # GuardConfig(min_response_ms=0.0) for their streaming guard instance.
+        return self.verify(intent=intent_data, state=state_dict)

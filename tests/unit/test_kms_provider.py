@@ -302,9 +302,11 @@ class TestAwsKmsKeyProviderBehavior:
         *,
         explicit_version: str | None = None,
     ) -> AwsKmsKeyProvider:
-        import threading
-
-        p = AwsKmsKeyProvider._for_testing(client, secret_arn=self._ARN)
+        p = AwsKmsKeyProvider._for_testing(
+            client,
+            secret_arn=self._ARN,
+            explicit_version=explicit_version,
+        )
         return p
 
     def test_private_key_pem_from_secret_string(self, test_pem: bytes) -> None:
@@ -391,9 +393,12 @@ class TestGcpKmsKeyProviderBehavior:
         *,
         version_id: str = "latest",
     ) -> GcpKmsKeyProvider:
-        import threading
-
-        p = GcpKmsKeyProvider._for_testing(client)
+        p = GcpKmsKeyProvider._for_testing(
+            client,
+            project_id="my-project",
+            secret_id="pramanix-signing-key",
+            version_id=version_id,
+        )
         return p
 
     def test_private_key_pem_from_payload(self, test_pem: bytes) -> None:

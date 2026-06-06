@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 _log = logging.getLogger(__name__)
 from typing import TYPE_CHECKING, Any  # noqa: E402
@@ -96,7 +96,7 @@ def _classify_severity(
 ) -> str:
     """Classify decision severity based on violated rules and intent context.
 
-    CRITICAL_PREVENTION: High-value financial or PHI access attempts
+    CRITICAL_PREVENTION: Regulatory / high-value financial violations
     HIGH:                Most policy violations in regulated domains
     MEDIUM:              Infrastructure and operational violations
     """
@@ -115,17 +115,25 @@ def _classify_severity(
         "cpu_memory_guard",
     }
 
-    # Severity is driven by VIOLATED INVARIANT LABELS, not by the caller-supplied
-    # `amount` field.  Using intent_dump["amount"] for severity allows an attacker
-    # to submit a $200,000 sanctions violation with intent={"amount": "0"} and
-    # receive a LOW or MEDIUM severity instead of CRITICAL_PREVENTION, reducing
-    # the urgency of SAR filing and audit review.
-    #
-    # Rule: if ANY high-value invariant was violated → CRITICAL_PREVENTION.
-    # This is not bypassable via intent field manipulation.
     violated_set = set(violated_invariants)
+
+    # Regulatory / patient-safety invariants → CRITICAL_PREVENTION regardless
+    # of amount.  Fixes #206: attacker cannot downgrade sanctions violations
+    # by setting intent={"amount": "0"}.
     if violated_set & high_value_rules:
         return "CRITICAL_PREVENTION"
+
+    # For non-regulatory violations the transaction amount signals severity:
+    # - Missing amount: no risk indicator → skip threshold, stay HIGH.
+    # - Unparseable amount: fail-safe → CRITICAL_PREVENTION.
+    # - Amount ≥ $100 000: high-value transaction → CRITICAL_PREVENTION.
+    amount_raw = intent_dump.get("amount")
+    if amount_raw is not None:
+        try:
+            if Decimal(str(amount_raw)) >= Decimal("100000"):
+                return "CRITICAL_PREVENTION"
+        except (InvalidOperation, Exception):
+            return "CRITICAL_PREVENTION"
 
     if violated_set & infra_rules:
         return "MEDIUM"

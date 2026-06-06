@@ -233,13 +233,17 @@ class TestArchiveKeySet:
         ks.add("b", secrets.token_bytes(32))
         assert set(ks.key_ids()) == {"a", "b"}
 
-    def test_overwrite_existing_key(self) -> None:
+    def test_overwrite_existing_key_raises(self) -> None:
+        """add() with a different key for an existing key_id raises KeyError."""
         ks = ArchiveKeySet()
         k1 = secrets.token_bytes(32)
         k2 = secrets.token_bytes(32)
         ks.add("k1", k1)
-        ks.add("k1", k2)  # overwrite
-        assert ks.get("k1") == k2
+        with pytest.raises(KeyError, match="k1"):
+            ks.add("k1", k2)  # different bytes → collision → KeyError
+        # Idempotent re-registration with the same bytes is allowed.
+        ks.add("k1", k1)
+        assert ks.get("k1") == k1
 
 
 # ---------------------------------------------------------------------------

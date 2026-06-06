@@ -1092,15 +1092,19 @@ class TestKeyProviderCoverage:
         assert p._cache_expires == 0.0
 
     def test_azure_key_vault_rotate_raises(self) -> None:
-        """AzureKeyVaultKeyProvider.rotate_key() raises RuntimeError on vault failure
-        and restores _secret_version to its pinned value."""
+        """rotate_key() raises RuntimeError on vault failure and restores version."""
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
         class _FailingAzureClient:
             def get_secret(self, name: str, version: str | None = None) -> None:
                 raise ConnectionError("Azure Key Vault unreachable in unit tests")
 
-        p = AzureKeyVaultKeyProvider._for_testing(_FailingAzureClient(), secret_name="pramanix-key")
+        # Construct with a pinned version so we can verify it is restored.
+        p = AzureKeyVaultKeyProvider._for_testing(
+            _FailingAzureClient(),
+            secret_name="pramanix-key",
+            secret_version="v1",
+        )
         assert p.supports_rotation is True
         with pytest.raises(RuntimeError, match="Azure Key Vault"):
             p.rotate_key()
@@ -1108,15 +1112,15 @@ class TestKeyProviderCoverage:
         assert p._secret_version == "v1"
 
     def test_gcp_kms_rotate_raises(self) -> None:
-        """GcpKmsKeyProvider.rotate_key() raises RuntimeError on Secret Manager failure
-        and restores _version_id to its pinned value."""
+        """rotate_key() raises RuntimeError on Secret Manager failure and restores version_id."""
         from pramanix.key_provider import GcpKmsKeyProvider
 
         class _FailingGcpClient:
             def access_secret_version(self, *, name: str) -> None:
                 raise ConnectionError("GCP Secret Manager unavailable in unit tests")
 
-        p = GcpKmsKeyProvider._for_testing(_FailingGcpClient())
+        # Construct with a pinned version_id so we can verify it is restored.
+        p = GcpKmsKeyProvider._for_testing(_FailingGcpClient(), version_id="5")
         assert p.supports_rotation is True
         with pytest.raises(RuntimeError, match="GCP Secret Manager"):
             p.rotate_key()
@@ -1146,43 +1150,57 @@ class TestKeyProviderCoverage:
             p.rotate_key()
 
     def test_hashicorp_vault_key_version_cached(self) -> None:
-        """key_version() returns cached version without API call."""
-
+        """key_version() returns the cached version without making an API call."""
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        p = HashiCorpVaultKeyProvider._for_testing(_FakeHvacClient())
+        # Pre-warm the version cache so _refresh_cache() is never called.
+        p = HashiCorpVaultKeyProvider._for_testing(
+            _FakeHvacClient(), cached_pem=b"pem", cached_version="42"
+        )
         assert p.key_version() == "42"
 
     def test_hashicorp_vault_cached_version_fallback(self) -> None:
         """key_version() returns 'vault-unknown' when _cached_version is None."""
-
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
-        p = HashiCorpVaultKeyProvider._for_testing(_FakeHvacClient())
+        # Pre-warm the PEM cache (cache is valid) but leave _cached_version=None
+        # so that key_version() returns the fallback string.
+        p = HashiCorpVaultKeyProvider._for_testing(
+            _FakeHvacClient(), cached_pem=b"pem"
+        )
         assert p.key_version() == "vault-unknown"
 
     def test_gcp_kms_private_key_pem_cached(self) -> None:
-        """GcpKmsKeyProvider.private_key_pem() returns from cache when valid."""
-
+        """private_key_pem() returns the pre-warmed cached bytes without an API call."""
         from pramanix.key_provider import GcpKmsKeyProvider
 
-        p = GcpKmsKeyProvider._for_testing(_FakeGcpClient())
-        result = p.private_key_pem()
-        assert result == b"cached-pem"
+        p = GcpKmsKeyProvider._for_testing(_FakeGcpClient(), cached_pem=b"cached-pem")
+        assert p.private_key_pem() == b"cached-pem"
 
     def test_azure_key_vault_cached_pem(self) -> None:
-
+        """private_key_pem() and key_version() return pre-warmed cached values."""
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        p = AzureKeyVaultKeyProvider._for_testing(_FakeSecretClient(), secret_name="test-key")
+        # Pre-warm the cache: no API call is made.
+        p = AzureKeyVaultKeyProvider._for_testing(
+            None,  # client unused when cache is warm
+            secret_name="test-key",
+            secret_version="abc123",
+            cached_pem=b"azure-pem",
+        )
         assert p.private_key_pem() == b"azure-pem"
         assert p.key_version() == "abc123"
 
     def test_azure_key_vault_cached_version_fallback(self) -> None:
-
+        """key_version() returns 'azure-unknown' when _cached_version is None."""
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
-        p = AzureKeyVaultKeyProvider._for_testing(_FakeSecretClient(), secret_name="test-key")
+        # Pre-warm PEM (cache valid) but leave _cached_version=None for fallback.
+        p = AzureKeyVaultKeyProvider._for_testing(
+            None,
+            secret_name="test-key",
+            cached_pem=b"pem",
+        )
         assert p.key_version() == "azure-unknown"
 
 
@@ -1402,21 +1420,22 @@ class TestArchiverCoverage:
         assert result is False
 
     def test_archive_segment_write_failure_raises(
-        self, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: object
     ) -> None:
+        """archive() propagates OSError from a failing archive_writer."""
         import pathlib
-        import tempfile
 
         from pramanix.audit.archiver import MerkleArchiver
 
-        base = pathlib.Path(str(tmp_path))
-        archiver = MerkleArchiver(base_path=base, max_active_entries=1000)
-        # Add some entries to archive
-        archiver.add("decision-001")
-
-        def _raise_disk_full(*a, **kw):
+        def _raise_disk_full(path: object, content: bytes) -> None:
             raise OSError("disk full")
 
-        monkeypatch.setattr(tempfile, "mkstemp", _raise_disk_full)
-        with pytest.raises(OSError):
-            archiver._archive_segment()
+        base = pathlib.Path(str(tmp_path))
+        archiver = MerkleArchiver(
+            base_path=base,
+            max_active_entries=1000,
+            archive_writer=_raise_disk_full,
+        )
+        archiver.add("decision-001")
+        with pytest.raises(OSError, match="disk full"):
+            archiver.archive()

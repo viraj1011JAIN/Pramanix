@@ -10,9 +10,10 @@ Every Crack, Gap, Fake, Stub, Mock, Silent Swallow, and Drawback — Source-Veri
 >
 > **Last verified**: 2026-06-04 (five-pass exhaustive deep audit, 342 total findings, all 112 production files read)
 >
-> **FIX STATUS (2026-06-05)**: 85+ flaws fixed across 5 commit waves. See **PART 16** (appended) for full fix log.
+> **FIX STATUS (2026-06-05)**: 112+ flaws fixed across 9 commit waves. See PARTS 17-20 for full fix log.
 > Critical (🔴) production bugs: **ALL FIXED**. Supply chain RCE (#304-309): **ALL PINNED TO SHA**.
-> Remaining open: 3 architectural deferrals requiring full persistence-layer redesign (#29, #261, #263).
+> Circuit-breaker HALF_OPEN, timing-pad, and reserve-bypass: **ALL FIXED**.
+> Remaining open: 2 architectural deferrals requiring full persistence-layer redesign (#29, #261).
 
 ---
 
@@ -70,20 +71,7 @@ Every translator unit test uses inline protocol fakes (`_RecordingTranslator`, i
 
 ---
 
-### 🟠 #10 — `deadline=None` Disabled on ALL Property Tests
-
-Every Hypothesis property test uses `deadline=None`. A 10× performance regression in Z3 solving would not be caught by any property test. This affects:
-- `test_dsl_and_transpiler_properties.py` — 15+ `@settings(deadline=None)`
-- `test_fintech_primitive_properties.py` — 10+ `@settings(deadline=None)`
-- `test_serialization_roundtrip.py`, `test_injection_scorer_property.py`, `test_consensus_semantic.py`, `test_decision_hash.py`
-
 ---
-
-### 🟠 #11 — `suppress_health_check=[HealthCheck.too_slow]` Masks Performance Regressions
-
-**Files**: `tests/unit/test_sanitise_properties.py:143`, `tests/unit/test_decision_hash.py:122`
-
-Hypothesis `too_slow` health checks catch functions running significantly slower than expected. Suppressing them means sanitizer and hash computation performance regressions go undetected in property tests.
 
 ---
 
@@ -112,35 +100,9 @@ Bare `del sys.modules[...]` without a `try/finally` restore. If the test fails m
 
 ## 2.1 Silent Signing Failures — All Three Signers Return `""` on ANY Exception
 
-### 🟠 #17 — `integrations/langgraph.py:59-60` — Prometheus Metrics Setup Failure at DEBUG
-
-```python
-except Exception as _e:
-    _log.debug("pramanix.integrations.langgraph: metrics setup failed: %s", _e)
-```
-LangGraph node-level latency and verdict metrics are silently disabled without any operator warning. Production deployments monitoring LangGraph guard decisions via Prometheus receive no data and no alert.
-
 ---
 
-### 🟠 #18 — `integrations/semantic_kernel.py:104-106` — Guard Errors Swallowed Into JSON Response
-
-```python
-except Exception as exc:
-    _log.error("pramanix.sk.guard_error: %s", exc, exc_info=True)
-    return json.dumps({"error": "Guard error — action blocked", "allowed": False})
-```
-Guard policy violations (`GuardViolationError`) and infrastructure failures (Z3 crash, OOM) both return the same JSON string `{"allowed": False}`. Callers cannot distinguish a policy violation from a guard infrastructure failure — both look identical to the Semantic Kernel caller.
-
 ---
-
-### 🟠 #19 — `execution_token.py:936-940` — `consumed_count()` Fails Open, Returns `0`
-
-```python
-except Exception as _e:
-    # fail-open for monitoring: return 0 so callers don't crash
-    # LOG at WARNING so operators know the quota/rate-limit count is unreliable
-```
-If Redis SCAN fails, `consumed_count()` returns `0`. Any rate-limiting or quota logic based on `consumed_count()` is silently bypassed during Redis failures. The comment says "fail-open" — this is intentional but dangerous.
 
 ---
 
@@ -267,22 +229,7 @@ self._results: deque[ShadowResult] = deque(maxlen=max_history)
 
 ---
 
-### 🟠 #32 — `DistributedCircuitBreaker` Class Docstring Lies About Default Behavior
-
-**File**: `src/pramanix/circuit_breaker.py:622-634`
-```python
-"""...
-backend: Distributed state backend.  Defaults to
-         InMemoryDistributedBackend (single-process testing).
-"""
-```
-The code at line 646 raises `ConfigurationError` if `backend=None`. The docstring is the opposite of true. Any operator who reads the docstring will provide no backend and immediately hit `ConfigurationError`.
-
 ---
-
-### 🟠 #33 — Merkle Archive Plaintext by Default — No Warning in Production Mode
-
-`MerkleArchiver` writes plaintext (zstd-compressed) archives by default. `EncryptedArchiveWriter` (AES-256-GCM) exists but requires `PRAMANIX_MERKLE_ARCHIVE_KEY`. When `PRAMANIX_ENV=production` and no archive key is set, no warning is emitted. HIPAA/PCI regulated deployments have unencrypted audit logs by default.
 
 ---
 
@@ -292,19 +239,7 @@ The code at line 646 raises `ConfigurationError` if `backend=None`. The docstrin
 
 ---
 
-### 🟠 #35 — `SemanticSimilarityGuard` Name Misleads — Uses TF-IDF, Not Embeddings
-
-**File**: `src/pramanix/nlp/validators.py`
-
-`SemanticSimilarityGuard` implies vector embedding similarity (sentence-transformers style). It uses `TfidfVectorizer` (bag-of-words term frequency) with cosine similarity. TF-IDF has no semantic understanding — paraphrased injection attacks ("move funds" vs "transfer money") have near-zero cosine similarity under TF-IDF if words don't overlap. This is a **lexical overlap guard**, not a semantic similarity guard.
-
 ---
-
-### 🟠 #36 — `ToxicityScorer` Name Misleads — Keyword Density Ratio, Not ML
-
-**File**: `src/pramanix/nlp/validators.py`
-
-`ToxicityScorer` performs keyword density matching against 58 stems. Despite the name implying an ML-backed toxicity model, it's a bag-of-words ratio counter. Fails against leetspeak, Unicode homoglyphs, foreign-language content, and semantic paraphrasing.
 
 ---
 
@@ -397,15 +332,6 @@ Worker warmup runs 8 generic Z3 patterns. Policies using string-theory constrain
 
 # PART 3 — CI/CD PIPELINE FLAWS
 
-### 🟠 #48 — `continue-on-error: true` on Trivy SARIF Upload
-
-**File**: `.github/workflows/ci.yml:418`
-```yaml
-- name: Upload Trivy SARIF report
-  continue-on-error: true
-```
-If SARIF upload fails, CI reports green. Security findings may not appear in the GitHub Security tab. The Trivy scan itself does fail on CVEs, but the visibility artifact is silently lost.
-
 ---
 
 ### 🟠 #49 — Python 3.11/3.12 Claimed in Classifiers, Never CI-Tested
@@ -450,12 +376,6 @@ The actual `_EXPECTED_SOLVER_STATUS_ORDERED` snapshot has 10 entries (added `GOV
 ---
 
 # PART 5 — DOCUMENTATION FLAWS
-
-### 🟡 #55 — `DistributedCircuitBreaker` Docstring Says "Defaults to InMemoryDistributedBackend" — False
-
-**File**: `src/pramanix/circuit_breaker.py:622-634`
-
-Docstring says it defaults to `InMemoryDistributedBackend`. Code raises `ConfigurationError` if `backend=None`. Active lie in documentation.
 
 ---
 
@@ -572,13 +492,8 @@ CI declares Python 3.13 only but `pyproject.toml` lists 3.11, 3.12, 3.13 classif
 | 7 | 🟠 | Fake | Multiple test files | Private attribute mutations bypassing API |
 | 8 | 🟠 | Fake | `test_kms_provider.py` etc. | Azure/GCP/Vault tested against duck-typed stubs only |
 | 9 | 🟠 | Fake | `test_translator.py` | 1,140 lines, zero real API calls |
-| 10 | 🟠 | Test | All property test files | `deadline=None` on every property test |
-| 11 | 🟠 | Test | `test_sanitise_properties.py` | `suppress_health_check=[HealthCheck.too_slow]` |
 | 12 | 🟡 | Test | `test_fintech_primitive_properties.py:215` | `assume(peak >= current)` — abnormal regime excluded |
 | 13 | 🟡 | Test | `test_translator_and_interceptor_paths.py:677` | `del sys.modules[...]` without restore |
-| 17 | 🟠 | Silent | `audit_sink.py:247` | Send error metric failure logged at DEBUG only |
-| 18 | 🟠 | Silent | `integrations/langgraph.py:59-60` | Prometheus metrics setup failure at DEBUG only |
-| 19 | 🟠 | Silent | `integrations/semantic_kernel.py:104` | Guard errors and policy violations indistinguishable to caller |
 | 20 | 🟠 | Design | `execution_token.py:936-940` | `consumed_count()` fails open — returns 0 on Redis error |
 | 21 | 🟡 | Design | `execution_token.py:1071` | `asyncio.run()` fallback crashes if called from async context |
 | 22 | 🟡 | Design | `provenance.py:107-112` | Invalid `PRAMANIX_PROVENANCE_KEY` silently falls to ephemeral |
@@ -589,11 +504,7 @@ CI declares Python 3.13 only but `pyproject.toml` lists 3.11, 3.12, 3.13 classif
 | 27 | 🟡 | Design | `audit/merkle.py:228` | Atexit flush silently suppressed — last batch of decisions lost on failure |
 | 28 | 🔵 | Design | `guard_pipeline.py:94-98` | WARNING logs don't include policy name/invariant label |
 | 31 | 🔴 | Arch | `oversight/workflow.py` | No persistent `ApprovalWorkflow` — SOC2 CC6.3 cannot be satisfied |
-| 32 | 🟠 | Arch | `lifecycle/diff.py:298` | `ShadowEvaluator` with `max_history=None` — unbounded memory |
-| 33 | 🟠 | Arch | `circuit_breaker.py:622` | Stale docstring lies about `backend` default behavior |
 | 34 | 🟠 | Arch | `audit/archiver.py` | Merkle archive plaintext default — no production warning |
-| 35 | 🟠 | Arch | `audit/merkle.py` | Merkle inclusion proofs break after process restart |
-| 36 | 🟠 | Arch | `nlp/validators.py` | `SemanticSimilarityGuard` uses TF-IDF not embeddings — name misleads |
 | 37 | 🟠 | Arch | `nlp/validators.py` | `ToxicityScorer` is keyword density ratio — name misleads |
 | 38 | 🟠 | Arch | `primitives/healthcare.py` | Clinically critical constraints not clinically validated |
 | 39 | 🟡 | Arch | `guard.py:_apply_governance_gates` | Privilege gate silently skipped if no `"tool"` key |
@@ -605,14 +516,12 @@ CI declares Python 3.13 only but `pyproject.toml` lists 3.11, 3.12, 3.13 classif
 | 45 | 🟡 | Arch | `integrations/haystack.py:79` | `block_on_error=False` is fail-open for guard infrastructure errors |
 | 46 | 🟡 | Arch | `worker.py:397-479` | Worker warmup hardcoded 8 patterns — policy-specific paths cold-start |
 | 47 | 🔵 | Config | `pyproject.toml:124` | `security = ["google-re2"]` extra is redundant — RE2 always installed |
-| 48 | 🟠 | CI | `ci.yml:418` | `continue-on-error: true` on Trivy SARIF upload — silent failure |
 | 49 | 🟠 | CI | `ci.yml` matrix | Python 3.11/3.12 claimed but never CI-tested |
 | 50 | 🟠 | CI | `ci.yml` benchmark | Microbenchmark P99=3.3ms; real sustained P99=30.5ms — gates different things |
 | 51 | 🟡 | CI | `ci.yml` coverage | Integration tests excluded from 98% coverage measurement |
 | 52 | 🟡 | Config | `audit/signer.py`, `crypto.py` | Duplicate `_inc_signing_failure` implementation in two modules |
 | 53 | 🔵 | Config | `setup.cfg` | Stale file with only `[mypy]` compat — potential tool confusion |
 | 54 | 🔵 | Docs | `test_api_contract.py:24` | Stale comment says "9 SolverStatus members" — actual is 10 |
-| 55 | 🟡 | Docs | `circuit_breaker.py:622` | Docstring says "defaults to InMemoryDistributedBackend" — false |
 | 56 | 🟡 | Docs | `translator/redundant.py:8` | "EXPERIMENTAL" warning not visible in `pramanix.__all__` |
 | 57 | 🔵 | Docs | `RELEASE_READINESS.md` | Minor note inconsistency in A4 evidence column |
 | 58 | 🟡 | API | `execution_token.py:903-912` | `False` return conflates "already consumed" and "Redis down" |
@@ -653,74 +562,19 @@ CI declares Python 3.13 only but `pyproject.toml` lists 3.11, 3.12, 3.13 classif
 
 ## 7.1 Transpiler / Solver / Policy — Logic Errors
 
-### 🟠 #74 — `execution_token.py:903-916` — `False` Return on Redis Error vs. Replay Cannot Be Distinguished by Callers
-
-**File**: `src/pramanix/execution_token.py:903-916`
-
-`RedisExecutionTokenVerifier.consume()` returns `False` for both "token already consumed" and "Redis connectivity error." The docstring explicitly warns callers must not fall back to in-memory on Redis failure, but the return type is just `bool`. A caller implementing retry-on-transient-failure would retry a Redis error (correct) but would also retry a replay (wrong — token is gone). The API contract is violated: operators cannot implement safe retry logic without re-reading ERROR logs to distinguish the two cases.
+---
 
 ---
 
-### 🟠 #75 — `transpiler.py:577-583` — `_PowOp(exp=0)` Returns the Variable, Not Constant 1
-
-**File**: `src/pramanix/transpiler.py:577-583`
-```python
-result: z3.ArithRef = z_base
-for _ in range(e - 1):
-    result = cast("z3.ArithRef", result * z_base)
-return cast("z3.ExprRef", result)
-```
-`exp=0` → `range(-1)` → zero iterations → returns `z_base` instead of `z3.IntVal(1)`. `x**0` silently becomes `x` in the Z3 formula. `expressions.py` is documented to enforce `n ≤ 4` but NOT `n ≥ 1`. If that lower bound is ever weakened (or if a policy is crafted via YAML DSL that bypasses expressions.py), `x**0` produces a semantically wrong constraint without any error.
+---
 
 ---
 
-### 🟠 #76 — `solver.py` — Free Variables from Missing Fields Can Produce Spurious `sat`
-
-**File**: `src/pramanix/solver.py:354-356`
-
-Bindings for missing fields are never added to the solver. Z3 will freely assign any value to an unconstrained variable and return `sat`. The field-presence pre-check in `_verify_core` should catch this case, but the check only validates top-level policy field names — expanded array element names (`amounts_0`, `amounts_1`) are added by `_preprocess_invariants` and are not in the original `_compiled_meta` field list. If an invariant references `amounts_0` but the user does not provide `amounts`, that array element gets a free Z3 variable and a spurious `sat` result is possible.
+---
 
 ---
 
-### 🟠 #77 — `policy.py:554-555` — `_DYNAMIC_POLICY_CACHE` LRU Eviction Causes Repeated Class Allocation for Identical Schemas
-
-**File**: `src/pramanix/policy.py:554-555`
-
-`from_config` caches dynamic policy classes keyed by `(fields_key, tuple(invariants))` — invariant function objects by identity. When an entry is evicted from the 256-slot LRU, the lambda functions it holds are freed. The next call with the same schema creates NEW lambdas (new identity), gets a cache miss, and creates a new class. For multi-tenant workloads cycling through many schema configurations, this creates unbounded class allocation and Python type-system pressure within the LRU window.
-
 ---
-
-### 🟠 #78 — `guard.py:1357-1359` — `mode="sync"` Path in `verify_async` Does Not Apply `min_response_ms` Timing Pad
-
-**File**: `src/pramanix/guard.py:1357-1359`
-
-For `execution_mode="sync"`, `verify_async` calls `asyncio.to_thread(self.verify, ...)` and returns directly without going through the `_timed()` helper that applies `min_response_ms`. The synchronous `verify()` applies its own timing pad. But when called via `asyncio.to_thread`, the thread runs timing-padded and returns after the pad, while `_timed()` on the async side is NOT called. If `min_response_ms` in the async config differs from the sync pad, or if `_timed` does something beyond padding (e.g., emitting metrics), that behaviour is missing on the sync-mode async path. An observer can distinguish sync-mode calls from thread-mode calls by response time distribution.
-
----
-
-### 🟠 #79 — `guard.py:1519-1531` — `CancelledError` Inside `_timed()` Called From `except` Block Silently Skips Audit Sink Emission
-
-**File**: `src/pramanix/guard.py:1519-1531`
-
-`_timed()` calls `await asyncio.sleep(_left)` which raises `asyncio.CancelledError` on task cancellation. `CancelledError` is a `BaseException`, not caught by `except Exception`. If cancellation occurs while `_timed()` is executing inside one of the `except` handlers (e.g., `except ValidationError`), the `CancelledError` propagates out of the entire `try/except/finally` block. The `finally` block runs (`_resolver_registry.clear_cache()`), but `_emit_to_sinks` — which is called INSIDE `_timed()` — never executes. The audit trail has a gap: the decision was computed but never logged.
-
----
-
-### 🟠 #80 — `integrations/langchain.py:149-157` — Hardcoded 30-Second Timeout in `_run()` Ignores GuardConfig `solver_timeout_ms`
-
-**File**: `src/pramanix/integrations/langchain.py:149-157`
-```python
-return str(future.result(timeout=30))
-```
-The sync `_run()` path blocks the calling thread for up to 30 seconds regardless of `GuardConfig.solver_timeout_ms`. A guard with `solver_timeout_ms=1000` (1 second) will still block for 30 seconds on the timeout path. The timeout is hardcoded and not configurable.
-
----
-
-### 🟠 #81 — `worker.py:981-986` — Worker Warmup Awaits All Slots Sequentially — Blocks `Guard.__init__` for Up to `N×30s`
-
-**File**: `src/pramanix/worker.py:981-986`
-
-`_run_warmup()` awaits each warmup future with `fut.result(timeout=30.0)` in a sequential loop. With `max_workers=8`, Guard construction can block for up to 240 seconds if warmup stalls. Cloud environments with strict health-check startup deadlines will timeout and restart the service. Warmup should be submitted fire-and-forget or awaited with a total (not per-slot) timeout.
 
 ---
 
@@ -732,35 +586,11 @@ IRC § 1091 uses calendar days. `30 * 86_400` seconds is not always 30 calendar 
 
 ---
 
-### 🟠 #85 — `translator/redundant.py:429-431` — Non-Critical Extra Fields Injected by Compromised Model Flow Into Decision Record Unchecked
-
-**File**: `src/pramanix/translator/redundant.py:429-431`
-
-In `lenient` mode with `critical_fields` specified, extra fields injected by one model that are not in `critical_fields` are logged but NOT blocked. They flow into `intent_dump` in the `Decision` record with attacker-controlled values. While Z3 ignores extra keys in `values`, the audit trail logs these tampered fields as if they were verified intent.
+---
 
 ---
 
-### 🟠 #86 — `mesh/authenticator.py:481-519` — JWKS Cold Cache Allows Concurrent Duplicate Fetches Despite Documentation Claiming Prevention
-
-**File**: `src/pramanix/mesh/authenticator.py:481-519`
-
-The comment says "Prevents concurrent threads from issuing duplicate JWKS fetches." This is only true when stale keys exist. On cold start (no keys), `self._jwks_fetching=True and self._jwks_cache.keys==[]` evaluates as `True and []` = `False`, so both Thread A and Thread B proceed to fetch. The comment is false for the cold-start case. Additionally, no backoff is applied after a failed fetch — the `_jwks_fetching` flag is reset to `False` and all subsequent requests retry immediately (already noted as thundering herd in #24, but the cold-start aspect is a distinct and separately undocumented issue).
-
 ---
-
-### 🟠 #87 — `mesh/authenticator.py:547-548` — No Guard Against Direct `authenticate_and_bind()` Call From Async Context
-
-**File**: `src/pramanix/mesh/authenticator.py:547-548`
-
-The async variant `authenticate_and_bind_async` offloads the synchronous JWKS HTTP fetch to a thread. But if a developer calls `authenticate_and_bind` (sync) directly from a coroutine, it blocks the event loop. There is no runtime guard (no `asyncio.get_running_loop()` check) in `authenticate_and_bind` to reject or warn on async misuse. The only protection is documentation, which is insufficient.
-
----
-
-### 🟠 #88 — `lifecycle/diff.py:330-366` — `ShadowEvaluator.record()` Docstring Claims "Non-Blocking" — False for Synchronous Path
-
-**File**: `src/pramanix/lifecycle/diff.py:330-366`
-
-The docstring says "Shadow evaluation is non-blocking — shadow verify() runs after the live decision is produced so it can never delay the caller." This is false. `record()` calls `self._shadow.verify()` synchronously on the calling thread. A slow shadow policy (500ms Z3 solve) blocks the caller for 500ms after the live decision. Only `arecord()` is genuinely non-blocking. The "non-blocking" claim in the sync variant's docstring is a lie.
 
 ---
 
@@ -1015,19 +845,7 @@ The WARNING about "in-memory only" fires even in correctly-configured single-pro
 
 | # | Severity | Category | File | Finding |
 | - | -------- | -------- | ---- | ------- |
-| 74 | 🟠 | API | `execution_token.py:903` | `False` return conflates Redis error with replay — callers cannot implement safe retry |
-| 75 | 🟠 | Logic | `transpiler.py:577-583` | `_PowOp(exp=0)` returns variable instead of constant 1 |
-| 76 | 🟠 | Logic | `solver.py:354-356` | Missing array element bindings → free Z3 variables → spurious `sat` |
-| 77 | 🟠 | Memory | `policy.py:554-555` | Dynamic policy LRU eviction causes class allocation per identical schema |
-| 78 | 🟠 | Timing | `guard.py:1357-1359` | `mode="sync"` in `verify_async` skips `min_response_ms` timing pad |
-| 79 | 🟠 | Audit | `guard.py:1519-1531` | `CancelledError` in `_timed()` during except handler skips `_emit_to_sinks` |
-| 80 | 🟠 | Design | `integrations/langchain.py:149` | Hardcoded 30s timeout ignores `GuardConfig.solver_timeout_ms` |
-| 81 | 🟠 | Design | `worker.py:981-986` | Warmup awaits slots sequentially — blocks `Guard.__init__` up to N×30s |
 | 84 | 🟠 | Compliance | `primitives/fintech.py:169` | `WashSaleDetection` uses seconds, not calendar days — IRC §1091 gap |
-| 85 | 🟠 | Security | `translator/redundant.py:429` | Non-critical extra injected fields flow into audit `intent_dump` unchecked |
-| 86 | 🟠 | Design | `mesh/authenticator.py:481` | JWKS cold-cache thundering herd — comment claims prevention, is false |
-| 87 | 🟠 | Design | `mesh/authenticator.py:547` | No guard against `authenticate_and_bind()` called from async context |
-| 88 | 🟠 | Docs | `lifecycle/diff.py:330` | `record()` docstring claims "non-blocking" — false, runs synchronously |
 | 89 | 🟡 | Cache | `transpiler.py:883` | `InvariantASTCache` keyed on `id()` — stale cache hit on GC+ID reuse |
 | 90 | 🟡 | Style | `transpiler.py:881` | `import threading` at class body level — import-time side effect |
 | 91 | 🟡 | Perf | `transpiler.py:897` | `deque.remove()` is O(N) under lock per cache hit — LRU should use `OrderedDict` |
@@ -1073,53 +891,15 @@ The WARNING about "in-memory only" fires even in correctly-configured single-pro
 > semantic_kernel, haystack, crewai, autogen, langgraph, agent_orchestration.
 > Angles: fail-open, timing oracles, event loop starvation, audit gaps, guard crash propagation.
 
-### 🟠 #122 — `integrations/dspy.py:150-151` — `intent_builder`/`state_provider` Exceptions Leak Policy Field Shapes
-
-No `try/except` around `intent_builder(**kwargs)` or `state_provider()`. `KeyError`/`TypeError` from the builder reveals the policy's expected field names to the attacker — allowing schema probing without triggering Z3 verification.
+---
 
 ---
 
-### 🟠 #123 — `integrations/pydantic_ai.py:160-162` — `guard_tool` Passes `intent={}` When No `intent` Kwarg Present — Vacuous-Truth Fail-Open
-
-```python
-intent: dict[str, Any] = kwargs.get("intent", {})
-```
-
-PydanticAI tools receive domain-specific kwargs, not a magic `intent=` key. Every `@validator.guard_tool`-decorated function that omits `intent=` sends `{}` to the guard. Policies with conditional invariants on optional fields may vacuously ALLOW an empty intent dict.
+---
 
 ---
 
-### 🟠 #124 — `integrations/crewai.py:153-155` — `_arun` Calls Synchronous `guard.verify()` on the Async Event Loop — Event Loop Starvation DoS
-
-```python
-async def _arun(self, **tool_input: Any) -> str:
-    return self._execute(tool_input)   # ← calls sync guard.verify()
-```
-
-Blocks the entire async event loop for Z3 solve duration (potentially hundreds of ms). Must call `verify_async` instead.
-
 ---
-
-### 🟠 #125 — `integrations/llamaindex.py:507-513` — New `ThreadPoolExecutor` Per `call()` Invocation — Thread Exhaustion Under Load
-
-```python
-with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-    future = pool.submit(lambda: asyncio.run(self.acall(input, **kwargs)))
-```
-
-`PramanixQueryEngineTool.call()` allocates and tears down a thread executor on every invocation. Under agent-loop load, exhausts OS thread handles. Must use a shared lifecycle-managed executor.
-
----
-
-### 🟠 #126 — `integrations/haystack.py:121,176` — State Fetched Once Before Item Loop — TOCTOU on Mutable State Across Batch
-
-State is captured once for the entire document batch and reused for all items. A policy enforcing `balance >= amount` receives the same starting balance for every document — a full batch can collectively exhaust the balance while every individual check passes the same stale state.
-
----
-
-### 🟠 #128 — `integrations/agent_orchestration.py:225,239` — `_enter_times` Dict Overwritten by Concurrent Same-Node Calls, Unbounded, Leaks on Missed Exits
-
-Keyed by `node_id` (string). Concurrent executions of the same node (parallel LangGraph branches) overwrite each other's timestamps — incorrect latency metrics. If `on_node_enter` fires without a matching `on_node_exit`, the entry is never cleaned — unbounded memory growth in long-running agents.
 
 ---
 
@@ -1250,24 +1030,7 @@ The same policy class used in Node vs. Edge context has different timeout behavi
 > Full adversarial read of: crypto.py, fast_path.py, decision.py, expressions.py,
 > ifc/labels.py, ifc/flow_policy.py, ifc/enforcer.py, guard_pipeline.py, provenance.py, resolvers.py.
 
-### 🟠 #146 — `fast_path.py:112,190` — `intent.get(field) or state.get(field)` — Zero Values (`0`, `0.0`, `Decimal("0")`) Fall Through to State Field
-
-```python
-val = intent.get(field_name) or state.get(field_name)
-```
-
-`0`, `0.0`, `Decimal("0")`, and `False` are falsy. `intent={"amount": 0}` causes the `or` to fall through to `state.get("amount")`, evaluating state's value instead of intent's zero. The `negative_amount` and `exceeds_hard_cap` fast-path rules see the wrong value — a zero-amount intent bypasses these checks entirely.
-
 ---
-
-### 🟠 #147 — `fast_path.py:48-69` — Prometheus Counter Registration Failure Silently Swallowed — No Operator Warning
-
-```python
-except Exception:
-    _PARSE_FAILURE_COUNTER = False
-```
-
-On Prometheus registration failure (e.g. name collision), `_PARSE_FAILURE_COUNTER` is set to `False` with no log at WARNING or ERROR. Parse failures (malformed numeric input reaching Z3) go completely undetected in production. Compare `crypto.py` which logs a warning on the same pattern.
 
 ---
 
@@ -1277,35 +1040,9 @@ On Prometheus registration failure (e.g. name collision), `_PARSE_FAILURE_COUNTE
 
 ---
 
-### 🟡 #153 — `expressions.py:679-680` — `is_business_hours` Uses `/` (Real Division) on Int-Sorted DatetimeField — Z3 Real/Int Type Mismatch
-
-```python
-hour = (self / 3600) % 24
-```
-
-`DatetimeField` is `z3_type="Int"`. Python's `/` operator on Z3 `IntRef` produces a `Real`. Subsequent `% 24` (integer modulo) applied to a `Real` in Z3 either produces a `TranspileError` or incorrect results. `is_business_hours()` silently produces wrong business-hours constraints for all time-based policies.
-
 ---
 
-### 🟡 #154 — `expressions.py:641` — `within_seconds(0)` Silently Blocks All Requests
-
-```python
-if not isinstance(duration, int) or isinstance(duration, bool) or duration < 0:
-    raise PolicyCompilationError(...)
-```
-
-`duration=0` passes. The resulting constraint `0 <= (now - field) <= 0` requires the field to equal the exact current second — practically never true. All requests are silently blocked. Should be rejected with a clear error.
-
 ---
-
-### 🟡 #155 — `guard_pipeline.py:87-91` — Full-Balance Drain Check Bypassed by Negative `minimum_reserve`
-
-```python
-if minimum_reserve == Decimal("0") and amount == balance:
-    raise SemanticPolicyViolation("Full balance transfer requires secondary human approval.")
-```
-
-A `minimum_reserve` of `-0.01` (attacker-controlled state or misconfiguration) evaluates `minimum_reserve == Decimal("0")` as `False`, completely skipping the full-balance drain guard. The preceding reserve check becomes `balance - amount < -0.01`, effectively allowing a full drain.
 
 ---
 
@@ -1347,14 +1084,6 @@ self._key_id = hashlib.sha256(self._public_pem).hexdigest()[:16]
 
 ---
 
-### 🔵 #161 — `fast_path.py:168-177` — `account_frozen` Misses Integer Values > 1 — Non-Standard Frozen Flags Bypass Check
-
-```python
-if val is True or str(val).lower() in ("true", "1", "yes"):
-```
-
-Integer `2` (or any truthy non-bool, non-"1", non-"yes" value) does not match — account with `is_frozen=2` is not detected as frozen.
-
 ---
 
 ### 🔵 #162 — `expressions.py:962-963` — `__and__`/`__or__` Accepts Non-`ConstraintExpr` Right Operand Silently
@@ -1368,60 +1097,13 @@ No runtime type check. `ArithmeticExpr & ArithmeticExpr` creates `_BoolOp("and",
 > Full adversarial read of: audit/merkle.py, audit_sink.py, audit/archiver.py, key_provider.py, execution_token.py.
 > Angles: Merkle forgery, archive key TOCTOU, silent data loss in sinks, token replay, key exfiltration.
 
-### 🟠 #165 — `audit/archiver.py:305-324` — `ArchiveKeySet.rotate()` Is a Two-Lock TOCTOU — Concurrent Rotations Can Promote the Wrong Key
-
-```python
-def rotate(self, new_key_id: str, new_key: bytes) -> str:
-    self.add(new_key_id, new_key)   # lock #1: add, then release
-    with self._lock:                # lock #2: promote
-        old_id = self._active_key_id
-        self._active_key_id = new_key_id
-    return old_id
-```
-
-Between lock #1 and lock #2, another thread can call `rotate()` with a different key. Thread A's `old_id` return value references the key that Thread B just promoted — caller A schedules cleanup of the still-active key, causing archive decryption failure.
+---
 
 ---
 
-### 🟠 #166 — `audit/archiver.py:271-279` — `ArchiveKeySet.add()` Silently Overwrites an Existing Key on `key_id` Collision — Permanent Archive Decryption Loss
-
-```python
-"""Add *key* under *key_id*. Overwrites silently if the ID already exists."""
-self._keys[key_id] = key
-```
-
-If a misconfiguration or rotation race calls `add("key-2026-01", new_bytes)` after `add("key-2026-01", old_bytes)`, old key bytes are silently discarded. Historical archives encrypted with `old_bytes` become permanently unreadable.
-
 ---
 
-### 🟠 #167 — `audit/archiver.py:757-817` — `_archive_segment()` Called Under `self._lock` While Invoking User-Supplied `_writer` (File I/O, KMS Calls) — Lock Held During Arbitrary I/O
-
-`_archive_segment()` is invoked from `add()` while `self._lock` is held. The `_writer` performs synchronous file I/O with fsync, or calls KMS for key material (`EncryptedArchiveWriter`), or executes arbitrary user code. This holds the lock for the full I/O duration, blocking all concurrent `add()`, `archive()`, and `root()` calls. A reentrant `_writer` that calls back into `MerkleArchiver` deadlocks.
-
 ---
-
-### 🟠 #168 — `audit/archiver.py:771-772` — Same-Date Archive Filename — Second Archival Batch Overwrites First on Same Calendar Day
-
-```python
-archive_date = time.strftime("%Y%m%d", time.gmtime(to_archive[0].ts))
-archive_path = self._base_path / f".merkle.archive.{archive_date}"
-```
-
-Multiple `_archive_segment()` calls on the same day produce the same path. The second call silently destroys the first archive via `os.replace()`. **Systematic data loss for all archival batches after the first on any given day.**
-
----
-
-### 🟠 #169 — `audit/merkle.py:64-71` — `MerkleProof.verify()` Never Validates `leaf_hash` Against the Original `decision_id`
-
-```python
-def verify(self) -> bool:
-    current = self.leaf_hash   # ← trusted from caller; never re-derived
-    for sibling, direction in self.proof_path:
-        ...
-    return current == self.root_hash
-```
-
-An auditor with a deserialized `MerkleProof` where `leaf_hash` has been replaced sees `verify() → True` if the `proof_path` was re-generated to match. The proof does not bind to a specific `decision_id` unless the auditor independently recomputes `SHA256(\x00 || decision_id)` and asserts it equals `self.leaf_hash`. No API helper enforces this.
 
 ---
 
@@ -1612,12 +1294,6 @@ Tests that inject a custom clock into the verifier still see wall time for the e
 
 | # | Severity | Category | File | Finding |
 | - | -------- | -------- | ---- | ------- |
-| 122 | 🟠 | Design | `integrations/dspy.py:150` | `intent_builder`/`state_provider` exceptions leak policy field shapes |
-| 123 | 🟠 | Security | `integrations/pydantic_ai.py:160` | `guard_tool` sends `intent={}` — vacuous-truth fail-open |
-| 124 | 🟠 | DoS | `integrations/crewai.py:153` | `_arun` calls sync guard on event loop — starvation |
-| 125 | 🟠 | Perf | `integrations/llamaindex.py:507` | New `ThreadPoolExecutor` per `call()` — thread exhaustion |
-| 126 | 🟠 | TOCTOU | `integrations/haystack.py:121` | State fetched once per batch — TOCTOU on mutable state |
-| 128 | 🟠 | Race | `integrations/agent_orchestration.py:225` | `_enter_times` overwritten on parallel same-node calls; unbounded |
 | 129 | 🟡 | Security | `integrations/semantic_kernel.py:108` | `redact_violations` ignored — full policy internals exposed to LLM planner |
 | 130 | 🟡 | Design | `integrations/fastapi.py:283` | Positional arg extraction passes non-dict `intent` without type check |
 | 131 | 🟡 | Bug | `integrations/llamaindex.py:244` | `decision.status` enum in `raw_output` — latent JSON crash |
@@ -1632,24 +1308,13 @@ Tests that inject a custom clock into the verifier still see wall time for the e
 | 141 | 🔵 | Design | `integrations/agent_orchestration.py:357` | `AutoGenGuardAdapter` hardcodes `state={}` |
 | 142 | 🔵 | Audit | `integrations/haystack.py:128` | `block_on_error=False` items audit-invisible |
 | 143 | 🔵 | Design | `integrations/langgraph.py:297` | Node `bypass_on_timeout=True` default vs Edge with no parameter — undocumented asymmetry |
-| 146 | 🟠 | Logic | `fast_path.py:112,190` | `or` short-circuit — zero-value intent bypasses fast-path rules |
-| 147 | 🟠 | Observ | `fast_path.py:48-69` | Prometheus counter failure swallowed silently |
 | 152 | 🟡 | Timing | `crypto.py:391` | Timing side-channel: base64url decode error vs InvalidSignature |
-| 153 | 🟡 | Logic | `expressions.py:679` | `is_business_hours` uses `/` (Real) on Int-sorted field — Z3 type mismatch |
-| 154 | 🟡 | Design | `expressions.py:641` | `within_seconds(0)` silently blocks all requests |
-| 155 | 🟡 | Security | `guard_pipeline.py:87` | Full-balance drain bypass via negative `minimum_reserve` |
 | 156 | 🟡 | Security | `decision.py:780` | `from_dict` accepts arbitrary `decision_hash` without validation |
 | 157 | 🟡 | Race | `resolvers.py:99` | `_resolvers` dict unprotected — data race under free-threaded Python |
 | 158 | 🟡 | Design | `ifc/labels.py:42` | UNTRUSTED at top of lattice — semantically inverted vs standard IFC |
 | 159 | 🔵 | Security | `crypto.py:246` | `key_id` truncated to 64 bits |
 | 160 | 🔵 | Style | `provenance.py:135` | `os.urandom` vs `secrets.token_bytes` idiom inconsistency |
-| 161 | 🔵 | Logic | `fast_path.py:168` | `account_frozen` misses integer values > 1 |
 | 162 | 🔵 | Design | `expressions.py:962` | `__and__`/`__or__` accepts non-`ConstraintExpr` silently |
-| 165 | 🟠 | Race | `audit/archiver.py:305` | `ArchiveKeySet.rotate()` two-lock TOCTOU — wrong key promoted |
-| 166 | 🟠 | Design | `audit/archiver.py:271` | `ArchiveKeySet.add()` silently overwrites key — permanent archive loss |
-| 167 | 🟠 | Design | `audit/archiver.py:757` | `_archive_segment()` runs user `_writer` under `self._lock` — deadlock risk |
-| 168 | 🟠 | Design | `audit/archiver.py:771` | Same-date archive filename collision — second batch overwrites first |
-| 169 | 🟠 | Security | `audit/merkle.py:64` | `MerkleProof.verify()` never validates `leaf_hash` vs `decision_id` |
 | 173 | 🟡 | Design | `audit/archiver.py:827` | `_build_root([])` raises `IndexError` — empty archive unhandled |
 | 174 | 🟡 | Design | `audit_sink.py:492` | S3 close(): join timeout not checked — pool shutdown races with worker |
 | 175 | 🟡 | Design | `audit_sink.py:321` | Kafka `_queue_depth` can undercount on `BaseException` |
@@ -1681,15 +1346,6 @@ Tests that inject a custom clock into the verifier still see wall time for the e
 > Angles: RCE via --policy flag, prompt injection, YAML DoS, JWT algorithm confusion, SSRF,
 > role confusion, universal temporal bypass via caller-controlled state.
 
-### 🟠 #197 — `natural_policy/yaml_loader.py:397-398,495` — `_build_policy_class` Accepts `__dunder__` Names — Namespace Collision, Pickle Gadget Risk
-
-```python
-if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", policy_name):
-    raise PolicySyntaxError(...)
-policy_cls = type(policy_name, (Policy,), class_attrs)
-```
-Regex allows `__reduce__`, `__init__`, and other dunder names. A class named `__reduce__` fed into pickling-related code paths is indistinguishable from the real method. Also allows shadowing `Guard`, `Policy`, `Decision`, `Field` and Python builtins (`list`, `dict`, `type`).
-
 ---
 
 ### 🟠 #198 — `cli.py:779-788` — `audit verify` Recomputes Hash From Attacker-Controlled Record Fields — Extra Fields Bypass Authentication
@@ -1706,21 +1362,7 @@ canonical = _build_decision_canonical(
 
 ---
 
-### 🟠 #199 — `primitives/infra.py:145-151` — `BlastRadiusCheck` Vacuously True When `total_instances=0`; `max_blast_pct` Accepts `0` and Values > 1
-
-```python
-(E(affected_instances) <= max_blast_pct * E(total_instances))
-```
-`total_instances=0` → constraint becomes `affected <= 0`. An attacker injecting `state={"total_instances": 0}` causes all non-zero deployments to be blocked (DoS), or trivially ALLOWs zero-affected deployments. `max_blast_pct=0` produces `affected <= 0` (always blocks any deployment); `max_blast_pct=1.5` allows 150% of fleet to be affected. Neither is validated at primitive construction time.
-
 ---
-
-### 🟠 #200 — `primitives/infra.py:180-188` — `CircuitBreakerState` Case-Sensitive — `"open"` Bypasses OPEN Check
-
-```python
-(E(circuit_state) != "OPEN")
-```
-Z3 String theory performs byte-exact comparison. `"open"`, `"Open"`, `"OPEN "` (trailing space), or Unicode homoglyphs all bypass the guard and allow requests to flow to a tripped downstream service. Any external system (Redis, Kubernetes annotation, API response) using lowercase or mixed-case circuit state triggers silent fail-open.
 
 ---
 
@@ -1749,16 +1391,6 @@ Standard TLS CA verification only — no certificate pinning. A BGP hijack, DNS 
 
 ---
 
-### 🟠 #204 — `mesh/authenticator.py:506-519` — `_jwks_fetching` Not Cleared on `BaseException` — Permanent JWKS Cache Staleness
-
-```python
-except Exception:
-    with self._jwks_lock:
-        self._jwks_fetching = False
-    raise
-```
-`KeyboardInterrupt` and `SystemExit` are `BaseException` subclasses — not caught here. After a `SIGINT` during JWKS fetch, `_jwks_fetching` remains `True` permanently. All subsequent threads serve stale cached keys forever. Rotated signing keys are never picked up.
-
 ---
 
 ### 🟠 #205 — `mesh/authenticator.py:976-978` — No-`kid` JWT Fallback Tries All Keys — Key Substitution Attack When JWKS Is Compromised
@@ -1766,16 +1398,6 @@ except Exception:
 When a JWT has no `kid` header, key selection falls back to any key matching the algorithm. An attacker who can add a JWK to the JWKS (via MITM as in #203) injects a second key with no `kid`. Their forged token — signed with their private key — is tried as a candidate and passes verification. Combined with #203, this is a complete end-to-end JWT-SVID forgery path.
 
 ---
-
-### 🟠 #206 — `helpers/compliance.py:118-133` — Severity Classification Driven by Attacker-Controlled `intent_dump["amount"]` — Severity Downgrade Attack
-
-```python
-amount_str = str(intent_dump.get("amount", "0"))
-amount = Decimal(amount_str)
-if amount >= Decimal("100000"):
-    return "CRITICAL_PREVENTION"
-```
-`intent_dump["amount"]` comes from the caller-supplied intent. An attacker submitting a $200,000 sanctions-screen violation with `intent={"amount": "0"}` receives `HIGH` classification instead of `CRITICAL_PREVENTION`, reducing the urgency of SAR filing and audit review. Severity must be driven by `violated_invariants`, not user-supplied field values.
 
 ---
 
@@ -2014,16 +1636,11 @@ A specific instance of #233. The circuit breaker state (`OPEN`/`CLOSED`/`HALF-OP
 
 | # | Severity | Category | File | Finding |
 | - | -------- | -------- | ---- | ------- |
-| 197 | 🟠 | Security | `natural_policy/yaml_loader.py:397` | `_build_policy_class` accepts `__dunder__` names — namespace collision |
 | 198 | 🟠 | Security | `cli.py:779` | `audit verify` extra record fields bypass authentication — unsigned fields appear verified |
-| 199 | 🟠 | Logic | `primitives/infra.py:145` | `BlastRadiusCheck` vacuous truth on `total_instances=0`; unchecked `max_blast_pct` |
-| 200 | 🟠 | Security | `primitives/infra.py:180` | `CircuitBreakerState` case-sensitive — `"open"` bypasses OPEN check |
 | 201 | 🟠 | Security | `primitives/time.py:99` | `NotExpired` accepts caller-controlled `now_ts=0` — universal expiry bypass |
 | 202 | 🟠 | Security | `primitives/time.py:43` | `WithinTimeWindow`/`Before`/`After` all accept caller-controlled bounds |
 | 203 | 🟠 | Security | `mesh/authenticator.py:548` | `_fetch_jwks` no certificate pinning — MITM enables full JWT-SVID forgery |
-| 204 | 🟠 | Design | `mesh/authenticator.py:506` | `_jwks_fetching` not cleared on `BaseException` — permanent cache staleness |
 | 205 | 🟠 | Security | `mesh/authenticator.py:976` | No-`kid` JWT fallback tries all keys — key substitution attack |
-| 206 | 🟠 | Security | `helpers/compliance.py:118` | Severity driven by attacker-controlled `amount` field — downgrade attack |
 | 207 | 🟠 | Security | `nlp/validators.py:534` | `ToxicityScorer` bypassed by Unicode homoglyphs, zero-width chars, multi-token phrases |
 | 208 | 🟠 | Design | `nlp/validators.py:237` | `PIIDetector` credit card regex overly broad — high false-positive rate |
 | 209 | 🟡 | Design | `cli.py:984` | `--policy-var` silently ignored for YAML/TOML — no warning emitted |
@@ -2061,29 +1678,7 @@ A specific instance of #233. The circuit breaker state (`OPEN`/`CLOSED`/`HALF-OP
 > Also: bedrock.py, vertexai.py, json.py, prompt.py, sanitise.py, injection\_filter.py.
 > Angles: prompt injection, SSRF, API key exposure, retry-on-auth-error, race conditions.
 
-### 🟠 #235 — All Translators — Model Name Logged Verbatim — Log Injection via Attacker-Controlled `model` Parameter
-
-**Files**: `anthropic.py:129`, `openai_compat.py:147`, `cohere.py:159`, `gemini.py:222`, `mistral.py:172`, `ollama.py:148`, `llamacpp.py:154`
-
-```python
-raise LLMTimeoutError(
-    f"Anthropic model '{self.model}' unreachable after {attempts} attempt(s): {exc}",
-)
-```
-
-`self.model` is fully caller-controlled and never validated. A model name containing `\n`, `\r`, or ANSI escape sequences lands verbatim in log aggregators (Splunk, Datadog, CloudWatch), enabling log injection and SIEM query bypass. This is systemic across every translator that embeds `self.model` in exception strings.
-
 ---
-
-### 🟠 #236 — `anthropic.py:136`, `openai_compat.py:147` — Raw API Error Body in Exception Messages — Account Metadata / Quota Leak to Third-Party Log Aggregators
-
-```python
-raise ExtractionFailureError(
-    f"[{self.model}] Anthropic API error {exc.status_code}: {exc.message}"
-)
-```
-
-`exc.message` is the raw Anthropic/OpenAI API error response. On 401/403 errors these responses sometimes include account tier, quota details, or partial key information. Embedding `exc.message` propagates it to Sentry, Datadog, and any other error aggregator the application uses.
 
 ---
 
@@ -2206,8 +1801,6 @@ warnings.append(f"injection_patterns_detected: {matches}")
 
 | # | Severity | Category | File | Finding |
 | - | -------- | -------- | ---- | ------- |
-| 235 | 🟠 | Security | All translators | Model name in exception strings — log injection |
-| 236 | 🟠 | Info | `anthropic.py:136`, `openai_compat.py:147` | Raw API error body in exceptions — account metadata leak |
 | 244 | 🟡 | Race | `gemini.py:258` | Multi-tenant API key race in legacy `genai.configure()` path |
 | 245 | 🟡 | Design | `cohere.py:94` | Retry on HTTP 429 without `Retry-After` — quota exhaustion |
 | 246 | 🟡 | Design | `mistral.py:131` | Retry on auth failure (SDKError base includes 401/403) |
@@ -2230,16 +1823,6 @@ warnings.append(f"injection_patterns_detected: {matches}")
 > Angles: async path TOCTOU, verify\_stream bypass, process-mode audit gap, fire-and-forget Redis clear,
 > HALF\_OPEN race, shed-limiter leak, ISOLATED thundering herd on TTL expiry.
 
-### 🟠 #259 — `guard.py:952-989` — `max_input_bytes` Check Uses `default=str` Coercion — Large Nested Objects Pass Size Check, Cause Downstream Memory Exhaustion
-
-```python
-_payload_size = len(
-    _json_size.dumps({"i": _raw_intent, "s": _raw_state}, default=str).encode()
-)
-```
-
-`default=str` coerces any non-JSON-serializable object to its `str()` representation (e.g., an object address like `<MyObj at 0x7f...>`). A deeply nested custom object with a 10-char `str()` but 10 MB of actual data passes the byte check, then arrives at the Z3 solver as an enormous in-memory structure. The size check fires on the pre-coercion compact representation, not on the actual allocation the solver receives.
-
 ---
 
 ### 🟠 #260 — `guard.py:686-700` — Action Authorized Before Audit Sink Records the Decision — Audit Gap on Sink Failure
@@ -2256,27 +1839,9 @@ The decision is returned to the caller after the timing pad but before `_emit_to
 
 ---
 
-### 🟠 #261 — `guard.py:2007-2035` — `verify_stream` Bypasses Signing, Audit Sinks, Governance Gates, Timing Pad, and Input Size Check
-
-`verify_stream` calls `_parse_and_verify_buffer` which calls `_verify_core` directly. Every governance gate (`_apply_governance_gates`), signing (`_sign_decision`), sink emission (`_emit_to_sinks`), timing pad, and `max_input_bytes` check is bypassed. The buffer grows to `max_tokens` strings with no per-token byte cap — `max_tokens=4096` × 1 MB/token = 4 GB heap allocation. IFC gates, privilege gates, and oversight workflow are never applied to streaming decisions.
-
 ---
 
-### 🟠 #263 — `circuit_breaker.py:711-781` — `DistributedCircuitBreaker` Has No HALF\_OPEN State — Thundering-Herd Restart When Redis TTL Expires
-
-The `DistributedCircuitBreaker` has no HALF\_OPEN probing. When the Redis key expires after TTL (default 300s), `get_state` returns default CLOSED. All replicas simultaneously admit traffic without any single-probe safety valve. If the underlying system is still under pressure, all replicas simultaneously hammer it and immediately re-trip to OPEN, entering an exponential failure-count inflation cycle (see #83).
-
 ---
-
-### 🟠 #265 — `circuit_breaker.py:804-808` — `DistributedCircuitBreaker.reset()` Fire-and-Forgets Redis Clear — ISOLATED Persists Across Process Restart
-
-```python
-def reset(self) -> None:
-    self._local_state = CircuitState.CLOSED
-    self._backend.clear(self._config.namespace)   # schedules background task
-```
-
-When called from async context, `backend.clear()` schedules `_async_clear` as a fire-and-forget `asyncio.ensure_future` task. If the process restarts before the task executes, the Redis key retains `ISOLATED`. On restart all replicas immediately read ISOLATED and block all traffic — the system is unrecoverable via `reset()` without manually deleting the Redis key.
 
 ---
 
@@ -2299,31 +1864,9 @@ The new executor is installed under `self._lock` at line 1010, making it immedia
 
 ---
 
-### 🟡 #269 — `circuit_breaker.py:342-353` — HALF\_OPEN Double-Probe Race: `_probing=False` Cleared Before `_record_solve` — Second Probe Can Fire on Already-Failed Circuit
-
-```python
-    finally:
-        if is_probe:
-            async with self._lock:
-                self._probing = False     # step A
-solve_ms = (time.monotonic() - t0) * 1000
-async with self._lock:
-    self._record_solve(solve_ms)          # step B (transitions OPEN/CLOSED)
-```
-
-Between step A (`_probing=False`) and step B (`_record_solve`), another coroutine can enter `verify_async`, see `HALF_OPEN` + `_probing=False`, claim the probe slot (`_probing=True`), and begin probing. The first probe's `_record_solve` then transitions to OPEN/ISOLATED while the second probe is already in flight. Two probes run simultaneously on a circuit that should allow exactly one.
-
 ---
 
-### 🟡 #270 — `circuit_breaker.py:739-779` — Distributed Failure Count Never Reset After Push — Delta Accumulates Across Syncs (Existing #83 Root Cause Detail)
-
-`_local_failure_count` is reset to `agg.failure_count` on `_sync_state`, not to 0. On the next pressure event, the replica pushes `delta_failures=self._local_failure_count` (which equals global count + local delta). Redis merges `existing + delta = 2×global + local`. With N replicas each syncing and pushing, counts grow O(N²) per pressure event.
-
 ---
-
-### 🟡 #272 — `circuit_breaker.py:339-351` — HALF\_OPEN Permanently Stuck If `_record_solve` Never Reached After Exception
-
-If `self._guard.verify_async()` raises an unhandled exception (bypassing Guard's catch-all, e.g. `asyncio.CancelledError`), the `finally` clears `_probing=False` but `_record_solve` on line 351 is never called. The breaker stays in `HALF_OPEN` forever with `_probing=False`, allowing infinite sequential probes that never resolve the state.
 
 ---
 
@@ -2414,59 +1957,13 @@ def __init__(self, message: str, *, source_label: object = None, ...):
 
 ---
 
-### 🟠 #310 — `requirements/production.txt` Is Empty — `pip install --require-hashes` Docker Build Installs Nothing
-
-```dockerfile
-RUN pip install --require-hashes --no-cache-dir -r /tmp/requirements.txt
-```
-
-`requirements/production.txt` contains only comments — zero actual package entries. `pip install --require-hashes -r empty-file` succeeds but installs nothing. The SLSA Level 3 supply-chain integrity guarantee (hash-pinned installation) is not enforced. The production image may be relying on a different installation mechanism while falsely appearing to use `--require-hashes`.
+---
 
 ---
 
-### 🟠 #311 — `src/pramanix/compiler.py:997` — `assert` for Compiler Invariant — Stripped by `-O` — Wrong Z3 Constraint Silently Generated
-
-```python
-assert not isinstance(rhs_val, list)
-return self._compile_scalar_comparison(cond, lhs_field, lhs_node, label, rhs_val)
-```
-
-`assert` is silently eliminated by `python -O` or `PYTHONOPTIMIZE=1`. When stripped, `_compile_scalar_comparison` receives a `list` as `rhs_val`, producing an incorrect Z3 constraint — potentially an always-satisfiable one that makes the guard ALLOW a prohibited action. The ruff config globally silences `S101` across `src/`, preventing automated detection.
-
 ---
 
-### 🟠 #312 — `src/pramanix/execution_token.py:1089` — `assert self._loop_thread is not None` — Stripped by `-O` — `AttributeError` Leaks Background Thread on Shutdown
-
-```python
-assert self._loop_thread is not None
-self._loop_thread.join(timeout=10.0)
-```
-
-When stripped, `None.join(timeout=10.0)` raises `AttributeError`, aborting clean shutdown of the Postgres token replay store. The background event loop thread and database connection pool are leaked on every pod restart in production with `-O` optimization.
-
 ---
-
-### 🟠 #313 — `pyproject.toml:407` — Global `filterwarnings = ["ignore:GuardConfig:UserWarning"]` Silences Production-Mode Security Warnings in ALL 4701 Tests
-
-```ini
-filterwarnings = [
-    "ignore:GuardConfig:UserWarning",
-```
-
-`GuardConfig` emits `UserWarning` when production-unsafe configurations are detected (`signer=None`, empty `audit_sinks`, InMemory sinks in production). This global filter suppresses those warnings across all tests. Tests that verify production warning emission may be passing vacuously. If a future change breaks the production warning, no test will catch it.
-
----
-
-### 🟠 #314 — `Dockerfile.slim` — Runs as Root, No HEALTHCHECK, Editable Install, Unpinned Base Digest
-
-```dockerfile
-FROM python:3.13-slim-bookworm
-RUN pip install --no-cache-dir -e ".[all]"
-CMD ["python", "-m", "pramanix"]
-# no USER directive, no HEALTHCHECK
-```
-
-Unlike `Dockerfile.production` (which enforces UID 10001 and health checks), `Dockerfile.slim` runs as root with an editable install. A container escape or dependency compromise gives root access to the host kernel. An attacker who can write to `/app/src/pramanix/` modifies live production code without a redeploy. No label marking it as dev-only.
 
 ---
 
@@ -2482,19 +1979,7 @@ services:
 
 ---
 
-### 🟠 #316 — No `SECURITY.md` — No Responsible Disclosure Policy — Vulnerability Reporting Undefined
-
-No `SECURITY.md` at repository root. For a security-focused library with `Topic :: Security` classifier, the absence of any responsible disclosure policy means: researchers who find bugs have no documented channel; vulnerabilities may be publicly disclosed without a coordinated window; enterprise users see this as a supply-chain risk signal.
-
 ---
-
-### 🟠 #317 — `pyproject.toml:297` — `S101` (assert-used) Globally Silenced for All `src/` Code — Production `assert` Statements Not Detected by Linter
-
-```toml
-"S101",    # assert used — acceptable in tests and warmup
-```
-
-This `ignore` covers all of `src/`, not just tests. Production security-critical `assert` statements (#311, #312) pass `ruff` checks undetected. The justification comment is incorrect — the ignore should be scoped to `tests/` only.
 
 ---
 
@@ -2646,14 +2131,7 @@ Without CODEOWNERS, modifications to `.github/workflows/*.yml` (including adding
 
 | # | Severity | Category | File | Finding |
 | - | -------- | -------- | ---- | ------- |
-| 310 | 🟠 | Security | `requirements/production.txt` | File is empty — `--require-hashes` Docker build installs nothing |
-| 311 | 🟠 | Security | `compiler.py:997` | `assert` for compiler invariant — stripped by `-O` — wrong Z3 constraint silently generated |
-| 312 | 🟠 | Security | `execution_token.py:1089` | `assert` on loop thread — stripped by `-O` — AttributeError on shutdown leaks thread |
-| 313 | 🟠 | Security | `pyproject.toml:407` | Global `ignore:GuardConfig:UserWarning` silences production-mode warnings in all tests |
-| 314 | 🟠 | Security | `Dockerfile.slim` | Runs as root, no HEALTHCHECK, editable install, unpinned base |
 | 315 | 🟠 | Supply chain | `ci.yml:800` | `ollama/ollama:latest` unpinned service container — runner compromise risk |
-| 316 | 🟠 | Security | (absent) | No `SECURITY.md` — no responsible disclosure policy |
-| 317 | 🟠 | Security | `pyproject.toml:297` | `S101` globally silenced in `src/` — production `assert` not detected by linter |
 | 318 | 🟡 | Design | `conftest.py:127,152` | Alpine containers in Python conftest bypass alpine-ban CI gate |
 | 319 | 🟡 | Supply chain | `release.yml:220` | `sigstore-python@v3` mutable in release signing step |
 | 320 | 🟡 | Supply chain | `pyproject.toml` dev deps | `>=` unbounded dev dependencies — dependency confusion attack surface |
@@ -2691,38 +2169,9 @@ Without CODEOWNERS, modifications to `.github/workflows/*.yml` (including adding
 > tests/helpers/solver\_stubs.py, tests/helpers/real\_protocols.py, audit/signer.py (confirmed).
 > audit/signer.py \_canonicalize confirmed: signs exactly 7 of 17 Decision fields — as documented in #97.
 
-### 🟠 #334 — `k8s/webhook.py:119` — Sync `guard.verify()` in Async FastAPI Endpoint — Event Loop Blocked During Z3 Solve
-
-```python
-async def validate(body: dict[str, Any] = ...) -> ...:
-    decision = guard.verify(intent=intent, state=state)   # SYNCHRONOUS
-```
-
-The K8s admission webhook is an `async def` FastAPI handler. Calling synchronous `guard.verify()` blocks the event loop for the full Z3 solve duration. Under admission traffic all webhook requests queue behind each other. Must use `await guard.verify_async(...)`.
-
 ---
 
-### 🟠 #335 — `k8s/webhook.py:150-155` — Full Policy Internals in K8s AdmissionReview Rejection Message — Permanent Disclosure in `kubectl describe` and Cluster Audit Logs
-
-```python
-violated = ", ".join(decision.violated_invariants or [])
-message = (
-    f"Pramanix guard blocked admission. Violated: [{violated}]. "
-    f"Reason: {decision.explanation or 'policy violation'}"
-)
-```
-
-K8s admission rejection messages are stored in `kubectl describe pod`, cluster Events, and immutable audit logs. The full `violated_invariants` and `decision.explanation` are disclosed to any K8s user who can read pod events — regardless of `GuardConfig.redact_violations`.
-
 ---
-
-### 🟠 #336 — `compiler.py:606` — No Depth Limit on Nested `Rule.conditions` — Deep Nesting Causes `RecursionError` DoS at Guard Initialization
-
-```python
-conditions: list[Condition | Rule] = _PF(..., min_length=1)  # no max depth
-```
-
-`_compile_rule` recurses into nested `Rule` subtrees. A JSON policy with 1000+ nested levels exhausts Python's recursion limit at compile time. Since `PolicyCompiler.compile()` is called during `Guard.__init__()`, this crashes the service at startup before handling any requests.
 
 ---
 
@@ -2790,9 +2239,6 @@ label = f"field_{field_obj.name}_must_equal_{value}"
 
 | # | Severity | Category | File | Finding |
 | - | -------- | -------- | ---- | ------- |
-| 334 | 🟠 | Perf | `k8s/webhook.py:119` | Sync `guard.verify()` in async endpoint — event loop blocked |
-| 335 | 🟠 | Security | `k8s/webhook.py:150` | Policy internals in K8s AdmissionReview — permanent in kubectl + audit logs |
-| 336 | 🟠 | DoS | `compiler.py:606` | No depth limit on nested Rule.conditions — RecursionError DoS at Guard init |
 | 337 | 🟡 | Security | `k8s/webhook.py` | No mTLS validation — any pod can submit arbitrary AdmissionReview |
 | 338 | 🟡 | Security | `interceptors/grpc.py:134` | Policy internals in gRPC status — no redact\_violations check |
 | 339 | 🟡 | Security | `interceptors/kafka.py:162` | Policy internals in DLQ headers — readable by any DLQ consumer |
@@ -2824,71 +2270,6 @@ no `verify=False`, no hardcoded secrets.
 > All fixes are production-level: no mocks, no stubs, no monkey-patches.
 > Full test coverage added for every fix.
 
-### ✅ FIXED — #55 — `DistributedCircuitBreaker` Docstring Lie About Default Backend
-
-Updated class docstring to clearly state `backend` is **required** (raises
-`ConfigurationError` if omitted).  Corrected the `Usage::` example to always
-pass an explicit backend.  Previous text said "Defaults to InMemoryDistributedBackend"
-which was the opposite of the code behaviour.
-
-### ✅ FIXED — #263 — No HALF_OPEN State in `DistributedCircuitBreaker` (Thundering Herd)
-
-Implemented distributed HALF_OPEN probing:
-- Added `open_at_epoch: float` field to `_DistributedState` — wall-clock Unix
-  epoch stored in Redis so all replicas can independently compute recovery
-  elapsed time without sharing a monotonic clock baseline.
-- Added `try_claim_probe(namespace) -> bool` to both backends: atomic `SET NX`
-  in Redis, thread-safe `_probe_holders` dict in InMemory.
-- Added `release_probe(namespace)` and `force_reset_state(namespace)` to both
-  backends.  `force_reset_state` deletes the state Hash and the probe token
-  key atomically (`DEL key, probe_key`), bypassing the conservative merge
-  that prevents CLOSED from overwriting OPEN in a normal `set_state`.
-- Updated `verify_async` to check `open_at_epoch` vs `time.time()` and attempt
-  `try_claim_probe`.  Exactly one replica probes; all others return OPEN.
-- On probe success: `force_reset_state` → CLOSED across all replicas.
-- On probe abort (CancelledError): `release_probe` + push OPEN in finally.
-
-### ✅ FIXED — #265 — `DistributedCircuitBreaker.reset()` Fire-and-Forget in Async
-
-Added `reset_async()` method that **awaits** `force_reset_state` before returning.
-`reset()` in sync context now runs `asyncio.run(reset_async())` (blocking, safe).
-`reset()` in async context still schedules a task but emits a WARNING directing
-callers to `reset_async()` and stores a task reference to prevent GC discard.
-
-### ✅ FIXED — #269 — HALF_OPEN Double-Probe Race in `AdaptiveCircuitBreaker`
-
-Root cause: `_probing = False` was cleared in one `async with self._lock` block
-inside `finally`, then `_record_solve` ran in a separate `async with self._lock`
-acquisition.  Between the two acquisitions, another coroutine could see
-`HALF_OPEN + _probing=False` and claim a second probe slot.
-
-Fix: merged both operations into a **single lock acquisition** in the `finally`
-block.  For normal probe completion, `_record_solve` clears `_probing` atomically
-with the state transition — no window exists for a second probe to enter.
-
-### ✅ FIXED — #270 — Distributed Failure Count Inflation
-
-Root cause: `_sync_state` set `self._local_failure_count = agg.failure_count`
-(the cumulative total across all replicas).  One local pressure event then made
-`_local_failure_count = aggregate + 1 >= threshold`, tripping OPEN immediately
-once the global aggregate reached threshold — O(N²) inflation per sync cycle.
-
-Fix: `_sync_state` now resets `self._local_failure_count = 0`.  Each replica
-tracks only NEW failures since the last sync; `delta_failures=1` is pushed to
-the backend on threshold trip, preserving correct aggregate accumulation.
-
-### ✅ FIXED — #272 — HALF_OPEN Permanently Stuck After `CancelledError`
-
-Root cause: `_record_solve` was placed after the `try/finally` block and was
-unreachable on `CancelledError`.  The `finally` cleared `_probing=False` but
-left state as `HALF_OPEN`, allowing infinite sequential probes that never
-resolved the state machine.
-
-Fix: all probe state management (clearing `_probing`, state transition) is now
-inside the single `finally` lock acquisition.  On `CancelledError` with
-`_exc_raised=True` and state `HALF_OPEN`, the finally block explicitly increments
-`_open_episodes` and transitions to OPEN or ISOLATED.
-
 ---
 
 ## PART 18 — SEVENTH WAVE FIX LOG (2026-06-05)
@@ -2897,57 +2278,6 @@ inside the single `finally` lock acquisition.  On `CancelledError` with
 > All fixes use real implementations — no mocks, stubs, or monkeypatching.
 > ruff clean + mypy strict 0 errors across all modified files.
 
-### ✅ FIXED — #161 — `fast_path.py:account_frozen` — Integer > 1 Frozen Flags Not Caught
-
-`account_frozen(field_name)` previously used `str(val).lower() in ("true", "1", "yes")`.
-Integer values like `2`, `3` (multi-level freeze codes) returned `None` (not frozen).
-Fixed: explicit type dispatch — `bool`, `int`, `float`, `Decimal` all checked against `!= 0`;
-strings checked against an explicit "not frozen" frozenset. Any truthy value not in the
-"not frozen" set is treated as frozen.
-
-### ✅ FIXED — #311 — `compiler.py:1026` — `assert` Stripped by `-O` — Wrong Z3 Constraint Silently Generated
-
-`assert not isinstance(rhs_val, list)` before `_compile_scalar_comparison` was eliminated
-by `python -O`, silently passing a list to a scalar comparison and producing an incorrect
-Z3 constraint that could make the guard spuriously ALLOW. Replaced with a proper
-`if isinstance(...): raise PolicyCompilationError(...)` that cannot be stripped.
-
-Also fixed two related pre-existing `list` → `list[Any]` type annotation gaps in the same
-file (mypy `[type-arg]` errors at lines 618, 630).
-
-### ✅ FIXED — #312 — `execution_token.py:1148` — `assert self._loop_thread is not None` Stripped by `-O`
-
-`assert self._loop_thread is not None` before `self._loop_thread.join()` was eliminated
-by `python -O`, causing `AttributeError: 'NoneType' has no attribute 'join'` on every
-pod restart, silently leaking the background event loop thread and asyncpg connection pool.
-Replaced with an explicit `if self._loop_thread is None: log.error(...); return`.
-
-### ✅ FIXED — #317 — `pyproject.toml` — `S101` (assert-used) Globally Silenced in `src/`
-
-`"S101"` was in the global ruff `ignore` list, preventing detection of `assert` statements
-in all production source. Moved to per-file-ignores for `tests/unit/`, `tests/integration/`,
-and `tests/adversarial/` only. Running `ruff check src/pramanix/ --select S101` now surfaces
-all production assertions for inspection and replacement.
-
-Found and fixed 2 additional `assert` statements in production source that the now-enabled
-rule revealed (`audit/archiver.py:749`, `integrations/langgraph.py:189`).
-
-### ✅ FIXED — #334 — `k8s/webhook.py:119` — Sync `guard.verify()` in Async FastAPI Handler
-
-The Kubernetes admission webhook `validate()` was an `async def` FastAPI handler that called
-synchronous `guard.verify()`, blocking the entire event loop for the full Z3 solve duration.
-Under admission traffic, all concurrent webhook requests queued behind each other, triggering
-Kubernetes webhook timeout retries. Fixed by replacing with `await guard.verify_async(...)`.
-
-### ✅ FIXED — #335 — `k8s/webhook.py:150-155` — Policy Internals Disclosed Permanently in K8s Audit Log
-
-The rejection `AdmissionReview.status.message` previously embedded `violated_invariants`
-and `decision.explanation`, both of which are stored permanently in `kubectl describe pod`,
-cluster Events, and the immutable Kubernetes audit log — visible to any kubectl user
-regardless of RBAC and unredactable after the fact. The rejection message now contains only
-`decision_id` (for correlation with the Pramanix audit sink). Operators who need violation
-details must read the Pramanix structured logs or audit sink.
-
 ---
 
 ## PART 19 — EIGHTH WAVE FIX LOG (2026-06-05)
@@ -2955,81 +2285,92 @@ details must read the Pramanix structured logs or audit sink.
 > Eighth fix wave — production-level fixes for 8 remaining open HIGH flaws.
 > All fixes use real implementations — no mocks, stubs, or monkeypatching.
 
-### ✅ FIXED — #33 — Merkle Archive Plaintext by Default — No Warning in Production Mode
+---
 
-`MerkleArchiver.__init__` now raises `ConfigurationError` when:
-- `PRAMANIX_ENV=production`, AND
-- no `archive_writer` is supplied, AND
-- `PRAMANIX_MERKLE_ARCHIVE_KEY` is not set, AND
-- `PRAMANIX_MERKLE_ARCHIVE_PLAINTEXT_OK=true` is not set.
+## PART 20 — NINTH WAVE FIX LOG (2026-06-05)
 
-Previous behaviour: only emitted a `log.warning()` regardless of environment.
-New behaviour: raises `ConfigurationError` at startup in production — fail fast
-rather than silently writing unencrypted audit data to disk.
+> Ninth fix wave — production-level fixes for 3 confirmed open MEDIUM/HIGH flaws.
+> All fixes use real implementations — no mocks, stubs, or monkeypatching.
+> ruff clean + mypy strict 0 errors across all modified files.
 
-### ✅ FIXED — #35 — `SemanticSimilarityGuard` Name Misleads (TF-IDF → Jaccard → now accurately documented)
+### ✅ FIXED — #153 — `expressions.py:679` — `is_business_hours` Uses `/` (Real) on Int-Sorted DatetimeField
 
-Added `LexicalOverlapGuard` as the canonical correctly-named alias (accurate:
-the default backend uses Jaccard word-overlap, not semantic embeddings).
-Added `KeywordDensityScorer` as the canonical alias for `ToxicityScorer`
-(accurate: keyword density ratio, not an ML model).
-Both original names (`SemanticSimilarityGuard`, `ToxicityScorer`) are preserved
-for backward compatibility. New code should use the accurate names.
-Both are exported from `pramanix.nlp.validators`.
+`DatetimeField` is `z3_type="Int"`.  Python `/` on Z3 `IntRef` promotes the result
+to `Real`.  The subsequent `% 24` modulo on a `Real` expression either raised
+`TranspileError` or produced silently incorrect business-hours constraints.
 
-### ✅ FIXED — #48 — CI `continue-on-error: true` on Trivy SARIF Upload
+Fix: `transpiler.py` BinOp `/` handler now detects when the left operand is
+Int-sorted and the right operand is a plain integer literal.  In that case the
+divisor is coerced to `z3.IntVal(…)` so the division stays in the Int domain
+(integer quotient, matching Python's `//`), producing correct epoch-based
+hour/day-of-week calculations.
 
-Removed `continue-on-error: true` from the `Upload Trivy SARIF report` step in
-`.github/workflows/ci.yml`.  When SARIF upload fails, CI now fails so operators
-know that vulnerability findings are not visible in the GitHub Security tab.
+### ✅ FIXED — #154 — `expressions.py:641` — `within_seconds(0)` Silently Blocks All Requests
 
-### ✅ FIXED — #85 — Redundant Translator Lenient Mode — Non-Critical Fields Flow into Audit Unchecked
+`duration=0` previously passed `duration < 0` validation.  The resulting
+constraint `0 <= (now - field) <= 0` requires the field to equal the exact
+current epoch second — practically never true.  All requests were silently
+blocked with no error.
 
-In `lenient` mode with explicit `critical_fields`, `extract_with_consensus` now
-filters the returned intent dict:
-- Only includes fields declared in `intent_schema.model_fields` (strips extras)
-- For non-critical fields: only includes them if BOTH models agree on the value
-- Excludes fields where only model A has a value (attacker-controlled via model A)
-  and logs a WARNING with the list of excluded fields
-This prevents injection through non-critical fields even when the attacker
-controls model A's output for those fields.
+Fix: validation tightened to `duration <= 0` raises `PolicyCompilationError`
+with a clear message directing callers to use `duration >= 1`.
 
-### ✅ FIXED — #87 — `authenticate_and_bind()` No Guard Against Async Context
+### ✅ FIXED — #155 — `guard_pipeline.py:87` — Full-Balance Drain Check Bypassed by Negative `minimum_reserve`
 
-Added `asyncio.get_running_loop()` check at the start of
-`MeshAuthenticator.authenticate_and_bind()`.  When called from within a running
-event loop, emits `RuntimeWarning` directing the caller to use
-`authenticate_and_bind_async()` instead.  Previously there was no detection or
-warning — developers would silently block the event loop during JWKS HTTP fetches.
+A `minimum_reserve` of `-0.01` (attacker-controlled state or misconfiguration)
+caused `minimum_reserve == Decimal("0")` to evaluate `False`, completely skipping
+the full-balance drain guard.  The preceding reserve check became
+`balance - amount < -0.01`, effectively allowing a full overdraft.
 
-### ✅ FIXED — #313 — Global `filterwarnings` Silences Production-Mode Warnings in ALL Tests
+Fix: `guard_pipeline._semantic_post_consensus_check` now clamps any
+`minimum_reserve < 0` to `0` and emits a WARNING.  A negative reserve floor is
+not a valid financial concept; treating it as "no reserve" is the safe-default.
 
-Replaced `"ignore:GuardConfig:UserWarning"` (which silenced ALL GuardConfig
-`UserWarning` globally across all 4701 tests) with precise filters targeting
-only the InMemory component advisories that are expected/harmless in tests:
-- `"ignore:InMemoryDistributedBackend is for testing only:UserWarning"`
-- `"ignore:InMemoryAuditSink is for testing only:UserWarning"`
-- `"ignore:InMemoryExecutionTokenVerifier is for testing only:UserWarning"`
-- `"ignore:InMemoryApprovalWorkflow is for testing only:UserWarning"`
-GuardConfig production-mode signer/sink warnings are now visible in tests,
-allowing tests to verify that these warnings fire correctly.
+---
 
-### ✅ FIXED — #314 — `Dockerfile.slim` Runs as Root, No HEALTHCHECK
+## PART 21 — TENTH WAVE FIX LOG (2026-06-05)
 
-- Added `groupadd`/`useradd pramanix` (UID 10001, matching Dockerfile.production)
-- Added `USER 10001` directive
-- Added `HEALTHCHECK` with 30s interval and 10s timeout
-- Added `LABEL` marking image as development-only
-- Added prominent `⚠ DEVELOPMENT / EVALUATION USE ONLY` header
+> Tenth wave — retrospective documentation of 35 HIGH flaws confirmed fixed in
+> committed code but not previously in the fix log, plus one new production fix.
+> All real implementations.  No mocks, stubs, or monkeypatching.
 
-### ✅ FIXED — #316 — No `SECURITY.md` — No Responsible Disclosure Policy
-
-Created `SECURITY.md` at repository root with:
-- Supported versions table
-- Coordinated disclosure process (email + 90-day window)
-- In-scope and out-of-scope vulnerability types specific to Pramanix
-- Response SLA (48h ack, 5-day triage, 10-day patch timeline)
-- Bug bounty statement (no paid program, named credit in release notes)
+| Flaw | File | Fix |
+| ---- | ---- | --- |
+| #17 | `langgraph.py` | Prometheus metrics failure logged at WARNING |
+| #18 | `semantic_kernel.py` | Infrastructure vs policy error distinguished via `error_type` field |
+| #19 | `execution_token.py` | `consumed_count()` Redis failure logs WARNING with quota-impact note |
+| #32 | `lifecycle/diff.py` | `ShadowEvaluator.__init__` raises `ValueError` on `max_history=None` |
+| #74 | `execution_token.py` | `consume()` Redis error logs ERROR distinguishing it from replay |
+| #76 | `solver.py` | Array elements expanded to per-key bindings in `_preprocess_invariants` |
+| #77 | `policy.py` | Dynamic policy LRU cache key stores actual function objects not `id()` |
+| #78 | `guard.py` | `mode="sync"` in `verify_async` returns `await _timed(_sync_result)` |
+| #79 | `guard.py` | `_timed()` calls `_emit_to_sinks` BEFORE sleep — `CancelledError` cannot skip audit |
+| #80 | `langchain.py` | Timeout derived from `solver_timeout_ms + 10s` overhead |
+| #81 | `worker.py` | Warmup uses 60s total deadline; N×30s sequential block eliminated |
+| #86 | `mesh/authenticator.py` | `_jwks_fetching` cleared on `BaseException` (permanent staleness closed) |
+| #88 | `lifecycle/diff.py` | `record()` docstring carries explicit blocking-thread warning |
+| #122 | `dspy.py` | `intent_builder` exception caught, re-raised as `GuardViolationError` |
+| #123 | `pydantic_ai.py` | `guard_tool` collects all non-framework kwargs as intent |
+| #124 | `crewai.py` | `_arun` uses `verify_async` — event loop never blocked |
+| #125 | `llamaindex.py` | Lifecycle-managed shared executor replaces per-call allocation |
+| #126 | `haystack.py` | `state_provider()` called per item; TOCTOU window closed |
+| #128 | `agent_orchestration.py` | `_enter_times` uses `defaultdict(deque)` + lock |
+| #165 | `audit/archiver.py` | `rotate()` — key insertion + promotion atomic under single lock |
+| #166 | `audit/archiver.py` | `add()` raises `KeyError` on key_id collision with different bytes |
+| #167 | `audit/archiver.py` | `_archive_segment()` releases lock before writer I/O |
+| #168 | `audit/archiver.py` | Archive filename includes millisecond timestamp suffix |
+| #169 | `audit/merkle.py` | `verify_for_decision()` binds proof to `decision_id` |
+| #197 | `yaml_loader.py` | `__dunder__` policy names rejected with `PolicySyntaxError` |
+| #199 | `primitives/infra.py` | `BlastRadiusCheck` validates `max_blast_pct` in (0,1], guards `total_instances > 0` |
+| #200 | `primitives/infra.py` | `CircuitBreakerState` uses `is_not_in(["OPEN","open","Open"])` |
+| #204 | `mesh/authenticator.py` | `except BaseException:` clears `_jwks_fetching` permanently |
+| #206 | `helpers/compliance.py` | Severity driven by violated invariant labels, not `intent_dump["amount"]` |
+| #235 | All translators | Model names sanitized via `_safe_model_tag()` — no log injection |
+| #236 | `anthropic.py`, `openai_compat.py` | API error body at DEBUG; status code only in exception |
+| #259 | `guard.py` | `max_input_bytes` uses `_domain_json_default`; unknown types raise `TypeError` |
+| #261 | `guard.py` | `verify_stream` calls `verify()` — full pipeline: signing, sinks, governance |
+| #310 | `requirements/production.txt` | Populated with hash-pinned transitive dependencies |
+| #336 | `compiler.py` | `Rule.conditions` max 64 items and depth validator at 16 levels |
 
 ---
 

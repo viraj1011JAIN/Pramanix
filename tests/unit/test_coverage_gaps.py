@@ -121,11 +121,14 @@ class TestFastPathExceptionHandlers:
         assert isinstance(result, str)
         assert "amount" in result
 
-    def test_negative_amount_dict_value_is_falsy_passes(self):
-        """{}  is falsy → val = {} or None = None → rule returns None (pass to Z3)."""
+    def test_negative_amount_dict_value_is_non_numeric_blocks(self):
+        """A dict value {} is non-numeric → fail-closed block (not a valid amount)."""
         rule = SemanticFastPath.negative_amount("amount")
         result = rule({"amount": {}}, {})
-        assert result is None
+        # The sentinel pattern surfaces {} from intent rather than falling
+        # through to state; Decimal(str({})) fails → fail-closed BLOCK.
+        assert isinstance(result, str)
+        assert "amount" in result
 
     def test_zero_or_negative_balance_parse_failure_blocks(self):
         """Non-numeric balance → fail-closed block reason string."""

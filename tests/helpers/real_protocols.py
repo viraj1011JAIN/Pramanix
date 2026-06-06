@@ -2406,7 +2406,12 @@ class _FakeHvacKv:
 
 class _FakeHvacKvV2:
     def read_secret_version(self, **kwargs: Any) -> dict[str, Any]:
-        return {"data": {"data": {"private_key_pem": "FAKE_PEM"}}}
+        return {
+            "data": {
+                "data": {"private_key_pem": "FAKE_PEM"},
+                "metadata": {"version": 42},
+            }
+        }
 
     def create_or_update_secret(self, **kwargs: Any) -> dict[str, Any]:
         return {}

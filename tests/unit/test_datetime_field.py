@@ -84,18 +84,19 @@ class TestWithinSeconds:
 
     def test_negative_duration_raises(self) -> None:
         f = DatetimeField("ts")
-        with pytest.raises(Exception, match="non-negative"):
+        with pytest.raises(PolicyCompilationError, match="positive"):
             E(f).within_seconds(-1)
 
     def test_non_int_raises(self) -> None:
         f = DatetimeField("ts")
-        with pytest.raises(PolicyCompilationError, match="non-negative integer"):
+        with pytest.raises(PolicyCompilationError, match="positive integer"):
             E(f).within_seconds(1.5)  # type: ignore[arg-type]
 
-    def test_zero_duration_valid(self) -> None:
+    def test_zero_duration_raises(self) -> None:
+        """within_seconds(0) is rejected — it would silently block all requests."""
         f = DatetimeField("ts")
-        expr = E(f).within_seconds(0)
-        assert isinstance(expr, ConstraintExpr)
+        with pytest.raises(PolicyCompilationError, match="positive"):
+            E(f).within_seconds(0)
 
 
 # ── Gate: TradeWindowPolicy — full Guard integration ─────────────────────────
