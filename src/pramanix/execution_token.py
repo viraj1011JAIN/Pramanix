@@ -1094,11 +1094,31 @@ class PostgresExecutionTokenVerifier:
 
         Uses run_coroutine_threadsafe — one bounded background thread, no
         nested loops, no deprecated asyncio.get_event_loop() calls.
-        Falls back to asyncio.run() when called in test mode (_loop is None).
+        Falls back to asyncio.run() when called in test mode (_loop is None)
+        and no event loop is already running.  Raises ConfigurationError when
+        called from within an async context without a dedicated loop configured
+        — callers in async contexts must pass loop= at construction or call the
+        _async_* helpers directly.
         """
         import asyncio
 
+        from pramanix.exceptions import ConfigurationError
+
         if self._loop is None:
+            try:
+                asyncio.get_running_loop()
+                running = True
+            except RuntimeError:
+                running = False
+
+            if running:
+                raise ConfigurationError(
+                    "PostgresExecutionTokenVerifier._run() was called from within "
+                    "an already-running async event loop, but no dedicated background "
+                    "loop was configured.  Either:\n"
+                    "  1. Pass loop= at construction to start a background thread, or\n"
+                    "  2. Call the _async_* helpers directly from async code."
+                )
             return asyncio.run(coro)
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 

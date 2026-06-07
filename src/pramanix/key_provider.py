@@ -513,6 +513,11 @@ class AzureKeyVaultKeyProvider:
         )
         # H-12: cache fetched key PEM and version to avoid redundant API calls.
         self._cache_lock = threading.Lock()
+
+    @property
+    def secret_name(self) -> str:
+        """The Azure Key Vault secret name configured at construction time."""
+        return self._secret_name
         self._cached_pem: bytes | None = None
         self._cached_version: str | None = None
         self._cache_expires: float = 0.0

@@ -114,7 +114,13 @@ _MESH_PRINCIPAL_KEY: Final[str] = "_mesh_principal"
 #:   - No whitespace.
 _SPIFFE_URI_RE: Final[re.Pattern[str]] = re.compile(
     r"^spiffe://"
-    r"(?P<trust_domain>[A-Za-z0-9][A-Za-z0-9\-\.]{0,253})"
+    # Trust domain rules (#221 fix):
+    #   1. At least 2 characters total (single-char domains like "a" rejected).
+    #   2. No consecutive dots ("foo..bar" rejected).
+    #   3. No leading or trailing hyphens per label (RFC 1035).
+    # Lookahead enforces the 2-char minimum before the main label pattern.
+    r"(?=[A-Za-z0-9\-\.]{2,}(?:/|$))"
+    r"(?P<trust_domain>[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?){0,126})"
     r"(?P<path>/[^\s#?]*)?"
     r"$"
 )
@@ -803,14 +809,27 @@ def _validate_temporal_claims(
             reason="missing_exp",
             token_preview=token_preview,
         )
-    try:
-        exp_int = int(exp)
-    except (TypeError, ValueError) as exc:
+    if not isinstance(exp, int) or isinstance(exp, bool):
         raise MeshAuthenticationError(
-            f"JWT-SVID 'exp' claim is not a valid integer: {exp!r}",
+            f"JWT-SVID 'exp' claim must be a JSON integer, got {type(exp).__name__!r}: "
+            f"{exp!r}.  Float values such as 9.9e99 produce tokens that never expire — "
+            "rejected for security.  Use a Unix epoch integer (e.g. int(time.time()) + 3600).",
             reason="malformed_exp",
             token_preview=token_preview,
-        ) from exc
+        )
+    exp_int: int = exp
+
+    # Reject far-future and negative epoch values.  Any expiry beyond year 9999
+    # (epoch 253402300799) is almost certainly an accidental float-to-int coercion
+    # (e.g. int(9.9e99)) rather than a legitimate token lifetime.
+    _MAX_EPOCH: int = 253_402_300_799  # 9999-12-31 23:59:59 UTC
+    if exp_int < 0 or exp_int > _MAX_EPOCH:
+        raise MeshAuthenticationError(
+            f"JWT-SVID 'exp' value {exp_int!r} is outside the valid Unix epoch range "
+            f"[0, {_MAX_EPOCH}].  Far-future values indicate a misconfigured signer.",
+            reason="malformed_exp",
+            token_preview=token_preview,
+        )
 
     if now > exp_int + skew:
         raise MeshAuthenticationError(
@@ -1146,6 +1165,14 @@ def _jwk_to_public_key(jwk: _JwkDict) -> Any:
             )
         n = int.from_bytes(_b64url_decode(n_b64), "big")
         e = int.from_bytes(_b64url_decode(e_b64), "big")
+        _MIN_RSA_BITS = 2048
+        if n.bit_length() < _MIN_RSA_BITS:
+            raise MeshAuthenticationError(
+                f"RSA JWK modulus is only {n.bit_length()} bits — minimum is "
+                f"{_MIN_RSA_BITS} bits.  Keys shorter than {_MIN_RSA_BITS} bits "
+                "are factorable with modern hardware and MUST NOT be used.",
+                reason="weak_key",
+            )
         return rsa.RSAPublicNumbers(e=e, n=n).public_key(default_backend())
 
     if kty == "EC":

@@ -89,7 +89,14 @@ def FieldMustEqual(field_obj: Field, value: Any) -> ConstraintExpr:
         field_obj: Any :class:`~pramanix.expressions.Field`.
         value:     The required value (must be compatible with the field's sort).
     """
-    label = f"field_{field_obj.name}_must_equal_{value}"
+    import re as _re
+
+    # Sanitise the value portion of the label so non-identifier chars (spaces,
+    # slashes, punctuation, unicode) don't fail the ^[a-z][a-z0-9_]*$ label
+    # validation at policy compile time (#341 fix — e.g. "PENDING REVIEW" would
+    # produce a label with a space, raising PolicyCompilationError).
+    value_slug = _re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or "value"
+    label = f"field_{field_obj.name}_must_equal_{value_slug}"
     return cast(
         "ConstraintExpr",
         (

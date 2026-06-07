@@ -18,7 +18,7 @@ import contextlib
 import os
 from typing import TYPE_CHECKING, Any, cast
 
-from pramanix.exceptions import ConfigurationError, LLMTimeoutError
+from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
 
@@ -196,7 +196,7 @@ class MistralTranslator(RedactedSecretsMixin):
                 f"after {attempts} attempt(s): {exc}",
             ) from exc
         # Unreachable in normal operation; satisfies type-checkers.
-        raise ExtractionFailureError(  # type: ignore[unreachable]
+        raise ExtractionFailureError(
             f"MistralTranslator: no successful response from model {self.model!r}"
         )
 

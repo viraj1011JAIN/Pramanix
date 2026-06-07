@@ -448,7 +448,7 @@ class TestAzureKeyVaultKeyProviderInit:
             secret_name="my-secret",
             _client=_FakeSecretClient(),
         )
-        assert provider._secret_name == "my-secret"
+        assert provider.secret_name == "my-secret"
 
 
 class TestGcpKmsKeyProviderInit:

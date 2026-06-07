@@ -44,13 +44,30 @@ __all__ = ["python_type_to_z3_sort"]
 
 # ── Mapping table ─────────────────────────────────────────────────────────────
 
-# Order matters: bool before int (bool is a subclass of int).
-_TYPE_MAP: list[tuple[type, z3.SortRef]] = [
-    (bool, z3.BoolSort()),
-    (int, z3.IntSort()),
-    (float, z3.RealSort()),
-    (Decimal, z3.RealSort()),
+# Z3 sort objects are created lazily inside python_type_to_z3_sort() rather than
+# at module import time.  Module-level sort instances are tied to the default Z3
+# context; any code path that creates a new z3.Context() (e.g. process-pool
+# workers, test fixtures with context isolation) would find cached sorts invalid,
+# raising Z3Exception during policy compilation (#340 fix).
+
+# Order matters: bool before int (bool is a subclass of int in Python).
+_TYPE_NAME_MAP: list[tuple[type, str]] = [
+    (bool, "Bool"),
+    (int, "Int"),
+    (float, "Real"),
+    (Decimal, "Real"),
 ]
+
+
+def _sort_for_name(name: str) -> z3.SortRef:
+    """Return the Z3 sort for *name*, created in the current context."""
+    if name == "Bool":
+        return z3.BoolSort()
+    if name == "Int":
+        return z3.IntSort()
+    if name == "Real":
+        return z3.RealSort()
+    raise PolicyCompilationError(f"Unknown Z3 sort name: {name!r}")  # unreachable
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -61,6 +78,11 @@ def python_type_to_z3_sort(
     z3_type_hint: str | None = None,
 ) -> z3.SortRef:
     """Map *python_type* to the corresponding Z3 :class:`~z3.SortRef`.
+
+    Z3 sort objects are created fresh on every call so they are valid in the
+    calling thread's active Z3 context.  This avoids ``Z3Exception`` when
+    running in a process-pool worker or a test fixture that creates a new
+    ``z3.Context()`` (#340 fix — do not cache sorts at module import time).
 
     Args:
         python_type:  The Python ``type`` object declared on a
@@ -79,14 +101,14 @@ def python_type_to_z3_sort(
             supported types, or if *z3_type_hint* is inconsistent with
             the resolved sort.
     """
-    resolved: z3.SortRef | None = None
+    sort_name: str | None = None
 
-    for py_type, sort in _TYPE_MAP:
+    for py_type, name in _TYPE_NAME_MAP:
         if python_type is py_type:
-            resolved = sort
+            sort_name = name
             break
 
-    if resolved is None:
+    if sort_name is None:
         raise PolicyCompilationError(
             f"Unsupported Python type for Z3: {python_type!r}. "
             "Supported types are: bool, int, float, Decimal. "
@@ -94,13 +116,11 @@ def python_type_to_z3_sort(
         )
 
     # ── Optional consistency check with z3_type_hint ──────────────────────────
-    if z3_type_hint is not None:
-        expected_name = resolved.name()
-        if z3_type_hint != expected_name:
-            raise PolicyCompilationError(
-                f"Type mismatch: python_type={python_type!r} maps to Z3 sort "
-                f"'{expected_name}', but z3_type_hint='{z3_type_hint}' was declared. "
-                "Fix the Field declaration to use a consistent z3_type."
-            )
+    if z3_type_hint is not None and z3_type_hint != sort_name:
+        raise PolicyCompilationError(
+            f"Type mismatch: python_type={python_type!r} maps to Z3 sort "
+            f"'{sort_name}', but z3_type_hint='{z3_type_hint}' was declared. "
+            "Fix the Field declaration to use a consistent z3_type."
+        )
 
-    return resolved
+    return _sort_for_name(sort_name)

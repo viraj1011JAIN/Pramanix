@@ -11,16 +11,15 @@ If the package is not installed, instantiation raises
 """
 
 from __future__ import annotations
-import re
 
 import asyncio
 import os
+import re
 from typing import TYPE_CHECKING, Any
 
 from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
-
 from pramanix.translator.base import RedactedSecretsMixin
 
 if TYPE_CHECKING:
@@ -39,6 +38,7 @@ _TEMPERATURE = 0.0
 # different pytest tests each run with a fresh event loop.
 import threading as _thr  # noqa: E402
 
+
 def _safe_model_tag(model: str) -> str:
     """Return a log-safe version of *model* that cannot inject log lines.
 
@@ -49,8 +49,9 @@ def _safe_model_tag(model: str) -> str:
     # x00-x1f are all ASCII control chars (NUL through US, incl newline).
     _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
     # Strip ANSI CSI escape sequences.
-    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    _s = re.sub("\x1b\\[[0-9;]*[A-Za-z]", "", _s)
     return _s[:100]
+
 
 _GEMINI_CONFIGURE_LOCK = _thr.Lock()
 del _thr
@@ -158,9 +159,7 @@ class GeminiTranslator(RedactedSecretsMixin):
             # Older versions only have global configure(); we use it under a lock
             # (see _single_call) to serialise multi-tenant access.
             _client_cls = getattr(_genai, "Client", None)
-            self._client = (
-                _client_cls(api_key=self._api_key) if _client_cls is not None else None
-            )
+            self._client = _client_cls(api_key=self._api_key) if _client_cls is not None else None
         else:
             self._client = None
 
@@ -265,7 +264,9 @@ class GeminiTranslator(RedactedSecretsMixin):
             except ImportError:
                 pass
             raise
-        raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Retry loop exited without a result")
+        raise ExtractionFailureError(
+            f"[{_safe_model_tag(self.model)}] Retry loop exited without a result"
+        )
 
     async def _single_call(
         self,
@@ -317,14 +318,32 @@ class GeminiTranslator(RedactedSecretsMixin):
             # combined prompt (which concatenates system_prompt + user_input).
             effective_prompt = prompt  # user-only
             if self._api_key:
-                with _GEMINI_CONFIGURE_LOCK:
-                    genai.configure(api_key=self._api_key)
-                    try:
-                        model_client = genai.GenerativeModel(**model_kwargs)
-                    except TypeError:
-                        model_kwargs.pop("system_instruction", None)
-                        model_client = genai.GenerativeModel(**model_kwargs)
-                        effective_prompt = full_prompt_legacy or prompt
+                # Multi-tenant safety: hold _GEMINI_CONFIGURE_LOCK for the ENTIRE
+                # sequence of configure() + model construction + API call so that a
+                # concurrent GeminiTranslator for a different tenant cannot overwrite
+                # the global key between configure() and generate_content() (#244 fix).
+                # We run the full sequence in run_in_executor so the threading lock
+                # is never held across an asyncio await (which would block the event
+                # loop during network I/O).
+                api_key_snapshot = self._api_key
+                model_kwargs_snapshot = dict(model_kwargs)
+                fp_legacy = full_prompt_legacy or prompt
+
+                def _locked_call() -> Any:
+                    with _GEMINI_CONFIGURE_LOCK:
+                        genai.configure(api_key=api_key_snapshot)
+                        try:
+                            _model = genai.GenerativeModel(**model_kwargs_snapshot)
+                            _prompt = effective_prompt
+                        except TypeError:
+                            _kw = dict(model_kwargs_snapshot)
+                            _kw.pop("system_instruction", None)
+                            _model = genai.GenerativeModel(**_kw)
+                            _prompt = fp_legacy
+                        return _model.generate_content(_prompt)
+
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(None, _locked_call)
             else:
                 try:
                     model_client = genai.GenerativeModel(**model_kwargs)
@@ -332,15 +351,17 @@ class GeminiTranslator(RedactedSecretsMixin):
                     model_kwargs.pop("system_instruction", None)
                     model_client = genai.GenerativeModel(**model_kwargs)
                     effective_prompt = full_prompt_legacy or prompt
-            if hasattr(model_client, "generate_content_async"):
-                response = await model_client.generate_content_async(effective_prompt)
-            else:
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None, model_client.generate_content, effective_prompt
-                )
+                if hasattr(model_client, "generate_content_async"):
+                    response = await model_client.generate_content_async(effective_prompt)
+                else:
+                    loop = asyncio.get_running_loop()
+                    response = await loop.run_in_executor(
+                        None, model_client.generate_content, effective_prompt
+                    )
             raw_text = response.text
 
         if not raw_text or not raw_text.strip():
-            raise ExtractionFailureError(f"[{_safe_model_tag(self.model)}] Gemini returned an empty response.")
+            raise ExtractionFailureError(
+                f"[{_safe_model_tag(self.model)}] Gemini returned an empty response."
+            )
         return raw_text

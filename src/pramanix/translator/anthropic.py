@@ -29,8 +29,8 @@ def _safe_model_tag(model: str) -> str:
     """
     # x00-x1f are all ASCII control chars (NUL through US, incl newline).
     _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
-    # Strip ANSI CSI escape sequences.
-    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    # Strip ANSI CSI escape sequences (ESC + literal '[' + params + command).
+    _s = re.sub("\x1b" + r"\[[0-9;]*[A-Za-z]", "", _s)
     return _s[:100]
 
 if TYPE_CHECKING:
@@ -86,6 +86,16 @@ class AnthropicTranslator(RedactedSecretsMixin):
         )
         self._retryable = (anthropic.APITimeoutError, anthropic.APIConnectionError)
         self._api_status_error = anthropic.APIStatusError
+
+    @property
+    def api_key_is_set(self) -> bool:
+        """Return True if an API key was configured (from arg or env var)."""
+        return bool(self._api_key)
+
+    @property
+    def configured_api_key(self) -> str | None:
+        """Return the resolved API key (for tests and diagnostics only)."""
+        return self._api_key
 
     async def extract(
         self,

@@ -159,17 +159,26 @@ class PramanixKafkaConsumer:
                 continue
 
             if not decision.allowed:
-                violated = ", ".join(decision.violated_invariants or [])
+                # Respect redact_violations: policy internals in DLQ message headers
+                # are readable by any DLQ consumer or log aggregator.  When
+                # redact_violations=True, emit a generic reason instead of the full
+                # invariant list and explanation.
+                _cfg = self._guard._config
+                if _cfg.redact_violations:
+                    log_violated = "<redacted>"
+                    dlq_reason = "blocked: policy violation"
+                else:
+                    log_violated = ", ".join(decision.violated_invariants or [])
+                    dlq_reason = (
+                        f"blocked: [{log_violated}] {decision.explanation or ''}"
+                    )
                 _log.warning(
                     "pramanix.kafka.blocked topic=%s offset=%s violated=[%s]",
                     msg.topic(),
                     msg.offset(),
-                    violated,
+                    log_violated,
                 )
-                self._dead_letter(
-                    msg,
-                    reason=f"blocked: [{violated}] {decision.explanation or ''}",
-                )
+                self._dead_letter(msg, reason=dlq_reason)
                 self._commit(msg)
                 continue
 

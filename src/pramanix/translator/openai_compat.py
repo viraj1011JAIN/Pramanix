@@ -118,7 +118,7 @@ class OpenAICompatTranslator(RedactedSecretsMixin):
             base_url=self._base_url,
             timeout=timeout,
         )
-        self._retryable = (openai.APITimeoutError, openai.APIConnectionError)
+        self._retryable: tuple[Any, ...] = (openai.APITimeoutError, openai.APIConnectionError)
         self._api_status_error = openai.APIStatusError
 
     async def extract(
@@ -221,7 +221,6 @@ class OpenAICompatTranslator(RedactedSecretsMixin):
         inst._base_url = base_url
         inst._client = client
         inst._retryable = (Exception,)
-        inst._max_attempts = 3
         return inst
 
     async def aclose(self) -> None:

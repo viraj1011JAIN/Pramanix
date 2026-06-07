@@ -2741,3 +2741,131 @@ index is statistically valid. Also fixed stale `# type: ignore[arg-type]` in `ti
 - Hardcoded secrets (`sk-`, `api_key = "literal"`) — none in `src/`
 
 ---
+
+## PART 26 — NINETEENTH/TWENTIETH WAVE FIX LOG (2026-06-07)
+
+> Wave 19 — remaining HIGH flaws #6, #7, #20.
+> Wave 20 — security-critical MEDIUM flaws #214, #215, #216, #217, #218, #219, #220, #221, #222, #244, #338, #339, #340, #341.
+> All real implementations. No mocks, stubs, or monkeypatching.
+
+### ✅ FIXED — 🟡 #20 — `execution_token.py` — `asyncio.run()` Fallback Crashes in Async Context
+
+`PostgresExecutionTokenVerifier._run()` called `asyncio.run()` when `_loop is None`, crashing with
+`RuntimeError: This event loop is already running` when instantiated from an async context (FastAPI,
+pytest-asyncio). Fixed: detect a running loop via `asyncio.get_running_loop()`; raise
+`ConfigurationError` with clear instructions ("pass loop= at construction or call _async_* helpers").
+`asyncio.run()` is still used as a legitimate fallback when no loop is running (sync/test contexts).
+
+### ✅ FIXED — 🟠 #6/#7 — Monkeypatch + Private Attribute Access
+
+Added `AnthropicTranslator.configured_api_key` and `api_key_is_set` public properties.
+Added `AzureKeyVaultKeyProvider.secret_name` public property.
+Updated `test_translator_anthropic.py` to use `configured_api_key` and `api_key_is_set`.
+Updated `test_misc_coverage_gaps.py` to use `secret_name` instead of `_secret_name`.
+
+### ✅ FIXED — 🟡 #214 — `ProdDeployApproval(required_approvers=0)` — Silent Auth Bypass
+
+Added `ValueError` guard at construction: `required_approvers < 1` raises with a clear error message.
+A zero-approver gate produced `approver_count >= 0` — trivially satisfied — bypassing all deployment gates.
+
+### ✅ FIXED — 🟡 #215 — `ReplicaBudget(min>max)` — Unsatisfiable Constraint Silently Blocks All
+
+Added `ValueError` guard at construction: `min_replicas > max_replicas` raises.
+Previously an inverted range produced an always-unsat constraint — every replica request blocked with no diagnostic.
+
+### ✅ FIXED — 🟡 #216 — `HIPAARole.BREAK_GLASS=99` / `EnterpriseRole.SUPERUSER=99` — Integer Collision
+
+Converted both classes to `enum.IntEnum` (backwards-compatible — `IntEnum` members compare equal to `int` literals).
+Changed `EnterpriseRole.SUPERUSER` from `99` to `100` to eliminate the shared integer value.
+Z3 expressions like `E(_role) == HIPAARole.CLINICIAN` continue to work unchanged.
+Python code can now use `isinstance(v, HIPAARole)` to enforce namespace separation.
+
+### ✅ FIXED — 🟡 #217 — JWT `exp` as Float Produces Never-Expiring Token
+
+`_validate_temporal_claims()` now rejects non-integer `exp` values (floats, bools, strings) with
+`MeshAuthenticationError(reason="malformed_exp")`. Also validates that the integer is within the
+valid Unix epoch range `[0, 253402300799]` (year 9999 max) — catches `int(9.9e99)` coercions.
+
+### ✅ FIXED — 🟡 #218 — `_jwk_to_public_key` Accepts 512-Bit RSA Keys
+
+Added `n.bit_length() >= 2048` check after extracting the RSA modulus. Keys shorter than 2048 bits
+raise `MeshAuthenticationError(reason="weak_key")` — they are factorable with modern hardware.
+
+### ✅ FIXED — 🟡 #219 — `SemanticSimilarityGuard._tokenise` Calls `None.split()` When RE2 Absent
+
+Added `_require_re2()` call at the top of `_tokenise()`. When RE2 is not installed, this raises
+`ConfigurationError` with a clear install instruction instead of `AttributeError: 'NoneType'`.
+
+### ✅ FIXED — 🟡 #220 — `URLValidator` SSRF via IP Literals
+
+Added `_is_private_ip()` method using `ipaddress.ip_address()`. Called before domain blocklist
+matching — rejects IPv4 loopback (127.x), RFC 1918 (10.x, 172.16-31.x, 192.168.x), link-local
+(169.254.x), IPv6 loopback (::1), and IPv6 unique-local (fc/fd). Public IPs and regular domains pass unchanged.
+
+### ✅ FIXED — 🟡 #221 — SPIFFE URI Regex Allows Single-Char Domains and Consecutive Dots
+
+Updated `_SPIFFE_URI_RE` to enforce RFC 1035 DNS name rules: each label must be 1+ alnum chars
+optionally surrounded by hyphens, labels separated by single dots. Minimum trust-domain length
+is 2 characters (single-char domains like `spiffe://a/path` now rejected).
+
+### ✅ FIXED — 🟡 #222 — `ProfanityDetector` ReDoS via Long `extra_words`
+
+Added `_MAX_WORD_LEN = 50` class constant. `__init__` raises `ValueError` for any `extra_words`
+entry longer than 50 characters. Stdlib `re` word-boundary patterns on long words trigger
+catastrophic backtracking on adversarial near-miss input.
+
+### ✅ FIXED — 🟡 #244 — Gemini Multi-Tenant API Key Race in Legacy SDK Path
+
+`_GEMINI_CONFIGURE_LOCK` was released before `generate_content()` on the legacy `configure()` path.
+Thread A could set `KEY_A`, release the lock, and then execute the API call using Thread B's `KEY_B`
+(when Thread B called `configure(KEY_B)` between the lock release and the API call).
+Fixed: the entire `configure()` + model construction + `generate_content()` sequence is now wrapped
+in `run_in_executor(None, _locked_call)` where `_locked_call` holds `_GEMINI_CONFIGURE_LOCK`
+for the full duration. The threading lock is never held across an asyncio `await`.
+
+### ✅ FIXED — 🟡 #338 — gRPC Interceptor Ignores `redact_violations`
+
+`PramanixGrpcInterceptor` embedded `violated_invariants` and `decision.explanation` in gRPC status
+messages unconditionally. Now checks `interceptor._guard._config.redact_violations`: when `True`,
+sends a generic `"Request denied by policy."` message with no policy internals.
+
+### ✅ FIXED — 🟡 #339 — Kafka DLQ Interceptor Ignores `redact_violations`
+
+`PramanixKafkaConsumer` embedded full violation details in `x-pramanix-block-reason` Kafka headers.
+Now checks `self._guard._config.redact_violations`: when `True`, emits generic
+`"blocked: policy violation"` in the DLQ header. Log output is also redacted when the flag is set.
+
+### ✅ FIXED — 🟡 #340 — Z3 Sort Objects Created at Module Import Time
+
+`helpers/type_mapping.py` held module-level `z3.BoolSort()`, `z3.IntSort()`, `z3.RealSort()` objects
+in `_TYPE_MAP`. These are tied to the default Z3 context — any code creating a `z3.Context()` would
+find them invalid and raise `Z3Exception`. Replaced with `_TYPE_NAME_MAP` (string names only).
+`python_type_to_z3_sort()` now calls `_sort_for_name()` which creates a fresh sort in the current
+context on every call.
+
+### ✅ FIXED — 🔵 #341 — `FieldMustEqual` Label Fails on Non-Identifier Values
+
+`FieldMustEqual` now sanitises the value portion of the invariant label via
+`re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or "value"`.
+Values like `"PENDING REVIEW"` or `"A/B test"` produce valid `^[a-z][a-z0-9_]*$` labels.
+
+| # | Severity | File | Fix |
+|---|----------|------|-----|
+| 20 | 🟡 | `execution_token.py` | `asyncio.run()` fallback: detect running loop → `ConfigurationError` |
+| 6/7 | 🟠 | `translator/anthropic.py`, `key_provider.py`, tests | Public properties replace private attribute access |
+| 214 | 🟡 | `primitives/infra.py` | `ProdDeployApproval`: `required_approvers < 1` → `ValueError` |
+| 215 | 🟡 | `primitives/infra.py` | `ReplicaBudget`: `min > max` → `ValueError` |
+| 216 | 🟡 | `primitives/roles.py` | `HIPAARole`/`EnterpriseRole` → `IntEnum`; `SUPERUSER = 100` |
+| 217 | 🟡 | `mesh/authenticator.py` | `exp` non-integer or out-of-epoch-range → `malformed_exp` |
+| 218 | 🟡 | `mesh/authenticator.py` | RSA key `< 2048 bits` → `weak_key` |
+| 219 | 🟡 | `nlp/validators.py` | `SemanticSimilarityGuard._tokenise`: `_require_re2()` guard added |
+| 220 | 🟡 | `nlp/validators.py` | `URLValidator._is_private_ip()`: SSRF via IP literals blocked |
+| 221 | 🟡 | `mesh/authenticator.py` | SPIFFE URI: RFC 1035 trust-domain pattern, ≥2 chars, no `..` |
+| 222 | 🟡 | `nlp/validators.py` | `ProfanityDetector`: `extra_words` > 50 chars → `ValueError` |
+| 244 | 🟡 | `translator/gemini.py` | Lock held through full `configure()` + API call sequence |
+| 338 | 🟡 | `interceptors/grpc.py` | gRPC status: check `redact_violations` before embedding policy internals |
+| 339 | 🟡 | `interceptors/kafka.py` | Kafka DLQ header: check `redact_violations` before embedding internals |
+| 340 | 🟡 | `helpers/type_mapping.py` | Z3 sorts created lazily per call, not at module import time |
+| 341 | 🔵 | `primitives/common.py` | `FieldMustEqual` label: sanitise non-identifier chars in value |
+
+---

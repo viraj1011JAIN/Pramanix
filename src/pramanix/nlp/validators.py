@@ -816,6 +816,7 @@ class SemanticSimilarityGuard:
     @staticmethod
     def _tokenise(text: str) -> frozenset[str]:
         """Lower-case, NFKC-normalise, and split on non-alphanumeric chars."""
+        _require_re2()
         norm = _normalise(text)
         return frozenset(_re_engine.split(r"\W+", norm)) - {""}
 
@@ -1109,6 +1110,36 @@ class URLValidator:
     blocked_domains: frozenset[str] = frozenset()
     require_path: bool = False
 
+    # Private/loopback IPv4 and IPv6 ranges that must be rejected to prevent SSRF.
+    # Checked against parsed IP literals before any domain blocklist.
+    _BLOCKED_IP_PREFIXES: tuple[str, ...] = (
+        "127.",       # IPv4 loopback (127.0.0.0/8)
+        "10.",        # RFC 1918 private (10.0.0.0/8)
+        "172.16.",    # RFC 1918 private (172.16.0.0/12) — full range checked below
+        "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+        "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+        "192.168.",   # RFC 1918 private (192.168.0.0/16)
+        "169.254.",   # Link-local (169.254.0.0/16)
+        "0.",         # This-network (0.0.0.0/8)
+        "100.64.",    # Shared address space (RFC 6598)
+    )
+    _BLOCKED_IPV6: tuple[str, ...] = (
+        "::1",            # IPv6 loopback
+        "fc", "fd",       # IPv6 unique local (fc00::/7)
+        "fe80",           # IPv6 link-local (fe80::/10)
+        "::",             # IPv6 unspecified
+    )
+
+    def _is_private_ip(self, host: str) -> bool:
+        """Return True if *host* is a private/loopback IP literal (SSRF risk)."""
+        import ipaddress
+
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return not addr.is_global or addr.is_loopback or addr.is_private or addr.is_link_local
+
     def validate(self, url: str) -> tuple[bool, str]:
         """Return ``(True, "")`` if *url* passes all configured checks."""
         from urllib.parse import urlparse
@@ -1128,6 +1159,14 @@ class URLValidator:
             return False, "URL has no host"
 
         host = (parsed.hostname or "").lower()
+
+        # Reject private/loopback IP literals — domain blocklist suffix matching
+        # never fires on IP literals, so SSRF via 127.0.0.1 or [::1] bypasses it.
+        if self._is_private_ip(host):
+            return False, (
+                f"host {host!r} resolves to a private or loopback IP address — "
+                "blocked to prevent SSRF attacks"
+            )
 
         for bd in self.blocked_domains:
             if host == bd.lower() or host.endswith(f".{bd.lower()}"):
@@ -1323,6 +1362,12 @@ class ProfanityDetector:
         assert "***" in censored
     """
 
+    # Maximum length for any single extra_word entry.  Long words combined with
+    # adversarial near-miss input can trigger catastrophic backtracking in stdlib
+    # re because we use word-boundary patterns ((?<!\w)...(?!\w)).  RE2 is not
+    # used here because ProfanityDetector is intentionally zero-dependency.
+    _MAX_WORD_LEN: int = 50
+
     def __init__(
         self,
         extra_words: list[str] | None = None,
@@ -1331,7 +1376,18 @@ class ProfanityDetector:
     ) -> None:
         words: set[str] = set(_DEFAULT_PROFANITY_WORDS)
         if extra_words:
-            words.update(w.strip() for w in extra_words if w.strip())
+            for w in extra_words:
+                stripped = w.strip()
+                if not stripped:
+                    continue
+                if len(stripped) > self._MAX_WORD_LEN:
+                    raise ValueError(
+                        f"ProfanityDetector: extra_words entry {stripped[:20]!r}... "
+                        f"is {len(stripped)} characters — maximum is {self._MAX_WORD_LEN}. "
+                        "Long entries can trigger catastrophic backtracking in the "
+                        "stdlib re engine used for word-boundary matching."
+                    )
+                words.add(stripped)
         self._case_sensitive = case_sensitive
         self._words: frozenset[str] = frozenset(words)
         # Pre-compile per-word whole-boundary patterns for deterministic matching.

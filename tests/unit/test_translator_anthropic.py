@@ -50,12 +50,14 @@ class TestAnthropicTranslatorConstruction:
 
     def test_api_key_stored(self) -> None:
         t = AnthropicTranslator("claude-opus-4-6", api_key="sk-test")
-        assert t._api_key == "sk-test"
+        assert t.configured_api_key == "sk-test"
+        assert t.api_key_is_set
 
     def test_api_key_falls_back_to_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-test")
         t = AnthropicTranslator("claude-opus-4-6")
-        assert t._api_key == "sk-env-test"
+        assert t.configured_api_key == "sk-env-test"
+        assert t.api_key_is_set
 
     async def test_context_manager_protocol(self) -> None:
         async with AnthropicTranslator("claude-opus-4-6") as t:

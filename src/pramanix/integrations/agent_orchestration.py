@@ -231,7 +231,7 @@ class LangGraphGuardAdapter:
         # (leaked entries) are bounded by the depth of the parallel fan-out.
         import collections as _coll
         import threading as _thr
-        self._enter_times: dict[str, _coll.deque] = _coll.defaultdict(_coll.deque)
+        self._enter_times: dict[str, _coll.deque[float]] = _coll.defaultdict(_coll.deque)
         self._enter_times_lock = _thr.Lock()
 
     def on_node_enter(self, node_id: str, state: dict[str, Any]) -> None:

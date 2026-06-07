@@ -28,7 +28,7 @@ Example::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pramanix.expressions import ConstraintExpr, E
 
@@ -155,18 +155,13 @@ def BlastRadiusCheck(
             f"BlastRadiusCheck: max_blast_pct must be in (0, 1], got {max_blast_pct!r}. "
             "Use Decimal('0.05') for 5%, Decimal('1') for 100%."
         )
-    return cast(
-        ConstraintExpr,
-        (
-            (E(total_instances) > 0)
-            & (E(affected_instances) <= max_blast_pct * E(total_instances))
-        )
-        .named("blast_radius_check")
-        .explain(
-            "Blast radius exceeded or fleet size is zero: {affected_instances} of "
-            f"{{total_instances}} instances (> {max_blast_pct * 100:.1f}% limit). "
-            "Reduce rollout batch size or provide a valid total_instances > 0."
-        ),
+    return (
+        (E(total_instances) > 0)
+        & (E(affected_instances) <= max_blast_pct * E(total_instances))
+    ).named("blast_radius_check").explain(
+        "Blast radius exceeded or fleet size is zero: {affected_instances} of "
+        f"{{total_instances}} instances (> {max_blast_pct * 100:.1f}% limit). "
+        "Reduce rollout batch size or provide a valid total_instances > 0."
     )
 
 
@@ -203,15 +198,12 @@ def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
     #   state = {"circuit_state": redis.get("cb:state").decode().upper()}
     # For defence-in-depth, we also match case-insensitively via _InOp membership
     # with all known OPEN variants.
-    return cast(
-        ConstraintExpr,
-        (E(circuit_state).is_not_in(["OPEN", "open", "Open"]))
-        .named("circuit_breaker_state")
-        .explain(
-            'Request blocked: circuit_state="{circuit_state}" — circuit breaker '
-            "is OPEN. Downstream service is unhealthy — fail fast. "
-            "Normalise circuit_state to uppercase in your state provider."
-        ),
+    return (
+        E(circuit_state).is_not_in(["OPEN", "open", "Open"])
+    ).named("circuit_breaker_state").explain(
+        'Request blocked: circuit_state="{circuit_state}" — circuit breaker '
+        "is OPEN. Downstream service is unhealthy — fail fast. "
+        "Normalise circuit_state to uppercase in your state provider."
     )
 
 
@@ -231,8 +223,18 @@ def ProdDeployApproval(
     Args:
         deployment_approved: Field (bool, Bool) — True when approval workflow completed.
         approver_count:      Field (int, Int) — number of unique approvers who signed off.
-        required_approvers:  Minimum number of approvers required (literal int).
+        required_approvers:  Minimum number of approvers required (literal int, ≥ 1).
+
+    Raises:
+        ValueError: If ``required_approvers < 1`` — zero approvers would trivially
+            satisfy the quorum check, defeating the deployment gate entirely.
     """
+    if required_approvers < 1:
+        raise ValueError(
+            f"ProdDeployApproval: required_approvers={required_approvers!r} is invalid. "
+            "A zero-approver gate is trivially satisfied and provides no protection. "
+            "Set required_approvers >= 1 (typically 2 for internal, 3 for PCI/SOX)."
+        )
     return (
         (E(deployment_approved).is_true() & (E(approver_count) >= required_approvers))
         .named("prod_deploy_approval")
@@ -261,7 +263,17 @@ def ReplicaBudget(
         requested_replicas: Field (int, Int) — desired replica count.
         min_replicas:       Hard minimum replicas (literal int, for HA floor).
         max_replicas:       Hard maximum replicas (literal int, for cost ceiling).
+
+    Raises:
+        ValueError: If ``min_replicas > max_replicas`` — the resulting constraint is
+            always unsatisfiable, blocking every request with no diagnostic.
     """
+    if min_replicas > max_replicas:
+        raise ValueError(
+            f"ReplicaBudget: min_replicas={min_replicas} > max_replicas={max_replicas}. "
+            "This produces an unsatisfiable constraint — every replica request will be "
+            "blocked.  Ensure min_replicas <= max_replicas."
+        )
     return (
         ((E(requested_replicas) >= min_replicas) & (E(requested_replicas) <= max_replicas))
         .named("replica_budget")

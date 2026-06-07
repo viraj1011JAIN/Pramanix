@@ -132,12 +132,19 @@ class PramanixGrpcInterceptor(_InterceptorBase):
                 return False
 
             if not decision.allowed:
-                violated = ", ".join(decision.violated_invariants or [])
-                context.abort(
-                    interceptor._denied_code,
-                    f"Pramanix guard blocked RPC. Violated: [{violated}]. "
-                    f"Reason: {decision.explanation or 'policy violation'}",
-                )
+                # Respect redact_violations: in multi-tenant or adversarial
+                # environments, violated invariant labels and explanation text
+                # must not leak policy internals to the caller.
+                _cfg = interceptor._guard._config
+                if _cfg.redact_violations:
+                    detail = "Pramanix guard blocked RPC. Request denied by policy."
+                else:
+                    violated = ", ".join(decision.violated_invariants or [])
+                    detail = (
+                        f"Pramanix guard blocked RPC. Violated: [{violated}]. "
+                        f"Reason: {decision.explanation or 'policy violation'}"
+                    )
+                context.abort(interceptor._denied_code, detail)
                 return False
             return True
 
