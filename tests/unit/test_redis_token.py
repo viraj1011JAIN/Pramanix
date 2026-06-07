@@ -462,17 +462,22 @@ class TestRedisConnectionFailure:
         result = verifier.consume(token)
         assert result is False
 
-    def test_consumed_count_returns_zero_on_connection_error(self):
-        """consumed_count() must not crash when Redis is unavailable."""
+    def test_consumed_count_raises_on_connection_error(self):
+        """consumed_count() raises VerificationError when Redis is unavailable.
+
+        Callers using this for quota enforcement must catch VerificationError
+        and treat the outage as a denial rather than a zero count.
+        """
+        from pramanix.exceptions import VerificationError
+
         key = secrets.token_bytes(32)
         broken = _BrokenRedis()
         verifier = RedisExecutionTokenVerifier(
             secret_key=key,
             redis_client=broken,
         )
-        # Must return 0 (safe default), never raise
-        count = verifier.consumed_count()
-        assert count == 0
+        with pytest.raises(VerificationError, match="Redis SCAN failed"):
+            verifier.consumed_count()
 
     def test_no_exception_propagates_on_connection_error(self):
         """No ConnectionError or any other exception must escape consume()."""

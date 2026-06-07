@@ -166,9 +166,11 @@ class PramanixMiddleware(_BaseHTTPMiddleware):
 
         # ── 4. Intent validation ──────────────────────────────────────────────
         try:
+            from pydantic import ValidationError as _PydanticValidationError
+
             intent_obj = self._intent_model.model_validate(raw)
             intent_dict: dict[str, Any] = intent_obj.model_dump()
-        except Exception as exc:
+        except _PydanticValidationError as exc:
             _log.warning("pramanix.fastapi.intent_validation_error: %s", exc, exc_info=True)
             return JSONResponse(
                 status_code=422,

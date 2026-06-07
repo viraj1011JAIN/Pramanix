@@ -1093,7 +1093,8 @@ class TestKeyProviderCoverage:
         assert p._cache_expires == 0.0
 
     def test_azure_key_vault_rotate_raises(self) -> None:
-        """rotate_key() raises RuntimeError on vault failure and restores version."""
+        """rotate_key() raises ConfigurationError on vault failure and restores version."""
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
         class _FailingAzureClient:
@@ -1107,13 +1108,14 @@ class TestKeyProviderCoverage:
             secret_version="v1",
         )
         assert p.supports_rotation is True
-        with pytest.raises(RuntimeError, match="Azure Key Vault"):
+        with pytest.raises(ConfigurationError, match="Azure Key Vault"):
             p.rotate_key()
         # secret_version must be restored to its pinned value on failure.
         assert p._secret_version == "v1"
 
     def test_gcp_kms_rotate_raises(self) -> None:
-        """rotate_key() raises RuntimeError on Secret Manager failure and restores version_id."""
+        """rotate_key() raises ConfigurationError on Secret Manager failure and restores version_id."""
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import GcpKmsKeyProvider
 
         class _FailingGcpClient:
@@ -1123,13 +1125,14 @@ class TestKeyProviderCoverage:
         # Construct with a pinned version_id so we can verify it is restored.
         p = GcpKmsKeyProvider._for_testing(_FailingGcpClient(), version_id="5")
         assert p.supports_rotation is True
-        with pytest.raises(RuntimeError, match="GCP Secret Manager"):
+        with pytest.raises(ConfigurationError, match="GCP Secret Manager"):
             p.rotate_key()
         # version_id must be restored to its pinned value on failure.
         assert p._version_id == "5"
 
     def test_hashicorp_vault_rotate_raises(self) -> None:
-        """HashiCorpVaultKeyProvider.rotate_key() raises RuntimeError on Vault failure."""
+        """HashiCorpVaultKeyProvider.rotate_key() raises ConfigurationError on Vault failure."""
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         class _Kv2:
@@ -1147,7 +1150,7 @@ class TestKeyProviderCoverage:
 
         p = HashiCorpVaultKeyProvider._for_testing(_FailingVaultClient())
         assert p.supports_rotation is True
-        with pytest.raises(RuntimeError, match="HashiCorp Vault"):
+        with pytest.raises(ConfigurationError, match="HashiCorp Vault"):
             p.rotate_key()
 
     def test_hashicorp_vault_key_version_cached(self) -> None:

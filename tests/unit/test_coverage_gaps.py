@@ -1038,6 +1038,7 @@ class TestKeyProviderRefreshCacheErrors:
     """
 
     def test_aws_refresh_cache_wraps_exception(self) -> None:
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import AwsKmsKeyProvider
 
         real_client = _AwsSecretsClientError()
@@ -1045,10 +1046,11 @@ class TestKeyProviderRefreshCacheErrors:
             secret_arn="arn:aws:secretsmanager:us-east-1:0:secret:k",
             _client=real_client,
         )
-        with pytest.raises(RuntimeError, match="AwsKmsKeyProvider: failed to fetch secret"):
+        with pytest.raises(ConfigurationError, match="AwsKmsKeyProvider: failed to fetch secret"):
             provider.private_key_pem()
 
     def test_azure_refresh_cache_wraps_exception(self) -> None:
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import AzureKeyVaultKeyProvider
 
         real_client = _AzureSecretClientError()
@@ -1057,10 +1059,11 @@ class TestKeyProviderRefreshCacheErrors:
             secret_name="my-key",
             _client=real_client,
         )
-        with pytest.raises(RuntimeError, match="AzureKeyVaultKeyProvider: failed to fetch"):
+        with pytest.raises(ConfigurationError, match="AzureKeyVaultKeyProvider: failed to fetch"):
             provider.private_key_pem()
 
     def test_gcp_refresh_cache_wraps_exception(self) -> None:
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import GcpKmsKeyProvider
 
         real_client = _GcpSecretClientError()
@@ -1069,10 +1072,11 @@ class TestKeyProviderRefreshCacheErrors:
             secret_id="my-secret",
             _client=real_client,
         )
-        with pytest.raises(RuntimeError, match="GcpKmsKeyProvider: failed to fetch"):
+        with pytest.raises(ConfigurationError, match="GcpKmsKeyProvider: failed to fetch"):
             provider.private_key_pem()
 
     def test_vault_refresh_cache_wraps_exception(self) -> None:
+        from pramanix.exceptions import ConfigurationError
         from pramanix.key_provider import HashiCorpVaultKeyProvider
 
         real_client = _VaultKvClientError()
@@ -1081,7 +1085,7 @@ class TestKeyProviderRefreshCacheErrors:
             secret_path="pramanix/key",
             _client=real_client,
         )
-        with pytest.raises(RuntimeError, match="HashiCorpVaultKeyProvider: failed to read"):
+        with pytest.raises(ConfigurationError, match="HashiCorpVaultKeyProvider: failed to read"):
             provider.private_key_pem()
 
     def test_vault_missing_field_raises_configuration_error(self) -> None:

@@ -20,7 +20,6 @@ Requires: Docker + LocalStack (testcontainers[localstack]) + boto3
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any
 
 import pytest
@@ -30,7 +29,6 @@ boto3 = pytest.importorskip("boto3", reason="boto3 not installed")  # type: igno
 from pramanix.key_provider import AwsKmsKeyProvider
 
 from .conftest import requires_docker
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -72,7 +70,7 @@ def test_aws_kms_provider_fetches_pem_from_localstack(localstack_endpoint: str) 
         _client=sm,
     )
     fetched = provider.private_key_pem()
-    assert fetched == pem, f"Fetched PEM does not match stored PEM"
+    assert fetched == pem, "Fetched PEM does not match stored PEM"
 
 
 @requires_docker
@@ -89,16 +87,20 @@ def test_aws_kms_provider_derives_public_key(localstack_endpoint: str) -> None:
 
 
 @requires_docker
-def test_aws_kms_provider_missing_secret_raises_runtime_error(localstack_endpoint: str) -> None:
-    """A missing secret ARN must raise RuntimeError (wrapping ClientError), never hang."""
+def test_aws_kms_provider_missing_secret_raises_configuration_error(
+    localstack_endpoint: str,
+) -> None:
+    """A missing secret ARN must raise ConfigurationError (wrapping ClientError), never hang."""
+    from pramanix.exceptions import ConfigurationError
+
     sm = _make_sm_client(localstack_endpoint)
     provider = AwsKmsKeyProvider(
         "arn:aws:secretsmanager:us-east-1:000000000000:secret:does-not-exist",
         _client=sm,
     )
     # LocalStack returns a real ResourceNotFoundException which AwsKmsKeyProvider
-    # wraps in RuntimeError.  This exercises the real HTTP error path.
-    with pytest.raises(RuntimeError, match="failed to fetch secret"):
+    # wraps in ConfigurationError.  This exercises the real HTTP error path.
+    with pytest.raises(ConfigurationError, match="failed to fetch secret"):
         provider.private_key_pem()
 
 
@@ -112,9 +114,9 @@ def test_aws_kms_provider_key_version_from_localstack(localstack_endpoint: str) 
 
     provider = AwsKmsKeyProvider(secret_name, _client=sm)
     version = provider.key_version()
-    assert isinstance(version, str) and len(version) > 0, (
-        f"Expected non-empty version string, got: {version!r}"
-    )
+    assert (
+        isinstance(version, str) and len(version) > 0
+    ), f"Expected non-empty version string, got: {version!r}"
 
 
 @requires_docker
@@ -138,9 +140,7 @@ def test_aws_kms_provider_cache_avoids_second_api_call(localstack_endpoint: str)
     provider = AwsKmsKeyProvider(secret_name, _client=sm)
     provider.private_key_pem()  # first call — fetches from LocalStack
     provider.private_key_pem()  # second call — must use cache
-    assert call_count == 1, (
-        f"Expected exactly 1 API call due to cache, got {call_count}"
-    )
+    assert call_count == 1, f"Expected exactly 1 API call due to cache, got {call_count}"
 
 
 @requires_docker
@@ -153,7 +153,7 @@ def test_aws_kms_provider_secret_binary_fetches_correctly(localstack_endpoint: s
 
     provider = AwsKmsKeyProvider(secret_name, _client=sm)
     fetched = provider.private_key_pem()
-    assert fetched == pem, f"Binary secret fetch mismatch"
+    assert fetched == pem, "Binary secret fetch mismatch"
 
 
 @requires_docker

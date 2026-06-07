@@ -207,8 +207,10 @@ class PramanixFunctionTool:
 
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
+            from pydantic import ValidationError as _PydanticValidationError
+
             intent: dict[str, Any] = self._intent_schema.model_validate(raw).model_dump()
-        except Exception as exc:
+        except _PydanticValidationError as exc:
             return ToolOutput(
                 content=f"Pramanix: invalid input: {exc}",
                 tool_name=self._name,
@@ -453,8 +455,10 @@ class PramanixQueryEngineTool:
 
         # ── 2. Validate intent against schema ──────────────────────────────────
         try:
+            from pydantic import ValidationError as _PydanticValidationError
+
             intent: dict[str, Any] = self._intent_schema.model_validate(raw).model_dump()
-        except Exception as exc:
+        except _PydanticValidationError as exc:
             return ToolOutput(
                 content=f"Pramanix: invalid input: {exc}",
                 tool_name=self._name,

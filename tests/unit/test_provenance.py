@@ -324,20 +324,24 @@ def test_provenance_key_ephemeral_when_no_env(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
 
 
-def test_provenance_key_invalid_env_hex_falls_back_to_ephemeral(
+def test_provenance_key_invalid_env_hex_raises_configuration_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Invalid hex in PRAMANIX_PROVENANCE_KEY logs warning and falls back to ephemeral."""
+    """Invalid hex in PRAMANIX_PROVENANCE_KEY raises ConfigurationError.
+
+    When the operator explicitly sets PRAMANIX_PROVENANCE_KEY, a malformed
+    value is a configuration error — not a reason to silently fall back to
+    an ephemeral key that the operator did not intend.
+    """
     import pramanix.provenance as _prov
+    from pramanix.exceptions import ConfigurationError
 
     monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
     monkeypatch.setenv("PRAMANIX_PROVENANCE_KEY", "not-valid-hex!!")
     monkeypatch.delenv("PRAMANIX_PROVENANCE_KEY_FILE", raising=False)
 
-    result = _prov._provenance_key()
-    # Fallback to ephemeral random key — still 32 bytes
-    assert isinstance(result, bytes)
-    assert len(result) == 32
+    with pytest.raises(ConfigurationError, match="PRAMANIX_PROVENANCE_KEY"):
+        _prov._provenance_key()
 
     monkeypatch.setattr(_prov, "_PROVENANCE_KEY", None)
 

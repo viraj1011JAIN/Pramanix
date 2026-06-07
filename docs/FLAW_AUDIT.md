@@ -2435,6 +2435,117 @@ Windows due to MAX_PATH limit; install separately on Linux/macOS.
 
 ---
 
+## PART 23 — THIRTEENTH WAVE FIX LOG (2026-06-07)
+
+> Thirteenth wave — fixed 26 test failures + 4 gRPC ERRORs from the test run.
+> Two source-level bugs discovered and fixed; all remaining changes are test correctness fixes.
+> No mocks, stubs, or monkeypatching.
+
+### ✅ FIXED — Source: `integrations/haystack.py` Missing `import asyncio`
+
+`run_async()` used `asyncio.iscoroutine()` at line 196 but `asyncio` was never imported.
+Added `import asyncio` at module level — no test file can import the module without this fix.
+
+### ✅ FIXED — Source: `compliance/oracle.py` — HIPAA and ISO_42001 `_CONTROL_ID_PATTERNS` Too Strict
+
+HIPAA pattern `^§\d+\.\d+` rejected subsection references like `§164.308(a)(1)`.
+Fixed to `^§\d+\.\d+(\([a-zA-Z0-9]+\))*` to allow nested `(letter/digits)` subsections.
+ISO_42001 pattern `^(Clause|Annex)\s+[A-Za-z0-9]+` rejected `Annex A.6.2.1`.
+Fixed to `^(Clause|Annex)\s+[A-Za-z0-9][A-Za-z0-9.]*` to allow dots in identifiers.
+
+### ✅ FIXED — Tests: All 26 Test Failures + 4 gRPC ERRORs Resolved
+
+| File | Root cause | Fix |
+|------|-----------|-----|
+| `test_fastapi_integration_coverage.py` | `asyncio.get_event_loop().run_until_complete()` deprecated in Python 3.13 | Replace with `asyncio.run()` |
+| `test_grpc_interceptor.py` | `_Policy` missing `validate()` (not inheriting `Policy`) | Make `_Policy(Policy)` with proper `invariants()` classmethod |
+| `test_process_pickle.py` | Size-check serialisation error fires before IPC type check | Accept `"could not be size-checked"` in assertions |
+| `test_dark_paths_combined.py` | Same as above | Same fix |
+| `test_redis_loader.py` | PII-safe error message changed | Match `"No state found for the authenticated principal"` |
+| `test_redundant_full.py` | Lenient mode now excludes disagreeing non-critical fields | Assert `"approved" not in result` |
+| `test_translator.py` | Same lenient mode change | Assert `"recipient" not in result` |
+| `test_translator_and_interceptor_paths.py` | `LlamaCppTranslator` NameError; `guard` NameError | Use `llama_cpp_cls`; use `make_allow_guard()` |
+| `test_interceptors_real.py` | `guard` NameError (should be module-level `_GUARD`) | Replace `guard` with `_GUARD` |
+| `test_phase2_error_taxonomy.py` | `error_domain` IS in hash (#150 anti-forgery) — stale assertion | Assert `d1.decision_hash != d2.decision_hash` |
+| `test_oracle_coverage.py` | Registry-inference fallback removed for ALLOWED records | Assert `att.total_controls_matched == 0` when no `evaluated_invariants` |
+| `test_guard_to_compliance_oracle.py` | `Decision.to_dict()` lacks `evaluated_invariants` → SOC2 not matched | Populate `evaluated_invariants` from known policy labels in `_make_record` |
+
+---
+
+## PART 24 — FOURTEENTH WAVE FIX LOG (2026-06-07)
+
+> Fourteenth wave — 7 production MEDIUM/HIGH flaws fixed across 5 source files.
+> All tests updated to match new behavior contracts.
+
+### ✅ FIXED — #22 — `key_provider.py` — Cloud Providers Raise `RuntimeError` Instead of `ConfigurationError`
+
+AWS KMS, Azure Key Vault, GCP Secret Manager, and HashiCorp Vault `_refresh_cache()` methods all raised untyped
+`RuntimeError` on infrastructure failure. Changed all four to raise `ConfigurationError` from `pramanix.exceptions`
+so callers using `except PramanixError` catch cloud provider failures.
+Removed the redundant lazy `from pramanix.exceptions import ConfigurationError` inside HashiCorp's `_refresh_cache()`
+(replaced by a module-level import). Updated `AzureKeyVaultKeyProvider.rotate_key()` Raises docstring accordingly.
+Updated 7 stale `pytest.raises(RuntimeError, ...)` assertions in `test_coverage_gaps.py`,
+`test_translator_and_interceptor_paths.py`, and `test_aws_kms_provider.py` to expect `ConfigurationError`.
+
+### ✅ FIXED — #21 — `provenance.py` — Invalid `PRAMANIX_PROVENANCE_KEY` Falls Through to Ephemeral Key
+
+When `PRAMANIX_PROVENANCE_KEY` is set but contains invalid hex (typo, truncation), the old code logged a WARNING
+and silently fell back to an ephemeral key — defeating the operator's intent.
+Now raises `ConfigurationError` when the env var is set but invalid.
+Same treatment applied to the `PRAMANIX_PROVENANCE_KEY_FILE` path: an unreadable or malformed file now raises
+`ConfigurationError` instead of silently falling through.
+Updated `test_provenance_key_invalid_env_hex_falls_back_to_ephemeral` → now
+`test_provenance_key_invalid_env_hex_raises_configuration_error`.
+
+### ✅ FIXED — #38 — `guard.py` — Privilege Gate Silently Skipped When `"tool"` Key Absent
+
+`_apply_governance_gates()` only enforced `ExecutionScope` when `intent["tool"]` or `intent["_tool"]` was present.
+Agents using `"action"`, `"function"`, `"command"` or any other key name bypassed privilege checks entirely with
+no warning. Added an `else` branch that logs a structured WARNING with `stage="privilege_gate_skipped"` so
+operators can detect agents bypassing scope enforcement via monitoring.
+
+### ✅ FIXED — #84 — `fintech.py` — `WashSaleDetection` Uses Fixed 86,400-Second Windows, Not Calendar Days
+
+IRC § 1091 counts calendar days in the taxpayer's local timezone. The primitive used `wash_window_days × 86_400`
+seconds — correct for UTC but potentially ±1 calendar day in DST-observing jurisdictions (DST transitions
+compress a day to 82,800 s or expand it to 90,000 s).
+Added extended docstring explaining the UTC-epoch arithmetic limitation and DST risk.
+Added a `UserWarning` at every call site advising callers to normalise timestamps to midnight UTC and consider
+adding one day of buffer (`wash_window_days=31` for the standard 30-day window).
+Added `filterwarnings` entry in `pyproject.toml` to suppress the warning in tests (which don't test the warning).
+
+### ✅ FIXED — #61 — `integrations/fastapi.py` — Overly Broad `except Exception` for Intent Validation
+
+`PramanixMiddleware._dispatch()` caught all exceptions during `model_validate()` and returned 422.
+This masked `MemoryError`, `RecursionError`, etc. as schema validation errors.
+Narrowed to `except pydantic.ValidationError` — infrastructure errors now propagate naturally.
+
+### ✅ FIXED — #62 — `integrations/llamaindex.py` — Same Overly Broad Exception for Intent Validation
+
+`PramanixFunctionTool.call()` and `PramanixQueryEngineTool.call()` caught all exceptions during intent validation.
+Both `except Exception` blocks narrowed to `except pydantic.ValidationError` (two instances, same fix applied
+via `replace_all=True`).
+
+### ✅ FIXED — #58 — `execution_token.py` — `consumed_count()` Returns 0 on Redis SCAN Failure (Fail-Open)
+
+`RedisExecutionTokenVerifier.consumed_count()` returned 0 when Redis SCAN failed, potentially allowing
+quota/rate-limit checks to pass when they should have failed. Changed to raise `VerificationError` with a
+descriptive message instructing callers to fail-closed on quota enforcement.
+Updated `test_consumed_count_returns_zero_on_connection_error` → now
+`test_consumed_count_raises_on_connection_error`.
+
+| # | Severity | File | Fix |
+|---|----------|------|-----|
+| 22 | 🟡 | `key_provider.py` | All cloud providers: `RuntimeError` → `ConfigurationError` |
+| 21 | 🟡 | `provenance.py` | Invalid env var: warn+fallback → `ConfigurationError` |
+| 38 | 🟡 | `guard.py` | Privilege gate skip: silent → structured WARNING |
+| 84 | 🟠 | `primitives/fintech.py` | `WashSaleDetection`: DST disclaimer + `UserWarning` at call sites |
+| 61 | 🟡 | `integrations/fastapi.py` | Intent validation: `except Exception` → `except ValidationError` |
+| 62 | 🟡 | `integrations/llamaindex.py` | Intent validation: same (2 call sites) |
+| 58 | 🟡 | `execution_token.py` | `consumed_count()` SCAN error: return 0 → raise `VerificationError` |
+
+---
+
 ## CONFIRMED CLEAN (Explicitly Verified)
 
 - `os.system(` — none in `src/`

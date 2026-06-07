@@ -803,6 +803,18 @@ class Guard:
         # ── Step 7: Privilege scope gate ──────────────────────────────────────
         if gov.capability_manifest is not None:
             _tool = str(intent_values.get("tool") or intent_values.get("_tool") or "")
+            if not _tool:
+                _log.warning(
+                    "pramanix.guard.privilege_gate_skipped",
+                    decision_id=decision_id,
+                    policy=self._policy.__name__,
+                    reason=(
+                        "No 'tool' or '_tool' key found in intent — ExecutionScope "
+                        "enforcement was skipped. Agents using alternative key names "
+                        "('action', 'function', 'command') bypass privilege checks. "
+                        "Add 'tool' to the intent or remove the capability_manifest."
+                    ),
+                )
             if _tool:
                 from pramanix.exceptions import (
                     PrivilegeEscalationError,

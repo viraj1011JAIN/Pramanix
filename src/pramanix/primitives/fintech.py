@@ -222,11 +222,38 @@ def WashSaleDetection(
     loss and buys a "substantially identical" security within 30 days before
     or after the sale, the loss is disallowed.
 
+    **UTC-epoch arithmetic — DST limitation**: This primitive computes the
+    window as ``wash_window_days * 86_400`` seconds.  UNIX timestamps are
+    always UTC, so this is exact for UTC-normalised timestamps.  However,
+    IRC § 1091 counts *calendar* days in the taxpayer's local timezone.  A
+    DST transition compresses one local day to 23 hours (82 800 s) or
+    expands it to 25 hours (90 000 s), meaning the fixed-second window may
+    accept a trade that falls one calendar day inside the disallowance window,
+    or vice-versa.
+
+    For maximum compliance safety in DST-observing jurisdictions, pass
+    ``wash_window_days=31`` (or add 7 200 s of buffer via a custom
+    ``window_secs`` pre-computation) and normalise timestamps to midnight UTC
+    before calling this primitive.
+
     Args:
-        sell_epoch:        Field (int, Int) — UNIX timestamp of sale.
-        buy_epoch:         Field (int, Int) — UNIX timestamp of repurchase.
-        wash_window_days:  Wash-sale window in calendar days (default 30).
+        sell_epoch:        Field (int, Int) — UNIX timestamp of sale (UTC).
+        buy_epoch:         Field (int, Int) — UNIX timestamp of repurchase (UTC).
+        wash_window_days:  Wash-sale window in nominal days (default 30).
+                           Each day is counted as exactly 86 400 seconds; see
+                           the DST limitation note above.
     """
+    import warnings as _warnings
+
+    _warnings.warn(
+        "WashSaleDetection uses UTC epoch arithmetic (wash_window_days * 86_400 s). "
+        "IRC § 1091 counts calendar days in the taxpayer's local timezone; DST "
+        "transitions can cause ±1 calendar-day errors at the window boundary. "
+        "For full compliance, normalise timestamps to midnight UTC and consider "
+        "adding one day of buffer (wash_window_days=31 for the standard 30-day window).",
+        UserWarning,
+        stacklevel=2,
+    )
     window_secs = wash_window_days * 86_400
     return (
         (

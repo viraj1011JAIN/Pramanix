@@ -429,6 +429,10 @@ filterwarnings = [
     # AntiStructuring is deprecated in favour of CTRThresholdCheck.
     # Tests that exercise the deprecated primitive emit this warning intentionally.
     "ignore:AntiStructuring is deprecated:DeprecationWarning",
+    # WashSaleDetection emits a UserWarning about UTC-epoch vs calendar-day
+    # arithmetic at every call site.  Tests that use the primitive are not
+    # testing the warning itself, so suppress it to avoid noise.
+    "ignore:WashSaleDetection uses UTC epoch arithmetic.*:UserWarning",
     # CohereTranslator old-SDK fallback is expected when testing v1 compatibility.
     "ignore:CohereTranslator.*falling back:UserWarning",
     # Non-linear arithmetic is an expected constraint in healthcare primitives

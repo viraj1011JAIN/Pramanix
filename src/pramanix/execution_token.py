@@ -932,8 +932,15 @@ class RedisExecutionTokenVerifier:
 
         Returns:
             Number of unconsumed-TTL token keys in Redis under this prefix.
-            Returns 0 if Redis is unreachable (fail-safe default).
+
+        Raises:
+            VerificationError: If the Redis SCAN fails. Callers using this
+                value for quota enforcement must catch this and treat the
+                outage as a denial, not a zero count. A falsely-low 0 would
+                allow requests that should be blocked while Redis is degraded.
         """
+        from pramanix.exceptions import VerificationError as _VE
+
         cursor = 0
         count = 0
         try:
@@ -943,21 +950,12 @@ class RedisExecutionTokenVerifier:
                 if cursor == 0:
                     break
         except Exception as _e:
-            # fail-open for monitoring: return 0 so callers don't crash, but
-            # LOG at WARNING so operators know the quota/rate-limit count is
-            # unreliable — a falsely-low 0 may permit requests that should be
-            # blocked if a quota check is based on this value.
-            import logging as _etlog
-
-            _etlog.getLogger(__name__).warning(
-                "execution_token.RedisExecutionTokenVerifier.consumed_count(): "
-                "Redis SCAN failed — returning 0 (fail-open for monitoring). "
-                "Quota or rate-limit checks using this value may be too permissive "
-                "while Redis is degraded. Error: %s",
-                _e,
-                exc_info=True,
-            )
-            return 0
+            raise _VE(
+                "RedisExecutionTokenVerifier.consumed_count(): Redis SCAN failed — "
+                "the consumed-token count is unavailable. Do not treat this as zero: "
+                "quota or rate-limit checks based on this value must fail-closed "
+                f"while Redis is degraded. Underlying error: {type(_e).__name__}: {_e}"
+            ) from _e
         return count
 
     @classmethod

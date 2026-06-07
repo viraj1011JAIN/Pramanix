@@ -44,7 +44,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from pramanix.exceptions import ProvenanceError
+from pramanix.exceptions import ConfigurationError, ProvenanceError
 
 __all__ = [
     "ProvenanceChain",
@@ -105,11 +105,13 @@ def _provenance_key() -> bytes:
                 _PROVENANCE_KEY = key
                 return _PROVENANCE_KEY
             except ValueError as exc:
-                _log.warning(
-                    "provenance: invalid %s value (%s) — falling back to ephemeral key",
-                    _PROVENANCE_KEY_ENV,
-                    exc,
-                )
+                # Operator explicitly set the env var — a malformed value is a
+                # configuration error, not a graceful fallback opportunity.
+                raise ConfigurationError(
+                    f"provenance: {_PROVENANCE_KEY_ENV} is set but invalid "
+                    f"({exc}). Correct the value or unset the variable to use "
+                    "an ephemeral key."
+                ) from exc
 
         # ── 2. Key file ───────────────────────────────────────────────────────
         key_file = os.environ.get(_PROVENANCE_KEY_FILE_ENV, "").strip()
@@ -124,12 +126,10 @@ def _provenance_key() -> bytes:
                 _PROVENANCE_KEY = key
                 return _PROVENANCE_KEY
             except (OSError, ValueError) as exc:
-                _log.warning(
-                    "provenance: cannot load key from %s=%r (%s) — falling back to ephemeral key",
-                    _PROVENANCE_KEY_FILE_ENV,
-                    key_file,
-                    exc,
-                )
+                raise ConfigurationError(
+                    f"provenance: cannot load key from {_PROVENANCE_KEY_FILE_ENV}={key_file!r} "
+                    f"({exc}). Correct the file path/content or unset the variable."
+                ) from exc
 
         # ── 3. Ephemeral random key ───────────────────────────────────────────
         _PROVENANCE_KEY = os.urandom(32)

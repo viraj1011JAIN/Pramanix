@@ -45,6 +45,8 @@ import time
 from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
+from pramanix.exceptions import ConfigurationError
+
 _DEFAULT_KEY_CACHE_TTL: float = 300.0
 
 __all__ = [
@@ -223,7 +225,7 @@ class EnvKeyProvider:
         *,
         env_var: str = "PRAMANIX_SIGNING_KEY_PEM",
         version: str = "env-1",
-    ) -> "EnvKeyProvider":
+    ) -> EnvKeyProvider:
         """Construct without requiring the env var to be set.
 
         Useful when a test only needs to inspect supports_rotation or
@@ -384,7 +386,7 @@ class AwsKmsKeyProvider:
                 VersionStage=self._version_stage,
             )
         except Exception as exc:
-            raise RuntimeError(
+            raise ConfigurationError(
                 f"AwsKmsKeyProvider: failed to fetch secret {self._secret_arn!r} "
                 f"from AWS Secrets Manager — KMS may be unreachable or credentials "
                 f"are invalid. Underlying error: {type(exc).__name__}: {exc}"
@@ -436,17 +438,16 @@ class AwsKmsKeyProvider:
             self._cache_expires = 0.0
         self._client.rotate_secret(SecretId=self._secret_arn)
 
-
     @classmethod
     def _for_testing(
         cls,
         client: Any,
         *,
-        secret_arn: str = "arn:aws:secretsmanager:us-east-1:000000000000:secret:test",
+        secret_arn: str = "arn:aws:secretsmanager:us-east-1:000000000000:secret:test",  # noqa: S107
         version_stage: str = "AWSCURRENT",
         explicit_version: str | None = None,
         cached_pem: bytes | None = None,
-    ) -> "AwsKmsKeyProvider":
+    ) -> AwsKmsKeyProvider:
         """Construct with a pre-built Secrets Manager client for unit testing."""
         inst = cls.__new__(cls)
         inst._secret_arn = secret_arn
@@ -457,9 +458,7 @@ class AwsKmsKeyProvider:
         inst._cached_pem = cached_pem
         inst._cached_version = explicit_version or ("test-version" if cached_pem else None)
         inst._cache_expires = (
-            time.monotonic() + _DEFAULT_KEY_CACHE_TTL
-            if (cached_pem or explicit_version)
-            else 0.0
+            time.monotonic() + _DEFAULT_KEY_CACHE_TTL if (cached_pem or explicit_version) else 0.0
         )
         return inst
 
@@ -525,7 +524,7 @@ class AzureKeyVaultKeyProvider:
         try:
             secret = self._client.get_secret(self._secret_name, version=self._secret_version)
         except Exception as exc:
-            raise RuntimeError(
+            raise ConfigurationError(
                 f"AzureKeyVaultKeyProvider: failed to fetch secret {self._secret_name!r} "
                 f"from Azure Key Vault — the vault may be unreachable, the secret may "
                 f"not exist, or credentials are invalid. "
@@ -572,7 +571,7 @@ class AzureKeyVaultKeyProvider:
         PEM the operator has uploaded to the vault.
 
         Raises:
-            RuntimeError: If the Azure Key Vault fetch fails.
+            ConfigurationError: If the Azure Key Vault fetch fails.
         """
         with self._cache_lock:
             # Force re-fetch on next access by expiring the cache and clearing
@@ -593,10 +592,10 @@ class AzureKeyVaultKeyProvider:
         cls,
         client: Any,
         *,
-        secret_name: str = "test-key",
+        secret_name: str = "test-key",  # noqa: S107
         secret_version: str | None = None,
         cached_pem: bytes | None = None,
-    ) -> "AzureKeyVaultKeyProvider":
+    ) -> AzureKeyVaultKeyProvider:
         """Construct an instance with a pre-built client for unit testing.
 
         Accepts an already-constructed SecretClient duck-type so tests can
@@ -659,6 +658,7 @@ class GcpKmsKeyProvider:
         # H-12: cache fetched key PEM to avoid redundant API calls.
         self._cache_lock = threading.Lock()
         self._cached_pem: bytes | None = None
+        self._cached_version: str | None = None
         self._cache_expires: float = 0.0
 
     def _version_name(self) -> str:
@@ -673,7 +673,7 @@ class GcpKmsKeyProvider:
         try:
             response = self._client.access_secret_version(name=self._version_name())
         except Exception as exc:
-            raise RuntimeError(
+            raise ConfigurationError(
                 f"GcpKmsKeyProvider: failed to fetch secret "
                 f"projects/{self._project_id}/secrets/{self._secret_id}/"
                 f"versions/{self._version_id} from GCP Secret Manager — "
@@ -730,17 +730,16 @@ class GcpKmsKeyProvider:
                 self._version_id = _pinned
                 raise
 
-
     @classmethod
     def _for_testing(
         cls,
         client: Any,
         *,
         project_id: str = "test-project",
-        secret_id: str = "test-secret",
+        secret_id: str = "test-secret",  # noqa: S107
         version_id: str = "latest",
         cached_pem: bytes | None = None,
-    ) -> "GcpKmsKeyProvider":
+    ) -> GcpKmsKeyProvider:
         """Construct with a pre-built SecretManagerServiceClient for unit testing."""
         inst = cls.__new__(cls)
         inst._project_id = project_id
@@ -800,6 +799,7 @@ class HashiCorpVaultKeyProvider:
                 "HashiCorpVaultKeyProvider requires 'hvac'. "
                 "Install it: pip install 'pramanix[vault]'"
             ) from exc
+        self._vault_url = url
         self._secret_path = secret_path
         self._field = field
         self._mount_point = mount_point
@@ -820,7 +820,7 @@ class HashiCorpVaultKeyProvider:
                 mount_point=self._mount_point,
             )
         except Exception as exc:
-            raise RuntimeError(
+            raise ConfigurationError(
                 f"HashiCorpVaultKeyProvider: failed to read secret {self._secret_path!r} "
                 f"(mount={self._mount_point!r}) from HashiCorp Vault — "
                 f"the Vault server may be sealed/unreachable or the token is invalid. "
@@ -829,8 +829,6 @@ class HashiCorpVaultKeyProvider:
         try:
             value: str | bytes = resp["data"]["data"][self._field]
         except KeyError:
-            from pramanix.exceptions import ConfigurationError
-
             available = list(resp.get("data", {}).get("data", {}).keys())
             raise ConfigurationError(
                 f"HashiCorpVaultKeyProvider: field {self._field!r} not found in secret "
@@ -893,12 +891,12 @@ class HashiCorpVaultKeyProvider:
         client: Any,
         *,
         vault_url: str = "http://localhost:8200",
-        secret_path: str = "pramanix/signing-key",
+        secret_path: str = "pramanix/signing-key",  # noqa: S107
         mount_point: str = "secret",
         field: str = "private_key_pem",
         cached_pem: bytes | None = None,
         cached_version: str | None = None,
-    ) -> "HashiCorpVaultKeyProvider":
+    ) -> HashiCorpVaultKeyProvider:
         """Construct with a pre-built hvac client for unit testing.
 
         Pass *cached_pem* and/or *cached_version* to pre-warm the cache so
@@ -917,9 +915,7 @@ class HashiCorpVaultKeyProvider:
         inst._cached_pem = cached_pem
         inst._cached_version = cached_version
         warm = cached_pem is not None or cached_version is not None
-        inst._cache_expires = (
-            time.monotonic() + _DEFAULT_KEY_CACHE_TTL if warm else 0.0
-        )
+        inst._cache_expires = time.monotonic() + _DEFAULT_KEY_CACHE_TTL if warm else 0.0
         return inst
 
 
