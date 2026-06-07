@@ -580,7 +580,7 @@ CI declares Python 3.13 only but `pyproject.toml` lists 3.11, 3.12, 3.13 classif
 
 ---
 
-### 🟠 #84 — `primitives/fintech.py:169-204` — `WashSaleDetection` Uses Fixed 86,400-Second Windows, Not Calendar Days
+### ✅ FIXED — 🟠 #84 — `primitives/fintech.py:169-204` — `WashSaleDetection` Uses Fixed 86,400-Second Windows, Not Calendar Days
 
 **File**: `src/pramanix/primitives/fintech.py:169-204`
 
@@ -1827,7 +1827,7 @@ warnings.append(f"injection_patterns_detected: {matches}")
 
 ---
 
-### 🟠 #260 — `guard.py:686-700` — Action Authorized Before Audit Sink Records the Decision — Audit Gap on Sink Failure
+### ✅ FIXED — 🟠 #260 — `guard.py:686-700` — Action Authorized Before Audit Sink Records the Decision — Audit Gap on Sink Failure
 
 ```python
 decision = self._sign_decision(self._verify_core(intent, state))
