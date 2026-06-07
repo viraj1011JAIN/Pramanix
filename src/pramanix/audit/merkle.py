@@ -12,9 +12,9 @@ audit log. Provide the MerkleProof to any auditor on demand.
 Two implementations
 -------------------
 * :class:`MerkleAnchor`           — In-memory only.  Fast, no dependencies.
-* :class:`PersistentMerkleAnchor` — Same API + a ``checkpoint_callback`` that
-  fires every *N* additions so the caller can write the root hash to a durable
-  store (database, append-only file, S3, etc.).
+* :class:`PersistentMerkleAnchor` — Same API + ``checkpoint_callback`` and
+  ``leaves_checkpoint_callback`` hooks that fire every *N* additions so the
+  caller can write the root hash and full leaf list to a durable store.
 
 Usage (basic)::
 
@@ -25,20 +25,54 @@ Usage (basic)::
     proof = anchor.prove(decision_id)
     assert proof.verify()
 
-Usage (persistent checkpointing)::
+Usage (persistent checkpointing with cross-restart proof validity)::
+
+    import json, sqlite3
+
+    conn = sqlite3.connect("audit.db")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS checkpoints "
+        "(root TEXT, count INTEGER, leaves TEXT, ts TEXT)"
+    )
 
     def save_root(root: str, count: int) -> None:
-        db.execute("INSERT INTO merkle_checkpoints VALUES (?, ?, ?)",
-                   (root, count, datetime.now(datetime.UTC).isoformat()))
+        conn.execute(
+            "INSERT INTO checkpoints(root,count,ts) VALUES(?,?,datetime('now'))",
+            (root, count),
+        )
+        conn.commit()
+
+    def save_leaves(leaves: list[str]) -> None:
+        conn.execute(
+            "UPDATE checkpoints SET leaves=? WHERE rowid=last_insert_rowid()",
+            (json.dumps(leaves),),
+        )
+        conn.commit()
 
     anchor = PersistentMerkleAnchor(
         checkpoint_every=500,
         checkpoint_callback=save_root,
+        leaves_checkpoint_callback=save_leaves,
     )
     for decision in stream:
         anchor.add(decision.decision_id)
-    # Flush any remaining leaves that haven't triggered a checkpoint:
-    anchor.flush()
+    anchor.flush()  # persist any trailing decisions
+
+    # --- After restart, restore from last checkpoint ---
+    row = conn.execute(
+        "SELECT root, leaves FROM checkpoints ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    if row:
+        stored_root, stored_leaves = row
+        anchor = PersistentMerkleAnchor(
+            checkpoint_every=500,
+            checkpoint_callback=save_root,
+            leaves_checkpoint_callback=save_leaves,
+            initial_leaves=json.loads(stored_leaves),
+            expected_root=stored_root,   # raises ValueError on corruption
+        )
+        proof = anchor.prove(some_decision_id)
+        assert proof is not None and proof.verify()
 """
 
 from __future__ import annotations
@@ -203,58 +237,80 @@ class MerkleAnchor:
 
 
 class PersistentMerkleAnchor(MerkleAnchor):
-    """Merkle anchor that checkpoints its root hash to a durable store.
+    """Merkle anchor that checkpoints its root hash and leaf hashes to a durable store.
 
-    Extends :class:`MerkleAnchor` with a ``checkpoint_callback`` hook that is
-    called automatically every *checkpoint_every* additions.  This solves the
-    **Merkle Volatility** gap: the in-memory ``MerkleAnchor`` is lost on
-    restart, making post-mortem audits impossible unless the root is persisted.
+    Extends :class:`MerkleAnchor` with checkpoint hooks that fire automatically
+    every *checkpoint_every* additions.  Solves two gaps:
 
-    The callback receives ``(root_hash: str, leaf_count: int)`` so the caller
-    can store the root alongside its positional index for replay auditing.
+    * **Merkle Volatility** — root hash is never silently dropped; written to a
+      durable store via ``checkpoint_callback``.
+    * **Cross-restart proof validity (#34)** — the full leaf-hash list is emitted
+      via ``leaves_checkpoint_callback`` so callers can persist it alongside the
+      root.  On restart, pass ``initial_leaves`` to restore the tree so that
+      ``prove()`` and ``verify()`` work across process boundaries.
 
     Args:
-        checkpoint_every:    Trigger a checkpoint after every N ``add()`` calls.
-                             Default: 100.
-        checkpoint_callback: Callable invoked as
-                             ``callback(root_hash, leaf_count)`` when the
-                             threshold is reached and on explicit ``flush()``.
-                             Runs synchronously in the caller's thread.
+        checkpoint_every:           Trigger a checkpoint after every N ``add()``
+                                    calls.  Default: 100.
+        checkpoint_callback:        Callable invoked as
+                                    ``callback(root_hash, leaf_count)`` on each
+                                    periodic checkpoint and on ``flush()``.
+                                    Runs synchronously in the caller's thread.
+        leaves_checkpoint_callback: Callable invoked as
+                                    ``callback(leaf_hashes)`` immediately after
+                                    ``checkpoint_callback`` on each checkpoint.
+                                    Receives a snapshot of the full leaf-hash
+                                    list (SHA-256 hex strings, **not** raw
+                                    decision IDs).  Persist this list to the
+                                    same durable store as the root hash.
+        initial_leaves:             Leaf-hash list to restore from a previous
+                                    session's ``leaves_checkpoint_callback``.
+                                    Enables ``prove()``/``verify()`` across
+                                    process restarts.
+        expected_root:              Expected root hash after restoring
+                                    ``initial_leaves``.  If the recomputed root
+                                    does not match, ``__init__`` raises
+                                    ``ValueError`` — use this to detect truncated
+                                    or corrupted leaf stores at startup.
 
-    Example::
-
-        import sqlite3
-
-        conn = sqlite3.connect("audit.db")
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS checkpoints "
-            "(root TEXT, count INTEGER, ts TEXT)"
-        )
-
-        def save(root: str, count: int) -> None:
-            conn.execute(
-                "INSERT INTO checkpoints VALUES (?,?,datetime('now'))",
-                (root, count),
-            )
-            conn.commit()
-
-        anchor = PersistentMerkleAnchor(checkpoint_every=500, checkpoint_callback=save)
-        for d in decisions:
-            anchor.add(d.decision_id)
-        anchor.flush()  # persist any trailing decisions
+    .. note::
+        ``initial_leaves`` does **not** restore duplicate-detection state.
+        Decision IDs added before the restart will not be caught as duplicates
+        in the new process; duplicates added *within* the new session are still
+        caught normally.
     """
 
     def __init__(
         self,
         checkpoint_every: int = 100,
         checkpoint_callback: Callable[[str, int], None] | None = None,
+        leaves_checkpoint_callback: Callable[[list[str]], None] | None = None,
+        initial_leaves: list[str] | None = None,
+        expected_root: str | None = None,
     ) -> None:
         super().__init__()
         if checkpoint_every < 1:
             raise ValueError("checkpoint_every must be >= 1.")
         self._checkpoint_every = checkpoint_every
         self._callback = checkpoint_callback
+        self._leaves_callback = leaves_checkpoint_callback
         self._last_checkpoint_count: int = 0
+
+        # Cross-restart leaf restore (#34): repopulate the in-memory leaf list
+        # from a previously persisted snapshot so prove()/verify() work again.
+        if initial_leaves is not None:
+            with self._lock:
+                self._leaves = list(initial_leaves)
+            if expected_root is not None:
+                actual = self.root()
+                if actual != expected_root:
+                    raise ValueError(
+                        f"Restored leaf hashes produce root {actual!r} but "
+                        f"expected_root is {expected_root!r}. "
+                        "The leaf store may be corrupted or incomplete."
+                    )
+            self._last_checkpoint_count = len(self._leaves)
+
         # Auto-flush at process exit so trailing leaves added since the last
         # periodic checkpoint are never silently dropped. A weak reference is
         # used so the anchor can still be garbage-collected normally during the
@@ -294,5 +350,10 @@ class PersistentMerkleAnchor(MerkleAnchor):
 
     def _do_checkpoint(self, count: int) -> None:
         root = self.root()
-        if root is not None and self._callback is not None:
-            self._callback(root, count)
+        if root is not None:
+            if self._callback is not None:
+                self._callback(root, count)
+            if self._leaves_callback is not None:
+                with self._lock:
+                    leaves_snapshot = self._leaves[:]
+                self._leaves_callback(leaves_snapshot)

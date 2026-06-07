@@ -195,6 +195,99 @@ class TestThroughput:
         ), f"Mixed 100-call batch took {total_ms:.0f} ms — budget {self.TOTAL_BUDGET_MS:.0f} ms."
 
 
+# ── Sustained load benchmark (#50) ───────────────────────────────────────────
+
+
+class TestSustainedLoad:
+    """Statistically valid P99 gate using 500 calls instead of 20.
+
+    The 20-call microbenchmark in TestLatencyReport computes P99 = max(20 samples),
+    which is not meaningful — a single slow call can inflate it.  This test uses
+    500 calls so that P99 covers the 495th-worst call and P99.9 covers the
+    499th-worst call (#50 fix: sustained load gate replaces the microbenchmark).
+
+    Budgets are tuned for a single-core CI runner.  Real sustained-load P99 at
+    ~81 RPS is ~30ms; the gate is set at 100ms so CI does not flap, while still
+    catching genuine regressions (a 3× slowdown would exceed the gate).
+    """
+
+    WARMUP_CALLS = 10
+    MEASURE_CALLS = 500
+    P99_BUDGET_MS = 100.0
+    P99_9_BUDGET_MS = 500.0
+
+    def test_sustained_allow_p99_within_budget(self, bench_guard: Guard) -> None:
+        for _ in range(self.WARMUP_CALLS):
+            bench_guard.verify(intent=_ALLOW_INTENT, state=_ALLOW_STATE)
+
+        latencies: list[float] = []
+        for _ in range(self.MEASURE_CALLS):
+            t0 = time.perf_counter()
+            bench_guard.verify(intent=_ALLOW_INTENT, state=_ALLOW_STATE)
+            latencies.append((time.perf_counter() - t0) * 1000)
+
+        sorted_lat = sorted(latencies)
+        p99 = sorted_lat[int(0.99 * self.MEASURE_CALLS)]
+        p99_9 = sorted_lat[int(0.999 * self.MEASURE_CALLS)]
+        mean_ms = statistics.mean(latencies)
+
+        assert p99 <= self.P99_BUDGET_MS, (
+            f"Sustained-load P99={p99:.1f}ms exceeds {self.P99_BUDGET_MS:.0f}ms gate "
+            f"(mean={mean_ms:.1f}ms, n={self.MEASURE_CALLS}).  "
+            "This indicates a genuine performance regression — check recent changes."
+        )
+        assert p99_9 <= self.P99_9_BUDGET_MS, (
+            f"Sustained-load P99.9={p99_9:.1f}ms exceeds {self.P99_9_BUDGET_MS:.0f}ms gate "
+            f"(mean={mean_ms:.1f}ms).  Tail latency spike detected."
+        )
+
+    def test_sustained_block_p99_within_budget(self, bench_guard: Guard) -> None:
+        for _ in range(self.WARMUP_CALLS):
+            bench_guard.verify(intent=_BLOCK_INTENT, state=_BLOCK_STATE)
+
+        latencies: list[float] = []
+        for _ in range(self.MEASURE_CALLS):
+            t0 = time.perf_counter()
+            bench_guard.verify(intent=_BLOCK_INTENT, state=_BLOCK_STATE)
+            latencies.append((time.perf_counter() - t0) * 1000)
+
+        sorted_lat = sorted(latencies)
+        p99 = sorted_lat[int(0.99 * self.MEASURE_CALLS)]
+        mean_ms = statistics.mean(latencies)
+
+        assert p99 <= self.P99_BUDGET_MS, (
+            f"Sustained-load BLOCK P99={p99:.1f}ms exceeds {self.P99_BUDGET_MS:.0f}ms gate "
+            f"(mean={mean_ms:.1f}ms, n={self.MEASURE_CALLS})."
+        )
+
+    def test_sustained_load_prints_distribution(
+        self, bench_guard: Guard, capsys: pytest.CaptureFixture
+    ) -> None:
+        """Print full latency distribution for CI artifact trending."""
+        for _ in range(self.WARMUP_CALLS):
+            bench_guard.verify(intent=_ALLOW_INTENT, state=_ALLOW_STATE)
+
+        latencies: list[float] = []
+        for _ in range(self.MEASURE_CALLS):
+            t0 = time.perf_counter()
+            bench_guard.verify(intent=_ALLOW_INTENT, state=_ALLOW_STATE)
+            latencies.append((time.perf_counter() - t0) * 1000)
+
+        sorted_lat = sorted(latencies)
+        p50 = sorted_lat[int(0.50 * self.MEASURE_CALLS)]
+        p95 = sorted_lat[int(0.95 * self.MEASURE_CALLS)]
+        p99 = sorted_lat[int(0.99 * self.MEASURE_CALLS)]
+        p99_9 = sorted_lat[int(0.999 * self.MEASURE_CALLS)]
+        mean_ms = statistics.mean(latencies)
+
+        print(
+            f"\n[BENCH-SUSTAINED] Guard.verify() latency "
+            f"({self.MEASURE_CALLS} calls after {self.WARMUP_CALLS} warmup, sync): "
+            f"mean={mean_ms:.1f}ms  p50={p50:.1f}ms  p95={p95:.1f}ms  "
+            f"p99={p99:.1f}ms  p99.9={p99_9:.1f}ms"
+        )
+
+
 # ── Latency reporting (always passes — for CI artifact logging) ───────────────
 
 
@@ -204,9 +297,9 @@ class TestLatencyReport:
     def test_latency_distribution_report(
         self, bench_guard: Guard, capsys: pytest.CaptureFixture
     ) -> None:
-        """Print mean/p50/p95/p99 latencies for CI trend analysis."""
-        n = 20
-        for _ in range(3):
+        """Print mean/p50/p95/p99 latencies for CI trend analysis (200 calls)."""
+        n = 200
+        for _ in range(10):
             bench_guard.verify(intent=_ALLOW_INTENT, state=_ALLOW_STATE)  # warmup
 
         latencies: list[float] = []

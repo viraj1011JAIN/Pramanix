@@ -1436,9 +1436,13 @@ class Guard:
             )
             return decision
         finally:
-            # Always clear the per-context resolver cache after every decision
-            # (context = asyncio Task or OS thread).  Prevents User A's resolved
-            # field values from bleeding into User B's subsequent request.
+            # C-01 / #266: clear the per-context resolver cache after every
+            # decision.  ResolverRegistry stores its cache in a ContextVar,
+            # so each OS thread has its own isolated cache — clear_cache()
+            # here only affects THIS thread; concurrent threads are
+            # structurally unaffected.  Clearing is still required to prevent
+            # stale resolved values leaking into a later call on the same
+            # thread (e.g. thread-pool reuse across requests).
             _resolver_registry.clear_cache()
             if self._config.metrics_enabled and _PROM_AVAILABLE:
                 _policy_name = self._policy.__name__

@@ -616,6 +616,27 @@ class AdaptiveCircuitBreaker:
 # ── Phase C-5: Distributed Circuit Breaker ───────────────────────────────────
 
 
+def _safe_circuit_state(raw: str, *, namespace: str = "") -> str:
+    """Return *raw* if it is a valid :class:`CircuitState` member; else OPEN.
+
+    Redis data is attacker-observable (Redis misconfig / SSRF / prototype
+    pollution).  A caller injecting ``circuit_state="closed"`` into an OPEN
+    circuit would bypass downstream service protection.  Validate the value
+    against the enum before trusting it; fail-safe to OPEN on any invalid
+    string (#234).
+    """
+    try:
+        return CircuitState(raw).value
+    except ValueError:
+        log.warning(
+            "circuit_breaker.invalid_state: namespace=%r raw=%r is not a valid "
+            "CircuitState — failing SAFE (OPEN). Check Redis data integrity.",
+            namespace,
+            raw,
+        )
+        return CircuitState.OPEN.value
+
+
 @dataclass
 class _DistributedState:
     """Shared state record stored in the distributed backend."""
@@ -934,9 +955,7 @@ class DistributedCircuitBreaker:
             # is the "thundering herd" scenario the probe token prevents: rather
             # than all replicas simultaneously admitting traffic when the Redis
             # key expires, each must claim the probe token atomically first.
-            elapsed = (
-                self._config.recovery_seconds if open_at == 0.0 else time.time() - open_at
-            )
+            elapsed = self._config.recovery_seconds if open_at == 0.0 else time.time() - open_at
 
             if elapsed >= self._config.recovery_seconds:
                 try:
@@ -1122,8 +1141,7 @@ class DistributedCircuitBreaker:
         self._synced_open_at_epoch = 0.0
         self._update_prometheus()
         log.warning(
-            "DistributedCircuitBreaker manually reset from ISOLATED "
-            "(namespace=%s)",
+            "DistributedCircuitBreaker manually reset from ISOLATED " "(namespace=%s)",
             self._config.namespace,
         )
 
@@ -1372,9 +1390,7 @@ class RedisDistributedBackend:
         """
         try:
             client = await self._get_client()
-            result = await client.set(
-                self._probe_key(namespace), "1", nx=True, ex=self._ttl
-            )
+            result = await client.set(self._probe_key(namespace), "1", nx=True, ex=self._ttl)
             return result is not None
         except Exception as exc:
             log.error(
@@ -1445,7 +1461,10 @@ class RedisDistributedBackend:
 
         try:
             return _DistributedState(
-                circuit_state=data.get("circuit_state", CircuitState.CLOSED.value),
+                circuit_state=_safe_circuit_state(
+                    data.get("circuit_state", CircuitState.CLOSED.value),
+                    namespace=namespace,
+                ),
                 failure_count=int(data.get("failure_count", 0)),
                 last_failure_time=float(data.get("last_failure_time", 0.0)),
                 open_episode_count=int(data.get("open_episode_count", 0)),
@@ -1500,7 +1519,10 @@ class RedisDistributedBackend:
                         # Parse existing state, defaulting to CLOSED if absent.
                         try:
                             current = _DistributedState(
-                                circuit_state=raw.get("circuit_state", CircuitState.CLOSED.value),
+                                circuit_state=_safe_circuit_state(
+                                    raw.get("circuit_state", CircuitState.CLOSED.value),
+                                    namespace=namespace,
+                                ),
                                 failure_count=int(raw.get("failure_count", 0)),
                                 last_failure_time=float(raw.get("last_failure_time", 0.0)),
                                 open_episode_count=int(raw.get("open_episode_count", 0)),

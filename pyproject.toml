@@ -455,6 +455,11 @@ filterwarnings = [
     "ignore:WorkerPool GC.*without explicit shutdown:UserWarning",
     # LangSmith integration warning — external tracing service not configured in CI.
     "ignore:.*langsmith.*:UserWarning",
+    # #37: DosageGradientCheck and PediatricDoseBound emit PramanixClinicalWarning
+    # at every call site.  Module-level invariant construction in the healthcare
+    # primitives test file fires these warnings at import time; suppress the noise
+    # so only the dedicated warning-emission tests see them (via pytest.warns()).
+    "ignore:.*has not been independently reviewed by a clinical pharmacist:UserWarning",
 ]
 
 [tool.coverage.run]

@@ -60,6 +60,8 @@ __all__ = [
     "PolicyError",
     "PolicySyntaxError",
     "PramanixError",
+    "PramanixClinicalWarning",
+    "PramanixSecurityWarning",
     "PrivilegeEscalationError",
     "ProvenanceError",
     "ResolverConflictError",
@@ -682,3 +684,38 @@ class IntegrityError(GuardError):
     def __init__(self, message: str, *, path: str = "") -> None:
         self._path = path  # underscore: private; never embed in public messages
         super().__init__(message)
+
+
+# ── Security advisories ───────────────────────────────────────────────────────
+
+
+class PramanixSecurityWarning(UserWarning):
+    """Security advisory emitted for unsafe but non-fatal API usage patterns.
+
+    Operators may promote this to an error in CI via::
+
+        import warnings
+        warnings.filterwarnings("error", category=PramanixSecurityWarning)
+
+    Raised when a caller opts into a pattern that weakens security guarantees,
+    e.g. supplying a caller-controllable ``Field`` for a time bound in temporal
+    primitives instead of a compile-time literal integer.
+    """
+
+
+class PramanixClinicalWarning(UserWarning):
+    """Clinical safety advisory emitted by healthcare constraint primitives (#37).
+
+    Raised when constructing dosage or paediatric dose constraints that have not
+    been independently reviewed by a clinical pharmacist, patient safety board,
+    or equivalent clinical authority.
+
+    Operators MUST escalate this to an error and gate on clinical sign-off
+    before deploying any healthcare primitive in a production clinical system::
+
+        import warnings
+        warnings.filterwarnings("error", category=PramanixClinicalWarning)
+
+    Incorrect dosage logic can cause patient harm.  These primitives are
+    provided for illustrative purposes only and carry no clinical warranty.
+    """

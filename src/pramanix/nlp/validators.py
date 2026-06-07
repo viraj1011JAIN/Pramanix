@@ -216,10 +216,93 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+# Homoglyph confusables table (#207): Cyrillic and Greek characters that are
+# visually indistinguishable from Latin letters in most fonts.  NFKC alone does
+# NOT map these — they are distinct code points in different scripts.  An
+# adversary can replace a Latin letter with its Cyrillic lookalike to bypass
+# keyword matching: e.g. "kіll" (Cyrillic і U+0456) ≠ "kill" (Latin i U+0069).
+# str.translate() applies this table in O(n) time — one pass per character.
+_CONFUSABLES: dict[int, str] = {
+    # Cyrillic → Latin
+    0x0430: "a",  # а → a
+    0x0410: "a",  # А → a
+    0x0435: "e",  # е → e
+    0x0415: "e",  # Е → e
+    0x043E: "o",  # о → o
+    0x041E: "o",  # О → o
+    0x0440: "p",  # р → p
+    0x0420: "p",  # Р → p
+    0x0441: "c",  # с → c
+    0x0421: "c",  # С → c
+    0x0445: "x",  # х → x
+    0x0425: "x",  # Х → x
+    0x0456: "i",  # і → i  (Ukrainian small i — primary evasion char)
+    0x0406: "i",  # І → i
+    0x0432: "b",  # в → b
+    0x0412: "b",  # В → b
+    0x043D: "n",  # н → n
+    0x041D: "n",  # Н → n
+    0x043A: "k",  # к → k
+    0x041A: "k",  # К → k
+    0x043C: "m",  # м → m
+    0x041C: "m",  # М → m
+    0x0442: "t",  # т → t
+    0x0422: "t",  # Т → t
+    0x0455: "s",  # ѕ → s  (Cyrillic dze)
+    # Greek → Latin
+    0x03B1: "a",  # α → a
+    0x03B5: "e",  # ε → e
+    0x03B7: "n",  # η → n
+    0x03B9: "i",  # ι → i
+    0x03BA: "k",  # κ → k
+    0x03BD: "v",  # ν → v
+    0x03BF: "o",  # ο → o
+    0x03C1: "p",  # ρ → p
+    0x03C7: "x",  # χ → x
+    # Mathematical / letterlike
+    0x2113: "l",  # ℓ → l
+    0x0261: "g",  # ɡ → g  (IPA voiced velar stop)
+}
+_CONFUSABLES_TABLE: dict[int, str] = _CONFUSABLES  # alias — str.translate expects int keys
+
 
 def _normalise(text: str) -> str:
-    """NFKC-normalise and lower-case *text* for pattern matching."""
-    return unicodedata.normalize("NFKC", text).casefold()
+    """NFKC-normalise, deconfuse homoglyphs, strip zero-width chars, casefold.
+
+    Pipeline (#207):
+    1. NFKC: fullwidth → ASCII, decomposed → composed, compatibility variants.
+    2. Confusables: Cyrillic/Greek lookalikes → ASCII equivalents.
+    3. Zero-width filter: remove non-printable invisible characters.
+    4. casefold: locale-insensitive lowercasing.
+    """
+    text = unicodedata.normalize("NFKC", text)
+    text = text.translate(_CONFUSABLES_TABLE)
+    # Strip zero-width and other invisible chars that survive steps 1-2
+    text = "".join(ch for ch in text if ch.isprintable())
+    return text.casefold()
+
+
+def _luhn_valid(digits: str) -> bool:
+    """Return True iff *digits* (only decimal chars) passes the Luhn checksum.
+
+    Luhn algorithm (#208): validates that a numeric string has a valid credit
+    card check digit.  Eliminates phone numbers, SSNs, timestamps, and other
+    numeric sequences that happen to match the card-prefix regex but are not
+    real card numbers.
+    """
+    total = 0
+    odd_position = True  # from the rightmost digit
+    for ch in reversed(digits):
+        if not ch.isdigit():
+            continue
+        d = int(ch)
+        if not odd_position:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+        odd_position = not odd_position
+    return total % 10 == 0
 
 
 # ── PIIDetector ────────────────────────────────────────────────────────────────
@@ -351,13 +434,25 @@ class PIIDetector:
         results: list[PIIMatch] = []
         for label, pattern in self._patterns:
             for m in pattern.finditer(text):
-                results.append(PIIMatch(label=label, value=m.group(), start=m.start(), end=m.end()))
+                matched = m.group()
+                if label == "credit_card":
+                    # Luhn check (#208): eliminate false positives (phone
+                    # numbers, SSNs, timestamps) that pass the prefix regex
+                    # but are not valid card numbers.
+                    digits = "".join(ch for ch in matched if ch.isdigit())
+                    if not _luhn_valid(digits):
+                        continue
+                results.append(PIIMatch(label=label, value=matched, start=m.start(), end=m.end()))
         results.sort(key=lambda m: m.start)
         return results
 
     def has_pii(self, text: str) -> bool:
-        """Return ``True`` if *text* contains at least one PII match."""
-        return any(pattern.search(text) for _label, pattern in self._patterns)
+        """Return ``True`` if *text* contains at least one PII match.
+
+        Delegates to :meth:`detect` so that Luhn validation (#208) is
+        applied consistently for ``credit_card`` matches.
+        """
+        return bool(self.detect(text))
 
     def redact(self, text: str, replacement: str = "[REDACTED]") -> str:
         """Return a copy of *text* with all PII replaced by *replacement*.
@@ -547,13 +642,9 @@ class ToxicityScorer:
             result = float(self._score_fn(text))
             return max(0.0, min(1.0, result))
 
-        # Strip punctuation from each token after NFKC + casefold normalization.
-        # Zero-width chars (U+200B etc.) are stripped by NFKC; Cyrillic/Greek
-        # lookalikes (e.g. Cyrillic i -> i) are mapped by casefolding.  Multi-word toxic
-        # phrases in the word set are also matched as bigrams/trigrams below.
+        # Full normalisation pipeline (#207): NFKC + homoglyph deconfuse +
+        # zero-width strip + casefold — _normalise() handles all steps.
         normalised = _normalise(text)
-        # Strip zero-width joiners and other invisible chars that survive NFKC
-        normalised = "".join(ch for ch in normalised if ch.isprintable())
         tokens = normalised.split()
         if not tokens:
             return 0.0
@@ -562,11 +653,17 @@ class ToxicityScorer:
         stripped = [t.strip(".,!?;:'\"()[]{}") for t in tokens]
         unigram_hits = sum(1 for t in stripped if t in self._words)
 
-        # Bigram matching for multi-word toxic phrases in self._words
+        # Bigram matching for 2-word toxic phrases
         bigrams = [f"{stripped[i]} {stripped[i+1]}" for i in range(len(stripped) - 1)]
         bigram_hits = sum(1 for bg in bigrams if bg in self._words)
 
-        toxic_count = unigram_hits + bigram_hits
+        # Trigram matching for 3-word toxic phrases
+        trigrams = [
+            f"{stripped[i]} {stripped[i+1]} {stripped[i+2]}" for i in range(len(stripped) - 2)
+        ]
+        trigram_hits = sum(1 for tg in trigrams if tg in self._words)
+
+        toxic_count = unigram_hits + bigram_hits + trigram_hits
         return min(1.0, toxic_count / len(tokens))
 
     def is_toxic(self, text: str, threshold: float | None = None) -> bool:

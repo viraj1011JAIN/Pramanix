@@ -51,9 +51,15 @@ def _make_audit_record(decision: Decision, signer: PramanixSigner) -> dict:
         "policy_name": decision.policy_name,
         "intent_dump": decision.intent_dump or {},
         "state_dump": decision.state_dump or {},
-        # error_domain is now part of the canonical hash (#150); must be
-        # included in audit records so _recompute_hash() matches decision_hash.
+        # Canonical hash fields — must match Decision._compute_hash().
+        # error_domain: added in wave 9 (#150).
+        # hash_alg / metadata / stack_trace_hash: added in wave 16 (#198)
+        # for sha256-v2.  CLI _recompute_hash() selects the algorithm based
+        # on hash_alg; omitting it defaults to sha256-v1 (wrong for v2 hashes).
         "error_domain": decision.error_domain,
+        "hash_alg": "sha256-v2",
+        "metadata": dict(decision.metadata) if decision.metadata else {},
+        "stack_trace_hash": decision.stack_trace_hash,
     }
 
 

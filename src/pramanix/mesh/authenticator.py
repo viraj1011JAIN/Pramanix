@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import re
 import threading
@@ -241,6 +242,7 @@ class MeshAuthenticator:
         jwks_cache_ttl_seconds: int = 600,
         jwks_connect_timeout_seconds: float = 5.0,
         jwks_read_timeout_seconds: float = 10.0,
+        jwks_cert_sha256_pin: str | None = None,
     ) -> None:
         # ── Parameter validation ──────────────────────────────────────────────
         if jwks_uri is None and public_key_pem is None:
@@ -268,6 +270,22 @@ class MeshAuthenticator:
         self._cache_ttl: int = jwks_cache_ttl_seconds
         self._connect_timeout: float = jwks_connect_timeout_seconds
         self._read_timeout: float = jwks_read_timeout_seconds
+
+        # ── SHA-256 TLS certificate pin (#203) ────────────────────────────────
+        if jwks_cert_sha256_pin is not None:
+            # Normalize: strip colons (common display format) and lowercase.
+            normalized_pin = jwks_cert_sha256_pin.replace(":", "").lower()
+            if len(normalized_pin) != 64 or not all(
+                c in "0123456789abcdef" for c in normalized_pin
+            ):
+                raise ValueError(
+                    "'jwks_cert_sha256_pin' must be a 64-char hex SHA-256 "
+                    "fingerprint (colons are stripped automatically). "
+                    f"Got {jwks_cert_sha256_pin!r}."
+                )
+            self._jwks_cert_sha256_pin: str | None = normalized_pin
+        else:
+            self._jwks_cert_sha256_pin = None
 
         # ── Key material ──────────────────────────────────────────────────────
         self._jwks_uri: str | None = jwks_uri
@@ -584,6 +602,11 @@ class MeshAuthenticator:
                 ),
                 follow_redirects=False,
             )
+            # SHA-256 TLS certificate pin verification (#203).
+            # Must precede raise_for_status() so MITM connections are
+            # rejected before any response body is processed.
+            if self._jwks_cert_sha256_pin is not None:
+                self._check_cert_pin(response)
             response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise MeshAuthenticationError(
@@ -623,6 +646,42 @@ class MeshAuthenticator:
             )
 
         return keys
+
+    def _check_cert_pin(self, response: Any) -> None:
+        """Verify the JWKS endpoint's TLS certificate against the SHA-256 pin.
+
+        Extracts the DER-encoded leaf certificate from the httpx response
+        extensions (``"ssl_object"``), hashes it with SHA-256, and compares
+        the result against ``self._jwks_cert_sha256_pin``.
+
+        Raises
+        ------
+        MeshAuthenticationError
+            On fingerprint mismatch, missing SSL object, or missing
+            peer certificate — all treated as potential MITM attacks.
+        """
+        ssl_obj = response.extensions.get("ssl_object")
+        if ssl_obj is None:
+            raise MeshAuthenticationError(
+                "JWKS cert pin configured but no SSL object in httpx response. "
+                "Ensure the endpoint is HTTPS and httpx >= 0.24 is installed.",
+                reason="jwks_ssl_pin_unavailable",
+            )
+        cert_der: bytes | None = ssl_obj.getpeercert(binary_form=True)
+        if not cert_der:
+            raise MeshAuthenticationError(
+                "JWKS cert pin configured but peer certificate is unavailable "
+                "— cannot verify pinned fingerprint.",
+                reason="jwks_ssl_pin_no_cert",
+            )
+        actual_fp = hashlib.sha256(cert_der).hexdigest()
+        if actual_fp != self._jwks_cert_sha256_pin:
+            raise MeshAuthenticationError(
+                "JWKS endpoint TLS certificate fingerprint mismatch. "
+                "Possible MITM attack or certificate rotation without pin update. "
+                "Update 'jwks_cert_sha256_pin' if the certificate was intentionally renewed.",
+                reason="jwks_ssl_pin_mismatch",
+            )
 
 
 # ── Module-level helpers ───────────────────────────────────────────────────────

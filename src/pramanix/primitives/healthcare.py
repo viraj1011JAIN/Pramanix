@@ -70,14 +70,34 @@ Example::
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any, cast
 
+from pramanix.exceptions import PramanixClinicalWarning
 from pramanix.expressions import ConstraintExpr, E
 
 if TYPE_CHECKING:
     from decimal import Decimal
 
     from pramanix.expressions import Field
+
+_CLINICAL_VALIDATION_MSG = (
+    "{name} has not been independently reviewed by a clinical pharmacist, "
+    "patient safety board, or equivalent clinical authority (#37). "
+    "Do not deploy in any production clinical system without independent "
+    "clinical validation. Incorrect dosage logic can cause patient harm. "
+    "Silence only after documented clinical sign-off: "
+    "warnings.filterwarnings('ignore', category=PramanixClinicalWarning)"
+)
+
+
+def _clinical_warn(name: str) -> None:
+    warnings.warn(
+        _CLINICAL_VALIDATION_MSG.format(name=name),
+        PramanixClinicalWarning,
+        stacklevel=3,
+    )
+
 
 __all__ = [
     "BreakGlassAuth",
@@ -179,6 +199,7 @@ def DosageGradientCheck(
         current_dose:     Field (Decimal, Real) — current prescribed dose.
         max_increase_pct: Decimal — maximum fractional increase (e.g., Decimal("0.25")).
     """
+    _clinical_warn("DosageGradientCheck")
     return (
         (E(new_dose) - E(current_dose) <= max_increase_pct * E(current_dose))
         .named("dosage_gradient_check")
@@ -247,6 +268,7 @@ def PediatricDoseBound(
         absolute_max: Decimal — hard absolute dose ceiling in the same unit as
             ``dose_per_kg x weight_kg`` (e.g., mg).
     """
+    _clinical_warn("PediatricDoseBound")
     return (
         (E(dose_per_kg) * E(weight_kg) <= absolute_max)
         .named("pediatric_dose_bound")

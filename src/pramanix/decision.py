@@ -127,6 +127,8 @@ def _build_decision_canonical(
     violated_invariants: Any,
     policy_name: str | None = None,
     error_domain: str | None = None,
+    stack_trace_hash: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the canonical dict used for :meth:`Decision._compute_hash`.
 
@@ -134,6 +136,12 @@ def _build_decision_canonical(
     import it directly — single source of truth for the canonical-field
     set and their serialisation rules.  Any change here is automatically
     reflected in both the library and the CLI with no risk of silent drift.
+
+    ``hash_alg`` is embedded in the canonical dict itself, so a verifier
+    reading an old record can detect the format and re-derive the correct
+    hash without guessing.  The current format is ``sha256-v2``; ``sha256-v1``
+    records (without ``stack_trace_hash`` / ``metadata``) are still verifiable
+    by the CLI via backward-compatible re-computation (#198).
 
     Args:
         allowed:             ``Decision.allowed`` as a plain ``bool``.
@@ -145,8 +153,12 @@ def _build_decision_canonical(
         violated_invariants: Iterable of invariant label strings.
         policy_name:         Human-readable policy class name.
         error_domain:        Operational fault domain string or ``None``.
-                             Included in the hash so on-call routing fields
-                             cannot be forged in the wire format (#150).
+        stack_trace_hash:    SHA-256 hex digest of the exception traceback, or
+                             ``None``.  Authenticated so callers cannot swap the
+                             fault fingerprint post-hoc (#198).
+        metadata:            Caller-supplied key/value pairs.  Authenticated so
+                             an attacker cannot inject arbitrary metadata into a
+                             verified audit record (#198).
 
     Returns:
         Canonical ``dict`` ready for :func:`_canonical_bytes`.
@@ -155,10 +167,12 @@ def _build_decision_canonical(
         "allowed": bool(allowed),
         "error_domain": str(error_domain) if error_domain is not None else None,
         "explanation": str(explanation or ""),
-        "hash_alg": "sha256-v1",
+        "hash_alg": "sha256-v2",
         "intent_dump": _make_json_safe(dict(intent_dump) if intent_dump else {}),
+        "metadata": _make_json_safe(dict(metadata) if metadata else {}),
         "policy": str(policy or ""),
         "policy_name": str(policy_name or ""),
+        "stack_trace_hash": str(stack_trace_hash) if stack_trace_hash is not None else None,
         "state_dump": _make_json_safe(dict(state_dump) if state_dump else {}),
         "status": str(status or ""),
         "violated_invariants": sorted(str(v) for v in (violated_invariants or ())),
@@ -446,8 +460,10 @@ class Decision:
             error_domain=self.error_domain,
             explanation=self.explanation,
             intent_dump=self.intent_dump,
+            metadata=self.metadata,
             policy=policy,
             policy_name=self.policy_name,
+            stack_trace_hash=self.stack_trace_hash,
             state_dump=self.state_dump,
             status=status,
             violated_invariants=self.violated_invariants,

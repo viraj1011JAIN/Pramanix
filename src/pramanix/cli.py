@@ -767,6 +767,11 @@ def _cmd_audit_verify(args: argparse.Namespace) -> int:
 def _recompute_hash(record: dict[str, Any]) -> str:
     """Recompute decision_hash from a JSONL audit record.
 
+    Supports both ``sha256-v1`` (legacy — 10 canonical fields) and
+    ``sha256-v2`` (current — adds ``stack_trace_hash`` and ``metadata``)
+    by inspecting ``record["hash_alg"]``.  Old records re-hash correctly
+    without requiring migration (#198 backward-compat).
+
     Delegates to :func:`pramanix.decision._build_decision_canonical` and
     :func:`pramanix.decision._canonical_bytes` — the same functions used by
     :meth:`Decision._compute_hash` — guaranteeing byte-for-byte determinism
@@ -776,17 +781,41 @@ def _recompute_hash(record: dict[str, Any]) -> str:
 
     from pramanix.decision import _build_decision_canonical, _canonical_bytes
 
-    canonical = _build_decision_canonical(
-        allowed=bool(record.get("allowed", False)),
-        error_domain=record.get("error_domain"),
-        explanation=str(record.get("explanation", "")),
-        intent_dump=record.get("intent_dump") or {},
-        policy=str(record.get("policy", "")),
-        policy_name=record.get("policy_name"),
-        state_dump=record.get("state_dump") or {},
-        status=str(record.get("status", "")),
-        violated_invariants=record.get("violated_invariants") or [],
-    )
+    hash_alg = record.get("hash_alg", "sha256-v1")
+
+    if hash_alg == "sha256-v1":
+        # Legacy format: sha256-v1 did NOT include metadata or stack_trace_hash.
+        # Re-build using only the original 10-field set so the hash matches.
+        canonical: dict[str, Any] = {
+            "allowed": bool(record.get("allowed", False)),
+            "error_domain": record.get("error_domain"),
+            "explanation": str(record.get("explanation", "")),
+            "hash_alg": "sha256-v1",
+            "intent_dump": record.get("intent_dump") or {},
+            "policy": str(record.get("policy", "")),
+            "policy_name": str(record.get("policy_name") or ""),
+            "state_dump": record.get("state_dump") or {},
+            "status": str(record.get("status", "")),
+            "violated_invariants": sorted(
+                str(v) for v in (record.get("violated_invariants") or [])
+            ),
+        }
+    else:
+        # sha256-v2 (current): all 12 canonical fields including metadata and
+        # stack_trace_hash — both must be authenticated to prevent field injection.
+        canonical = _build_decision_canonical(
+            allowed=bool(record.get("allowed", False)),
+            error_domain=record.get("error_domain"),
+            explanation=str(record.get("explanation", "")),
+            intent_dump=record.get("intent_dump") or {},
+            metadata=record.get("metadata") or {},
+            policy=str(record.get("policy", "")),
+            policy_name=record.get("policy_name"),
+            stack_trace_hash=record.get("stack_trace_hash"),
+            state_dump=record.get("state_dump") or {},
+            status=str(record.get("status", "")),
+            violated_invariants=record.get("violated_invariants") or [],
+        )
     return hashlib.sha256(_canonical_bytes(canonical)).hexdigest()
 
 

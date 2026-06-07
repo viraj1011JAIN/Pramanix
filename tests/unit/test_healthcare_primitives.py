@@ -294,3 +294,74 @@ class TestPediatricDoseBound:
             timeout_ms=5_000,
         )
         assert result.sat is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PramanixClinicalWarning emission (#37)
+# DosageGradientCheck and PediatricDoseBound must warn at every call site.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestClinicalWarningEmission:
+    """Verify that safety-critical primitives emit PramanixClinicalWarning (#37)."""
+
+    def test_dosage_gradient_check_emits_clinical_warning(self) -> None:
+        import warnings
+
+        from pramanix.exceptions import PramanixClinicalWarning
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            DosageGradientCheck(_new_dose, _current_dose, Decimal("0.25"))
+
+        clinical = [x for x in w if issubclass(x.category, PramanixClinicalWarning)]
+        assert (
+            len(clinical) == 1
+        ), "DosageGradientCheck must emit exactly one PramanixClinicalWarning"
+        assert "DosageGradientCheck" in str(clinical[0].message)
+        assert "clinical" in str(clinical[0].message).lower()
+
+    def test_pediatric_dose_bound_emits_clinical_warning(self) -> None:
+        import warnings
+
+        from pramanix.exceptions import PramanixClinicalWarning
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PediatricDoseBound(_dose_per_kg, _weight_kg, Decimal("500"))
+
+        clinical = [x for x in w if issubclass(x.category, PramanixClinicalWarning)]
+        assert (
+            len(clinical) == 1
+        ), "PediatricDoseBound must emit exactly one PramanixClinicalWarning"
+        assert "PediatricDoseBound" in str(clinical[0].message)
+        assert "clinical" in str(clinical[0].message).lower()
+
+    def test_phi_least_privilege_does_not_emit_clinical_warning(self) -> None:
+        """Non-dosing primitives must NOT emit PramanixClinicalWarning."""
+        import warnings
+
+        from pramanix.exceptions import PramanixClinicalWarning
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            PHILeastPrivilege(_requestor_role, [1, 2])
+            ConsentActive(_consent_status, _consent_expiry, 1_735_000_000)
+            BreakGlassAuth(_emergency_flag, _approver_id)
+
+        clinical = [x for x in w if issubclass(x.category, PramanixClinicalWarning)]
+        assert clinical == [], "Non-dosing primitives must not emit PramanixClinicalWarning"
+
+    def test_clinical_warning_promotable_to_error(self) -> None:
+        """Operators can promote PramanixClinicalWarning to an error in CI."""
+        import warnings
+
+        from pramanix.exceptions import PramanixClinicalWarning
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", PramanixClinicalWarning)
+            try:
+                DosageGradientCheck(_new_dose, _current_dose, Decimal("0.25"))
+                assert False, "Should have raised PramanixClinicalWarning as error"
+            except PramanixClinicalWarning:
+                pass  # expected

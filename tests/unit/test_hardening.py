@@ -522,6 +522,158 @@ class TestPersistentMerkleAnchor:
         with pytest.raises(ValueError):
             PersistentMerkleAnchor(checkpoint_every=0)
 
+    # ── Cross-restart leaf persistence (#34) ──────────────────────────────────
+
+    def test_leaves_callback_fires_with_full_leaf_list(self):
+        """leaves_checkpoint_callback receives all leaf hashes at each checkpoint."""
+        from pramanix import PersistentMerkleAnchor
+
+        captured_leaves: list[list[str]] = []
+        anchor = PersistentMerkleAnchor(
+            checkpoint_every=3,
+            leaves_checkpoint_callback=lambda leaves: captured_leaves.append(list(leaves)),
+        )
+        for i in range(6):
+            anchor.add(f"decision-{i:04d}")
+
+        assert len(captured_leaves) == 2
+        assert len(captured_leaves[0]) == 3
+        assert len(captured_leaves[1]) == 6
+        # Snapshot must be a copy — mutating it must not affect the anchor
+        captured_leaves[0].clear()
+        assert len(anchor._leaves) == 6
+
+    def test_leaves_callback_fires_on_flush(self):
+        """leaves_checkpoint_callback is also called by flush() for trailing leaves."""
+        from pramanix import PersistentMerkleAnchor
+
+        captured: list[list[str]] = []
+        anchor = PersistentMerkleAnchor(
+            checkpoint_every=100,
+            leaves_checkpoint_callback=lambda leaves: captured.append(list(leaves)),
+        )
+        for i in range(7):
+            anchor.add(f"id-{i}")
+        assert captured == []
+        anchor.flush()
+        assert len(captured) == 1
+        assert len(captured[0]) == 7
+
+    def test_cross_restart_prove_works_after_restore(self):
+        """prove() and verify() work on an anchor restored from initial_leaves."""
+        from pramanix import PersistentMerkleAnchor
+
+        decision_ids = [f"dec-{i:04d}" for i in range(10)]
+        stored_leaves: list[str] = []
+        stored_root: list[str] = []
+
+        original = PersistentMerkleAnchor(
+            checkpoint_every=100,
+            checkpoint_callback=lambda root, _count: stored_root.append(root),
+            leaves_checkpoint_callback=lambda leaves: stored_leaves.extend(leaves),
+        )
+        for did in decision_ids:
+            original.add(did)
+        original.flush()
+
+        # Simulate process restart — create a fresh anchor from persisted state
+        restored = PersistentMerkleAnchor(
+            checkpoint_every=100,
+            initial_leaves=stored_leaves,
+            expected_root=stored_root[0],
+        )
+
+        # Every decision_id must still be provable after restart
+        for did in decision_ids:
+            proof = restored.prove(did)
+            assert proof is not None, f"prove({did!r}) returned None after restore"
+            assert proof.verify(), f"verify() failed for {did!r} after restore"
+            assert proof.verify_for_decision(did), f"verify_for_decision() failed for {did!r}"
+
+    def test_cross_restart_root_matches_original(self):
+        """Restored anchor produces the same root as the original."""
+        from pramanix import PersistentMerkleAnchor
+
+        stored_leaves: list[str] = []
+        original = PersistentMerkleAnchor(
+            checkpoint_every=100,
+            leaves_checkpoint_callback=lambda leaves: stored_leaves.extend(leaves),
+        )
+        for i in range(5):
+            original.add(f"id-{i}")
+        original.flush()
+
+        original_root = original.root()
+        restored = PersistentMerkleAnchor(initial_leaves=stored_leaves)
+        assert restored.root() == original_root
+
+    def test_expected_root_mismatch_raises_valueerror(self):
+        """init raises ValueError when initial_leaves produce a different root than expected_root."""
+        from pramanix import PersistentMerkleAnchor
+
+        stored_leaves: list[str] = []
+        anchor = PersistentMerkleAnchor(
+            checkpoint_every=100,
+            leaves_checkpoint_callback=lambda leaves: stored_leaves.extend(leaves),
+        )
+        for i in range(4):
+            anchor.add(f"id-{i}")
+        anchor.flush()
+
+        with pytest.raises(ValueError, match="expected_root"):
+            PersistentMerkleAnchor(
+                initial_leaves=stored_leaves,
+                expected_root="deadbeef" * 8,  # wrong root
+            )
+
+    def test_initial_leaves_empty_list_is_valid(self):
+        """initial_leaves=[] is accepted and produces an empty tree (root is None)."""
+        from pramanix import PersistentMerkleAnchor
+
+        anchor = PersistentMerkleAnchor(initial_leaves=[])
+        assert anchor.root() is None
+        assert len(anchor._leaves) == 0
+
+    def test_leaves_callback_snapshot_is_independent(self):
+        """Mutations to the captured snapshot do not affect the live tree."""
+        from pramanix import PersistentMerkleAnchor
+
+        captured: list[list[str]] = []
+        anchor = PersistentMerkleAnchor(
+            checkpoint_every=2,
+            leaves_checkpoint_callback=lambda leaves: captured.append(leaves),
+        )
+        anchor.add("a")
+        anchor.add("b")  # triggers checkpoint at count=2
+        assert len(captured) == 1
+        captured[0].append("INJECTED")  # mutate the snapshot
+        # Live tree must still have exactly 2 leaves
+        assert len(anchor._leaves) == 2
+
+    def test_both_callbacks_fire_on_same_checkpoint(self):
+        """checkpoint_callback and leaves_checkpoint_callback both fire for each checkpoint."""
+        from pramanix import PersistentMerkleAnchor
+
+        roots: list[str] = []
+        leaf_lists: list[list[str]] = []
+        anchor = PersistentMerkleAnchor(
+            checkpoint_every=3,
+            checkpoint_callback=lambda root, _count: roots.append(root),
+            leaves_checkpoint_callback=lambda leaves: leaf_lists.append(list(leaves)),
+        )
+        for i in range(3):
+            anchor.add(f"x-{i}")
+
+        assert len(roots) == 1
+        assert len(leaf_lists) == 1
+        # The root from checkpoint_callback must equal root computed from captured leaves
+        from pramanix.audit.merkle import MerkleAnchor
+
+        ref = MerkleAnchor()
+        for lh in leaf_lists[0]:
+            ref._leaves.append(lh)
+        assert ref.root() == roots[0]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # H06 — Big Data DoS  (max_input_bytes)
