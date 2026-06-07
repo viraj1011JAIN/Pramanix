@@ -88,9 +88,10 @@ def parse_llm_response(raw: str, *, model_name: str = "") -> dict[str, Any]:
     try:
         parsed = json.loads(cleaned)
     except json.JSONDecodeError as exc:
+        _snippet = raw[:50] + ("…" if len(raw) > 50 else "")
         raise ExtractionFailureError(
             f"{prefix}LLM returned unparseable JSON: {exc}. "
-            f"Raw response (first 300 chars): {raw[:300]!r}"
+            f"Raw response (first 50 chars): {_snippet!r}"
         ) from exc
 
     if not isinstance(parsed, dict):

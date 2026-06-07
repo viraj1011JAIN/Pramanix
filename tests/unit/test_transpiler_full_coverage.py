@@ -345,14 +345,14 @@ class TestTranspileRegexMatchOpZ3Exception:
         assert exc_info.value.__cause__ is not None
 
 
-# ── InvariantASTCache: get() with key in cache but missing from access_order ──
+# ── InvariantASTCache: get() moves entry to MRU position ─────────────────────
 
 
 class TestInvariantASTCacheGetValueError:
-    """Lines 816-817: access_order.remove(key) raises ValueError → pass."""
+    """get() retrieves cached entry and promotes it to most-recently-used position."""
 
-    def test_get_returns_entry_even_when_not_in_access_order(self) -> None:
-        """Line 816-817: key in _cache but not in _access_order → ValueError handled."""
+    def test_get_returns_entry_and_moves_to_mru(self) -> None:
+        """get() retrieves a directly-injected entry and moves it to MRU in OrderedDict."""
 
         class _PolicyA:
             pass
@@ -367,31 +367,26 @@ class TestInvariantASTCacheGetValueError:
             )
         ]
         key = (id(_PolicyA), "hash_a")
-        # Inject directly into cache without touching access_order
+        # Inject directly into the OrderedDict (at LRU position)
         InvariantASTCache._cache[key] = meta
-        # Ensure the key is NOT in access_order
-        if key in InvariantASTCache._access_order:
-            InvariantASTCache._access_order.remove(key)
 
         try:
             result = InvariantASTCache.get(_PolicyA, "hash_a")
             assert result is meta
-            # After get(), key should be in access_order
-            assert key in InvariantASTCache._access_order
+            # After get(), key should be at the MRU (last) position in the OrderedDict
+            assert list(InvariantASTCache._cache.keys())[-1] == key
         finally:
             InvariantASTCache._cache.pop(key, None)
-            if key in InvariantASTCache._access_order:
-                InvariantASTCache._access_order.remove(key)
 
 
-# ── InvariantASTCache: put() update with key missing from access_order ────────
+# ── InvariantASTCache: put() update path ──────────────────────────────────────
 
 
 class TestInvariantASTCachePutValueError:
-    """Lines 844-845: put() update path with key in cache but not in access_order."""
+    """put() update path: existing key is refreshed to MRU without duplicate insert."""
 
-    def test_put_update_handles_missing_key_in_access_order(self) -> None:
-        """Lines 844-845: key is in _cache but not in _access_order → ValueError → pass."""
+    def test_put_update_replaces_existing_entry(self) -> None:
+        """put() on an existing key replaces the value and moves it to MRU position."""
 
         class _PolicyB:
             pass
@@ -415,19 +410,18 @@ class TestInvariantASTCachePutValueError:
             )
         ]
         key = (id(_PolicyB), "hash_b")
-        # Inject into cache but NOT into access_order
+        # Inject into cache directly (at LRU position)
         InvariantASTCache._cache[key] = meta1
-        if key in InvariantASTCache._access_order:
-            InvariantASTCache._access_order.remove(key)
 
         try:
-            # put() detects key in cache → tries remove from access_order → ValueError handled
+            # put() detects existing key → updates in-place, moves to MRU
             InvariantASTCache.put(_PolicyB, "hash_b", meta2)
             assert InvariantASTCache.get(_PolicyB, "hash_b") is meta2
+            # Size must not have grown (update, not insert)
+            keys = [k for k in InvariantASTCache._cache if k == key]
+            assert len(keys) == 1
         finally:
             InvariantASTCache._cache.pop(key, None)
-            if key in InvariantASTCache._access_order:
-                InvariantASTCache._access_order.remove(key)
 
     def test_lru_eviction_removes_oldest_when_at_capacity(self) -> None:
         """Lines 851-853: LRU eviction path — oldest key removed when cache full."""
@@ -450,9 +444,8 @@ class TestInvariantASTCachePutValueError:
         original_max = InvariantASTCache._max_size
         try:
             InvariantASTCache._max_size = 1
-            # Clear any leftover state
+            # Clear any leftover state (OrderedDict — no separate _access_order)
             InvariantASTCache._cache.clear()
-            InvariantASTCache._access_order.clear()
 
             # Insert first entry
             InvariantASTCache.put(_PolicyC, "hash_c", meta)
@@ -468,17 +461,16 @@ class TestInvariantASTCachePutValueError:
         finally:
             InvariantASTCache._max_size = original_max
             InvariantASTCache._cache.clear()
-            InvariantASTCache._access_order.clear()
 
 
-# ── InvariantASTCache: clear(policy_cls=...) with key missing from access_order
+# ── InvariantASTCache: clear(policy_cls=...) removes only that class ──────────
 
 
 class TestInvariantASTCacheClearPolicyClass:
-    """Lines 877-878: clear(policy_cls) when key in cache but not in access_order."""
+    """clear(policy_cls) removes only entries for that class, leaving others intact."""
 
     def test_clear_specific_policy_class(self) -> None:
-        """Lines 877-878: ValueError handled when key not in access_order during clear."""
+        """clear(_PolicyE) removes only _PolicyE entries; _PolicyF is unaffected."""
 
         class _PolicyE:
             pass
@@ -498,16 +490,11 @@ class TestInvariantASTCacheClearPolicyClass:
         key_e = (id(_PolicyE), "hash_e")
         key_f = (id(_PolicyF), "hash_f")
 
-        # Inject _PolicyE into cache but NOT access_order (triggers lines 877-878)
+        # Inject both classes directly into the OrderedDict cache
         InvariantASTCache._cache[key_e] = meta
-        if key_e in InvariantASTCache._access_order:
-            InvariantASTCache._access_order.remove(key_e)
-
-        # Inject _PolicyF normally via put()
         InvariantASTCache.put(_PolicyF, "hash_f", meta)
 
         try:
-            # clear(_PolicyE) → remove from cache → access_order.remove() → ValueError → pass
             InvariantASTCache.clear(_PolicyE)
             assert InvariantASTCache.get(_PolicyE, "hash_e") is None
             # _PolicyF should be unaffected
@@ -515,9 +502,6 @@ class TestInvariantASTCacheClearPolicyClass:
         finally:
             InvariantASTCache._cache.pop(key_e, None)
             InvariantASTCache._cache.pop(key_f, None)
-            for k in [key_e, key_f]:
-                if k in InvariantASTCache._access_order:
-                    InvariantASTCache._access_order.remove(k)
 
     def test_clear_none_removes_all(self) -> None:
         """clear(None) clears the entire cache."""

@@ -922,6 +922,8 @@ class MerkleArchiver:
 
 def _build_root(leaf_hashes: list[str]) -> str:
     """Compute Merkle root using \x01-prefixed internal nodes (H-07 safe)."""
+    if not leaf_hashes:
+        raise ValueError("_build_root requires at least one leaf hash")
     level = leaf_hashes[:]
     while len(level) > 1:
         if len(level) % 2 == 1:

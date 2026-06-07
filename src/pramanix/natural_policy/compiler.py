@@ -629,19 +629,18 @@ class NaturalPolicyCompiler:
         try:
             schema = NaturalPolicySchema.model_validate(raw_dict)
         except PydanticValidationError as exc:
-            # Collect all validation errors into a single message
+            # Collect all validation errors into a single message.
+            # Do NOT include the raw policy text — it may contain sensitive
+            # business logic or PII that must not appear in error aggregators.
             errors = "; ".join(
                 f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors()
             )
             raise ExtractionFailureError(
-                f"LLM output failed schema validation. "
-                f"Validation errors: {errors}. "
-                f"Original policy: {original_english[:200]!r}"
+                f"LLM output failed schema validation. Validation errors: {errors}."
             ) from exc
         except (json.JSONDecodeError, TypeError, KeyError) as exc:
             raise ExtractionFailureError(
-                f"LLM output is not a valid JSON object: {exc}. "
-                f"Original policy: {original_english[:200]!r}"
+                f"LLM output is not a valid JSON object: {exc}."
             ) from exc
 
         return schema

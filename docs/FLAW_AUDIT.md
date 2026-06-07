@@ -2869,3 +2869,73 @@ Values like `"PENDING REVIEW"` or `"A/B test"` produce valid `^[a-z][a-z0-9_]*$`
 | 341 | 🔵 | `primitives/common.py` | `FieldMustEqual` label: sanitise non-identifier chars in value |
 
 ---
+
+# PART 27 — TWENTY-FIRST WAVE FIX LOG
+
+> Wave 21 — MEDIUM flaws #23, #105, #129, #173, #211, #226, #248, #249, #291.
+
+### ✅ FIXED — 🟡 #226 — `primitives/time.py` — No Maximum Epoch Value Guard
+
+`_validate_epoch()` added. `_bound_expr()` now calls it for all integer bounds before
+creating `_Literal` nodes. Values outside `[0, 253_402_300_799]` (year 1970–9999) raise
+`PolicyCompilationError`. Field bounds (runtime, not compile-time) are not validated here.
+
+### ✅ FIXED — 🟡 #248 — `translator/_json.py` — Raw LLM Response in Exception Messages
+
+`parse_llm_response()` now caps the raw response snippet at 50 characters with a `…`
+ellipsis. Full LLM output (which may contain PII from user input) no longer flows to
+Sentry/Datadog error aggregators.
+
+### ✅ FIXED — 🟡 #249 — `translator/bedrock.py` — Full Response Body in Exception Messages
+
+`_invoke_model()` caps the `repr(body)` snippet at 100 characters with `…` in the
+`ExtractionFailureError` message. Bedrock response bodies can contain upstream PII.
+
+### ✅ FIXED — 🟡 #291 — `audit/verifier.py` — Key Length in Characters, Not Bytes
+
+`DecisionVerifier.__init__()` now encodes `raw` to UTF-8 first and checks
+`len(encoded) < _MIN_KEY_LENGTH`. Multi-byte characters (é, ñ, 中, emoji) were
+previously over-counted as one unit per char instead of 2-4 bytes, allowing weak keys.
+
+### ✅ FIXED — 🟡 #173 — `audit/archiver.py` — `_build_root([])` Raises `IndexError`
+
+`_build_root()` now raises `ValueError("_build_root requires at least one leaf hash")`
+when called with an empty list, replacing the opaque `IndexError` from `level[0]`.
+
+### ✅ FIXED — 🟡 #129 — `integrations/semantic_kernel.py` — `redact_violations` Not Respected
+
+Both `verify()` and `verify_async()` now check `guard._config.redact_violations` before
+embedding `explanation` and `violated_invariants` in the JSON response. When `True`,
+both fields are replaced with `None`/`[]`.
+
+### ✅ FIXED — 🟡 #23 — `mesh/authenticator.py` — JWKS Thundering Herd on Refresh Failure
+
+Added `_jwks_fail_until: float = 0.0` and `_JWKS_BACKOFF_SECONDS = 30.0`. On any fetch
+failure, `_jwks_fail_until` is set to `now + 30s`. During the backoff window, concurrent
+requests either receive stale cached keys (if any exist) or raise `MeshAuthenticationError`
+with `reason="jwks_backoff"` immediately — no new HTTP fetches are issued.
+
+### ✅ FIXED — 🟡 #211 — `natural_policy/compiler.py` — Policy Text in Error Messages
+
+`_validate_schema()` no longer includes `original_english[:200]` in `ExtractionFailureError`
+messages. Policy text is sensitive business logic that must not appear in error aggregators.
+
+### ✅ FIXED — 🟡 #105 — `guard.py` — Oversized Request Rejections Not Counted in Metric
+
+Both `verify()` and `verify_async()` now increment `_decisions_total` with
+`status="payload_too_large"` before the early return. Previously, oversized requests
+bypassed the `finally` block where metrics are normally emitted.
+
+| # | Severity | File | Fix |
+|---|----------|------|-----|
+| 226 | 🟡 | `primitives/time.py` | Epoch bounds `[0, 253_402_300_799]` validated at compile time |
+| 248 | 🟡 | `translator/_json.py` | LLM response capped at 50 chars in error messages |
+| 249 | 🟡 | `translator/bedrock.py` | Response body capped at 100 chars in error messages |
+| 291 | 🟡 | `audit/verifier.py` | Key length checked in UTF-8 bytes, not characters |
+| 173 | 🟡 | `audit/archiver.py` | `_build_root([])` raises `ValueError` instead of `IndexError` |
+| 129 | 🟡 | `integrations/semantic_kernel.py` | `redact_violations=True` suppresses explanation/violations |
+| 23 | 🟡 | `mesh/authenticator.py` | 30-second backoff after JWKS fetch failure (thundering herd) |
+| 211 | 🟡 | `natural_policy/compiler.py` | Policy text removed from `ExtractionFailureError` messages |
+| 105 | 🟡 | `guard.py` | Oversized requests emit `payload_too_large` to Prometheus metric |
+
+---

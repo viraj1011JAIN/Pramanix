@@ -130,6 +130,9 @@ _SPIFFE_URI_RE: Final[re.Pattern[str]] = re.compile(
 #: adversarial request and is rejected before any parsing occurs.
 _MAX_TOKEN_BYTES: Final[int] = 16_384  # 16 KiB
 
+#: After a JWKS fetch failure, block retry for this many seconds (#23 thundering-herd).
+_JWKS_BACKOFF_SECONDS: float = 30.0
+
 # Type alias for a JWK dictionary parsed from a JWKS document.
 _JwkDict = dict[str, Any]
 
@@ -307,6 +310,9 @@ class MeshAuthenticator:
         # Prevents concurrent threads from issuing duplicate JWKS fetches when
         # the cache is expired.  Checked and set atomically under _jwks_lock.
         self._jwks_fetching: bool = False
+        # Thundering-herd guard (#23): after a failed fetch, block retry for
+        # _JWKS_BACKOFF_SECONDS.  0.0 means "no active backoff period".
+        self._jwks_fail_until: float = 0.0
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -543,13 +549,26 @@ class MeshAuthenticator:
         4. Store the result and clear the flag atomically under the lock.
         """
         with self._jwks_lock:
-            age = time.monotonic() - self._jwks_cache.fetched_at
+            now = time.monotonic()
+            age = now - self._jwks_cache.fetched_at
             if age < self._cache_ttl and self._jwks_cache.keys:
                 return list(self._jwks_cache.keys)
             if self._jwks_fetching and self._jwks_cache.keys:
                 # Another thread is refreshing; serve stale keys rather than
                 # issuing a duplicate HTTP request.
                 return list(self._jwks_cache.keys)
+            # Thundering-herd guard (#23): if the last fetch failed recently,
+            # serve stale keys if any exist; otherwise raise immediately to
+            # prevent a burst of requests all hitting the failing endpoint.
+            if self._jwks_fail_until > now:
+                if self._jwks_cache.keys:
+                    return list(self._jwks_cache.keys)
+                raise MeshAuthenticationError(
+                    f"JWKS endpoint {self._jwks_uri!r} is in backoff after a "
+                    f"recent fetch failure — retry in "
+                    f"{self._jwks_fail_until - now:.0f}s.",
+                    reason="jwks_backoff",
+                )
             # Claim the fetch slot (atomic because we're under the lock).
             self._jwks_fetching = True
 
@@ -563,6 +582,7 @@ class MeshAuthenticator:
             # keys forever — rotated signing keys are never picked up.
             with self._jwks_lock:
                 self._jwks_fetching = False
+                self._jwks_fail_until = time.monotonic() + _JWKS_BACKOFF_SECONDS
             raise
 
         with self._jwks_lock:

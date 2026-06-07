@@ -60,7 +60,7 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Union
 
-from pramanix.exceptions import PramanixSecurityWarning
+from pramanix.exceptions import PramanixSecurityWarning, PolicyCompilationError
 from pramanix.expressions import E, ExpressionNode, _Literal, _NowOp
 
 if TYPE_CHECKING:
@@ -76,6 +76,20 @@ __all__ = [
 # Union accepted for time bound parameters: int literal (safe) or Field (warned).
 _TimeBound = Union[int, "Field"]
 
+# Year 9999-12-31 23:59:59 UTC — same sentinel used in JWT validation (#217).
+_MAX_EPOCH: int = 253_402_300_799
+
+
+def _validate_epoch(value: int, param_name: str) -> None:
+    """Raise PolicyCompilationError if *value* is outside valid UNIX epoch range."""
+    if value < 0 or value > _MAX_EPOCH:
+        raise PolicyCompilationError(
+            f"Temporal primitive: {param_name}={value!r} is outside the valid "
+            f"UNIX epoch range [0, {_MAX_EPOCH}] (year 1970–9999). "
+            "Large values such as 99999999999 or negative values can cause "
+            "silent overflow on 32-bit Z3 contexts."
+        )
+
 
 def _bound_expr(bound: _TimeBound, param_name: str, caller_depth: int = 3) -> ExpressionNode:
     """Return an ExpressionNode for a time bound.
@@ -85,6 +99,7 @@ def _bound_expr(bound: _TimeBound, param_name: str, caller_depth: int = 3) -> Ex
       state; emits :class:`~pramanix.exceptions.PramanixSecurityWarning`.
     """
     if isinstance(bound, int):
+        _validate_epoch(bound, param_name)
         return ExpressionNode(_Literal(bound))
     # Field path — warn and fall back to caller-supplied resolution.
     warnings.warn(

@@ -121,12 +121,13 @@ class PramanixSemanticKernelPlugin:
                 "allowed": False,
             })
 
+        _redact = getattr(getattr(self._guard, "_config", None), "redact_violations", False)
         return json.dumps(
             {
                 "allowed": decision.allowed,
                 "status": str(decision.status),
-                "explanation": decision.explanation,
-                "violated_invariants": list(decision.violated_invariants),
+                "explanation": None if _redact else decision.explanation,
+                "violated_invariants": [] if _redact else list(decision.violated_invariants),
             }
         )
 
@@ -156,11 +157,12 @@ class PramanixSemanticKernelPlugin:
                 "allowed": False,
             })
 
+        _redact = getattr(getattr(self._guard, "_config", None), "redact_violations", False)
         return json.dumps(
             {
                 "allowed": decision.allowed,
                 "status": str(decision.status),
-                "explanation": decision.explanation,
-                "violated_invariants": list(decision.violated_invariants),
+                "explanation": None if _redact else decision.explanation,
+                "violated_invariants": [] if _redact else list(decision.violated_invariants),
             }
         )

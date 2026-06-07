@@ -1092,6 +1092,10 @@ class Guard:
                     ).encode()
                 )
                 if _payload_size > self._config.max_input_bytes:
+                    if self._config.metrics_enabled and _PROM_AVAILABLE:
+                        _decisions_total.labels(
+                            policy=self._policy.__name__, status="payload_too_large"
+                        ).inc()
                     return Decision.error(
                         reason=(
                             f"Input payload size ({_payload_size} bytes) exceeds "
@@ -1557,6 +1561,10 @@ class Guard:
                     ).encode()
                 )
                 if _payload_size_async > self._config.max_input_bytes:
+                    if self._config.metrics_enabled and _PROM_AVAILABLE:
+                        _decisions_total.labels(
+                            policy=self._policy.__name__, status="payload_too_large"
+                        ).inc()
                     _d = self._sign_decision(
                         Decision.error(
                             reason=(

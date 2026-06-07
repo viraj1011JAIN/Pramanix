@@ -64,12 +64,13 @@ class DecisionVerifier:
 
     def __init__(self, signing_key: str | None = None) -> None:
         raw = signing_key or os.environ.get("PRAMANIX_SIGNING_KEY", "")
-        if not raw or len(raw) < self._MIN_KEY_LENGTH:
+        encoded = raw.encode("utf-8") if raw else b""
+        if not encoded or len(encoded) < self._MIN_KEY_LENGTH:
             raise ValueError(
-                f"Signing key must be >= {self._MIN_KEY_LENGTH} characters. "
+                f"Signing key must be >= {self._MIN_KEY_LENGTH} bytes when encoded as UTF-8. "
                 'Generate one: python -c "import secrets; print(secrets.token_hex(64))"'
             )
-        self._key = raw.encode()
+        self._key = encoded
 
     def verify(self, token: str) -> VerificationResult:
         """Verify a JWS compact token. Never raises."""

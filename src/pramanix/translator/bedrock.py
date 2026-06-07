@@ -313,8 +313,11 @@ class BedrockTranslator(RedactedSecretsMixin):
             )
 
         if not text:
+            _body_repr = repr(body)
+            _body_snippet = _body_repr[:100] + ("…" if len(_body_repr) > 100 else "")
             raise ExtractionFailureError(
-                f"[{_safe_model_tag(self.model)}] Bedrock returned an empty response body: {body}"
+                f"[{_safe_model_tag(self.model)}] Bedrock returned an empty response body: "
+                f"{_body_snippet}"
             )
         return cast(str, text)
 
