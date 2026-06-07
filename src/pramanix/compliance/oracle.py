@@ -274,12 +274,12 @@ _CONTROL_ID_PATTERNS: dict[str, re.Pattern[str]] = {
     "SOC2": re.compile(r"^(CC|A|PI|P|C|CA)\d+\.\d+$"),
     # EU AI Act: Art.9, Art.13a, Recital 12, Annex I
     "EU_AI_ACT": re.compile(r"^(Art|Recital|Annex)[\s.]*\d+[a-zA-Z]?"),
-    # HIPAA CFR: §164.312(a)(1), §164.308(a)(1)(ii)(A)
-    "HIPAA": re.compile(r"^§\d+\.\d+"),
+    # HIPAA CFR: §164.308(a)(1), §164.312(a)(1)(ii)(A) — subsections use (letter/digits)
+    "HIPAA": re.compile(r"^§\d+\.\d+(\([a-zA-Z0-9]+\))*"),
     # NIST AI RMF: GOVERN-1.1, MAP-2.1, MEASURE-2.5, MANAGE-3.2
     "NIST_AI_RMF": re.compile(r"^(GOVERN|MAP|MEASURE|MANAGE)-\d+\.\d+$"),
-    # ISO/IEC 42001: Clause 6.1, Annex A.6.2.1, Annex B.1
-    "ISO_42001": re.compile(r"^(Clause|Annex)\s+[A-Za-z0-9]+"),
+    # ISO/IEC 42001: Clause 6.1, Annex A.6.2.1, Annex B.1 — allow dots in ref
+    "ISO_42001": re.compile(r"^(Clause|Annex)\s+[A-Za-z0-9][A-Za-z0-9.]*"),
     # GDPR: Art.5, Art.25, Art.35, Recital 4
     "GDPR": re.compile(r"^(Art|Recital)[\s.]*\d+[a-zA-Z]?"),
 }

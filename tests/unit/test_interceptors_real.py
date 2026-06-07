@@ -250,7 +250,7 @@ class TestKafkaConsumerRealPaths:
 
         consumer = PramanixKafkaConsumer._for_testing(
             None,
-            guard=guard,
+            guard=_GUARD,
             intent_extractor=lambda m: {},
         )
         consumer.close()  # must not raise

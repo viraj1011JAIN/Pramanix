@@ -48,14 +48,14 @@ from pramanix.translator.redundant import (
     extract_with_consensus,
 )
 from tests.helpers.real_protocols import (
+    _anthropic_status_exc,
     _AnthropicCompatClient,
     _AnthropicErrorMessagesNS,
+    _openai_status_exc,
+    _openai_timeout_exc,
     _OpenAICompatClient,
     _RaisingTranslator,
     _RecordingTranslator,
-    _anthropic_status_exc,
-    _openai_status_exc,
-    _openai_timeout_exc,
 )
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -430,7 +430,7 @@ class TestExtractWithConsensus:
 
     @pytest.mark.asyncio
     async def test_lenient_non_critical_mismatch_passes(self) -> None:
-        """lenient: non-critical field disagrees → passes; result from model A."""
+        """lenient: non-critical field disagrees → passes; disagreeing field excluded."""
         t_a = _RecordingTranslator({"amount": "50", "recipient": "alice"}, model="a")
         t_b = _RecordingTranslator({"amount": "50", "recipient": "ALICE"}, model="b")
         result = await extract_with_consensus(
@@ -441,7 +441,9 @@ class TestExtractWithConsensus:
             critical_fields=frozenset({"amount"}),
         )
         assert result["amount"] == Decimal("50")
-        assert result["recipient"] == "alice"
+        # "alice" vs "ALICE" are raw-unequal despite semantic equality, so the field
+        # is excluded to prevent injection through unverified non-critical values.
+        assert "recipient" not in result
 
     @pytest.mark.asyncio
     async def test_lenient_no_critical_fields_acts_like_strict_keys(self) -> None:

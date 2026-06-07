@@ -118,7 +118,7 @@ class TestPramanixMiddleware:
     def test_no_content_type_header_returns_415(self) -> None:
         client = TestClient(_make_app())
         # Remove default Content-Type by using bytes directly without header
-        resp = client.post("/", data=b"{}")
+        client.post("/", data=b"{}")
         # starlette testclient adds form content-type for data=; use content= for raw
         # Just test with wrong content type
         resp2 = client.post("/", content=b"x", headers={"Content-Type": "text/html"})
@@ -175,10 +175,8 @@ class TestPramanixMiddleware:
         """When starlette is available (which it is), __init__ succeeds.
         We test the guard is created by calling the middleware normally."""
         app = _make_app()
-        middleware = None
         # Access the middleware stack to confirm it's a PramanixMiddleware instance
-        for m in app.middleware_stack.__class__.__mro__:
-            break  # just check the app built without error
+        assert app.middleware_stack.__class__.__mro__  # just check the app built without error
         assert app is not None
 
     def test_block_with_redact_violations(self) -> None:
@@ -225,7 +223,7 @@ class TestPramanixRoute:
         async def _handler(intent: dict, state: dict) -> dict:
             return {"processed": True}
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handler(intent={"amount": 10.0}, state={"balance": 500.0})
         )
         assert result["processed"] is True
@@ -236,7 +234,7 @@ class TestPramanixRoute:
             return {"processed": True}
 
         with pytest.raises(GuardViolationError):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 _handler(intent={"amount": 10000.0}, state={"balance": 500.0})
             )
 
@@ -245,7 +243,7 @@ class TestPramanixRoute:
         async def _handler(intent: dict, state: dict) -> dict:
             return {"processed": True}
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handler(intent={"amount": 10000.0}, state={"balance": 500.0})
         )
         # Returns a JSONResponse with status_code 403
@@ -286,7 +284,7 @@ class TestPramanixRoute:
             return {"amount": intent.get("amount", 0)}
 
         intent_obj = _TransferIntent(amount=10.0)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handler(intent=intent_obj, state={"balance": 500.0})
         )
         assert result["amount"] == 10.0
@@ -301,7 +299,7 @@ class TestPramanixRoute:
         async def _handler(intent: dict, state: dict) -> dict:
             return {"state_balance": state.get("balance", 0)}
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handler(intent={"amount": 5.0}, state=_State(balance=500.0))
         )
         assert result["state_balance"] == 500.0
@@ -312,7 +310,7 @@ class TestPramanixRoute:
             return {"ok": True}
 
         # Call with positional args (intent, state)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handler({"amount": 5.0}, {"balance": 500.0})
         )
         assert result["ok"] is True
@@ -325,7 +323,7 @@ class TestPramanixRoute:
             return {"ok": True}
 
         # With an empty intent the policy may block (missing required fields)
-        result = asyncio.get_event_loop().run_until_complete(_handler(intent=None, state={}))
+        result = asyncio.run(_handler(intent=None, state={}))
         # Result is either the handler output or a JSONResponse (403)
         assert result is not None
 

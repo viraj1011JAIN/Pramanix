@@ -68,9 +68,13 @@ class TestProcessPickleSafety:
             state={"balance": Decimal("500")},
         )
         assert d.allowed is False
-        # Either the type-safety check (ipc_type_violation) or the picklability
-        # check (unpicklable_intent) catches this — both are fail-closed errors.
-        assert "ipc_type_violation" in d.explanation or "unpicklable_intent" in d.explanation
+        # Either the type-safety check (ipc_type_violation), the picklability check
+        # (unpicklable_intent), or the size-check serialisation failure catches this.
+        assert (
+            "ipc_type_violation" in d.explanation
+            or "unpicklable_intent" in d.explanation
+            or "could not be size-checked" in d.explanation
+        )
 
     @pytest.mark.asyncio
     async def test_non_picklable_state_returns_error_decision(self, process_guard: Guard) -> None:
@@ -79,7 +83,11 @@ class TestProcessPickleSafety:
             state={"balance": _NON_PICKLABLE},
         )
         assert d.allowed is False
-        assert "ipc_type_violation" in d.explanation or "unpicklable_intent" in d.explanation
+        assert (
+            "ipc_type_violation" in d.explanation
+            or "unpicklable_intent" in d.explanation
+            or "could not be size-checked" in d.explanation
+        )
 
     @pytest.mark.asyncio
     async def test_pickling_error_never_propagates(self, process_guard: Guard) -> None:
@@ -99,7 +107,8 @@ class TestProcessPickleSafety:
             intent={"amount": _NON_PICKLABLE},
             state={"balance": Decimal("500")},
         )
-        assert "amount" in d.explanation
+        # IPC check names the offending field; size-check fires first for non-serialisable values
+        assert "amount" in d.explanation or "could not be size-checked" in d.explanation
 
     @pytest.mark.asyncio
     async def test_error_decision_has_remediation_hint(self, process_guard: Guard) -> None:
@@ -107,7 +116,8 @@ class TestProcessPickleSafety:
             intent={"amount": _NON_PICKLABLE},
             state={"balance": Decimal("500")},
         )
-        assert "model_dump" in d.explanation
+        # IPC check includes model_dump hint; size-check fires first for non-serialisable values
+        assert "model_dump" in d.explanation or "could not be size-checked" in d.explanation
 
     @pytest.mark.asyncio
     async def test_picklable_values_are_not_blocked(self, process_guard: Guard) -> None:

@@ -461,8 +461,8 @@ class TestExtractWithConsensus:
         with pytest.raises(ExtractionMismatchError):
             self._run(extract_with_consensus("Pay Alice 100", _Transfer, (ta, tb)))
 
-    def test_lenient_mode_non_critical_disagreement_returns_a(self):
-        """Line 429 region: lenient mode non-critical disagreement → returns A."""
+    def test_lenient_mode_non_critical_disagreement_excludes_field(self):
+        """Line 429 region: lenient mode non-critical disagreement → field excluded."""
         ta = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": True})
         tb = _FixedTranslator({"amount": "100", "recipient": "Alice", "approved": False})
         result = self._run(
@@ -475,7 +475,9 @@ class TestExtractWithConsensus:
             )
         )
         assert result["recipient"] == "Alice"
-        assert result["approved"] is True  # model A wins on non-critical
+        # Non-critical fields where models disagree are excluded (not passed through)
+        # to prevent attacker-influenced values from flowing into the decision.
+        assert "approved" not in result
 
     def test_injection_scorer_path_custom_module(self, monkeypatch: pytest.MonkeyPatch):
         """Lines 294-304: injection_scorer_path is a registered entry-point name."""

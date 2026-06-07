@@ -269,8 +269,9 @@ class TestOpenAICompatCoverage:
     @pytest.mark.asyncio
     async def test_tenacity_absent_raises_import_error(self) -> None:
         """tenacity package absent in extract() → ImportError with pip hint."""
-        from pramanix.translator.openai_compat import OpenAICompatTranslator
         from pydantic import BaseModel
+
+        from pramanix.translator.openai_compat import OpenAICompatTranslator
 
         class _S(BaseModel):
             amount: float
@@ -470,7 +471,7 @@ class TestLlamaCppCoverage:
         _llamacpp_mod._MODEL_CACHE.pop(cache_key, None)
         _llamacpp_mod._MODEL_CACHE[cache_key] = fake_llm
 
-        t = LlamaCppTranslator._for_testing(model_path=fake_path)
+        t = llama_cpp_cls._for_testing(model_path=fake_path)
 
         result = t._get_llm()
         assert (
@@ -852,7 +853,7 @@ class TestKafkaConsumerCoverage:
 
         c = PramanixKafkaConsumer._for_testing(
             None,
-            guard=guard,
+            guard=make_allow_guard(),
             intent_extractor=lambda m: {},
         )
         results = list(c.safe_poll())

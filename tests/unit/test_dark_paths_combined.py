@@ -387,9 +387,11 @@ class TestAsyncProcessNonPicklable:
             assert decision.status == SolverStatus.ERROR
             # C-3a type-safety check fires first (ipc_type_violation) for non-primitive
             # types; C-3b pickle check fires for types that pass C-3a but fail pickle.
+            # Size-check serialisation failure fires before both for non-JSON-serialisable values.
             assert (
                 "ipc_type_violation" in decision.explanation
                 or "unpicklable" in decision.explanation.lower()
+                or "could not be size-checked" in decision.explanation
             )
         finally:
             await guard.shutdown()

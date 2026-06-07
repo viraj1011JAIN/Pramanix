@@ -13,8 +13,7 @@ import hashlib
 
 import pytest
 
-from pramanix.decision import Decision, SolverStatus, _ERROR_DOMAIN_MAP
-
+from pramanix.decision import _ERROR_DOMAIN_MAP, Decision, SolverStatus
 
 # ── 1. _ERROR_DOMAIN_MAP coverage ─────────────────────────────────────────────
 
@@ -255,31 +254,32 @@ class TestWireFormat:
         assert restored.stack_trace_hash == original.stack_trace_hash
 
 
-# ── 6. Decision hash stability (error_domain not in canonical hash) ────────────
+# ── 6. Decision hash stability (error_domain IS in canonical hash) ────────────
 
 
 class TestDecisionHashStability:
-    """error_domain and stack_trace_hash must NOT affect decision_hash.
+    """error_domain IS included in decision_hash (#150 fix) to prevent forgery.
 
-    These are operational metadata — they don't change the policy outcome.
-    Adding them to the canonical hash would break audit replay for any decision
-    that predates the taxonomy fields.
+    On-call routing fields cannot be tampered with in the wire format:
+    a "system_fault" decision cannot be re-labelled "policy_violation" without
+    breaking the hash.  stack_trace_hash is NOT in the hash (opaque, per-pod).
     """
 
-    def test_same_decision_different_error_domain_has_same_hash(self) -> None:
+    def test_different_error_domain_produces_different_hash(self) -> None:
         d1 = Decision.error(reason="boom", error_domain="system_fault")
         d2 = Decision.error(reason="boom", error_domain="resource_exhaustion")
-        assert d1.decision_hash == d2.decision_hash
+        # error_domain is intentionally in the canonical hash (#150 anti-forgery)
+        assert d1.decision_hash != d2.decision_hash
 
     def test_same_decision_different_traceback_has_same_hash(self) -> None:
         d1 = Decision.error(reason="boom", traceback_str="tb A")
         d2 = Decision.error(reason="boom", traceback_str="tb B")
         assert d1.decision_hash == d2.decision_hash
 
-    def test_error_domain_not_in_decision_hash_input(self) -> None:
+    def test_same_error_domain_produces_same_hash(self) -> None:
         d_with = Decision.error(reason="x", traceback_str="tb", error_domain="system_fault")
         d_without = Decision.error(reason="x")
-        # Both have the same explanation, so hashes match
+        # d_without auto-populates error_domain="system_fault" from _ERROR_DOMAIN_MAP
         assert d_with.decision_hash == d_without.decision_hash
 
 

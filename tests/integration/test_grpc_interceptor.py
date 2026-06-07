@@ -43,9 +43,8 @@ For client-side:
 from __future__ import annotations
 
 import json
-import threading
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -63,8 +62,7 @@ class _EchoServicer:
         return request
 
     def EchoStream(self, request_iterator: Any, context: Any) -> Any:  # noqa: N802
-        for req in request_iterator:
-            yield req
+        yield from request_iterator
 
 
 def _build_method_descriptor(request_deserializer: Any, response_serializer: Any) -> Any:
@@ -108,7 +106,7 @@ class _AmountPolicy:
     amount: Any = __import__("pramanix.policy", fromlist=["Field"]).Field(
         "amount", Decimal, "Real"
     )
-    invariants = [
+    invariants: ClassVar[list[Any]] = [
         lambda: __import__("pramanix.expressions", fromlist=["E"]).E(
             __import__("pramanix.policy", fromlist=["Field"]).Field("amount", Decimal, "Real")
         )
@@ -117,14 +115,17 @@ class _AmountPolicy:
 
 
 def _make_guard() -> Any:
+    from pramanix.expressions import E
     from pramanix.guard import Guard
     from pramanix.guard_config import GuardConfig
-    from pramanix.policy import Field
-    from pramanix.expressions import E
+    from pramanix.policy import Field, Policy
 
-    class _Policy:
-        amount: Field = Field("amount", Decimal, "Real")
-        invariants = [lambda: E(_Policy.amount) <= Decimal("1000")]
+    class _Policy(Policy):
+        amount = Field("amount", Decimal, "Real")
+
+        @classmethod
+        def invariants(cls) -> list:  # type: ignore[override]
+            return [(E(cls.amount) <= Decimal("1000")).named("amount_limit")]
 
     return Guard(_Policy, config=GuardConfig(execution_mode="sync"))
 
@@ -249,7 +250,7 @@ def test_malformed_intent_returns_internal_not_crash(grpc_server_address: str) -
     )
     try:
         # Send non-JSON bytes to trigger intent extraction error.
-        resp = stub(b"not-json-at-all!@#$%")
+        stub(b"not-json-at-all!@#$%")
         # If guard treats {} as allowed (no policy fields matched), it may return OK.
         # Either OK or INTERNAL is acceptable — it must not crash.
     except grpc.RpcError as e:

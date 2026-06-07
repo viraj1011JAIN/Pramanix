@@ -278,14 +278,20 @@ class TestEvaluateImpl:
 
 
 class TestExtractInvariantSets:
-    def test_allowed_record_infers_evaluated_from_registry(self) -> None:
-        """Allowed record with no evaluated_invariants in metadata → inferred."""
+    def test_allowed_record_without_evaluated_invariants_has_no_matches(self) -> None:
+        """Allowed record with no evaluated_invariants → 0 controls matched.
+
+        The oracle does NOT infer evaluated invariants from the registry
+        (removed to prevent fraudulent attestations on ALLOWED records).
+        Guards must populate evaluated_invariants in metadata for precise
+        compliance coverage.
+        """
         oracle = ComplianceOracle()
         oracle.register_mapping(_FW, _mapping(invariant_label="infer_me"))
-        rec = _record(allowed=True)  # no metadata
+        rec = _record(allowed=True)  # no metadata — no evaluated_invariants
         att = oracle.evaluate_record(rec)
-        # The inferred evaluated set should include "infer_me" → control fires
-        assert att.total_controls_matched == 1
+        # No evaluated_invariants → no invariant match → no controls fired
+        assert att.total_controls_matched == 0
 
     def test_blocked_record_uses_violated_set(self) -> None:
         oracle = ComplianceOracle()

@@ -99,7 +99,7 @@ async def test_load_raises_when_key_not_found() -> None:
     # Key not in the dict → _FakeRedis.get() returns None
     redis = _FakeRedis({})
     loader = RedisStateLoader(redis_client=redis)
-    with pytest.raises(StateLoadError, match="No state found for sub="):
+    with pytest.raises(StateLoadError, match="No state found for the authenticated principal"):
         await loader.load(claims)
 
 

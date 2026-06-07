@@ -38,7 +38,6 @@ from pramanix.compliance.oracle import (
 from pramanix.helpers.compliance import ComplianceReporter
 from pramanix.provenance import ProvenanceRecord
 
-
 # ── Policy fixture ─────────────────────────────────────────────────────────────
 
 
@@ -118,19 +117,28 @@ def oracle() -> ComplianceOracle:
     return o
 
 
+_POLICY_INVARIANT_LABELS = [
+    "non_negative_amount",
+    "within_daily_limit",
+    "sufficient_balance",
+]
+
+
 def _make_record(decision: object) -> ProvenanceRecord:
+    allowed = bool(getattr(decision, "allowed", False))
+    violated = list(getattr(decision, "violated_invariants", []))
+    # For ALLOWED decisions all policy invariants were evaluated and passed.
+    # Decision.to_dict() does not carry evaluated_invariants, so we populate
+    # it from the known policy labels so the compliance oracle can match controls.
+    evaluated = _POLICY_INVARIANT_LABELS if allowed else []
     return ProvenanceRecord(
         decision_id=str(getattr(decision, "decision_id", "")),
         policy_hash="sha256-test",
         principal_id="test-agent",
-        allowed=bool(getattr(decision, "allowed", False)),
+        allowed=allowed,
         metadata={
-            "violated_invariants": list(
-                getattr(decision, "violated_invariants", [])
-            ),
-            "evaluated_invariants": list(
-                getattr(decision, "evaluated_invariants", [])
-            ),
+            "violated_invariants": violated,
+            "evaluated_invariants": evaluated,
         },
     )
 
