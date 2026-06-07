@@ -700,6 +700,37 @@ class Guard:
             )
         return (semver[0], semver[1], semver[2])
 
+    def _wal_write(self, decision: Decision) -> Decision:
+        """Write *decision* to the WAL sink; force BLOCK on any failure.
+
+        The WAL write is the only path where a failure causes a decision
+        upgrade from ALLOW → BLOCK (fail-closed durability guarantee).
+        """
+        try:
+            self._config.wal_sink.write(decision)  # type: ignore[union-attr]
+        except Exception as _wal_exc:
+            import logging as _wlog
+
+            _wlog.getLogger(__name__).error(
+                "pramanix.guard.wal_failure: WAL write failed for decision_id=%s "
+                "policy=%s error=%s — forcing BLOCK to preserve audit integrity.",
+                getattr(decision, "decision_id", "?"),
+                self._policy.__name__,
+                _wal_exc,
+                exc_info=True,
+            )
+            # Force BLOCK: re-sign a new error decision.
+            blocked = Decision.error(
+                reason=(
+                    "Write-Ahead Log failure: audit record could not be durably "
+                    "written before returning this decision. The action is blocked "
+                    "to preserve audit integrity (fail-closed). "
+                    f"WAL error: {type(_wal_exc).__name__}: {_wal_exc}"
+                )
+            )
+            return self._sign_decision(blocked)
+        return decision
+
     def _emit_to_sinks(self, decision: Decision) -> None:
         """Emit decision to all configured audit sinks. Never raises."""
         for sink in self._config.audit_sinks:
@@ -735,12 +766,15 @@ class Guard:
         """
         _t0 = time.perf_counter()
         decision = self._sign_decision(self._verify_core(intent, state, trusted_state))
+        # ── WAL write (synchronous durability guarantee) ───────────────────────
+        # MUST happen before audit sinks and before returning. If the WAL write
+        # fails, force BLOCK — an ALLOW is mathematically incapable of reaching
+        # the caller until the audit record is confirmed durable on disk.
+        if self._config.wal_sink is not None:
+            decision = self._wal_write(decision)
         # ── Audit BEFORE timing pad ────────────────────────────────────────────
         # Emit to audit sinks FIRST — before the timing pad — so the decision is
-        # durably recorded even if the process crashes or is killed during the
-        # sleep window.  The sink time counts toward the min_response_ms budget,
-        # which is correct: attackers cannot use sink latency as a timing oracle
-        # since any remaining budget is consumed by the sleep below.
+        # recorded even if the process crashes during the sleep window.
         self._emit_to_sinks(decision)
         # ── Timing jitter buffer (side-channel mitigation) ─────────────────────
         # Loop until the minimum has truly elapsed.  time.sleep() can return
@@ -1631,8 +1665,7 @@ class Guard:
             conflicting = intent_values.keys() & state_values.keys()
             if conflicting:
                 _log.warning(
-                    "pramanix.guard: intent and state share conflicting keys "
-                    "for policy=%s: %s",
+                    "pramanix.guard: intent and state share conflicting keys " "for policy=%s: %s",
                     self._policy.__name__,
                     sorted(conflicting),
                 )

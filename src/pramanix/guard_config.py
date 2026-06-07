@@ -637,6 +637,34 @@ class GuardConfig:
     The flag name is intentionally verbose so that a security review catches it.
     """
 
+    wal_sink: Any | None = field(default=None)
+    """Optional :class:`~pramanix.wal.WalAuditSink` for synchronous, durable
+    audit writes (Write-Ahead Log).
+
+    When set, :meth:`~pramanix.guard.Guard.verify` blocks on
+    ``wal_sink.write(decision)`` **before** returning to the caller.  If the
+    WAL write fails for any reason, Guard force-converts the decision to
+    ``BLOCK`` — an ALLOW is mathematically incapable of reaching the caller
+    until the audit record is confirmed durable.
+
+    This closes the "Ephemeral Active Ledger" gap (Deferral 1): RAM-buffered
+    decisions can no longer be lost due to OOM-kill or power failure.
+
+    Use :class:`~pramanix.wal.PostgresWalSink` for SQL durable writes
+    (``synchronous_commit=local``), :class:`~pramanix.wal.KafkaWalSink` for
+    Kafka ``acks=all`` delivery, or :class:`~pramanix.wal.CompositeWalSink`
+    for dual-writer redundancy (SOC 2 / EU AI Act Article 12 compliance).
+
+    Default: ``None`` (WAL disabled; best-effort ``audit_sinks`` only).
+
+    Example::
+
+        from pramanix.wal import PostgresWalSink
+        wal = PostgresWalSink("postgresql://pramanix:secret@db:5432/pramanix")
+        wal.initialize()
+        config = GuardConfig(wal_sink=wal)
+    """
+
     def __post_init__(self) -> None:
         if self.solver_timeout_ms <= 0:
             raise ConfigurationError(

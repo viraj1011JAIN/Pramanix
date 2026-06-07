@@ -854,6 +854,8 @@ _EXPECTED_GUARDCONFIG_FIELDS: frozenset[str] = frozenset(
         # Phase 1 STOP 1+3: IPC seal key injection + timing protection (v1.0.0+)
         "result_seal_key",
         "allow_insecure_timing_leaks",
+        # Deferral 1: Write-Ahead Log for synchronous durable audit (v1.0.0+)
+        "wal_sink",
     }
 )
 
@@ -893,6 +895,8 @@ _EXPECTED_GUARDCONFIG_DEFAULTS: dict[str, Any] = {
     # Phase 1 STOP 1+3: IPC seal key injection + timing protection (v1.0.0+)
     "result_seal_key": None,
     "allow_insecure_timing_leaks": False,
+    # Deferral 1: Write-Ahead Log (v1.0.0+)
+    "wal_sink": None,
 }
 
 

@@ -2546,6 +2546,139 @@ Updated `test_consumed_count_returns_zero_on_connection_error` → now
 
 ---
 
+## ✅ FIXED — Deferral 1 — Ephemeral Active Ledger (Audit WAL Gap)
+
+**Severity: CRITICAL (SOC 2 Type II / EU AI Act Article 12 compliance blocker)**
+**Files: `src/pramanix/wal.py` (new), `src/pramanix/exceptions.py`, `src/pramanix/guard_config.py`, `src/pramanix/guard.py`**
+
+### Architectural Gap
+
+Before this fix, `AuditSink.emit()` was fire-and-forget: the Guard returned an ALLOW decision to the caller
+*before* any audit record was durably persisted. A process crash, OOM-kill, or network partition between
+`return decision` and `emit()` meant the ALLOW was acted on with no durable audit trail — a direct violation
+of SOC 2 Type II Criteria CC7.2 and EU AI Act Article 12 (audit log integrity).
+
+### Fix: Write-Ahead Log (synchronous durability guarantee)
+
+Introduced `WalAuditSink` protocol + three implementations in `src/pramanix/wal.py`:
+
+- **`PostgresWalSink`**: asyncpg pool on a dedicated background event loop thread.
+  Writes inside a transaction with `SET LOCAL synchronous_commit = local` — Postgres flushes WAL to
+  local disk *before* the COMMIT returns. The `Guard.verify()` call is mathematically incapable of
+  returning ALLOW until Postgres confirms durable write.
+  Two-phase export: `pending_export()` / `mark_exported()` for batch transfer to S3/BigQuery.
+  DDL uses `ON CONFLICT DO NOTHING` for idempotent duplicate writes.
+
+- **`KafkaWalSink`**: confluent-kafka with `acks=all` (all in-sync replicas confirm).
+  `produce()` → blocking `flush(timeout)` → delivery callback error check.
+
+- **`CompositeWalSink`**: fan-out to multiple sinks; raises `WalWriteError` if any sink fails.
+
+- **`InMemoryWalSink`**: testing only; raises `ConfigurationError` in `PRAMANIX_ENV=production`;
+  emits `UserWarning`; `raise_after` for failure simulation; `max_entries` eviction; thread-safe.
+
+### Fail-Closed Guarantee
+
+`Guard._wal_write()` wraps every `wal_sink.write()` call. If the write raises for *any* reason:
+1. Logs structured error at ERROR level with `decision_id` and WAL error details.
+2. Force-converts the decision to `BLOCK` with `explanation="Write-Ahead Log failure: ..."`.
+3. Returns the BLOCK to the caller — an ALLOW is physically incapable of reaching the caller
+   unless the audit record is confirmed durable.
+
+### API Surface
+
+```python
+config = GuardConfig(wal_sink=PostgresWalSink("postgresql://..."))
+```
+
+`wal_sink=None` (default) preserves backwards compatibility — WAL is opt-in.
+
+### New Exception
+
+`WalWriteError(PramanixError)` added to `pramanix.exceptions` with `decision_id` and `backend` attributes.
+
+### Tests
+
+- `tests/unit/test_wal.py` — 17 unit tests covering all sinks, fail-closed guarantee, production env guard,
+  thread safety, composite fan-out, and `WalWriteError` attributes.
+- `tests/integration/test_postgres_wal.py` — 7 integration tests with real asyncpg + Postgres 16:
+  durable write, block recorded, idempotent duplicate, protocol check, export lifecycle, concurrent writes,
+  composite dual write.
+
+---
+
+## ✅ FIXED — Deferral 2 — Durable Human-in-the-Loop Orchestration
+
+**Severity: CRITICAL (EU AI Act Article 14 / NIST AI RMF GOVERN compliance blocker)**
+**Files: `src/pramanix/oversight/workflow.py`**
+
+### Architectural Gap
+
+The existing `PostgresApprovalWorkflow` had `approve()` / `reject()` / `check()` but no way to *pause* an
+agent workflow and resume it after a human decision — especially across server restarts or different processes.
+An agent calling `request_approval()` got an `OversightRequiredError` but had no framework-level mechanism
+to block until a reviewer acted. Callers had to implement their own (typically broken) polling loops.
+The `InMemoryApprovalWorkflow` had no cross-process or cross-server capability whatsoever.
+
+### Fix: `wait_for_decision()` — Stateless Cross-Server Resume
+
+Added three new public methods to `PostgresApprovalWorkflow`:
+
+**`wait_for_decision(request_id, *, timeout_s=300.0, poll_interval_s=2.0) → ApprovalDecision`**
+
+Synchronous blocking call. Any server — including a fresh restart — can call this with just the
+`request_id` and resume the paused workflow. Poll loop queries `pramanix_approval_decisions` at
+`poll_interval_s` intervals. Returns `ApprovalDecision` with `status=APPROVED/REJECTED/REVOKED`, or
+a synthetic `TIMEOUT` decision when `timeout_s` elapses without a reviewer action.
+
+Postgres is the source of truth: a server crash between `request_approval()` and `wait_for_decision()`
+loses nothing — the request row survives in Postgres.
+
+**`revoke(request_id, *, reviewer_id, comment="") → OversightRecord`**
+
+Revoke a pending approval with distributed locking. Uses `SELECT FOR UPDATE` (already present in
+`_decide()`) to prevent concurrent approve+revoke races. Returns `OversightRecord` with `status=REVOKED`.
+
+**Internal `_check_decision_row(request_id)` async helper**
+
+Single non-blocking Postgres poll: `SELECT status, reviewer_id, comment, decided_at FROM
+pramanix_approval_decisions WHERE request_id = $1`. Returns `ApprovalDecision | None`.
+
+### Race Condition Prevention
+
+`_decide()` already used `SELECT ... FOR UPDATE` — the distributed lock was already correct.
+No new race conditions introduced. Concurrent `approve()` calls: exactly one succeeds, rest raise
+`KeyError("already been decided")`.
+
+### Usage Pattern
+
+```python
+try:
+    workflow.request_approval(principal_id="agent-001", action="wire $500,000", ...)
+except OversightRequiredError as exc:
+    request_id = exc.request_id
+    # Persist request_id to Redis/DB so any server can resume.
+
+# On ANY server, even after restart:
+decision = workflow.wait_for_decision(request_id, timeout_s=86400)
+if decision.status == ApprovalStatus.APPROVED:
+    execute_wire_transfer()
+```
+
+### Tests
+
+- `tests/integration/test_postgres_oversight_wait.py` — 7 integration tests with real asyncpg + Postgres 16:
+  wait→approved, wait→rejected, timeout fires correctly, cross-server resume (two workflow instances,
+  same pool), concurrent approve only one wins (SELECT FOR UPDATE), revoke prevents approve,
+  check() consistent with wait_for_decision().
+
+| # | Severity | File | Fix |
+|---|----------|------|-----|
+| Deferral 1 | 🔴 | `wal.py` (new) + `guard.py` + `guard_config.py` + `exceptions.py` | WAL: synchronous durable audit before ALLOW returns |
+| Deferral 2 | 🔴 | `oversight/workflow.py` | HITL: `wait_for_decision()` + `revoke()` + cross-server resume |
+
+---
+
 ## CONFIRMED CLEAN (Explicitly Verified)
 
 - `os.system(` — none in `src/`

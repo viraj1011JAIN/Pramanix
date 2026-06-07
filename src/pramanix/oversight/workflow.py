@@ -45,7 +45,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from pramanix.exceptions import OversightRequiredError
 
@@ -965,7 +965,7 @@ class RedisApprovalWorkflow:
         if raw is None:
             return False
         d = json.loads(raw)
-        return d.get("status") == ApprovalStatus.APPROVED.value
+        return bool(d.get("status") == ApprovalStatus.APPROVED.value)
 
     def pending(self) -> list[ApprovalRequest]:
         """Return all pending (not-yet-decided) requests still in Redis."""
@@ -1010,9 +1010,7 @@ class RedisApprovalWorkflow:
                 f"ApprovalRequest '{request_id}' not found (expired or already decided)."
             )
         if self._redis.get(self._dec_key(request_id)) is not None:
-            raise KeyError(
-                f"ApprovalRequest '{request_id}' has already been decided."
-            )
+            raise KeyError(f"ApprovalRequest '{request_id}' has already been decided.")
         req = self._req_from_dict(json.loads(raw_req))
         if req.is_expired():
             status = ApprovalStatus.TIMEOUT
@@ -1175,10 +1173,12 @@ class PostgresApprovalWorkflow:
         if _pool is None:
             try:
                 import importlib as _il
+
                 _il.import_module("asyncpg")
                 del _il
             except ImportError as exc:
                 from pramanix.exceptions import ConfigurationError
+
                 raise ConfigurationError(
                     "asyncpg is required for PostgresApprovalWorkflow. "
                     "Install it with: pip install 'pramanix[postgres]'"
@@ -1197,6 +1197,7 @@ class PostgresApprovalWorkflow:
         else:
             # Testing path: caller provides a pre-built pool; no loop thread needed.
             import asyncio as _asyncio
+
             try:
                 self._loop = _asyncio.get_event_loop()
             except RuntimeError:
@@ -1224,6 +1225,7 @@ class PostgresApprovalWorkflow:
     def _run_coro(self, coro: Any) -> Any:
         """Submit *coro* to the dedicated event loop and block until done."""
         import asyncio as _asyncio
+
         if self._loop is None:
             raise RuntimeError("PostgresApprovalWorkflow: event loop not started.")
         future = _asyncio.run_coroutine_threadsafe(coro, self._loop)
@@ -1234,6 +1236,7 @@ class PostgresApprovalWorkflow:
         if self._pool is not None:
             return self._pool
         import asyncpg as _asyncpg
+
         self._pool = await _asyncpg.create_pool(
             self._dsn, min_size=self._pool_min, max_size=self._pool_max
         )
@@ -1254,6 +1257,7 @@ class PostgresApprovalWorkflow:
 
     def close(self) -> None:
         """Close the asyncpg pool and stop the background event-loop thread."""
+
         async def _close_pool() -> None:
             if self._pool is not None:
                 await self._pool.close()
@@ -1327,9 +1331,13 @@ class PostgresApprovalWorkflow:
         Raises:
             KeyError: If *request_id* does not exist or has already been decided.
         """
-        return self._run_coro(
-            self._decide(request_id, ApprovalStatus.APPROVED,
-                         reviewer_id=reviewer_id, comment=comment)
+        return cast(
+            OversightRecord,
+            self._run_coro(
+                self._decide(
+                    request_id, ApprovalStatus.APPROVED, reviewer_id=reviewer_id, comment=comment
+                )
+            ),
         )
 
     def reject(
@@ -1340,22 +1348,161 @@ class PostgresApprovalWorkflow:
         comment: str = "",
     ) -> OversightRecord:
         """Record a rejection decision in Postgres."""
-        return self._run_coro(
-            self._decide(request_id, ApprovalStatus.REJECTED,
-                         reviewer_id=reviewer_id, comment=comment)
+        return cast(
+            OversightRecord,
+            self._run_coro(
+                self._decide(
+                    request_id, ApprovalStatus.REJECTED, reviewer_id=reviewer_id, comment=comment
+                )
+            ),
         )
 
     def check(self, request_id: str) -> bool:
         """Return True if *request_id* was APPROVED."""
-        return self._run_coro(self._check_async(request_id))
+        return cast(bool, self._run_coro(self._check_async(request_id)))
 
     def pending(self) -> list[ApprovalRequest]:
         """Return all non-expired, undecided requests from Postgres."""
-        return self._run_coro(self._pending_async())
+        return cast(list[ApprovalRequest], self._run_coro(self._pending_async()))
 
     def records(self) -> list[OversightRecord]:
         """Return all oversight records from Postgres."""
-        return self._run_coro(self._records_async())
+        return cast(list[OversightRecord], self._run_coro(self._records_async()))
+
+    def wait_for_decision(
+        self,
+        request_id: str,
+        *,
+        timeout_s: float = 300.0,
+        poll_interval_s: float = 2.0,
+    ) -> ApprovalDecision:
+        """Block until a reviewer decides *request_id* or the TTL expires.
+
+        This is the durable pause-resume mechanism for cross-server HITL
+        orchestration (Deferral 2 / EU AI Act Article 14 compliance).
+        Any server — not just the one that originally called
+        :meth:`request_approval` — can call this method with the stored
+        ``request_id`` and resume the paused agent workflow.
+
+        The poll loop queries Postgres at *poll_interval_s* intervals.  Postgres
+        is the source of truth, so the caller's server can crash and restart
+        without losing the approval state.
+
+        Args:
+            request_id:      UUID returned by :meth:`request_approval`.
+            timeout_s:       Maximum wall-clock seconds to wait.  When
+                             exceeded, returns a synthetic ``TIMEOUT`` decision.
+                             Default: 300 s (5 minutes).
+            poll_interval_s: Seconds between Postgres polls.  Lower values
+                             increase responsiveness at the cost of DB load.
+                             Default: 2 s.
+
+        Returns:
+            :class:`ApprovalDecision` with the reviewer's verdict or
+            ``ApprovalStatus.TIMEOUT`` if the deadline passed first.
+
+        Example::
+
+            try:
+                workflow.request_approval(
+                    principal_id="agent-001",
+                    action="wire $500,000",
+                    ...
+                )
+            except OversightRequiredError as exc:
+                request_id = exc.request_id
+                # Store request_id durably (Redis, DB) so any server can resume.
+
+            # On ANY server — even after restart:
+            decision = workflow.wait_for_decision(request_id, timeout_s=86400)
+            if decision.status == ApprovalStatus.APPROVED:
+                execute_wire_transfer()
+        """
+        return cast(
+            ApprovalDecision,
+            self._run_coro(
+                self._wait_for_decision_async(request_id, timeout_s, poll_interval_s)
+            ),
+        )
+
+    async def _wait_for_decision_async(
+        self,
+        request_id: str,
+        timeout_s: float,
+        poll_interval_s: float,
+    ) -> ApprovalDecision:
+        """Poll Postgres until decided or deadline."""
+        import asyncio as _asyncio
+
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            result = await self._check_decision_row(request_id)
+            if result is not None:
+                return result
+            sleep_s = min(poll_interval_s, max(0.0, deadline - time.time()))
+            if sleep_s <= 0:
+                break
+            await _asyncio.sleep(sleep_s)
+
+        # Deadline passed without a reviewer decision — record TIMEOUT.
+        _log.warning(
+            "oversight.pg.wait_timeout: request_id=%s timeout_s=%s",
+            request_id,
+            timeout_s,
+        )
+        return ApprovalDecision(
+            request_id=request_id,
+            status=ApprovalStatus.TIMEOUT,
+            reviewer_id="system:wait_timeout",
+            comment=f"wait_for_decision() timed out after {timeout_s}s.",
+        )
+
+    async def _check_decision_row(self, request_id: str) -> ApprovalDecision | None:
+        """Return the stored decision or None if not yet decided."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT status, reviewer_id, comment, decided_at
+                FROM pramanix_approval_decisions
+                WHERE request_id = $1
+                """,
+                request_id,
+            )
+        if row is None:
+            return None
+        return ApprovalDecision(
+            request_id=request_id,
+            status=ApprovalStatus(str(row["status"])),
+            reviewer_id=str(row["reviewer_id"]),
+            comment=str(row["comment"]),
+            decided_at=float(row["decided_at"]),
+        )
+
+    def revoke(
+        self,
+        request_id: str,
+        *,
+        reviewer_id: str,
+        comment: str = "",
+    ) -> OversightRecord:
+        """Revoke a pending approval request.
+
+        Distributed-safe: uses ``SELECT FOR UPDATE`` to prevent concurrent
+        approve + revoke race.  Returns an :class:`OversightRecord` with
+        ``status=REVOKED``.
+
+        Raises:
+            KeyError: If *request_id* not found or already decided.
+        """
+        return cast(
+            OversightRecord,
+            self._run_coro(
+                self._decide(
+                    request_id, ApprovalStatus.REVOKED, reviewer_id=reviewer_id, comment=comment
+                )
+            ),
+        )
 
     # ── Async internals ────────────────────────────────────────────────────────
 
@@ -1394,20 +1541,16 @@ class PostgresApprovalWorkflow:
         comment: str,
     ) -> OversightRecord:
         pool = await self._get_pool()
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn:  # noqa: SIM117
             async with conn.transaction():
                 row = await conn.fetchrow(
                     "SELECT * FROM pramanix_approval_requests WHERE request_id=$1 FOR UPDATE",
                     request_id,
                 )
                 if row is None:
-                    raise KeyError(
-                        f"ApprovalRequest '{request_id}' not found."
-                    )
+                    raise KeyError(f"ApprovalRequest '{request_id}' not found.")
                 if row["decided"]:
-                    raise KeyError(
-                        f"ApprovalRequest '{request_id}' has already been decided."
-                    )
+                    raise KeyError(f"ApprovalRequest '{request_id}' has already been decided.")
                 req = ApprovalRequest(
                     request_id=str(row["request_id"]),
                     principal_id=str(row["principal_id"]),
@@ -1427,7 +1570,8 @@ class PostgresApprovalWorkflow:
                     status = ApprovalStatus.TIMEOUT
                     _log.warning(
                         "oversight.pg.timeout: request_id=%s principal=%s",
-                        request_id, req.principal_id,
+                        request_id,
+                        req.principal_id,
                     )
                 dec = ApprovalDecision(
                     request_id=request_id,
@@ -1456,7 +1600,9 @@ class PostgresApprovalWorkflow:
                 )
         _log.info(
             "oversight.pg.decided: request_id=%s status=%s reviewer=%s",
-            request_id, status.value, reviewer_id,
+            request_id,
+            status.value,
+            reviewer_id,
         )
         return record
 
@@ -1487,20 +1633,22 @@ class PostgresApprovalWorkflow:
             created = float(row["created_at"])
             ttl = float(row["ttl_seconds"])
             if now <= created + ttl:  # only include non-expired
-                result.append(ApprovalRequest(
-                    request_id=str(row["request_id"]),
-                    principal_id=str(row["principal_id"]),
-                    action=str(row["action"]),
-                    decision_id=str(row["decision_id"]),
-                    policy_hash=str(row["policy_hash"]),
-                    intent_dump=json.loads(row["intent_dump"]),
-                    required_scopes=json.loads(row["required_scopes"]),
-                    blast_radius=str(row["blast_radius"]),
-                    reason=str(row["reason"]),
-                    created_at=created,
-                    ttl_seconds=ttl,
-                    metadata=json.loads(row["metadata"]),
-                ))
+                result.append(
+                    ApprovalRequest(
+                        request_id=str(row["request_id"]),
+                        principal_id=str(row["principal_id"]),
+                        action=str(row["action"]),
+                        decision_id=str(row["decision_id"]),
+                        policy_hash=str(row["policy_hash"]),
+                        intent_dump=json.loads(row["intent_dump"]),
+                        required_scopes=json.loads(row["required_scopes"]),
+                        blast_radius=str(row["blast_radius"]),
+                        reason=str(row["reason"]),
+                        created_at=created,
+                        ttl_seconds=ttl,
+                        metadata=json.loads(row["metadata"]),
+                    )
+                )
         return result
 
     async def _records_async(self) -> list[OversightRecord]:
@@ -1539,7 +1687,8 @@ class PostgresApprovalWorkflow:
             except Exception as exc:
                 _log.warning(
                     "oversight.pg.records: failed to decode record %s: %s",
-                    data.get("request_id", "?"), exc,
+                    data.get("request_id", "?"),
+                    exc,
                 )
         return recs
 
@@ -1599,6 +1748,7 @@ class WebhookNotificationChannel:
             import httpx as _httpx
         except ImportError as exc:
             from pramanix.exceptions import ConfigurationError
+
             raise ConfigurationError(
                 "httpx is required for WebhookNotificationChannel. "
                 "Install it with: pip install httpx"
@@ -1631,18 +1781,24 @@ class WebhookNotificationChannel:
                 if resp.status_code < 400:
                     _log.info(
                         "oversight.webhook.sent: request_id=%s status=%d",
-                        request.request_id, resp.status_code,
+                        request.request_id,
+                        resp.status_code,
                     )
                     return
                 _log.warning(
                     "oversight.webhook.http_error: request_id=%s status=%d attempt=%d/%d",
-                    request.request_id, resp.status_code, attempt + 1,
+                    request.request_id,
+                    resp.status_code,
+                    attempt + 1,
                     self._max_retries + 1,
                 )
             except Exception as exc:
                 _log.warning(
                     "oversight.webhook.send_error: request_id=%s attempt=%d/%d error=%s",
-                    request.request_id, attempt + 1, self._max_retries + 1, exc,
+                    request.request_id,
+                    attempt + 1,
+                    self._max_retries + 1,
+                    exc,
                 )
             attempt += 1
             if attempt <= self._max_retries:
@@ -1651,13 +1807,14 @@ class WebhookNotificationChannel:
         _log.error(
             "oversight.webhook.exhausted: request_id=%s all %d attempts failed — "
             "review portal must be checked manually",
-            request.request_id, self._max_retries + 1,
+            request.request_id,
+            self._max_retries + 1,
         )
 
     def _build_payload(self, request: ApprovalRequest) -> dict[str, Any]:
         """Build the webhook JSON payload from the approval request."""
         if self._payload_fn is not None:
-            return self._payload_fn(request)
+            return cast(dict[str, Any], self._payload_fn(request))
         return {
             "pramanix_event": "approval_required",
             "request_id": request.request_id,

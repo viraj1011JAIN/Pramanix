@@ -72,6 +72,7 @@ __all__ = [
     "TranspileError",
     "ValidationError",
     "VerificationError",
+    "WalWriteError",
     "WorkerError",
 ]
 
@@ -108,9 +109,7 @@ class InputTooLongError(PramanixError):
         # may contain PII (names, account numbers, medical info) that would
         # propagate to Sentry / Datadog / CloudWatch (#295).
         self.truncated_preview = truncated_preview
-        super().__init__(
-            f"Input too long: {actual} chars exceeds limit of {limit}."
-        )
+        super().__init__(f"Input too long: {actual} chars exceeds limit of {limit}.")
 
 
 # ── Policy definition errors (compile-time) ───────────────────────────────────
@@ -631,6 +630,34 @@ class ProvenanceError(PramanixError):
     ) -> None:
         self.decision_id = decision_id
         self.reason = reason
+        super().__init__(message)
+
+
+# ── Write-Ahead Log errors ────────────────────────────────────────────────────
+
+
+class WalWriteError(PramanixError):
+    """The Write-Ahead Log failed to durably record a decision.
+
+    Raised by :class:`~pramanix.wal.WalAuditSink` implementations when the
+    backing store (Postgres, Kafka, etc.) cannot confirm durable write.
+    Guard converts this into a forced BLOCK — an ALLOW is never returned to the
+    caller until WAL durability is confirmed.
+
+    Attributes:
+        decision_id:  UUID of the decision that could not be recorded.
+        backend:      Sink class name (e.g. ``"PostgresWalSink"``).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        decision_id: str = "",
+        backend: str = "",
+    ) -> None:
+        self.decision_id = decision_id
+        self.backend = backend
         super().__init__(message)
 
 
