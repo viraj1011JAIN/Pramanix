@@ -441,6 +441,16 @@ filterwarnings = [
     # asyncio.get_event_loop().run_until_complete() emit this; will be migrated
     # to asyncio.run() in a follow-up refactor.
     "ignore:There is no current event loop:DeprecationWarning",
+    # httpx DeprecationWarning for tests using data= instead of content=.
+    "ignore:Use 'content=<...>' to upload raw bytes:DeprecationWarning",
+    # PytestUnhandledThreadExceptionWarning from ppid-watchdog thread in worker
+    # tests: the test patches os._exit to raise SystemExit which propagates as
+    # a thread exception.  This is expected test infrastructure behavior.
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning",
+    # WorkerPool GC'd without shutdown() — test teardown warning, not a bug.
+    "ignore:WorkerPool GC.*without explicit shutdown:UserWarning",
+    # LangSmith integration warning — external tracing service not configured in CI.
+    "ignore:.*langsmith.*:UserWarning",
 ]
 
 [tool.coverage.run]

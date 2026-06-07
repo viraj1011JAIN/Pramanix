@@ -31,10 +31,9 @@ Design notes
 
 from __future__ import annotations
 
-import contextlib
 import enum
 import warnings
-from collections import deque
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass as _dataclass
 from decimal import Decimal
@@ -586,7 +585,7 @@ def transpile(
                     and isinstance(v, _Literal)
                     and isinstance(v.value, str)
                 ):
-                    enc = (promotions or {})[l.field.name]  # type: ignore[index]
+                    enc = (promotions or {})[l.field.name]
                     if v.value not in enc:
                         raise FieldTypeError(
                             f"String value {v.value!r} is not in the encoding table "
@@ -926,8 +925,9 @@ class InvariantASTCache:
 
     import threading as _threading
 
-    _cache: ClassVar[dict[tuple[int, str], list[InvariantMeta]]] = {}
-    _access_order: ClassVar[deque[tuple[int, str]]] = deque()  # ordered by last access
+    # OrderedDict provides O(1) move_to_end() for LRU bookkeeping — replaces the
+    # previous dict + deque pair whose deque.remove() was O(N) per cache hit (#91).
+    _cache: ClassVar[OrderedDict[tuple[int, str], list[InvariantMeta]]] = OrderedDict()
     _max_size: ClassVar[int] = 512
     _lock: ClassVar[Any] = _threading.Lock()
 
@@ -949,10 +949,8 @@ class InvariantASTCache:
         with cls._lock:
             entry = cls._cache.get(key)
             if entry is not None:
-                # Move to most-recently-used position.
-                with contextlib.suppress(ValueError):
-                    cls._access_order.remove(key)
-                cls._access_order.append(key)
+                # O(1) move to most-recently-used position (replaces O(N) deque.remove).
+                cls._cache.move_to_end(key)
             return entry
 
     @classmethod
@@ -975,20 +973,17 @@ class InvariantASTCache:
         key = (id(policy_cls), field_schema_hash)
         with cls._lock:
             if key in cls._cache:
-                # Update in place; refresh access order.
-                with contextlib.suppress(ValueError):
-                    cls._access_order.remove(key)
-                cls._access_order.append(key)
+                # Update in place; O(1) refresh to most-recently-used.
+                cls._cache.move_to_end(key)
                 cls._cache[key] = meta
                 return
 
-            # LRU eviction when at capacity.
-            while len(cls._cache) >= cls._max_size and cls._access_order:
-                oldest = cls._access_order.popleft()
-                cls._cache.pop(oldest, None)
+            # LRU eviction when at capacity: popitem(last=False) removes the
+            # oldest (least-recently-used) entry in O(1).
+            while len(cls._cache) >= cls._max_size:
+                cls._cache.popitem(last=False)
 
             cls._cache[key] = meta
-            cls._access_order.append(key)
 
     @classmethod
     def clear(cls, policy_cls: type | None = None) -> None:
@@ -1001,14 +996,10 @@ class InvariantASTCache:
         with cls._lock:
             if policy_cls is None:
                 cls._cache.clear()
-                cls._access_order.clear()
             else:
                 target_id = id(policy_cls)
-                keys_to_remove = [k for k in cls._cache if k[0] == target_id]
-                for k in keys_to_remove:
+                for k in [k for k in cls._cache if k[0] == target_id]:
                     del cls._cache[k]
-                    with contextlib.suppress(ValueError):
-                        cls._access_order.remove(k)
 
     @classmethod
     def size(cls) -> int:

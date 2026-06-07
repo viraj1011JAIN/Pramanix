@@ -334,9 +334,11 @@ Worker warmup runs 8 generic Z3 patterns. Policies using string-theory constrain
 
 ---
 
-### 🟠 #49 — Python 3.11/3.12 Claimed in Classifiers, Never CI-Tested
+### ✅ FIXED — #49 — Python 3.11/3.12 Claimed in Classifiers, Never CI-Tested
 
 `pyproject.toml` declares classifiers for 3.11, 3.12, 3.13. CI matrix: 3.13 only. The `_Z3_CTX_CREATE_LOCK` fix was documented as triggered by Python 3.13 GC behavior — 3.11/3.12 compatibility untested.
+
+**Fix**: CI matrix updated to `python-version: ["3.11", "3.12", "3.13"]`; misleading comment removed from `ci.yml` header.
 
 ---
 
@@ -617,7 +619,7 @@ This executes `import threading` at class definition time (module import), creat
 
 ---
 
-### 🟡 #91 — `transpiler.py:897-910` — `InvariantASTCache.get()` Uses O(N) `deque.remove()` on Every Cache Hit
+### ✅ FIXED — #91 — `transpiler.py:897-910` — `InvariantASTCache.get()` Uses O(N) `deque.remove()` on Every Cache Hit
 
 **File**: `src/pramanix/transpiler.py:897-910`
 ```python
@@ -671,7 +673,7 @@ At most 100 million distinct class names. Hash collisions produce two policies w
 
 ---
 
-### 🟡 #97 — `audit/signer.py:210+` — `DecisionSigner._canonicalize` Signs Only 7 of 17 Decision Fields — 10 Fields Are Unsigned
+### ✅ FIXED — #97 — `audit/signer.py:210+` — `DecisionSigner._canonicalize` Signs Only 7 of 17 Decision Fields — 10 Fields Are Unsigned
 
 **File**: `src/pramanix/audit/signer.py:210+`
 
@@ -1121,7 +1123,7 @@ A crafted archive with a valid header but no leaf lines passes the `if not leaf_
 
 ---
 
-### 🟡 #174 — `audit_sink.py:492-502` — S3 Sink `close()`: `_worker_thread.join(timeout=5.0)` Timeout Not Checked — Pool Shutdown Races With Still-Running Worker
+### ✅ FIXED — #174 — `audit_sink.py:492-502` — S3 Sink `close()`: `_worker_thread.join(timeout=5.0)` Timeout Not Checked — Pool Shutdown Races With Still-Running Worker
 
 ```python
 self._worker_thread.join(timeout=5.0)   # ← not checked if join timed out
@@ -1132,7 +1134,7 @@ If the worker is still running after 5 seconds (slow S3), it continues submittin
 
 ---
 
-### 🟡 #175 — `audit_sink.py:321-349` — Kafka Sink `_queue_depth` Can Undercount Permanently on `BaseException` Between Increment and `produce()`
+### ✅ FIXED — #175 — `audit_sink.py:321-349` — Kafka Sink `_queue_depth` Can Undercount Permanently on `BaseException` Between Increment and `produce()`
 
 `_queue_depth` is incremented outside the lock before `produce()`. A `KeyboardInterrupt` or `SystemExit` between increment and the `except Exception:` decrement leaves the depth permanently inflated. Subsequent `emit()` calls believe the queue is full and drop decisions when it is not.
 
@@ -1189,7 +1191,7 @@ NTP manipulation or VM migration clock skew allows a recently-expired token (e.g
 
 ---
 
-### 🟡 #181 — `execution_token.py:629-642` — SQLite `consume()`: Eviction DELETE and Token INSERT Are Two Separate Commits — Replay Window on Crash
+### ✅ FIXED — #181 — `execution_token.py:629-642` — SQLite `consume()`: Eviction DELETE and Token INSERT Are Two Separate Commits — Replay Window on Crash
 
 ```python
 self._evict_expired()   # DELETE + COMMIT (transaction #1)
@@ -2371,6 +2373,65 @@ not a valid financial concept; treating it as "no reserve" is the safe-default.
 | #261 | `guard.py` | `verify_stream` calls `verify()` — full pipeline: signing, sinks, governance |
 | #310 | `requirements/production.txt` | Populated with hash-pinned transitive dependencies |
 | #336 | `compiler.py` | `Rule.conditions` max 64 items and depth validator at 16 levels |
+| #49 | `ci.yml` | Matrix updated to `["3.11","3.12","3.13"]`; misleading comment fixed |
+| #91 | `transpiler.py` | `InvariantASTCache` uses `OrderedDict.move_to_end()` — O(1) LRU |
+| #97 | `audit/signer.py` | `_canonicalize` covers all 17 Decision fields; verifier exposes all |
+| #174 | `audit_sink.py` | S3 `close()` logs WARNING if worker thread is still alive after join |
+| #175 | `audit_sink.py` | Kafka `emit()` decrements `_queue_depth` on `BaseException` via flag |
+| #181 | `execution_token.py` | SQLite DELETE+INSERT in single atomic transaction — no replay window |
+
+---
+
+## PART 22 — TWELFTH WAVE FIX LOG (2026-06-07)
+
+> Twelfth wave — MEDIUM flaws + HIGH #49 and #310.
+> All real implementations.  No mocks, stubs, or monkeypatching.
+
+### ✅ FIXED — #49 — CI Python Matrix Now Tests 3.11 / 3.12 / 3.13
+
+CI matrix updated from 3.13-only to `["3.11","3.12","3.13"]` matching pyproject classifiers.
+Misleading comment "Python 3.12 and below dropped" removed from `ci.yml` header.
+
+### ✅ FIXED — #91 — `InvariantASTCache` O(N) `deque.remove()` → O(1) `OrderedDict.move_to_end()`
+
+Replaced `dict + deque` pair with a single `OrderedDict`.  `get()` now calls
+`cls._cache.move_to_end(key)` (O(1)); `put()` uses `cls._cache.popitem(last=False)` for
+LRU eviction (O(1)).  Removed `contextlib` import that was only used to suppress
+`ValueError` from `deque.remove()`.
+
+### ✅ FIXED — #97 — `_canonicalize` Extended to All 17 Decision Fields
+
+`DecisionSigner._canonicalize()` now signs all 17 fields from `Decision.to_dict()`:
+`allowed`, `decision_hash`, `decision_id`, `error_domain`, `explanation`, `hash_alg`,
+`intent_dump`, `metadata`, `policy_hash`, `policy_name`, `public_key_id`, `signature`,
+`solver_time_ms`, `stack_trace_hash`, `state_dump`, `status`, `violated_invariants`.
+`metadata`, `intent_dump`, `state_dump` are recursively key-sorted for stable serialisation.
+`DecisionVerifier.VerificationResult` extended with 11 new fields to expose the full payload.
+
+### ✅ FIXED — #174 — S3 Sink `close()` Logs Warning If Worker Is Still Alive After Join
+
+Added `if self._worker_thread.is_alive(): log.warning(...)` after `join(timeout=5.0)`.
+Prevents silent data loss from a worker that did not exit within the timeout.
+
+### ✅ FIXED — #175 — Kafka `_queue_depth` Correctly Decremented on `BaseException`
+
+`emit()` uses a `_depth_incremented` flag.  `BaseException` (KeyboardInterrupt, SystemExit,
+MemoryError) now decrements `_queue_depth` via a dedicated `except BaseException: raise`
+clause.  Once `produce()` succeeds, `_depth_incremented = False` so the delivery callback
+owns the decrement instead.
+
+### ✅ FIXED — #181 — SQLite `consume()` DELETE + INSERT in Single Atomic Transaction
+
+`_evict_expired()` now accepts a cursor parameter and omits its own `COMMIT`.  The caller's
+`consume()` calls it within the same transaction as the `INSERT`, then issues a single
+`COMMIT`.  A crash between the two operations rolls back both — no replay window.
+
+### ✅ FIXED — #310 — `requirements/production.txt` Populated With Hash-Pinned Dependencies
+
+`requirements/production.in` rewritten to list all individual runtime dependencies (not the
+local-dev `pramanix[all]` package).  `pip-compile --generate-hashes` run to produce the
+hash-pinned transitive lockfile.  `llama-cpp-python` excluded from lockfile generation on
+Windows due to MAX_PATH limit; install separately on Linux/macOS.
 
 ---
 

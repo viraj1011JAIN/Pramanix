@@ -36,6 +36,15 @@ _signing_failure_counter_lock = threading.Lock()
 _signing_failure_counter: Any = None
 
 
+def _sort_dict(d: Any) -> Any:
+    """Recursively sort dict keys for deterministic JSON serialisation."""
+    if isinstance(d, dict):
+        return {k: _sort_dict(v) for k, v in sorted(d.items())}
+    if isinstance(d, list):
+        return [_sort_dict(i) for i in d]
+    return d
+
+
 def _inc_signing_failure() -> None:
     """Increment pramanix_signing_failures_total Prometheus counter."""
     global _signing_failure_counter
@@ -227,19 +236,31 @@ class DecisionSigner:
     def _canonicalize(self, decision: Decision) -> dict[str, Any]:
         """Produce a deterministic canonical dict from a Decision.
 
-        Uses the exact key names returned by ``decision.to_dict()``.
-        ``iat`` is intentionally excluded from the signed payload — it is
-        non-deterministic (changes on every call) and is already captured
-        in ``SignedDecision.issued_at`` outside the HMAC boundary.  Including
-        it would make deterministic replay verification impossible.
+        Covers all 17 security-relevant fields from ``decision.to_dict()``.
+        ``iat`` is intentionally excluded — it is non-deterministic (changes
+        on every call) and is captured in ``SignedDecision.issued_at`` outside
+        the HMAC boundary; including it would make replay verification impossible.
+
+        ``metadata``, ``intent_dump``, and ``state_dump`` are JSON-sorted so
+        the canonical form is stable regardless of insertion order.
         """
         d = decision.to_dict()
         return {
-            "decision_id": str(d.get("decision_id", "")),
             "allowed": bool(d.get("allowed", False)),
+            "decision_hash": str(d.get("decision_hash") or ""),
+            "decision_id": str(d.get("decision_id", "")),
+            "error_domain": str(d.get("error_domain") or ""),
             "explanation": str(d.get("explanation", "")),
-            "policy_hash": str(d.get("policy_hash", "")),
+            "hash_alg": str(d.get("hash_alg") or ""),
+            "intent_dump": _sort_dict(d.get("intent_dump") or {}),
+            "metadata": _sort_dict(d.get("metadata") or {}),
+            "policy_hash": str(d.get("policy_hash") or ""),
+            "policy_name": str(d.get("policy_name") or ""),
+            "public_key_id": str(d.get("public_key_id") or ""),
+            "signature": str(d.get("signature") or ""),
             "solver_time_ms": float(d.get("solver_time_ms", 0)),
+            "stack_trace_hash": str(d.get("stack_trace_hash") or ""),
+            "state_dump": _sort_dict(d.get("state_dump") or {}),
             "status": str(d.get("status", "")),
             "violated_invariants": sorted(str(v) for v in d.get("violated_invariants", [])),
         }

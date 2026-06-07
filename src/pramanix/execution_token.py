@@ -579,11 +579,16 @@ class SQLiteExecutionTokenVerifier:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_expires ON consumed_tokens(expires_at)")
             self._conn.commit()
 
-    def _evict_expired(self) -> None:
-        """Delete expired rows.  Must be called under self._lock."""
-        cur = self._conn.cursor()
-        cur.execute("DELETE FROM consumed_tokens WHERE expires_at < ?", (self._clock(),))
-        self._conn.commit()
+    def _evict_expired(self, cursor: Any) -> None:
+        """Delete expired rows inside an already-open transaction.
+
+        Must be called under self._lock with an active cursor before the
+        caller's own COMMIT.  Folding the DELETE into the same transaction as
+        the INSERT that follows makes both operations atomic: a crash between
+        the two can no longer produce a state where expired rows are gone but
+        the new token was never recorded (replay-window vulnerability #181).
+        """
+        cursor.execute("DELETE FROM consumed_tokens WHERE expires_at < ?", (self._clock(),))
 
     def consume(
         self,
@@ -627,10 +632,12 @@ class SQLiteExecutionTokenVerifier:
             return False
 
         # ── 4. Single-use (atomic INSERT — UNIQUE constraint) ─────────────────
+        # DELETE-expired and INSERT-new are in a single transaction so a crash
+        # between the two cannot leave a replay window (flaw #181).
         with self._lock:
-            self._evict_expired()
             try:
                 cur = self._conn.cursor()
+                self._evict_expired(cur)
                 cur.execute(
                     "INSERT INTO consumed_tokens (token_id, expires_at) VALUES (?, ?)",
                     (token.token_id, token.expires_at),
@@ -638,6 +645,7 @@ class SQLiteExecutionTokenVerifier:
                 self._conn.commit()
             except sqlite3.IntegrityError:
                 # UNIQUE constraint violation — token already consumed.
+                self._conn.rollback()
                 return False
 
         return True
@@ -743,7 +751,8 @@ class SQLiteExecutionTokenVerifier:
             )
             row = cur.fetchone()
             count = row[0] if row else 0
-            self._evict_expired()
+            self._evict_expired(cur)
+            self._conn.commit()
             return count
 
     def close(self) -> None:

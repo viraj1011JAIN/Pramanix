@@ -36,19 +36,24 @@ class VerificationResult:
     violated_invariants: list[str]
     explanation: str
     policy_hash: str
-    """SHA-256 fingerprint of the policy that produced this decision.
-
-    Previously named ``policy`` (which was always empty because the signed
-    payload used the wrong key name).  Corrected in v0.5.x to read the
-    actual ``policy_hash`` field written by :class:`~pramanix.audit.signer.DecisionSigner`.
-    """
+    """SHA-256 fingerprint of the policy that produced this decision."""
     issued_at: int
     """Unix timestamp (milliseconds) of signing.  Always ``0`` for tokens
     produced by the current SDK — ``iat`` was removed from the signed payload
-    in v0.5.x to make signing deterministic (replay-verifiable).  The
-    timestamp is available on :attr:`~pramanix.audit.signer.SignedDecision.issued_at`
-    when the token is produced, but is NOT embedded in the JWS body.
+    to make signing deterministic (replay-verifiable).
     """
+    # Extended fields (added in v1.0 — all security-relevant Decision fields now signed)
+    policy_name: str = ""
+    decision_hash: str = ""
+    hash_alg: str = ""
+    signature: str = ""
+    public_key_id: str = ""
+    error_domain: str = ""
+    stack_trace_hash: str = ""
+    solver_time_ms: float = 0.0
+    metadata: dict[str, object] | None = None
+    intent_dump: dict[str, object] | None = None
+    state_dump: dict[str, object] | None = None
     error: str | None = None
 
 
@@ -106,12 +111,19 @@ class DecisionVerifier:
                 status=str(payload.get("status", "")),
                 violated_invariants=list(payload.get("violated_invariants", [])),
                 explanation=str(payload.get("explanation", "")),
-                # "policy_hash" is the correct key written by DecisionSigner._canonicalize().
-                # The old key "policy" was a bug — it never existed in to_dict() and
-                # always resolved to "".  "iat" was removed from the signed payload in
-                # v0.5.x (N6 fix) to make signing deterministic; it is therefore always 0.
                 policy_hash=str(payload.get("policy_hash", "")),
                 issued_at=int(payload.get("iat", 0)),
+                policy_name=str(payload.get("policy_name", "")),
+                decision_hash=str(payload.get("decision_hash", "")),
+                hash_alg=str(payload.get("hash_alg", "")),
+                signature=str(payload.get("signature", "")),
+                public_key_id=str(payload.get("public_key_id", "")),
+                error_domain=str(payload.get("error_domain", "")),
+                stack_trace_hash=str(payload.get("stack_trace_hash", "")),
+                solver_time_ms=float(payload.get("solver_time_ms", 0.0)),
+                metadata=dict(payload["metadata"]) if isinstance(payload.get("metadata"), dict) else None,
+                intent_dump=dict(payload["intent_dump"]) if isinstance(payload.get("intent_dump"), dict) else None,
+                state_dump=dict(payload["state_dump"]) if isinstance(payload.get("state_dump"), dict) else None,
             )
         except Exception as exc:
             return self._invalid(str(exc))
@@ -129,6 +141,7 @@ class DecisionVerifier:
             issued_at=0,
             error=error,
         )
+
 
     @staticmethod
     def _b64url(data: bytes) -> str:

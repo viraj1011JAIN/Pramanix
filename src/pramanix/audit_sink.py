@@ -320,6 +320,10 @@ class KafkaAuditSink:
 
     def emit(self, decision: Decision) -> None:
         """Emit decision to the Kafka topic."""
+        # _depth_incremented tracks whether this call owns the decrement.
+        # Set to False once produce() succeeds so the delivery callback takes over.
+        # Ensures _queue_depth is decremented even on BaseException (flaw #175).
+        _depth_incremented = False
         try:
             with self._queue_lock:
                 if self._queue_depth >= self._max_queue:
@@ -332,6 +336,7 @@ class KafkaAuditSink:
                     )
                     return
                 self._queue_depth += 1
+                _depth_incremented = True
 
             payload = json.dumps(decision.to_dict(), default=str).encode()
 
@@ -342,11 +347,18 @@ class KafkaAuditSink:
                     log.error("KafkaAuditSink: delivery error: %s", err)
 
             self._producer.produce(self._topic, value=payload, callback=_delivery_cb)
+            _depth_incremented = False  # delivery callback now owns the decrement
         except Exception as exc:
-            with self._queue_lock:
-                self._queue_depth = max(0, self._queue_depth - 1)
+            if _depth_incremented:
+                with self._queue_lock:
+                    self._queue_depth = max(0, self._queue_depth - 1)
             _increment_send_error_metric("kafka")
             log.error("KafkaAuditSink: failed to produce decision: %s", exc, exc_info=True)
+        except BaseException:
+            if _depth_incremented:
+                with self._queue_lock:
+                    self._queue_depth = max(0, self._queue_depth - 1)
+            raise
 
     def flush(self, timeout: float = 10.0) -> None:
         """Flush all pending messages to Kafka.  Call at shutdown."""
@@ -492,7 +504,7 @@ class S3AuditSink:
         prefix: str = "",
         max_queue_size: int = 1_000,
         start_worker: bool = True,
-    ) -> "S3AuditSink":
+    ) -> S3AuditSink:
         """Construct a fully-wired instance without real AWS credentials.
 
         Accepts an already-constructed S3 client duck-type so tests can
@@ -537,6 +549,11 @@ class S3AuditSink:
             self._queue.put_nowait(None)  # sentinel to unblock and drain worker
         self._stop_event.set()
         self._worker_thread.join(timeout=5.0)
+        if self._worker_thread.is_alive():
+            log.warning(
+                "S3AuditSink: worker thread did not exit within 5 s during close() — "
+                "some in-flight uploads may be lost.  Proceeding with thread pool shutdown.",
+            )
         self._pool.shutdown(wait=True, cancel_futures=False)
 
 
@@ -667,12 +684,12 @@ class SplunkHecAuditSink:
         http_client: Any,
         *,
         url: str = "http://localhost:8088/services/collector",
-        token: str = "Splunk test-token",
+        token: str = "Splunk test-token",  # noqa: S107 — test-factory default, not a real credential
         index: str | None = None,
         sourcetype: str = "pramanix:decision",
         max_queue_size: int = 500,
         start_worker: bool = True,
-    ) -> "SplunkHecAuditSink":
+    ) -> SplunkHecAuditSink:
         """Construct a fully-wired instance without real Splunk credentials.
 
         Accepts an already-constructed HTTP client duck-type so tests can
@@ -861,7 +878,7 @@ class DatadogAuditSink:
         tags: str = "",
         max_queue_size: int = 500,
         start_worker: bool = True,
-    ) -> "DatadogAuditSink":
+    ) -> DatadogAuditSink:
         """Construct a fully-wired instance without real Datadog credentials.
 
         Accepts already-constructed logs_api and api_client duck-types so

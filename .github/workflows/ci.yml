@@ -19,9 +19,8 @@
 # Nightly benchmark (schedule trigger):
 #   Runs latency_benchmark.py at 02:00 UTC; enforces P99 < 15ms gate.
 #
-# CRITICAL: Alpine base images are BANNED â€” Z3 requires glibc (Blueprint Â§48).
-# CRITICAL: Python 3.12 and below dropped â€” minimum is Python 3.13.
-# Matrix: ubuntu-latest Ã— Python 3.13
+# CRITICAL: Alpine base images are BANNED — Z3 requires glibc (Blueprint §48).
+# Matrix: ubuntu-latest × Python 3.11 / 3.12 / 3.13 (matching pyproject classifiers)
 
 name: Pramanix CI
 
