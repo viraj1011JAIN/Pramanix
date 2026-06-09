@@ -53,8 +53,10 @@ class GovernanceConfig:
 
     Attributes:
         ifc_policy:          Optional :class:`~pramanix.ifc.FlowPolicy`.
-        capability_manifest: Optional :class:`~pramanix.privilege.CapabilityManifest`.
-        execution_scope:     Granted :class:`~pramanix.privilege.ExecutionScope` flags.
+        capability_manifest: Optional
+            :class:`~pramanix.privilege.CapabilityManifest`.
+        execution_scope:     Granted
+            :class:`~pramanix.privilege.ExecutionScope` flags.
         oversight_workflow:  Optional human-in-the-loop approval workflow.
     """
 
@@ -129,9 +131,73 @@ class GovernanceConfig:
         # which is imported by guard, so the import chain must not form a cycle.
         from pramanix.exceptions import ConfigurationError
 
-        if self.execution_scope is not None and self.capability_manifest is None:
+        if (
+            self.execution_scope is not None
+            and self.capability_manifest is None
+        ):
             raise ConfigurationError(
-                "GovernanceConfig: execution_scope requires capability_manifest. "
-                "Provide a CapabilityManifest that defines which tools map to which "
-                "scopes, or remove execution_scope."
+                "GovernanceConfig: execution_scope requires"
+                " capability_manifest. Provide a CapabilityManifest that"
+                " defines which tools map to which scopes, or remove"
+                " execution_scope."
             )
+
+        # Runtime type guards — fail at construction time with an actionable
+        # message rather than raising AttributeError deep inside governance
+        # gates.
+        if self.ifc_policy is not None:
+            try:
+                from pramanix.ifc import FlowPolicy as _FlowPolicy
+
+                if not isinstance(self.ifc_policy, _FlowPolicy):
+                    raise ConfigurationError(
+                        "GovernanceConfig.ifc_policy must be a FlowPolicy"
+                        f" instance, got"
+                        f" {type(self.ifc_policy).__name__!r}."
+                    )
+            except ImportError:
+                pass
+
+        if self.capability_manifest is not None:
+            try:
+                from pramanix.privilege import (
+                    CapabilityManifest as _CapManifest,
+                )
+
+                if not isinstance(self.capability_manifest, _CapManifest):
+                    raise ConfigurationError(
+                        "GovernanceConfig.capability_manifest must be a"
+                        " CapabilityManifest instance, got"
+                        f" {type(self.capability_manifest).__name__!r}."
+                    )
+            except ImportError:
+                pass
+
+        if self.execution_scope is not None:
+            try:
+                from pramanix.privilege import ExecutionScope as _ExecScope
+
+                if not isinstance(self.execution_scope, _ExecScope):
+                    raise ConfigurationError(
+                        "GovernanceConfig.execution_scope must be an"
+                        " ExecutionScope instance, got"
+                        f" {type(self.execution_scope).__name__!r}."
+                    )
+            except ImportError:
+                pass
+
+        if self.oversight_workflow is not None:
+            _required = ("check", "request_approval")
+            _missing = [
+                m
+                for m in _required
+                if not callable(
+                    getattr(self.oversight_workflow, m, None)
+                )
+            ]
+            if _missing:
+                raise ConfigurationError(
+                    "GovernanceConfig.oversight_workflow is missing"
+                    f" required methods: {_missing!r}. Provide an object"
+                    " with check() and request_approval()."
+                )

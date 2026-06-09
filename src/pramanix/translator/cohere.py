@@ -11,20 +11,24 @@ If the package is not installed, instantiation raises
 """
 
 from __future__ import annotations
-import re
 
 import asyncio
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any
+
+from pramanix.exceptions import (
+    ConfigurationError,
+    ExtractionFailureError,
+    LLMTimeoutError,
+)
+from pramanix.translator._json import parse_llm_response
+from pramanix.translator._prompt import build_system_prompt
+from pramanix.translator.base import RedactedSecretsMixin
 
 _log = logging.getLogger(__name__)
 
-from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
-from pramanix.translator._json import parse_llm_response
-from pramanix.translator._prompt import build_system_prompt
-
-from pramanix.translator.base import RedactedSecretsMixin
 
 def _safe_model_tag(model: str) -> str:
     """Return a log-safe version of *model* that cannot inject log lines.
@@ -36,7 +40,7 @@ def _safe_model_tag(model: str) -> str:
     # x00-x1f are all ASCII control chars (NUL through US, incl newline).
     _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
     # Strip ANSI CSI escape sequences.
-    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    _s = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", _s)
     return _s[:100]
 
 if TYPE_CHECKING:
@@ -142,9 +146,9 @@ class CohereTranslator(RedactedSecretsMixin):
         try:
             from tenacity import (
                 AsyncRetrying,
+                RetryCallState,
                 retry_if_exception_type,
                 stop_after_attempt,
-                wait_exponential,
             )
         except ImportError as exc:
             raise ConfigurationError(
@@ -152,12 +156,27 @@ class CohereTranslator(RedactedSecretsMixin):
                 "Install it with: pip install 'pramanix[cohere]'"
             ) from exc
 
+        def _wait_with_retry_after(retry_state: RetryCallState) -> float:
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            if exc is not None:
+                try:
+                    headers = getattr(
+                        getattr(exc, "response", None), "headers", {}
+                    ) or {}
+                    ra = headers.get("Retry-After") or headers.get("retry-after")
+                    if ra is not None:
+                        return max(0.0, float(ra))
+                except Exception:
+                    pass
+            attempt = retry_state.attempt_number or 1
+            return min(1.0 * (2 ** (attempt - 1)), 10.0)
+
         system_prompt = build_system_prompt(intent_schema)
         attempts = 0
 
         try:
             async for attempt in AsyncRetrying(
-                wait=wait_exponential(multiplier=1, min=1, max=10),
+                wait=_wait_with_retry_after,
                 stop=stop_after_attempt(3),
                 retry=retry_if_exception_type(self._retryable),
                 reraise=True,

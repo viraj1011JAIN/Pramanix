@@ -107,6 +107,7 @@ from pramanix.exceptions import (
     GuardViolationError,
     InjectionBlockedError,
     InputTooLongError,
+    IntentValidationError,
     InvariantLabelError,
     LLMTimeoutError,
     MemoryViolationError,
@@ -447,6 +448,7 @@ __all__ = [
     "TranspileError",
     # IFC trust labels
     "TrustLabel",
+    "IntentValidationError",
     "ValidationError",
     "WorkerError",
     # Decorator

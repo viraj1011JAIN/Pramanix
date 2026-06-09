@@ -11,18 +11,22 @@ If the package is not installed, instantiation raises
 """
 
 from __future__ import annotations
-import re
 
 import asyncio
 import contextlib
 import os
+import re
 from typing import TYPE_CHECKING, Any, cast
 
-from pramanix.exceptions import ConfigurationError, ExtractionFailureError, LLMTimeoutError
+from pramanix.exceptions import (
+    ConfigurationError,
+    ExtractionFailureError,
+    LLMTimeoutError,
+)
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
-
 from pramanix.translator.base import RedactedSecretsMixin
+
 
 def _safe_model_tag(model: str) -> str:
     """Return a log-safe version of *model* that cannot inject log lines.
@@ -34,7 +38,7 @@ def _safe_model_tag(model: str) -> str:
     # x00-x1f are all ASCII control chars (NUL through US, incl newline).
     _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
     # Strip ANSI CSI escape sequences.
-    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    _s = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", _s)
     return _s[:100]
 
 if TYPE_CHECKING:
@@ -143,12 +147,24 @@ class MistralTranslator(RedactedSecretsMixin):
                 "Install it with: pip install 'pramanix[mistral]'"
             ) from exc
 
-        # M-13: only retry genuine Mistral transport errors, not programmer errors.
+        # M-13 / #246: only retry genuine Mistral transport errors, not
+        # programmer errors.  SDKError is the base class for ALL Mistral
+        # exceptions including 401 Unauthorized and 403 Forbidden.  Retrying
+        # auth failures wastes quota and delays surfacing the real problem.
+        # Solution: inside the retry body, intercept 4xx SDKErrors and
+        # convert them to ExtractionFailureError (not in _retryable) so
+        # tenacity re-raises them immediately without consuming retry budget.
         try:
-            from mistralai.models import SDKError as _MistralError
+            from mistralai.models import SDKError as _MistralSDKError
 
-            _retryable_base: tuple[type[Exception], ...] = (_MistralError, TimeoutError, OSError)
+            _mistral_sdk_error: type[Exception] | None = _MistralSDKError
+            _retryable_base: tuple[type[Exception], ...] = (
+                _MistralSDKError,
+                TimeoutError,
+                OSError,
+            )
         except ImportError:
+            _mistral_sdk_error = None
             _retryable_base = (TimeoutError, OSError)
 
         try:
@@ -181,10 +197,22 @@ class MistralTranslator(RedactedSecretsMixin):
             ):
                 with attempt:
                     attempts += 1
-                    raw = await self._single_call(
-                        system_prompt=system_prompt,
-                        user_content=user_content,
-                    )
+                    try:
+                        raw = await self._single_call(
+                            system_prompt=system_prompt,
+                            user_content=user_content,
+                        )
+                    except Exception as _exc:
+                        if _mistral_sdk_error is not None and isinstance(
+                            _exc, _mistral_sdk_error
+                        ):
+                            _status = getattr(_exc, "status_code", None)
+                            if _status is not None and 400 <= int(_status) < 500:
+                                raise ExtractionFailureError(
+                                    f"[{_safe_model_tag(self.model)}] Mistral"
+                                    f" client error (HTTP {_status}): {_exc}"
+                                ) from _exc
+                        raise
                     # Return inside the retry loop so the result is always
                     # taken from the last successful call, not from a shared
                     # variable that could be unbound if the loop exits via
@@ -192,8 +220,8 @@ class MistralTranslator(RedactedSecretsMixin):
                     return parse_llm_response(raw, model_name=self.model)
         except _retryable as exc:
             raise LLMTimeoutError(
-                f"MistralTranslator: all retry attempts exhausted for model {self.model!r} "
-                f"after {attempts} attempt(s): {exc}",
+                f"MistralTranslator: all retry attempts exhausted for"
+                f" model {self.model!r} after {attempts} attempt(s): {exc}",
             ) from exc
         # Unreachable in normal operation; satisfies type-checkers.
         raise ExtractionFailureError(

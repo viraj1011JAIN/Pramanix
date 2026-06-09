@@ -260,7 +260,7 @@ class PramanixFunctionTool:
             raw_input={"input": input},
             raw_output={
                 "decision_id": decision.decision_id,
-                "status": decision.status,
+                "status": decision.status.value,
                 "violated_invariants": list(decision.violated_invariants),
             },
             is_error=False,
@@ -495,7 +495,7 @@ class PramanixQueryEngineTool:
                 raw_input={"input": input},
                 raw_output={
                     "decision_id": decision.decision_id,
-                    "status": decision.status,
+                    "status": decision.status.value,
                     "violated_invariants": list(decision.violated_invariants),
                 },
                 is_error=False,

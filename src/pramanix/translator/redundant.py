@@ -467,7 +467,7 @@ async def extract_with_consensus(
     # sensitive_fields augmentation: append string values from flagged fields so
     # injection content embedded in free-text extracted fields is caught even
     # when the raw input text appears benign.
-    _score_text = text
+    _score_text = sanitised_text
     if sensitive_fields:
         _extra_parts = [
             str(dump_a[f])

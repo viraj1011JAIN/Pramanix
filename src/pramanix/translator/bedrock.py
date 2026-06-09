@@ -26,19 +26,19 @@ Usage::
 """
 
 from __future__ import annotations
-import re
 
 import asyncio
 import json
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 from pramanix.exceptions import ExtractionFailureError, LLMTimeoutError
 from pramanix.translator._json import parse_llm_response
 from pramanix.translator._prompt import build_system_prompt
-
 from pramanix.translator.base import RedactedSecretsMixin
+
 
 def _safe_model_tag(model: str) -> str:
     """Return a log-safe version of *model* that cannot inject log lines.
@@ -50,7 +50,7 @@ def _safe_model_tag(model: str) -> str:
     # x00-x1f are all ASCII control chars (NUL through US, incl newline).
     _s = re.sub("[\x00-\x1f\x7f]", "", str(model))
     # Strip ANSI CSI escape sequences.
-    _s = re.sub("\x1b\[[0-9;]*[A-Za-z]", "", _s)
+    _s = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", _s)
     return _s[:100]
 
 if TYPE_CHECKING:
@@ -195,7 +195,10 @@ class BedrockTranslator(RedactedSecretsMixin):
         elif "titan" in model_lower:
             payload = self._build_titan_payload(system_prompt, text)
         elif "llama" in model_lower:
-            payload = self._build_llama_payload(system_prompt, text)
+            if "llama3" in model_lower or "llama-3" in model_lower:
+                payload = self._build_llama3_payload(system_prompt, text)
+            else:
+                payload = self._build_llama_payload(system_prompt, text)
         else:
             # Fallback: use Bedrock Converse API (works for all models)
             return await self._converse(system_prompt, text)
@@ -267,9 +270,55 @@ class BedrockTranslator(RedactedSecretsMixin):
         return text
 
     def _build_llama_payload(self, system_prompt: str, text: str) -> dict[str, Any]:
-        """Build a Meta Llama chat payload."""
+        """Build a Meta Llama 2 chat payload (Llama 2 instruction format)."""
         safe_text = self._sanitize_for_llama2(text)
         prompt = f"<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{safe_text} [/INST]"
+        return {
+            "prompt": prompt,
+            "max_gen_len": self._max_tokens,
+            "temperature": 0.0,
+            "top_p": 1.0,
+        }
+
+    @staticmethod
+    def _sanitize_for_llama3(text: str) -> str:
+        """Strip Llama 3 special tokens from user-supplied text.
+
+        An attacker who includes Llama 3 header/EOT tokens can close the
+        current role block and inject a fabricated turn.  Strip all Llama 3
+        special tokens from user text before embedding it in the prompt.
+        """
+        for token in (
+            "<|begin_of_text|>",
+            "<|end_of_text|>",
+            "<|start_header_id|>",
+            "<|end_header_id|>",
+            "<|eot_id|>",
+        ):
+            text = text.replace(token, " ")
+        return text
+
+    def _build_llama3_payload(
+        self, system_prompt: str, text: str
+    ) -> dict[str, Any]:
+        """Build a Meta Llama 3 chat payload (Llama 3 header format).
+
+        Llama 3 models (``meta.llama3-*``) use a different special-token
+        syntax from Llama 2.  The Llama 2 ``<s>[INST] <<SYS>>`` format causes
+        the system prompt to be treated as user content on Llama 3 — the model
+        never sees it as authoritative system instructions.
+        """
+        safe_text = self._sanitize_for_llama3(text)
+        prompt = (
+            "<|begin_of_text|>"
+            "<|start_header_id|>system<|end_header_id|>\n"
+            f"{system_prompt}"
+            "<|eot_id|>"
+            "<|start_header_id|>user<|end_header_id|>\n"
+            f"{safe_text}"
+            "<|eot_id|>"
+            "<|start_header_id|>assistant<|end_header_id|>\n"
+        )
         return {
             "prompt": prompt,
             "max_gen_len": self._max_tokens,

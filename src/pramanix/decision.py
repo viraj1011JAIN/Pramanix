@@ -874,8 +874,20 @@ class Decision:
         Raises:
             KeyError:   If a required field is missing from *d*.
             ValueError: If ``status`` is not a valid :class:`SolverStatus` value,
-                        or if the ``allowed``/``status`` invariant is violated.
+                        or if the ``allowed``/``status`` invariant is violated,
+                        or if ``decision_hash`` is present but not a valid
+                        64-character lowercase hex string (SHA-256 format).
         """
+        raw_hash = str(d.get("decision_hash", ""))
+        if raw_hash and not (
+            len(raw_hash) == 64
+            and all(c in "0123456789abcdef" for c in raw_hash)
+        ):
+            raise ValueError(
+                f"decision_hash {raw_hash!r} is not a valid SHA-256 hex "
+                "digest (expected 64 lowercase hex characters). "
+                "The dict may have been tampered with."
+            )
         return cls(
             allowed=bool(d["allowed"]),
             status=SolverStatus(d["status"]),
@@ -888,7 +900,7 @@ class Decision:
             state_dump=dict(d.get("state_dump", {})),
             # Preserve the stored hash — do NOT recompute.  Pass it as a
             # non-empty string so __post_init__ skips recomputation.
-            decision_hash=str(d.get("decision_hash", "")),
+            decision_hash=raw_hash,
             signature=d.get("signature"),
             public_key_id=d.get("public_key_id"),
             policy_hash=d.get("policy_hash"),

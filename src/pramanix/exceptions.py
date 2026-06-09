@@ -19,7 +19,7 @@ Hierarchy::
     │   ├── FieldTypeError              # unsupported or mismatched Field type
     │   └── TranspileError              # DSL tree → Z3 AST conversion failure
     ├── GuardError                      # runtime verification errors
-    │   ├── ValidationError             # Pydantic validation failure (wraps pydantic exc)
+    │   ├── IntentValidationError        # Pydantic validation failure (wraps pydantic exc)
     │   ├── StateValidationError        # state_version missing or mismatched
     │   ├── SolverTimeoutError          # Z3 exceeded the time budget
     │   ├── SolverError                 # unexpected Z3 result
@@ -72,6 +72,7 @@ __all__ = [
     "SolverTimeoutError",
     "StateValidationError",
     "TranspileError",
+    "IntentValidationError",
     "ValidationError",
     "VerificationError",
     "WalWriteError",
@@ -178,7 +179,7 @@ class GuardError(PramanixError):
     """
 
 
-class ValidationError(GuardError):
+class IntentValidationError(GuardError):
     """Pydantic intent or state model validation failed.
 
     Wraps :class:`pydantic.ValidationError` so that Pydantic internals are
@@ -186,7 +187,20 @@ class ValidationError(GuardError):
     Pydantic exception when available.
 
     Converted by ``Guard.verify()`` to ``Decision.validation_failure()``.
+
+    .. note::
+        This class is intentionally named ``IntentValidationError`` (not
+        ``ValidationError``) to avoid shadowing :class:`pydantic.ValidationError`
+        when both are imported into the same scope.
     """
+
+
+ValidationError = IntentValidationError
+"""Backward-compatible alias for :class:`IntentValidationError`.
+
+Prefer ``IntentValidationError`` in new code to avoid name collision with
+:class:`pydantic.ValidationError` when both are present in the same scope.
+"""
 
 
 class StateValidationError(GuardError):
