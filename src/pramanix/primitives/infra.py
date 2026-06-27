@@ -28,8 +28,10 @@ Example::
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
+from pramanix.exceptions import PramanixSecurityWarning
 from pramanix.expressions import ConstraintExpr, E
 
 if TYPE_CHECKING:
@@ -165,7 +167,7 @@ def BlastRadiusCheck(
     )
 
 
-def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
+def CircuitBreakerState(circuit_state: Field, *, trusted: bool = False) -> ConstraintExpr:
     """Block execution when the downstream circuit breaker is open (tripped).
 
     DSL: ``E(circuit_state) != "OPEN"``
@@ -178,6 +180,33 @@ def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
     * ``"HALF-OPEN"`` — recovery probe; one request allowed through to test
                         if the downstream has recovered.
 
+    Trusted-state model (#234)
+    ---------------------------
+    ``circuit_state`` is resolved from ``Guard.verify()``'s ``state`` dict like
+    any other :class:`~pramanix.expressions.Field`. If that dict is populated
+    (even partially) from caller-supplied data — an agent's tool call, an API
+    request body — a caller can inject ``circuit_state="CLOSED"`` to bypass
+    this breaker entirely, regardless of the real downstream health. Z3 still
+    proves the invariant correctly; it is proving it over an attacker-chosen
+    value.
+
+    Pass ``trusted=True`` only after confirming ``circuit_state`` is supplied
+    *exclusively* via ``trusted_state=`` in ``Guard.verify()``/``verify_async()``
+    — never via the caller-controlled ``state`` dict. ``trusted_state`` is
+    merged into the resolved state *after* ``state``, so it always wins and
+    cannot be overridden by the caller::
+
+        breaker_state = redis.get("cb:downstream-payments").decode().upper()
+        guard.verify(
+            intent=intent,
+            state=state,                                   # caller-controlled
+            trusted_state={"circuit_state": breaker_state}, # infra-injected
+        )
+
+    Leaving ``trusted=False`` (the default) emits a
+    :class:`~pramanix.exceptions.PramanixSecurityWarning` at construction time
+    so this gap cannot be introduced silently.
+
     This string-based encoding supports the full ``CLOSED / OPEN / HALF-OPEN``
     lifecycle without separate Bool fields, and is safe to extend with custom
     states (e.g. ``"FORCED-OPEN"`` for maintenance windows).
@@ -189,7 +218,22 @@ def CircuitBreakerState(circuit_state: Field) -> ConstraintExpr:
     Args:
         circuit_state: Field (str, String) — current circuit breaker state.
             Must be one of ``"CLOSED"``, ``"OPEN"``, or ``"HALF-OPEN"``.
+        trusted: Set to ``True`` once ``circuit_state`` is confirmed to be
+            populated exclusively via ``trusted_state=`` in ``Guard.verify()``.
+            Default ``False`` emits :class:`~pramanix.exceptions.PramanixSecurityWarning`.
     """
+    if not trusted:
+        warnings.warn(
+            "CircuitBreakerState: `circuit_state` is resolved from Guard's `state` "
+            "dict. Unless populated exclusively via `trusted_state=` in "
+            "Guard.verify()/verify_async(), a caller controlling `state` can "
+            'inject circuit_state="CLOSED" to bypass this breaker entirely '
+            "(see flaw #234). Pass `trusted=True` once you've confirmed "
+            "circuit_state is always injected via trusted_state, never via "
+            "caller-supplied state.",
+            PramanixSecurityWarning,
+            stacklevel=2,
+        )
     # The circuit state value must be normalised (uppercased) by the state provider
     # before being passed to Guard.verify().  Using a single "OPEN" comparison
     # means "open" (lowercase) or "Open" (mixed-case) from external systems

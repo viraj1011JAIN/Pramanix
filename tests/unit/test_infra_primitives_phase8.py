@@ -15,8 +15,13 @@ ReplicaBudget, CPUMemoryGuard
 
 from __future__ import annotations
 
+import warnings
 from decimal import Decimal
 
+import pytest
+
+from pramanix import Guard, Policy
+from pramanix.exceptions import PramanixSecurityWarning
 from pramanix.expressions import Field
 from pramanix.primitives.infra import (
     BlastRadiusCheck,
@@ -92,7 +97,7 @@ class TestBlastRadiusCheck:
 # Supports CLOSED / OPEN / HALF-OPEN three-state lifecycle
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_INV_CIRCUIT = [CircuitBreakerState(_circuit_state)]
+_INV_CIRCUIT = [CircuitBreakerState(_circuit_state, trusted=True)]
 
 
 class TestCircuitBreakerState:
@@ -109,6 +114,46 @@ class TestCircuitBreakerState:
         result = solve(_INV_CIRCUIT, {"circuit_state": "OPEN"}, timeout_ms=5_000)
         assert result.sat is False
         assert any(v.label == "circuit_breaker_state" for v in result.violated)
+
+
+class TestCircuitBreakerStateTrustWarning:
+    """#234: circuit_state must come from trusted_state, not caller-controlled state."""
+
+    def test_default_untrusted_emits_security_warning(self) -> None:
+        with pytest.warns(PramanixSecurityWarning, match="trusted_state"):
+            CircuitBreakerState(_circuit_state)
+
+    def test_trusted_true_suppresses_warning(self) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", PramanixSecurityWarning)
+            CircuitBreakerState(_circuit_state, trusted=True)  # must not raise
+
+    def test_guard_trusted_state_defeats_spoofed_caller_state(self) -> None:
+        """End-to-end: an attacker-controlled state["circuit_state"]="CLOSED"
+        must not survive Guard's trusted_state override (#234)."""
+
+        class _Policy(Policy):
+            circuit_state = _circuit_state
+
+            @classmethod
+            def invariants(cls) -> list:
+                return [CircuitBreakerState(cls.circuit_state, trusted=True)]
+
+        guard = Guard(_Policy)
+
+        # Attacker controls `state` and tries to spoof a healthy breaker.
+        spoofed_state = {"circuit_state": "CLOSED"}
+
+        # Infrastructure (e.g. a Redis-backed health check) knows the truth:
+        # the real downstream circuit is OPEN.
+        decision = guard.verify(
+            intent={},
+            state=spoofed_state,
+            trusted_state={"circuit_state": "OPEN"},
+        )
+
+        assert decision.allowed is False
+        assert "circuit_breaker_state" in decision.violated_invariants
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

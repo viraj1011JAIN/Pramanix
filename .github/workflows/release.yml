@@ -1,31 +1,38 @@
 ﻿# SPDX-License-Identifier: AGPL-3.0-only
-# Pramanix SLSA Level 3 Release Pipeline â€” v0.5
+# Pramanix SLSA Level 3 Release Pipeline â€” v0.6
 #
-# Trigger: git tag matching v<major>.<minor>.<patch> or v<major>.<minor>.<patch>-rc.<n>
+# Trigger: completion of "Publish to PyPI" (publish.yml) on a release/RC tag.
+#
+# #322 fix: this workflow used to trigger independently on the SAME tag push
+# as publish.yml, racing it to call pypa/gh-action-pypi-publish. Whichever
+# workflow finished first "won" the PyPI upload; if publish.yml won, the
+# release had no SBOM and no Sigstore signatures despite the "SLSA Level 3"
+# claim. publish.yml is also the workflow PyPI's trusted-publisher config is
+# registered against (owner/repo/workflow=publish.yml/environment=pypi) â€”
+# repointing that registration isn't something a workflow file can do, so
+# publish.yml remains the sole PyPI publisher. This workflow now runs
+# strictly AFTER it succeeds, signs the artifacts it built, and never
+# touches PyPI itself â€” no more race, no more divergent SLSA evidence.
 #
 # Steps (in order):
-#   1. Version consistency check  â€” pyproject.toml == git tag == __version__
+#   1. Version consistency check  â€” pyproject.toml == tag == __version__
 #   2. Build                      â€” poetry build + twine check
 #   3. SBOM generation            â€” CycloneDX JSON
-#   4. OIDC publish to PyPI       â€” GitHub OIDC, no API token in secrets
-#   5. Sigstore artifact signing  â€” .sigstore.json per artifact
-#   6. GitHub Release             â€” CHANGELOG section as body, all artifacts attached
-#   7. Post-release smoke test    â€” clean venv, pip install, basic import
+#   4. Sigstore artifact signing  â€” .sigstore.json per artifact
+#   5. GitHub Release             â€” CHANGELOG section as body, all artifacts attached
+#   6. Post-release smoke test    â€” clean venv, pip install, basic import
 #
 # Permissions:
-#   id-token:write    â€” GitHub OIDC for PyPI trusted publishing
-#   contents:write    â€” create GitHub Release
+#   id-token:write     â€” GitHub OIDC for Sigstore keyless signing (NOT PyPI â€” publish.yml owns that)
+#   contents:write     â€” create GitHub Release
 #   attestations:write â€” Sigstore attestation upload
 
 name: Release (SLSA Level 3)
 
 on:
-  push:
-    tags:
-      # Release tags:  v1.2.3
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      # RC tags:       v1.2.3-rc.1
-      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
 
 permissions:
   id-token: write
@@ -39,15 +46,20 @@ env:
 
 jobs:
   release:
-    name: "Release ${{ github.ref_name }}"
+    name: "Release (post-publish signing)"
     runs-on: ubuntu-latest
+    # Only proceed if publish.yml actually succeeded in publishing to PyPI.
+    # workflow_run fires on failure/cancellation too â€” skip those.
+    if: github.event.workflow_run.conclusion == 'success'
 
     steps:
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # Checkout with full history so CHANGELOG section extraction works
+      # Checkout the EXACT commit publish.yml ran against (not main HEAD) â€”
+      # full history so CHANGELOG section extraction works.
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
@@ -56,12 +68,19 @@ jobs:
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       # STEP 1 â€” Version Consistency Check
-      # Assert pyproject.toml == git tag == __version__ == CHANGELOG entry
+      # Assert pyproject.toml == tag == __version__ == CHANGELOG entry
+      # The tag is derived from the checked-out commit (workflow_run does not
+      # expose github.ref_name for the upstream tag push).
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 1/7 â€” Version consistency check"
+      - name: "Step 0/6 â€” Resolve release tag from publish.yml's commit"
         run: |
-          # Strip leading 'v' from git tag
-          GIT_TAG="${{ github.ref_name }}"
+          GIT_TAG=$(git describe --tags --exact-match "${{ github.event.workflow_run.head_sha }}")
+          echo "Resolved tag: $GIT_TAG"
+          echo "GIT_TAG=$GIT_TAG" >> "$GITHUB_ENV"
+
+      - name: "Step 1/6 â€” Version consistency check"
+        run: |
+          GIT_TAG="${{ env.GIT_TAG }}"
           VERSION="${GIT_TAG#v}"
           echo "Verifying version: $VERSION (tag: $GIT_TAG)"
 
@@ -111,20 +130,22 @@ jobs:
           echo "âœ“ All version checks passed: $VERSION"
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "GIT_TAG=$GIT_TAG" >> "$GITHUB_ENV"
-          # Detect RC tags
+          # Detect RC tags (used only for the GitHub Release "prerelease" flag â€”
+          # publish.yml publishes both release and RC tags to production PyPI,
+          # there is no Test PyPI branch to mirror here).
           if [[ "$GIT_TAG" == *"-rc."* ]]; then
             echo "IS_PRERELEASE=true" >> "$GITHUB_ENV"
-            echo "PYPI_TARGET=testpypi" >> "$GITHUB_ENV"
           else
             echo "IS_PRERELEASE=false" >> "$GITHUB_ENV"
-            echo "PYPI_TARGET=pypi" >> "$GITHUB_ENV"
           fi
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       # STEP 2 â€” Build
+      # Rebuilds the SAME tagged commit publish.yml already published from, so
+      # the wheel/sdist signed below are bit-for-bit the ones published to PyPI.
       # poetry build â†’ twine check â†’ wheel purity verification
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 2/7 â€” Build wheel and sdist"
+      - name: "Step 2/6 â€” Build wheel and sdist"
         run: |
           pip install poetry twine
           poetry build
@@ -156,7 +177,7 @@ jobs:
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       # STEP 3 â€” SBOM Generation (CycloneDX)
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 3/7 â€” Generate CycloneDX SBOM"
+      - name: "Step 3/6 â€” Generate CycloneDX SBOM"
         run: |
           pip install cyclonedx-bom
 
@@ -193,30 +214,15 @@ jobs:
           path: pramanix-sbom.cdx.json
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # STEP 4 â€” OIDC Publish to PyPI (no API token â€” GitHub OIDC identity)
-      # RC tags â†’ Test PyPI; release tags â†’ production PyPI
-      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 4a/7 â€” Publish to Test PyPI (RC tags only)"
-        if: env.IS_PRERELEASE == 'true'
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          attestations: true
-          verbose: true
-
-      - name: "Step 4b/7 â€” Publish to PyPI (release tags only)"
-        if: env.IS_PRERELEASE == 'false'
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # v1.14.0
-        with:
-          attestations: true
-          verbose: true
-
-      # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # STEP 5 â€” Sigstore Artifact Signing
+      # STEP 4 â€” Sigstore Artifact Signing
       # Signs .whl and .tar.gz; produces .sigstore.json bundles
       # Bundle proves: artifact hash + GitHub Actions workflow + commit SHA
+      #
+      # NOTE: PyPI publishing happens in publish.yml, not here (#322 fix) â€”
+      # this job only re-builds the same tagged commit to sign and attach
+      # SBOM/Sigstore evidence to the GitHub Release.
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 5/7 â€” Sign artifacts with Sigstore"
+      - name: "Step 4/6 â€” Sign artifacts with Sigstore"
         uses: sigstore/gh-action-sigstore-python@f514d46b907ebcd5bedc05145c03b69c1edd8b46  # v3.0.0
         with:
           inputs: >-
@@ -238,11 +244,11 @@ jobs:
           done
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # STEP 6 â€” GitHub Release
+      # STEP 5 â€” GitHub Release
       # Extract CHANGELOG section for this version as release body
       # Attach: wheel, sdist, sigstore bundles, SBOM
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 6/7 â€” Extract CHANGELOG section"
+      - name: "Step 5/6 â€” Extract CHANGELOG section"
         run: |
           VERSION="${{ env.RELEASE_VERSION }}"
           # Extract the section between ## [VERSION] and the next ## heading
@@ -255,7 +261,7 @@ jobs:
           echo "=== Release notes preview ==="
           head -20 release-notes.md
 
-      - name: "Step 6/7 â€” Create GitHub Release"
+      - name: "Step 5/6 â€” Create GitHub Release"
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.1.0
         with:
           tag_name: ${{ env.GIT_TAG }}
@@ -270,22 +276,16 @@ jobs:
           fail_on_unmatched_files: true
 
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      # STEP 7 â€” Post-Release Smoke Test
-      # Clean ubuntu runner, pip install from PyPI, basic import
-      # Uses 120s CDN propagation wait before installing
+      # STEP 6 â€” Post-Release Smoke Test
+      # Clean ubuntu runner, pip install from PyPI, basic import.
+      # publish.yml's own smoke-test step already confirmed installability
+      # right after publishing; this is a second, independent confirmation
+      # using the fully-built dist (not just `from pramanix import Guard`)
+      # after CDN propagation has had more time to settle.
       # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      - name: "Step 7/7 â€” Post-release smoke test"
+      - name: "Step 6/6 â€” Post-release smoke test"
         run: |
           VERSION="${{ env.RELEASE_VERSION }}"
-          PYPI_TARGET="${{ env.PYPI_TARGET }}"
-
-          if [[ "$PYPI_TARGET" == "testpypi" ]]; then
-            INDEX_URL="https://test.pypi.org/simple/"
-            EXTRA_INDEX="--extra-index-url https://pypi.org/simple/"
-          else
-            INDEX_URL="https://pypi.org/simple/"
-            EXTRA_INDEX=""
-          fi
 
           echo "Waiting 120s for PyPI CDN propagation..."
           sleep 120
@@ -295,13 +295,13 @@ jobs:
           source /tmp/smoke-venv/bin/activate
 
           echo "--- Installing pramanix==$VERSION ---"
-          pip install --index-url "$INDEX_URL" $EXTRA_INDEX "pramanix==$VERSION"
+          pip install "pramanix==$VERSION"
 
           echo "--- Basic import smoke test ---"
           python -c "from pramanix import Guard, Policy, Field, E, Decision; print('OK')"
 
           echo "--- Installing pramanix[all]==$VERSION ---"
-          pip install --index-url "$INDEX_URL" $EXTRA_INDEX "pramanix[all]==$VERSION"
+          pip install "pramanix[all]==$VERSION"
 
           echo "--- Full extras smoke test ---"
           python -c "
