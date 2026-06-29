@@ -246,6 +246,35 @@ def azure_keyvault_url() -> str:
     return url
 
 
+# ── GCP Secret Manager (live-gated) ───────────────────────────────────────────
+#
+# #8 fix: GcpKmsKeyProvider previously had zero real-API test coverage — only
+# the duck-typed `_FakeSecretsManagerClient`-style stub in test_kms_provider.py.
+# Unlike AWS (LocalStack) there is no widely-available local GCP Secret
+# Manager emulator, so this follows the same env-gated live-credential
+# pattern already established for Azure above. Skip reason is intentionally
+# generic (not enumerating exact required env var names) to avoid the #326
+# anti-pattern of leaking expected-credential names into CI artifact XML.
+
+_GCP_LIVE = bool(os.environ.get("GCP_PROJECT_ID")) and bool(
+    os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or os.environ.get("GCP_ADC_AVAILABLE")
+)
+
+requires_gcp = pytest.mark.skipif(
+    not _GCP_LIVE,
+    reason="GCP Secret Manager live tests require a configured project and credentials",
+)
+
+
+@pytest.fixture(scope="session")
+def gcp_project_id() -> str:
+    """Return the GCP project ID from the environment."""
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    if not project_id:
+        pytest.skip("GCP_PROJECT_ID not set")
+    return project_id
+
+
 # ── OpenAI (live-gated) ───────────────────────────────────────────────────────
 
 requires_openai = pytest.mark.skipif(
