@@ -286,6 +286,21 @@ requires_openai = pytest.mark.skipif(
     ),
 )
 
+# ── Anthropic (live-gated) ────────────────────────────────────────────────────
+#
+# #9 fix: AnthropicTranslator previously had zero real-protocol test coverage
+# anywhere in the suite (Cohere/Gemini/Ollama/LlamaCpp already had real or
+# respx-based coverage). See test_anthropic_translator.py.
+
+requires_anthropic = pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"),
+    reason=(
+        "ANTHROPIC_API_KEY not set — Anthropic live tests skipped. "
+        "These tests MUST pass before any release that touches "
+        "translator/anthropic.py."
+    ),
+)
+
 # ── Gemini (live-gated) ───────────────────────────────────────────────────────
 
 requires_gemini = pytest.mark.skipif(
