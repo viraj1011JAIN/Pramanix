@@ -188,3 +188,87 @@ class TestWorkerCrashIsolation:
             assert isinstance(d, Decision), "submit_solve must not raise"
         finally:
             pool.shutdown(wait=True)
+
+
+# ── #6 closure: real PPID-reparenting test for _ppid_watchdog ────────────────
+#
+# FLAW_AUDIT.md #6 named this exact mechanism: tests/unit/test_worker_coverage_v2.py
+# faked os.getppid()/os._exit() with lambdas to drive _ppid_watchdog() through its
+# branches, so real OS reparenting was never exercised. Those unit tests still have
+# value for branch coverage of error paths (Prometheus counter increments, etc.) and
+# are left in place — but this test adds the thing they cannot provide: an actual
+# three-generation process tree where the middle process really dies, the worker
+# process is really reparented by the kernel, and the REAL os.getppid()/os._exit()
+# inside the unmodified _ppid_watchdog() function detect it and terminate the
+# worker for real. No monkeypatch.setattr on os.* anywhere in this test.
+#
+# os.fork() is POSIX-only (no Windows equivalent with this reparenting semantic),
+# matching the existing SIGKILL test's Unix-only gating above. Runs for real on
+# the ubuntu-latest CI runner (see .github/workflows/ci.yml).
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="os.fork()/PPID-reparenting semantics are POSIX-only — Unix-only test",
+)
+class TestPpidWatchdogRealReparenting:
+    def test_ppid_watchdog_self_terminates_when_real_parent_dies(self) -> None:
+        """A real orphaned worker process must self-terminate via the real watchdog.
+
+        Builds a real three-process chain: this test process (grandparent) forks
+        an intermediate process (the "parent"), which forks the worker process
+        under test, then immediately exits. The kernel reparents the now-orphaned
+        worker to init/a subreaper, which _ppid_watchdog() detects via a REAL
+        os.getppid() change on its next poll, then calls the REAL os._exit(0).
+        """
+        import os
+        import time as _time
+
+        read_fd, write_fd = os.pipe()
+
+        intermediate_pid = os.fork()
+        if intermediate_pid == 0:
+            # ── Intermediate "parent" process ────────────────────────────────
+            os.close(read_fd)
+            worker_pid = os.fork()
+            if worker_pid == 0:
+                # ── Worker process under test ────────────────────────────────
+                os.close(write_fd)
+                from pramanix.worker import _ppid_watchdog
+
+                _ppid_watchdog()  # blocks until the REAL os._exit(0) fires
+                os._exit(1)  # pragma: no cover — must never be reached
+            else:
+                # Hand the worker's PID back to the grandparent, then die
+                # immediately so the worker is orphaned right away.
+                os.write(write_fd, str(worker_pid).encode())
+                os.close(write_fd)
+                os._exit(0)
+
+        # ── Grandparent (the actual pytest process) ──────────────────────────
+        os.close(write_fd)
+        worker_pid = int(os.read(read_fd, 64).decode())
+        os.close(read_fd)
+
+        # Reap the intermediate process — it is OUR direct child.
+        os.waitpid(intermediate_pid, 0)
+
+        # The worker is no longer our child (it was the intermediate process's
+        # child, now reparented by the kernel), so we cannot waitpid() on it.
+        # Poll liveness via os.kill(pid, 0) (signal 0 = existence check only,
+        # raises ProcessLookupError once the kernel has reaped it). The watchdog
+        # polls every 2s internally, so allow several poll cycles of margin.
+        deadline = _time.monotonic() + 10.0
+        worker_exited = False
+        while _time.monotonic() < deadline:
+            try:
+                os.kill(worker_pid, 0)
+            except ProcessLookupError:
+                worker_exited = True
+                break
+            _time.sleep(0.2)
+
+        assert worker_exited, (
+            f"Real worker process {worker_pid} did not self-terminate after its "
+            "real parent died — _ppid_watchdog() failed to detect real reparenting."
+        )

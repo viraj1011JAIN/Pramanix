@@ -87,15 +87,7 @@ class AnthropicTranslator(RedactedSecretsMixin):
         self._retryable = (anthropic.APITimeoutError, anthropic.APIConnectionError)
         self._api_status_error = anthropic.APIStatusError
 
-    @property
-    def api_key_is_set(self) -> bool:
-        """Return True if an API key was configured (from arg or env var)."""
-        return bool(self._api_key)
-
-    @property
-    def configured_api_key(self) -> str | None:
-        """Return the resolved API key (for tests and diagnostics only)."""
-        return self._api_key
+    # api_key_is_set / configured_api_key are provided by RedactedSecretsMixin.
 
     async def extract(
         self,

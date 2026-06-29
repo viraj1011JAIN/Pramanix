@@ -42,7 +42,25 @@ class RedactedSecretsMixin:
     Translators that store credentials as instance attributes should inherit
     from this mixin.  It overrides ``__repr__`` to show ``***`` for secret
     fields and ``__getstate__`` to exclude them from pickle output.
+
+    Also provides :attr:`configured_api_key` / :attr:`api_key_is_set` —
+    public, stable accessors for the conventional ``self._api_key`` attribute
+    (#6/#7 closure: previously each translator either lacked a public
+    accessor entirely, forcing tests to read ``t._api_key`` directly, or
+    duplicated an identical property body per-class). Translators that do not
+    use ``_api_key`` (e.g. AWS/Vertex translators with multi-part credentials)
+    simply see ``None`` / ``False`` here, which is correct and harmless.
     """
+
+    @property
+    def api_key_is_set(self) -> bool:
+        """Return True if ``self._api_key`` was configured (arg or env var)."""
+        return bool(getattr(self, "_api_key", None))
+
+    @property
+    def configured_api_key(self) -> str | None:
+        """Return the resolved ``self._api_key`` (for tests/diagnostics only)."""
+        return getattr(self, "_api_key", None)
 
     def __repr__(self) -> str:
         safe = {

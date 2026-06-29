@@ -19,7 +19,10 @@ import json
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+import respx
+from pydantic import BaseModel as _BaseModel
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -322,83 +325,82 @@ class TestCohereRetryAfterHeader:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class _TransferIntent(_BaseModel):
+    amount: int
+
+
+_MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions"
+
+
 class TestMistralAuthErrorNotRetried:
-    def _make_translator(self) -> Any:
+    def test_translator_construction_raises_configuration_error_without_mistralai(self) -> None:
+        """When mistralai is absent, __init__ must raise ConfigurationError — not
+        instantiate a broken object via __new__()."""
+        from pramanix.exceptions import ConfigurationError
         from pramanix.translator.mistral import MistralTranslator
 
-        return MistralTranslator.__new__(MistralTranslator)
+        def _raise_import_error() -> Any:
+            raise ImportError("simulated: mistralai not installed")
 
-    def test_translator_instantiates_without_mistralai(self) -> None:
-        from pramanix.translator.mistral import MistralTranslator
+        with pytest.raises(ConfigurationError, match="mistralai"):
+            MistralTranslator(
+                "mistral-small",
+                api_key="test",
+                _mistralai_factory=_raise_import_error,
+            )
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        assert t is not None
-
+    @respx.mock
     @pytest.mark.asyncio
     async def test_extraction_failure_error_raised_on_401(self) -> None:
+        """A real 401 HTTP response must produce ExtractionFailureError without retrying.
+
+        Constructs a real MistralTranslator (no __new__ bypass, no private
+        attribute injection) and intercepts the real HTTP call the real
+        mistralai SDK makes, returning a real 401 response. The real SDK
+        raises the real SDKError; extract() must convert it to
+        ExtractionFailureError in a single attempt (#246: auth errors are not
+        retryable).
+        """
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.mistral import MistralTranslator
 
-        try:
-            from mistralai.models import SDKError
-        except ImportError:
-            pytest.skip("mistralai not installed")
+        pytest.importorskip("mistralai", reason="mistralai not installed")
 
-        class _AuthError(SDKError):
-            def __init__(self) -> None:
-                super().__init__(message="Unauthorized", status_code=401, body="")
+        route = respx.post(_MISTRAL_CHAT_URL).mock(
+            return_value=httpx.Response(401, json={"message": "Unauthorized", "type": "auth_error"})
+        )
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        t._api_key = "test"  # type: ignore[attr-defined]
-        t._model = "mistral-small"  # type: ignore[attr-defined]
-        t._timeout = 10.0  # type: ignore[attr-defined]
-        t._max_tokens = 512  # type: ignore[attr-defined]
-
-        async def _bad_single_call(**kwargs: Any) -> str:
-            raise _AuthError()
-
-        t._single_call = _bad_single_call  # type: ignore[method-assign]
-
-        from pydantic import BaseModel
-
-        class _Schema(BaseModel):
-            amount: int
+        translator = MistralTranslator("mistral-small", api_key="test", timeout=10.0)
 
         with pytest.raises(ExtractionFailureError, match="client error"):
-            await t.extract("pay 5", _Schema)
+            await translator.extract("pay 5", _TransferIntent)
 
+        # #246's whole point: auth errors must not consume retry budget.
+        assert route.call_count == 1, (
+            f"Expected exactly 1 HTTP call (no retry on 401), got {route.call_count}"
+        )
+
+    @respx.mock
     @pytest.mark.asyncio
     async def test_extraction_failure_error_raised_on_403(self) -> None:
+        """A real 403 HTTP response must produce ExtractionFailureError without retrying."""
         from pramanix.exceptions import ExtractionFailureError
         from pramanix.translator.mistral import MistralTranslator
 
-        try:
-            from mistralai.models import SDKError
-        except ImportError:
-            pytest.skip("mistralai not installed")
+        pytest.importorskip("mistralai", reason="mistralai not installed")
 
-        class _ForbiddenError(SDKError):
-            def __init__(self) -> None:
-                super().__init__(message="Forbidden", status_code=403, body="")
+        route = respx.post(_MISTRAL_CHAT_URL).mock(
+            return_value=httpx.Response(403, json={"message": "Forbidden", "type": "permission_error"})
+        )
 
-        t = MistralTranslator.__new__(MistralTranslator)
-        t._api_key = "test"  # type: ignore[attr-defined]
-        t._model = "mistral-small"  # type: ignore[attr-defined]
-        t._timeout = 10.0  # type: ignore[attr-defined]
-        t._max_tokens = 512  # type: ignore[attr-defined]
-
-        async def _bad_single_call(**kwargs: Any) -> str:
-            raise _ForbiddenError()
-
-        t._single_call = _bad_single_call  # type: ignore[method-assign]
-
-        from pydantic import BaseModel
-
-        class _Schema(BaseModel):
-            amount: int
+        translator = MistralTranslator("mistral-small", api_key="test", timeout=10.0)
 
         with pytest.raises(ExtractionFailureError, match="client error"):
-            await t.extract("pay 5", _Schema)
+            await translator.extract("pay 5", _TransferIntent)
+
+        assert route.call_count == 1, (
+            f"Expected exactly 1 HTTP call (no retry on 403), got {route.call_count}"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

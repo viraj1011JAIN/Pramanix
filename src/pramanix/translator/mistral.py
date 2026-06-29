@@ -154,16 +154,33 @@ class MistralTranslator(RedactedSecretsMixin):
         # Solution: inside the retry body, intercept 4xx SDKErrors and
         # convert them to ExtractionFailureError (not in _retryable) so
         # tenacity re-raises them immediately without consuming retry budget.
+        # mistralai>=1.0 has no upper bound (pyproject.toml), so both the v1
+        # top-level `mistralai.models.SDKError` and the v2+ relocated
+        # `mistralai.client.errors.SDKError` must be supported. Discovered via
+        # real-protocol testing (#6/#7 closure): the old single-path import
+        # silently degraded to `_mistral_sdk_error = None` under mistralai>=2,
+        # which resurrects #246 (auth failures get retried 3x instead of
+        # failing fast) without raising anything that would surface the gap.
         try:
-            from mistralai.models import SDKError as _MistralSDKError
+            from mistralai.client.errors import SDKError as _MistralSDKErrorV2  # v2+
 
+            _MistralSDKError: type[Exception] | None = _MistralSDKErrorV2
+        except ImportError:
+            try:
+                from mistralai.models import SDKError as _MistralSDKErrorV1  # v1
+
+                _MistralSDKError = _MistralSDKErrorV1
+            except ImportError:
+                _MistralSDKError = None
+
+        if _MistralSDKError is not None:
             _mistral_sdk_error: type[Exception] | None = _MistralSDKError
             _retryable_base: tuple[type[Exception], ...] = (
                 _MistralSDKError,
                 TimeoutError,
                 OSError,
             )
-        except ImportError:
+        else:
             _mistral_sdk_error = None
             _retryable_base = (TimeoutError, OSError)
 

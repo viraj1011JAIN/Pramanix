@@ -148,7 +148,7 @@ class TestCreateTranslator:
 
         t = create_translator("claude-opus-4-6", api_key="sk-test-key")
         assert isinstance(t, AnthropicTranslator)
-        assert t._api_key == "sk-test-key"
+        assert t.configured_api_key == "sk-test-key"
 
     def test_gpt_with_custom_timeout(self) -> None:
         from pramanix.translator.redundant import create_translator

@@ -600,7 +600,7 @@ class TestCreateTranslator:
 
         t = create_translator("gpt-4o", api_key=_OPENAI_TEST_KEY)
         assert isinstance(t, OpenAICompatTranslator)
-        assert t._api_key == _OPENAI_TEST_KEY
+        assert t.configured_api_key == _OPENAI_TEST_KEY
 
     def test_base_url_forwarded_to_openai(self) -> None:
         from pramanix.translator.openai_compat import OpenAICompatTranslator
